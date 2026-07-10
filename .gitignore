@@ -1,0 +1,21 @@
+# deps & builds
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# local data (library, sqlite, imported books)
+projects/marginalia/data/
+*.sqlite
+*.sqlite-journal
+*.db
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
