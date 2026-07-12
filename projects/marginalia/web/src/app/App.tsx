@@ -1,0 +1,69 @@
+import { NavLink, Route, Routes } from "react-router-dom";
+import { LibraryPage } from "../library/LibraryPage.js";
+import { ReaderPage } from "../reader/ReaderPage.js";
+import { SettingsPage } from "../settings/SettingsPage.js";
+import { useTheme, type ThemeChoice } from "./useTheme.js";
+import styles from "./App.module.css";
+
+const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
+  { value: "paper", label: "Paper" },
+  { value: "system", label: "Auto" },
+  { value: "ink", label: "Ink" },
+];
+
+export function App() {
+  const { choice, setChoice } = useTheme();
+
+  return (
+    <div className={styles.shell}>
+      <header className={styles.header}>
+        <NavLink to="/" className={styles.brand}>
+          Marginalia
+        </NavLink>
+        <nav className={styles.nav}>
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
+            }
+          >
+            Library
+          </NavLink>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
+            }
+          >
+            Settings
+          </NavLink>
+          <div className={styles.themeToggle} role="group" aria-label="Theme">
+            {THEME_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={
+                  choice === option.value
+                    ? `${styles.themeButton} ${styles.themeButtonActive}`
+                    : styles.themeButton
+                }
+                onClick={() => setChoice(option.value)}
+                aria-pressed={choice === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </nav>
+      </header>
+      <main className={styles.main}>
+        <Routes>
+          <Route path="/" element={<LibraryPage />} />
+          <Route path="/read/:id" element={<ReaderPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}

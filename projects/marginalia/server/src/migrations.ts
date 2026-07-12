@@ -1,0 +1,81 @@
+export interface Migration {
+  version: number;
+  sql: string;
+}
+
+/**
+ * Numbered, ordered SQL migrations. Applied version is tracked in
+ * `pragma user_version` (see db.ts). Append new migrations here — never edit
+ * an already-applied one.
+ */
+export const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    sql: `
+      CREATE TABLE resources (
+        id            TEXT PRIMARY KEY,
+        title         TEXT NOT NULL,
+        author        TEXT,
+        format        TEXT NOT NULL,
+        file_path     TEXT NOT NULL,
+        metadata      TEXT NOT NULL DEFAULT '{}',
+        imported_at   TEXT NOT NULL
+      );
+
+      CREATE TABLE resource_text (
+        resource_id   TEXT NOT NULL REFERENCES resources(id),
+        spine_index   INTEGER NOT NULL,
+        href          TEXT NOT NULL,
+        text          TEXT NOT NULL,
+        PRIMARY KEY (resource_id, spine_index)
+      );
+
+      CREATE TABLE reading_state (
+        resource_id   TEXT PRIMARY KEY REFERENCES resources(id),
+        location      TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE highlights (
+        id            TEXT PRIMARY KEY,
+        resource_id   TEXT NOT NULL REFERENCES resources(id),
+        exact         TEXT NOT NULL,
+        prefix        TEXT NOT NULL,
+        suffix        TEXT NOT NULL,
+        cfi           TEXT NOT NULL,
+        spine_index   INTEGER NOT NULL,
+        created_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE threads (
+        id            TEXT PRIMARY KEY,
+        highlight_id  TEXT NOT NULL UNIQUE REFERENCES highlights(id),
+        created_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE messages (
+        id            TEXT PRIMARY KEY,
+        thread_id     TEXT NOT NULL REFERENCES threads(id),
+        role          TEXT NOT NULL CHECK (role IN ('user','assistant')),
+        content       TEXT NOT NULL,
+        created_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE publishes (
+        thread_id     TEXT PRIMARY KEY REFERENCES threads(id),
+        note_path     TEXT NOT NULL,
+        content_hash  TEXT NOT NULL,
+        published_at  TEXT NOT NULL
+      );
+
+      CREATE TABLE settings (
+        key           TEXT PRIMARY KEY,
+        value         TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_resource_text_resource ON resource_text(resource_id);
+      CREATE INDEX idx_highlights_resource ON highlights(resource_id);
+      CREATE INDEX idx_messages_thread ON messages(thread_id);
+    `,
+  },
+];

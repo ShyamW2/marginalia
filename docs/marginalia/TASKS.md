@@ -7,18 +7,18 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 
 ## M0 — Scaffold
 
-- [ ] `projects/marginalia/` pnpm workspace: root `package.json`, `pnpm-workspace.yaml`,
+- [x] `projects/marginalia/` pnpm workspace: root `package.json`, `pnpm-workspace.yaml`,
       packages `shared/`, `server/`, `web/` (strict TS configs, shared base tsconfig)
-- [ ] `shared/src/schemas.ts`: zod schemas + inferred types for Resource, Anchor,
+- [x] `shared/src/schemas.ts`: zod schemas + inferred types for Resource, Anchor,
       Highlight, Thread, Message, Settings (per SPEC data model)
-- [ ] Express server: bootstrap, `/api/health` → `{ok: true}`, error-handling
+- [x] Express server: bootstrap, `/api/health` → `{ok: true}`, error-handling
       middleware, `data/` dir creation at startup
-- [ ] SQLite init + migration runner (`db.ts`) with migration 001 = full SPEC schema
-- [ ] Vite React app: routes `/`, `/read/:id`, `/settings` (placeholder pages), theme
+- [x] SQLite init + migration runner (`db.ts`) with migration 001 = full SPEC schema
+- [x] Vite React app: routes `/`, `/read/:id`, `/settings` (placeholder pages), theme
       CSS custom properties (paper/ink), proxy `/api` → server
-- [ ] Root `pnpm dev` runs both; `pnpm test` runs vitest; `pnpm build` builds both
-- [ ] Download 2 public-domain EPUBs into `projects/marginalia/fixtures/`
-- [ ] **Verify:** `pnpm dev` → browser shows themed placeholder app; `curl
+- [x] Root `pnpm dev` runs both; `pnpm test` runs vitest; `pnpm build` builds both
+- [x] Download 2 public-domain EPUBs into `projects/marginalia/fixtures/`
+- [x] **Verify:** `pnpm dev` → browser shows themed placeholder app; `curl
       localhost:5175/api/health` returns ok; `pnpm test` passes (one smoke test)
 
 ## M1 — Import & library

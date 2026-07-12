@@ -1,0 +1,94 @@
+/*
+ * Two themes: "paper" (light) and "ink" (dark). Custom properties only —
+ * components consume these variables, never hardcode colors. Respects
+ * prefers-color-scheme by default; :root[data-theme] overrides it.
+ */
+
+:root {
+  color-scheme: light;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
+    sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+    serif;
+
+  --color-bg: #faf7f0;
+  --color-bg-raised: #ffffff;
+  --color-text: #2a2620;
+  --color-text-muted: #6b6559;
+  --color-border: #e4ddce;
+  --color-accent: #8a5a3b;
+  --color-accent-text: #ffffff;
+  --color-highlight: #f3dfa0;
+  --color-highlight-active: #eac96a;
+  --color-danger: #a13d3d;
+
+  --shadow-panel: 0 8px 24px rgba(40, 30, 15, 0.12);
+  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-standard: 180ms;
+}
+
+:root[data-theme="ink"] {
+  color-scheme: dark;
+
+  --color-bg: #1c1a17;
+  --color-bg-raised: #262320;
+  --color-text: #e8e2d4;
+  --color-text-muted: #9a9284;
+  --color-border: #3a352c;
+  --color-accent: #d9a56c;
+  --color-accent-text: #1c1a17;
+  --color-highlight: #4d4326;
+  --color-highlight-active: #6b5a2e;
+  --color-danger: #d97a7a;
+
+  --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="paper"]) {
+    color-scheme: dark;
+
+    --color-bg: #1c1a17;
+    --color-bg-raised: #262320;
+    --color-text: #e8e2d4;
+    --color-text-muted: #9a9284;
+    --color-border: #3a352c;
+    --color-accent: #d9a56c;
+    --color-accent-text: #1c1a17;
+    --color-highlight: #4d4326;
+    --color-highlight-active: #6b5a2e;
+    --color-danger: #d97a7a;
+
+    --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--color-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "marginalia",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "concurrently -n server,web -c green,cyan \"pnpm --filter @marginalia/server dev\" \"pnpm --filter @marginalia/web dev\"",
+    "build": "pnpm --filter @marginalia/shared build && pnpm --filter @marginalia/server build && pnpm --filter @marginalia/web build",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.2"
+  }
+}
