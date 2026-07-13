@@ -23,17 +23,20 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 
 ## M1 — Import & library
 
-- [ ] Server: EPUB metadata + text extraction (`library/`): unzip, parse OPF (title,
+- [x] Server: EPUB metadata + text extraction (`library/`): unzip, parse OPF (title,
       author, spine), extract plain text per spine item → `resource_text`
-- [ ] `POST /api/resources` (multipart): sha256 hash, store to `data/library/`,
+- [x] `POST /api/resources` (multipart): sha256 hash, store to `data/library/`,
       extract, insert; duplicate import returns existing resource
-- [ ] `GET /api/resources`, `GET /api/resources/:id`, `GET /api/resources/:id/file`
-- [ ] Web: library grid (title/author cards), drag-drop + file-picker import with
+- [x] `GET /api/resources`, `GET /api/resources/:id`, `GET /api/resources/:id/file`
+- [x] Web: library grid (title/author cards), drag-drop + file-picker import with
       progress state, designed empty state
-- [ ] Unit tests: extraction against a fixture EPUB (spine count, non-empty text,
+- [x] Unit tests: extraction against a fixture EPUB (spine count, non-empty text,
       correct title)
-- [ ] **Verify:** import both fixture EPUBs via drag-drop; they appear in the grid;
+- [x] **Verify:** import both fixture EPUBs via drag-drop; they appear in the grid;
       re-importing one is a no-op; `resource_text` rows exist in sqlite
+      _(verified 2026-07-13: API + headless-browser pass; 14/5 `resource_text` rows,
+      dedupe confirmed, `:id/file` serves `application/epub+zip`, non-epub → 400 +
+      inline UI error)_
 
 ## M2 — Reader
 
