@@ -12,6 +12,7 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/SPEC.md` — prescriptive implementation spec (stack, schema, API, seams) — **binding**
 - `docs/marginalia/TASKS.md` — ordered task list with per-milestone acceptance criteria; check boxes off as you go
 - `docs/marginalia/PRODUCT.md` — product requirements and vision
+- `docs/marginalia/DESIGN.md` — aesthetic & interaction blueprint (the "three rooms" system) — binding for M7+
 - `docs/marginalia/SONNET_PROMPT.md` — kickoff prompt + operator notes for implementation sessions
 - `docs/marginalia/NOTES.md` — running log of spec gaps, friction, blockers (create on first use)
 - `docs/decisions.md` — decision log (ADR-lite)

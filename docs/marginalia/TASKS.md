@@ -94,7 +94,11 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
       highlight)
 - [ ] Settings API + settings page: provider picker, model, base URL, API keys
       (masked), vault path, context tokens; "Test connection" button that runs a
-      1-token stream
+      1-token stream; base-URL presets for openaiCompat (OpenRouter / Ollama /
+      LM Studio / Custom)
+      _(Deferred, NOT part of M4: a third `claudeAgent` provider using the Claude
+      Agent SDK for subscription-credit access — see docs/decisions.md 2026-07-17
+      provider-strategy entry. Do not build it in M4.)_
 - [ ] Dev CLI: `pnpm --filter server ask <resourceId> "<question>"` streams an answer
       to stdout (verifies the layer without UI)
 - [ ] Unit tests: openaiCompat SSE parsing (mocked), context builder; manual: CLI ask
@@ -135,17 +139,96 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
       notes/concepts appear and open correctly in Obsidian; publish again → no changes;
       threads from a second book sharing a concept link to the SAME concept note
 
-## M7 — Beauty & revisit pass
+## M7 — Beauty & revisit pass (v1 close-out + motion foundation)
 
+Design direction for M7–M10 lives in docs/marginalia/DESIGN.md — read it before
+starting any milestone from here on.
+
+- [ ] Adopt `motion` (framer-motion successor); code-split routes with `React.lazy`
+      (epub.js loads only in the reader; kills the 552KB single-chunk build warning)
 - [ ] Motion pass: panel open/close, pill appearance, page-turn feel (150–200ms
-      ease-out, no jank)
+      ease-out, no jank); transitions interruptible, `transform`/`opacity` only
+- [ ] First doorway transition: library card → reader as a shared-element zoom
+      (proof of the motion system; plain crossfade under reduced motion)
 - [ ] Library polish: covers extracted from EPUBs, annotated-book indicator (thread
       count), recently-read ordering
 - [ ] Reader revisit affordances: "annotations" overview (list of all threads in book,
       jump-to), unanchored-highlight surfacing
+- [ ] Reading focus mode: `f` toggles all marks/tabs/rail dots for a clean page;
+      subtle "notes hidden" indicator; persists for the session
 - [ ] Dark mode audit across every view; focus-visible states; reduced-motion respect
 - [ ] Error/edge audit: huge EPUB, EPUB with no metadata, provider down mid-stream,
       vault path unset → all degrade gracefully with designed states
 - [ ] **Verify:** full walkthrough (import → read → highlight → ask → follow-up →
       publish → open vault in Obsidian) in both themes; fix anything that feels rough
       before calling v1 done
+
+---
+
+Everything below is **v1.5** (the "three rooms" system, per DESIGN.md). Do not start
+until the M7 verify passes — v1 must be whole first.
+
+## M8 — The Desk (bookshelf workspace)
+
+- [ ] Migration (additive): per-resource shelf state (x, y, rotation, z-order);
+      notepad table (single markdown scratch note, autosave)
+- [ ] Freeform workspace at `/`: books as cover-forward draggable objects (spring
+      lift/settle, shadow depth while dragging), positions persist; current grid
+      remains as a list toggle (canonical keyboard/screen-reader path)
+- [ ] Hover info strip (author, progress, thread count, last-read) with quiet actions
+      (open scan, publish); click opens the reader via the book-opening transition
+      (cover zoom → stylized page-flutter landing on saved position; crossfade under
+      reduced motion)
+- [ ] Scroll-to-open "crown" gesture: scroll while hovering a book pushes into it
+      past a commit threshold; Escape backs out
+- [ ] The notepad: pad-of-paper scratch note on the desk, markdown, autosaved;
+      "publish to vault" runs it through the existing vault compiler path
+- [ ] Ambient desk physics: 1–2° cursor parallax with inertia; cursor trail canvas
+      overlay (pointer-events: none, rAF, decaying particles, idles when cursor
+      rests); custom cursor + trail both selectable/disableable in settings,
+      all gated behind reduced-motion
+- [ ] **Verify:** arrange five books, reload → same arrangement; open a book via
+      click and via crown-scroll → both land on saved position; write in the notepad,
+      reload → preserved; publish notepad → note appears in vault; toggle list view
+      and drive it keyboard-only; enable reduced motion → no trails/parallax, plain
+      transitions
+
+## M9 — The Scan (timeline & heat map) — requires M6 (concepts)
+
+- [ ] Migration (additive): `highlights.importance` (0–3); server-computed
+      `positionPercent` per highlight from char offsets in `resource_text`
+      (locate prefix+exact+suffix; unit tests: known fixture positions, duplicate
+      text disambiguated by prefix/suffix, not-found → null)
+- [ ] `/scan/:id`: full-width 0–100% strip, chapter ticks from spine, CRT
+      instrument aesthetic per DESIGN.md (dark panel, neon bands, mono readouts,
+      grain/scanlines under 5% opacity, contrast still passes)
+- [ ] Heat bands: highlights/threads plotted at true percent position, intensity by
+      thread length/depth; hover → phosphor ghost readout (quote + thread first
+      line); click → airlock transition into the reader at that position
+- [ ] Filter/search: by concept tag (from M6) and free text across quotes + thread
+      content; matching bands lit, rest dimmed
+- [ ] Importance: star a highlight (1–3) from the scan or the reader thread panel;
+      dog-ear rendering on the strip; "revisit queue" readout sorted by importance
+- [ ] Airlock transition both directions (reader ⇄ scan): page dims/desaturates,
+      scanlines in, highlights re-materialize as bands; reverse on the way back;
+      crossfade under reduced motion
+- [ ] Instrument readouts: totals, progress, chapter-length sparkline, last-visited
+- [ ] **Verify:** book with 10+ threads across chapters → bands sit at correct
+      positions (spot-check three against the reader); filter by a concept → correct
+      subset stays lit; star two passages → dog-ears + queue order correct; click a
+      band → reader opens on that passage; whole room keyboard-navigable
+
+## M10 — Reader depth (3D page turn & origami notes)
+
+- [ ] Snapshot page-turn: render current/next page to bitmaps, animate a 3D curl on
+      those planes (container-level transform so the marks-pane rides along), swap to
+      live DOM on settle; fast slide fallback stays for reduced motion / low fps
+- [ ] Stretch: interactive drag-to-peel (grab page edge, curl follows pointer,
+      release commits or springs back)
+- [ ] Origami fold skin on the M5 thread panel: collapsed = folded margin tab, click
+      unfolds in a two-crease animation, refold on collapse; paper grain + spine tint
+- [ ] Perf pass: 60fps during turns and folds; no layout thrash (transform/opacity
+      only); epub.js quirks encountered → logged in NOTES.md
+- [ ] **Verify:** page through a chapter with notes attached — notes ride the turning
+      page; fold/unfold threads repeatedly with no jank; reduced motion → slide
+      turns, instant fold; reading with all effects on still feels calm
