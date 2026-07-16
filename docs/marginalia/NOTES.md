@@ -22,7 +22,32 @@ Append; don't rewrite history.
 
 ## Friction
 
-_(none yet)_
+- **2026-07-16 (M2):** epub.js's `ePub(url)` sniffs input type from the URL's
+  file extension; our file route (`/api/resources/:id/file`) has none, so it
+  defaulted to treating the URL as an unpacked directory of book files
+  (fetching `META-INF/container.xml` etc. as separate relative requests →
+  404s) instead of a single archive to fetch-and-unzip. Fixed by passing
+  `{ openAs: "epub" }` in the `ePub()` options.
+- **2026-07-16 (M2):** epub.js's paginated flow renders each section into one
+  wide multi-column iframe and reveals the current page via the *container's*
+  scroll offset — the iframe itself is far wider than the visible viewport
+  and is positioned off to the side. A forwarded content `click` event's
+  `clientX`/`contents.window.innerWidth` are relative to that whole wide
+  canvas, not the visible page, so naive click-zone math (`clientX < width *
+  0.3`) silently never triggers. Fixed by translating through the iframe
+  element's own `getBoundingClientRect()` (via `contents.document.defaultView
+  .frameElement`) relative to our container's rect. Verified concretely with
+  a headless-browser click at a known screen position and confirming the
+  saved CFI position actually advanced/retreated — don't trust a fix here
+  without checking the real epub.js DOM structure (`.epub-container` >
+  `.epub-view` > `iframe`).
+- **2026-07-16 (M2):** the Standard Ebooks/Gutenberg-derived Alice fixture has
+  an unclosed `<a id="chap01">` bookmark anchor (no `href`) at the top of each
+  chapter; lenient HTML parsing makes it swallow the entire chapter body as
+  its descendant. A naive "don't turn pages when the click target is inside
+  an `<a>`" guard (meant to let real hyperlinks work) matched on every single
+  click in the whole book. Fixed by checking `closest("a[href]")` instead of
+  `closest("a")` — only navigable links should suppress the page-turn.
 
 ## Blockers
 

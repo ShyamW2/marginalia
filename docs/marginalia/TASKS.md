@@ -40,17 +40,24 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 
 ## M2 — Reader
 
-- [ ] `ReaderView` component wrapping epub.js: load book from
+- [x] `ReaderView` component wrapping epub.js: load book from
       `/api/resources/:id/file`, paginated flow mode, centered column layout per SPEC
-- [ ] Keyboard (←/→) + click-zone page turns; progress indicator in header
-- [ ] Reading position: save CFI (debounced) via `PUT /api/resources/:id/position`,
+- [x] Keyboard (←/→) + click-zone page turns; progress indicator in header
+- [x] Reading position: save CFI (debounced) via `PUT /api/resources/:id/position`,
       restore on open
-- [ ] Paper/ink themes applied *inside* the epub iframe (epub.js themes API) and
+- [x] Paper/ink themes applied *inside* the epub iframe (epub.js themes API) and
       matching chrome outside
-- [ ] Typography pass: serif book stack, comfortable measure/leading, margins
-- [ ] **Verify:** open a fixture book, read/page through it, close, reopen → same
+- [x] Typography pass: serif book stack, comfortable measure/leading, margins
+- [x] **Verify:** open a fixture book, read/page through it, close, reopen → same
       position; toggle dark mode → book content and chrome both switch; it looks like
       something you'd *choose* to read in
+      _(verified 2026-07-16: headless-browser pass against both fixtures — paginated
+      flow renders with serif typography in a centered column; Next/Prev buttons,
+      window-level and in-iframe ←/→ keys, and click-zone (left/right thirds, middle
+      inert) all turn pages; progress % updates and reaches whole-book percentages
+      once `book.locations.generate()` resolves; position saves debounced and
+      restores near-exactly on reload; toggling Ink switches both the chrome and the
+      epub iframe's injected theme together)_
 
 ## M3 — Highlights
 

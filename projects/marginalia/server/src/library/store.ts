@@ -1,5 +1,9 @@
 import type Database from "better-sqlite3";
-import type { Resource, ResourceSummary } from "@marginalia/shared";
+import type {
+  ReadingPosition,
+  Resource,
+  ResourceSummary,
+} from "@marginalia/shared";
 
 interface ResourceRow {
   id: string;
@@ -67,4 +71,37 @@ export function listResourceSummaries(
     highlightCount: row.highlight_count,
     threadCount: row.thread_count,
   }));
+}
+
+export function getReadingPosition(
+  db: Database.Database,
+  resourceId: string,
+): ReadingPosition | undefined {
+  const row = db
+    .prepare(
+      "SELECT resource_id, location, updated_at FROM reading_state WHERE resource_id = ?",
+    )
+    .get(resourceId) as
+    | { resource_id: string; location: string; updated_at: string }
+    | undefined;
+  if (!row) return undefined;
+  return {
+    resourceId: row.resource_id,
+    location: row.location,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function setReadingPosition(
+  db: Database.Database,
+  resourceId: string,
+  location: string,
+): ReadingPosition {
+  const updatedAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO reading_state (resource_id, location, updated_at)
+     VALUES (@resourceId, @location, @updatedAt)
+     ON CONFLICT (resource_id) DO UPDATE SET location = @location, updated_at = @updatedAt`,
+  ).run({ resourceId, location, updatedAt });
+  return { resourceId, location, updatedAt };
 }

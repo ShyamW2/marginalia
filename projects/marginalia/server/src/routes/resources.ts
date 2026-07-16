@@ -1,12 +1,15 @@
 import { Router } from "express";
 import multer from "multer";
 import fs from "node:fs";
+import { UpdateReadingPositionBodySchema } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { importEpub } from "../library/importResource.js";
 import {
+  getReadingPosition,
   getResourceById,
   getResourceFilePath,
   listResourceSummaries,
+  setReadingPosition,
 } from "../library/store.js";
 
 const upload = multer({
@@ -57,4 +60,33 @@ resourcesRouter.get("/:id/file", (req, res) => {
   }
   res.type("application/epub+zip");
   res.sendFile(filePath);
+});
+
+resourcesRouter.get("/:id/position", (req, res) => {
+  const resource = getResourceById(getDb(), req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const position = getReadingPosition(getDb(), req.params.id);
+  res.json(position ?? null);
+});
+
+resourcesRouter.put("/:id/position", (req, res) => {
+  const resource = getResourceById(getDb(), req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const parsed = UpdateReadingPositionBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const position = setReadingPosition(
+    getDb(),
+    req.params.id,
+    parsed.data.location,
+  );
+  res.json(position);
 });
