@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
-import type { Highlight } from "@marginalia/shared";
+import type { Highlight, HighlightWithThread } from "@marginalia/shared";
 
 interface HighlightRow {
   id: string;
@@ -66,6 +66,36 @@ export function listHighlightsForResource(
     )
     .all(resourceId) as HighlightRow[];
   return rows.map(rowToHighlight);
+}
+
+interface HighlightWithThreadRow extends HighlightRow {
+  thread_id: string | null;
+  answer_count: number;
+}
+
+/** SPEC: GET /api/resources/:id/highlights — highlights + their thread summaries. */
+export function listHighlightsWithThreadsForResource(
+  db: Database.Database,
+  resourceId: string,
+): HighlightWithThread[] {
+  const rows = db
+    .prepare(
+      `SELECT h.*, t.id AS thread_id,
+         (SELECT COUNT(*) FROM messages m
+            WHERE m.thread_id = t.id AND m.role = 'assistant') AS answer_count
+       FROM highlights h
+       LEFT JOIN threads t ON t.highlight_id = h.id
+       WHERE h.resource_id = ?
+       ORDER BY h.spine_index, h.created_at`,
+    )
+    .all(resourceId) as HighlightWithThreadRow[];
+
+  return rows.map((row) => ({
+    ...rowToHighlight(row),
+    thread: row.thread_id
+      ? { id: row.thread_id, hasAnswer: row.answer_count > 0 }
+      : null,
+  }));
 }
 
 export function getHighlightById(

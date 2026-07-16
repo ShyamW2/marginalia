@@ -91,6 +91,19 @@ export type CreateHighlightBody = z.infer<typeof CreateHighlightBodySchema>;
 // Thread + Message
 // ---------------------------------------------------------------------------
 
+/** Minimal thread state attached to a highlight for margin-rail rendering. */
+export const ThreadSummarySchema = z.object({
+  id: z.string(),
+  hasAnswer: z.boolean(), // at least one assistant message has been persisted
+});
+export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
+
+/** GET /api/resources/:id/highlights response shape (SPEC: "+ their thread summaries"). */
+export const HighlightWithThreadSchema = HighlightSchema.extend({
+  thread: ThreadSummarySchema.nullable(),
+});
+export type HighlightWithThread = z.infer<typeof HighlightWithThreadSchema>;
+
 export const ThreadSchema = z.object({
   id: z.string(), // uuid v4
   highlightId: z.string(),

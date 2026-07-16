@@ -11,7 +11,7 @@ import {
   listResourceSummaries,
   setReadingPosition,
 } from "../library/store.js";
-import { listHighlightsForResource } from "../annotations/highlights.js";
+import { listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -98,5 +98,5 @@ resourcesRouter.get("/:id/highlights", (req, res) => {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  res.json(listHighlightsForResource(getDb(), req.params.id));
+  res.json(listHighlightsWithThreadsForResource(getDb(), req.params.id));
 });

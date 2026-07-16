@@ -87,6 +87,28 @@ Append; don't rewrite history.
   unaffected — it only calls `.safeParse()`, which exists on both zod
   versions' `ZodType` with the same shape.
 
+- **2026-07-17 (M5):** `req.on("close")` is **useless** for detecting a
+  client disconnect on a long-lived SSE response in Express/Node — it fires
+  as soon as the *request* body has finished being read (i.e. right after
+  `express.json()` parses it), not when the client actually goes away. In
+  `routes/threads.ts` this meant the abort `AbortController` fired almost
+  immediately after `res.flushHeaders()`, aborting the provider's `fetch()`
+  before it could ever return — every thread request hung forever with zero
+  bytes streamed, no error logged anywhere (the abort happened, but nothing
+  after it ran because the client's connection was never actually closed,
+  so nothing observed the failure). Took a long debugging detour: identical
+  code (same `OpenAICompatProvider`, same book-sized context, same
+  `AbortController` wiring) worked instantly in a one-off script and in a
+  scratch Express app, and only hung inside the *real* running dev server —
+  the actual variable was `req.on("close")` vs `res.on("close")`, not
+  anything about context size, keep-alive, or process state (all dead ends
+  chased first). **Fix:** listen on `res.on("close")` instead (fires when
+  the *response's* underlying connection ends) and guard with
+  `if (res.writableEnded) return;` so our own clean `res.end()` doesn't look
+  like a disconnect. Verified against a real streaming SSE call end-to-end
+  (first question, a follow-up, `GET /api/threads/:id`, and the
+  highlights-with-thread-summary listing) once fixed.
+
 ## Blockers
 
 _(none yet)_
