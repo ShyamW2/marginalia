@@ -1,12 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import ePub from "epubjs";
 import type { Book, Contents, Location, Rendition } from "epubjs";
-import type { ReadingPosition } from "@marginalia/shared";
+import type { CreateHighlightBody, Highlight, ReadingPosition } from "@marginalia/shared";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
+import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
+import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
+import { AskPill } from "./AskPill.js";
+import { MarginRail } from "./MarginRail.js";
 import styles from "./ReaderView.module.css";
 
 const POSITION_SAVE_DEBOUNCE_MS = 600;
 const LOCATIONS_CHAR_STEP = 1600;
+const SELECTION_CONTEXT_MAX_LEN = 64;
+const HIGHLIGHT_MARK_CLASS = "marginalia-highlight";
+
+// epub.js's View typings don't expose the `contents` it renders, though it
+// exists at runtime (see managers/views/iframe.js) — narrow just that.
+interface ViewWithContents {
+  contents: Contents;
+}
 
 function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
   rendition.themes.register("app", {
@@ -21,6 +33,10 @@ function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
     },
     a: { color: `${vars.accent} !important` },
     "::selection": { background: `${vars.highlightActive} !important` },
+    [`.${HIGHLIGHT_MARK_CLASS}`]: {
+      background: `${vars.highlight} !important`,
+      cursor: "pointer",
+    },
   });
   rendition.themes.select("app");
 }
@@ -43,6 +59,40 @@ function savePosition(resourceId: string, location: string): void {
   });
 }
 
+async function fetchHighlights(resourceId: string): Promise<Highlight[]> {
+  const res = await fetch(`/api/resources/${resourceId}/highlights`);
+  if (!res.ok) return [];
+  return (await res.json()) as Highlight[];
+}
+
+async function postHighlight(
+  body: CreateHighlightBody,
+): Promise<Highlight | null> {
+  const res = await fetch("/api/highlights", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as Highlight;
+}
+
+async function deleteHighlightRequest(id: string): Promise<boolean> {
+  const res = await fetch(`/api/highlights/${id}`, { method: "DELETE" });
+  return res.ok;
+}
+
+interface PendingSelection {
+  cfi: string;
+  exact: string;
+  prefix: string;
+  suffix: string;
+  spineIndex: number;
+  contents: Contents;
+  left: number;
+  top: number;
+}
+
 interface ReaderViewProps {
   resourceId: string;
 }
@@ -51,6 +101,13 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const saveTimerRef = useRef<number | undefined>(undefined);
+  const highlightsRef = useRef<Highlight[]>([]);
+  const resolvedIdsRef = useRef<Set<string>>(new Set());
+  // Tracks the CFI each highlight's mark was actually attached at, which can
+  // differ from the stored anchor when it was resolved via the text-search
+  // fallback (a re-anchored CFI) rather than the original CFI resolving
+  // clean — deleting must remove the mark at whichever CFI is really there.
+  const attachedCfiRef = useRef<Map<string, string>>(new Map());
   const themeVars = useEpubThemeVars();
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
@@ -59,6 +116,17 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   const [progressPercent, setProgressPercent] = useState<number | null>(null);
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
+  const [currentSpineIndex, setCurrentSpineIndex] = useState<number | null>(
+    null,
+  );
+  const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [unanchoredIds, setUnanchoredIds] = useState<Set<string>>(new Set());
+  const [pendingSelection, setPendingSelection] =
+    useState<PendingSelection | null>(null);
+
+  useEffect(() => {
+    highlightsRef.current = highlights;
+  }, [highlights]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -66,6 +134,12 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
 
     setStatus("loading");
     setProgressPercent(null);
+    setHighlights([]);
+    setUnanchoredIds(new Set());
+    setPendingSelection(null);
+    highlightsRef.current = [];
+    resolvedIdsRef.current = new Set();
+    attachedCfiRef.current = new Map();
 
     // Our file route has no .epub extension for epub.js to sniff from the
     // URL, so it would otherwise be treated as an unpacked directory of
@@ -84,9 +158,70 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     renditionRef.current = rendition;
     applyTheme(rendition, themeVars);
 
+    function attachHighlightMark(highlightId: string, cfi: string) {
+      attachedCfiRef.current.set(highlightId, cfi);
+      rendition.annotations.highlight(
+        cfi,
+        { highlightId },
+        undefined,
+        HIGHLIGHT_MARK_CLASS,
+      );
+    }
+
+    function markUnanchored(highlightId: string) {
+      setUnanchoredIds((prev) => {
+        if (prev.has(highlightId)) return prev;
+        const next = new Set(prev);
+        next.add(highlightId);
+        return next;
+      });
+    }
+
+    // Resolves this section's highlights against its now-rendered document:
+    // CFI first, falling back to a prefix/exact/suffix text search, per the
+    // SPEC anchoring rule. Each highlight is resolved once — epub.js's
+    // Annotations store re-attaches marks to every future render of the same
+    // section on its own, no need to redo the search.
+    function resolveHighlightsForSection(contents: Contents) {
+      const sectionText = contents.document.body.textContent ?? "";
+      const candidates = highlightsRef.current.filter(
+        (h) =>
+          h.spineIndex === contents.sectionIndex &&
+          !resolvedIdsRef.current.has(h.id),
+      );
+
+      for (const highlight of candidates) {
+        resolvedIdsRef.current.add(highlight.id);
+
+        const result = resolveAnchor<RangeLike>({
+          tryCfi: () => contents.range(highlight.cfi) as unknown as RangeLike,
+          sectionText,
+          anchor: highlight,
+        });
+
+        if (result.status === "cfi") {
+          attachHighlightMark(highlight.id, highlight.cfi);
+        } else if (result.status === "fallback") {
+          const range = rangeFromTextOffsets(
+            contents.document,
+            result.match.start,
+            result.match.end,
+          );
+          if (range) {
+            attachHighlightMark(highlight.id, contents.cfiFromRange(range));
+          } else {
+            markUnanchored(highlight.id);
+          }
+        } else {
+          markUnanchored(highlight.id);
+        }
+      }
+    }
+
     function handleRelocated(location: Location) {
       setAtStart(Boolean(location.atStart));
       setAtEnd(Boolean(location.atEnd));
+      setCurrentSpineIndex(location.start.index);
       const pct = location.start.percentage;
       if (typeof pct === "number") {
         setProgressPercent(Math.round(pct * 100));
@@ -99,6 +234,68 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     }
     rendition.on("relocated", handleRelocated);
 
+    function handleRendered(_section: unknown, view: unknown) {
+      const contents = (view as ViewWithContents).contents;
+      if (contents) resolveHighlightsForSection(contents);
+    }
+    rendition.on("rendered", handleRendered);
+
+    function handleSelected(cfiRange: string, contents: Contents) {
+      const selection = contents.window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      if (range.collapsed) return;
+      const exact = range.toString();
+      if (!exact.trim()) return;
+
+      const { prefix, suffix } = getSelectionContext(
+        contents.document,
+        range,
+        SELECTION_CONTEXT_MAX_LEN,
+      );
+
+      const iframeEl = contents.document.defaultView?.frameElement as
+        | HTMLElement
+        | null
+        | undefined;
+      const container = containerRef.current;
+      if (!iframeEl || !container) return;
+
+      const iframeRect = iframeEl.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const rangeRect = range.getBoundingClientRect();
+
+      const rawLeft =
+        iframeRect.left + rangeRect.left + rangeRect.width / 2 - containerRect.left;
+      const rawTop = iframeRect.top + rangeRect.top - containerRect.top;
+
+      setPendingSelection({
+        cfi: cfiRange,
+        exact,
+        prefix,
+        suffix,
+        spineIndex: contents.sectionIndex,
+        contents,
+        // Clamp so a selection right at the edge of the visible page can't
+        // push the pill (which renders above the selection) off-screen.
+        left: Math.min(Math.max(rawLeft, 40), containerRect.width - 40),
+        top: Math.max(rawTop, 40),
+      });
+    }
+    rendition.on("selected", handleSelected);
+
+    function handleMarkClicked(_cfiRange: string, data: { highlightId?: string }) {
+      // A click on a highlight mark still bubbles as a content 'click', but
+      // clicking within the highlighted text is exactly what should NOT
+      // page-turn — markClicked fires first, so nothing more to do here
+      // beyond the browser's own default (no page turn, since the click
+      // handler below sees a real link/selection-free click through text
+      // that happens to be marked). Selecting the highlight is a stub for
+      // the thread panel that arrives in M5.
+      void data;
+    }
+    rendition.on("markClicked", handleMarkClicked);
+
     function handleContentClick(event: MouseEvent, contents: Contents) {
       const target = event.target as HTMLElement | null;
       // Old Gutenberg-style markup often has unclosed `<a id="...">` bookmark
@@ -106,6 +303,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
       // HTML parsing — only treat *navigable* links as click-through targets.
       if (target?.closest("a[href]")) return;
       if (contents.window.getSelection()?.toString()) return;
+      setPendingSelection(null);
 
       // epub.js's paginated flow renders the whole section into one wide
       // multi-column iframe and reveals the current page via scroll offset,
@@ -134,6 +332,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "ArrowLeft") rendition.prev();
       else if (event.key === "ArrowRight") rendition.next();
+      else if (event.key === "Escape") setPendingSelection(null);
     }
     rendition.on("keydown", handleKeydown);
     window.addEventListener("keydown", handleKeydown);
@@ -141,7 +340,14 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     book.ready
       .then(async () => {
         if (cancelled) return;
-        const position = await fetchPosition(resourceId);
+        const [position, resourceHighlights] = await Promise.all([
+          fetchPosition(resourceId),
+          fetchHighlights(resourceId),
+        ]);
+        if (cancelled) return;
+        highlightsRef.current = resourceHighlights;
+        setHighlights(resourceHighlights);
+
         await rendition.display(position?.location ?? undefined);
         if (cancelled) return;
         setStatus("ready");
@@ -174,20 +380,83 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     if (renditionRef.current) applyTheme(renditionRef.current, themeVars);
   }, [themeVars]);
 
+  async function handleAsk() {
+    if (!pendingSelection) return;
+    const created = await postHighlight({
+      resourceId,
+      exact: pendingSelection.exact,
+      prefix: pendingSelection.prefix,
+      suffix: pendingSelection.suffix,
+      cfi: pendingSelection.cfi,
+      spineIndex: pendingSelection.spineIndex,
+    });
+    if (created) {
+      setHighlights((prev) => [...prev, created]);
+      resolvedIdsRef.current.add(created.id);
+      // This CFI was just derived from the live, currently-rendered
+      // document, so it's trusted without going through resolveAnchor again.
+      attachedCfiRef.current.set(created.id, created.cfi);
+      renditionRef.current?.annotations.highlight(
+        created.cfi,
+        { highlightId: created.id },
+        undefined,
+        HIGHLIGHT_MARK_CLASS,
+      );
+      pendingSelection.contents.window.getSelection()?.removeAllRanges();
+    }
+    setPendingSelection(null);
+  }
+
+  async function handleDeleteHighlight(highlight: Highlight) {
+    const ok = await deleteHighlightRequest(highlight.id);
+    if (!ok) return;
+    setHighlights((prev) => prev.filter((h) => h.id !== highlight.id));
+    resolvedIdsRef.current.delete(highlight.id);
+    setUnanchoredIds((prev) => {
+      if (!prev.has(highlight.id)) return prev;
+      const next = new Set(prev);
+      next.delete(highlight.id);
+      return next;
+    });
+    const attachedCfi = attachedCfiRef.current.get(highlight.id) ?? highlight.cfi;
+    attachedCfiRef.current.delete(highlight.id);
+    renditionRef.current?.annotations.remove(attachedCfi, "highlight");
+  }
+
+  function handleNavigateToHighlight(highlight: Highlight) {
+    renditionRef.current?.display(highlight.cfi);
+  }
+
   return (
     <div className={styles.wrapper}>
       <div className={styles.progress}>
         {progressPercent !== null ? `${progressPercent}%` : ""}
       </div>
 
-      <div className={styles.stage}>
-        <div ref={containerRef} className={styles.epubContainer} />
-        {status === "loading" && (
-          <div className={styles.overlay}>Loading book…</div>
-        )}
-        {status === "error" && (
-          <div className={styles.overlay}>Couldn't load this book.</div>
-        )}
+      <div className={styles.readerRow}>
+        <div className={styles.stage}>
+          <div ref={containerRef} className={styles.epubContainer} />
+          {status === "loading" && (
+            <div className={styles.overlay}>Loading book…</div>
+          )}
+          {status === "error" && (
+            <div className={styles.overlay}>Couldn't load this book.</div>
+          )}
+          {pendingSelection && (
+            <AskPill
+              left={pendingSelection.left}
+              top={pendingSelection.top}
+              onClick={handleAsk}
+            />
+          )}
+        </div>
+        <MarginRail
+          highlights={highlights}
+          currentSpineIndex={currentSpineIndex}
+          unanchoredIds={unanchoredIds}
+          onNavigate={handleNavigateToHighlight}
+          onDelete={handleDeleteHighlight}
+        />
       </div>
 
       <div className={styles.footer}>

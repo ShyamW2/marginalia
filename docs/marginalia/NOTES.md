@@ -48,6 +48,29 @@ Append; don't rewrite history.
   an `<a>`" guard (meant to let real hyperlinks work) matched on every single
   click in the whole book. Fixed by checking `closest("a[href]")` instead of
   `closest("a")` — only navigable links should suppress the page-turn.
+- **2026-07-17 (M3):** epub.js's paginated flow shows only ~1 "logical page"
+  of a chapter-length spine section at a time, but the *whole section* is one
+  DOM document — `document.querySelector`/`TreeWalker` can happily find and
+  select text that exists in the DOM but is scrolled off the currently
+  visible page. A scripted test selection that didn't check the resulting
+  Range's `getBoundingClientRect()` against the viewport produced a
+  wildly-offscreen Ask pill position that looked like a coordinate-math bug
+  but wasn't — real users can only ever drag-select visible pixels, so this
+  can't happen via genuine interaction. Worth remembering when testing
+  anything selection-related against epub.js: always verify the selected
+  Range is actually within the visible viewport first.
+- **2026-07-17 (M3):** epub.js renders highlight/annotation marks via a
+  separate SVG "marks-pane" overlay positioned over the iframe *in the parent
+  document*, not as elements inside the iframe's own DOM — querying for
+  `.marginalia-highlight` (or any annotation class) has to search the
+  top-level page, not the iframe's document.
+- **2026-07-17 (M3):** the margin rail's hover-revealed delete button
+  (`opacity: 0` by default) still intercepted clicks meant for the dot
+  underneath it, because `opacity` doesn't affect hit-testing — needed
+  `pointer-events: none` until hovered. Separately, since hovering the dot to
+  click it *also* triggers the wrapper's `:hover`, an overlapping delete
+  button (`inset: -0.5rem`) would reveal itself and eat that same click. Fixed
+  by moving the delete button to sit beside the dot instead of on top of it.
 
 ## Blockers
 

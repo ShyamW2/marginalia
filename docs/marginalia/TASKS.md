@@ -61,17 +61,24 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 
 ## M3 — Highlights
 
-- [ ] Selection capture in the epub iframe: on selection, compute `{exact, prefix,
+- [x] Selection capture in the epub iframe: on selection, compute `{exact, prefix,
       suffix, cfi (range CFI), spineIndex}`; show floating "Ask" pill near selection
-- [ ] `POST /api/highlights`, `GET /api/resources/:id/highlights`,
+- [x] `POST /api/highlights`, `GET /api/resources/:id/highlights`,
       `DELETE /api/highlights/:id` (cascades thread + messages)
-- [ ] Render persisted highlights on section load (epub.js annotations), soft tint;
+- [x] Render persisted highlights on section load (epub.js annotations), soft tint;
       clicking a highlight selects it
-- [ ] Anchor resolution fallback (SPEC anchoring rule) + unit tests: CFI resolves;
+- [x] Anchor resolution fallback (SPEC anchoring rule) + unit tests: CFI resolves;
       CFI broken → prefix/exact/suffix search; unresolvable → "unanchored" flag
-- [ ] Margin rail: dot per highlight on the current page area; click → scroll/flip to it
-- [ ] **Verify:** highlight three passages across different chapters; reload → all
+- [x] Margin rail: dot per highlight on the current page area; click → scroll/flip to it
+- [x] **Verify:** highlight three passages across different chapters; reload → all
       three render in place; delete one from the rail; dots navigate correctly
+      _(verified 2026-07-17: headless-browser pass against the Alice fixture —
+      selecting real on-screen text raises the Ask pill within viewport bounds;
+      posting a highlight renders its soft-tint mark immediately via epub.js's
+      marks-pane; two highlights created in different chapters both show as margin
+      rail dots that survive a full reload; clicking a dot navigates to and
+      re-renders its mark; deleting via the rail's hover-revealed × removes both the
+      dot and the on-page mark and is reflected server-side)_
 
 ## M4 — LLM provider layer
 
