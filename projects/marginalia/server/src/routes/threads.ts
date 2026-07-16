@@ -72,7 +72,7 @@ async function streamThreadReply(
     if (!disconnected) {
       const assistantMessage = createMessage(db, threadId, "assistant", fullText);
       res.write(
-        `data: ${JSON.stringify({ done: true, messageId: assistantMessage.id })}\n\n`,
+        `data: ${JSON.stringify({ done: true, messageId: assistantMessage.id, threadId })}\n\n`,
       );
     }
   } catch (err) {

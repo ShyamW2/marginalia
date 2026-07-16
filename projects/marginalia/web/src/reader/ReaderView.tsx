@@ -1,13 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import ePub from "epubjs";
 import type { Book, Contents, Location, Rendition } from "epubjs";
-import type { CreateHighlightBody, Highlight, ReadingPosition } from "@marginalia/shared";
+import type {
+  CreateHighlightBody,
+  HighlightWithThread,
+  ReadingPosition,
+  Settings,
+  ThreadSummary,
+} from "@marginalia/shared";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
 import { AskPill } from "./AskPill.js";
 import { MarginRail } from "./MarginRail.js";
+import { ThreadPanel } from "../threads/ThreadPanel.js";
 import styles from "./ReaderView.module.css";
+
+const DEFAULT_THREAD_PANEL_TOP = 20;
+
+function isProviderConfigured(settings: Settings): boolean {
+  return settings.provider === "anthropic"
+    ? Boolean(settings.anthropicApiKey)
+    : Boolean(settings.openaiBaseUrl && settings.openaiModel);
+}
 
 const POSITION_SAVE_DEBOUNCE_MS = 600;
 const LOCATIONS_CHAR_STEP = 1600;
@@ -59,22 +74,33 @@ function savePosition(resourceId: string, location: string): void {
   });
 }
 
-async function fetchHighlights(resourceId: string): Promise<Highlight[]> {
+async function fetchHighlights(resourceId: string): Promise<HighlightWithThread[]> {
   const res = await fetch(`/api/resources/${resourceId}/highlights`);
   if (!res.ok) return [];
-  return (await res.json()) as Highlight[];
+  return (await res.json()) as HighlightWithThread[];
 }
 
 async function postHighlight(
   body: CreateHighlightBody,
-): Promise<Highlight | null> {
+): Promise<HighlightWithThread | null> {
   const res = await fetch("/api/highlights", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!res.ok) return null;
-  return (await res.json()) as Highlight;
+  const created = await res.json();
+  return { ...created, thread: null };
+}
+
+async function fetchSettings(): Promise<Settings | null> {
+  try {
+    const res = await fetch("/api/settings");
+    if (!res.ok) return null;
+    return (await res.json()) as Settings;
+  } catch {
+    return null;
+  }
 }
 
 async function deleteHighlightRequest(id: string): Promise<boolean> {
@@ -101,7 +127,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const saveTimerRef = useRef<number | undefined>(undefined);
-  const highlightsRef = useRef<Highlight[]>([]);
+  const highlightsRef = useRef<HighlightWithThread[]>([]);
   const resolvedIdsRef = useRef<Set<string>>(new Set());
   // Tracks the CFI each highlight's mark was actually attached at, which can
   // differ from the stored anchor when it was resolved via the text-search
@@ -119,14 +145,27 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   const [currentSpineIndex, setCurrentSpineIndex] = useState<number | null>(
     null,
   );
-  const [highlights, setHighlights] = useState<Highlight[]>([]);
+  const [highlights, setHighlights] = useState<HighlightWithThread[]>([]);
   const [unanchoredIds, setUnanchoredIds] = useState<Set<string>>(new Set());
   const [pendingSelection, setPendingSelection] =
     useState<PendingSelection | null>(null);
+  // Reopening a book always restores threads collapsed (SPEC) — this state
+  // is local and resets to null on every mount, no persistence needed.
+  const [expandedThread, setExpandedThread] = useState<{
+    highlightId: string;
+    top: number;
+  } | null>(null);
+  const [providerConfigured, setProviderConfigured] = useState(false);
 
   useEffect(() => {
     highlightsRef.current = highlights;
   }, [highlights]);
+
+  useEffect(() => {
+    fetchSettings().then((settings) => {
+      if (settings) setProviderConfigured(isProviderConfigured(settings));
+    });
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -137,6 +176,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     setHighlights([]);
     setUnanchoredIds(new Set());
     setPendingSelection(null);
+    setExpandedThread(null);
     highlightsRef.current = [];
     resolvedIdsRef.current = new Set();
     attachedCfiRef.current = new Map();
@@ -290,9 +330,10 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
       // page-turn — markClicked fires first, so nothing more to do here
       // beyond the browser's own default (no page turn, since the click
       // handler below sees a real link/selection-free click through text
-      // that happens to be marked). Selecting the highlight is a stub for
-      // the thread panel that arrives in M5.
-      void data;
+      // that happens to be marked). Clicking a highlight expands its thread.
+      if (data.highlightId) {
+        setExpandedThread({ highlightId: data.highlightId, top: DEFAULT_THREAD_PANEL_TOP });
+      }
     }
     rendition.on("markClicked", handleMarkClicked);
 
@@ -332,7 +373,10 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "ArrowLeft") rendition.prev();
       else if (event.key === "ArrowRight") rendition.next();
-      else if (event.key === "Escape") setPendingSelection(null);
+      else if (event.key === "Escape") {
+        setPendingSelection(null);
+        setExpandedThread(null);
+      }
     }
     rendition.on("keydown", handleKeydown);
     window.addEventListener("keydown", handleKeydown);
@@ -403,11 +447,14 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
         HIGHLIGHT_MARK_CLASS,
       );
       pendingSelection.contents.window.getSelection()?.removeAllRanges();
+      // Anchor the panel near the selection itself — the nicest, most
+      // literal "visually anchored to the highlight" case (a fresh Ask).
+      setExpandedThread({ highlightId: created.id, top: pendingSelection.top });
     }
     setPendingSelection(null);
   }
 
-  async function handleDeleteHighlight(highlight: Highlight) {
+  async function handleDeleteHighlight(highlight: HighlightWithThread) {
     const ok = await deleteHighlightRequest(highlight.id);
     if (!ok) return;
     setHighlights((prev) => prev.filter((h) => h.id !== highlight.id));
@@ -421,11 +468,26 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     const attachedCfi = attachedCfiRef.current.get(highlight.id) ?? highlight.cfi;
     attachedCfiRef.current.delete(highlight.id);
     renditionRef.current?.annotations.remove(attachedCfi, "highlight");
+    setExpandedThread((prev) => (prev?.highlightId === highlight.id ? null : prev));
   }
 
-  function handleNavigateToHighlight(highlight: Highlight) {
+  function handleNavigateToHighlight(highlight: HighlightWithThread) {
     renditionRef.current?.display(highlight.cfi);
   }
+
+  function handleOpenThread(highlight: HighlightWithThread) {
+    setExpandedThread({ highlightId: highlight.id, top: DEFAULT_THREAD_PANEL_TOP });
+  }
+
+  function handleThreadChange(highlightId: string, thread: ThreadSummary) {
+    setHighlights((prev) =>
+      prev.map((h) => (h.id === highlightId ? { ...h, thread } : h)),
+    );
+  }
+
+  const expandedHighlight = expandedThread
+    ? highlights.find((h) => h.id === expandedThread.highlightId)
+    : undefined;
 
   return (
     <div className={styles.wrapper}>
@@ -449,6 +511,21 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
               onClick={handleAsk}
             />
           )}
+          {expandedThread && expandedHighlight && (
+            <ThreadPanel
+              // Remount per highlight — simpler and more robust than
+              // threading highlight-identity changes through internal
+              // effect dependency arrays for "reset state on switch".
+              key={expandedHighlight.id}
+              highlightId={expandedHighlight.id}
+              highlightExact={expandedHighlight.exact}
+              thread={expandedHighlight.thread}
+              top={expandedThread.top}
+              providerConfigured={providerConfigured}
+              onClose={() => setExpandedThread(null)}
+              onThreadChange={handleThreadChange}
+            />
+          )}
         </div>
         <MarginRail
           highlights={highlights}
@@ -456,6 +533,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
           unanchoredIds={unanchoredIds}
           onNavigate={handleNavigateToHighlight}
           onDelete={handleDeleteHighlight}
+          onOpenThread={handleOpenThread}
         />
       </div>
 

@@ -108,6 +108,26 @@ Append; don't rewrite history.
   like a disconnect. Verified against a real streaming SSE call end-to-end
   (first question, a follow-up, `GET /api/threads/:id`, and the
   highlights-with-thread-summary listing) once fixed.
+- **2026-07-17 (M5):** `ThreadPanel`'s history-load effect originally
+  depended on `thread?.id`. Since the panel receives its `thread` prop from
+  the parent's highlight list, and `onThreadChange` updates that same list
+  the moment a *new* thread's first message finishes streaming, `thread?.id`
+  flips from `undefined` to a real id purely as a side effect of our own
+  `onDone` callback — re-triggering the effect and firing a redundant
+  `GET /api/threads/:id` right after every first message (harmless — same
+  content — but wasteful, and confusing to read a network log of). Fixed by
+  capturing the thread prop once at mount (`useState(() => thread)`, never
+  updated) and keying the history-load effect off that instead; `submit()`
+  still reads the live `thread` prop reactively to target follow-ups at the
+  right URL. Caught by watching the network log during browser verification,
+  not by a test.
+- **2026-07-17 (M4/M5):** Two `fetch("/api/settings")` call sites
+  (`SettingsPage.tsx`, `ReaderView.tsx`) were missing a `.catch()`/try-catch
+  around the initial mount fetch — surfaced as an actual unhandled promise
+  rejection in the web vitest run (jsdom has no base URL for relative
+  fetches), which would equally be an unhandled rejection in a real browser
+  if the request ever failed (offline, server restarting). Both wrapped in
+  try/catch now, matching the pattern `LibraryPage.tsx` already used.
 
 ## Blockers
 

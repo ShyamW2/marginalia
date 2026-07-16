@@ -34,8 +34,11 @@ describe("schemas smoke test", () => {
       true,
     );
     expect(
-      ThreadStreamEventSchema.safeParse({ done: true, messageId: "m1" })
-        .success,
+      ThreadStreamEventSchema.safeParse({
+        done: true,
+        messageId: "m1",
+        threadId: "t1",
+      }).success,
     ).toBe(true);
     expect(
       ThreadStreamEventSchema.safeParse({ error: "boom" }).success,

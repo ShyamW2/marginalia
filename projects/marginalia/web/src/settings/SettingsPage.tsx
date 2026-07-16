@@ -12,9 +12,13 @@ const BASE_URL_PRESETS = [
 type FormState = Settings;
 
 async function fetchSettings(): Promise<Settings | null> {
-  const res = await fetch("/api/settings");
-  if (!res.ok) return null;
-  return (await res.json()) as Settings;
+  try {
+    const res = await fetch("/api/settings");
+    if (!res.ok) return null;
+    return (await res.json()) as Settings;
+  } catch {
+    return null;
+  }
 }
 
 export function SettingsPage() {

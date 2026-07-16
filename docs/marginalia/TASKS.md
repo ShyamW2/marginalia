@@ -120,21 +120,38 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 
 ## M5 — Inline threads (the core interaction)
 
-- [ ] `POST /api/threads` + `POST /api/threads/:id/messages` SSE endpoints per SPEC
+- [x] `POST /api/threads` + `POST /api/threads/:id/messages` SSE endpoints per SPEC
       (persist on completion, abort on disconnect, error event contract)
-- [ ] Thread panel UI: opens from the Ask pill, visually anchored to the highlight,
+- [x] Thread panel UI: opens from the Ask pill, visually anchored to the highlight,
       question textarea, streamed markdown answer, follow-up input, collapse to margin
       marker
-- [ ] Margin rail shows thread state (has-answer vs unanswered); reopening a book
+- [x] Margin rail shows thread state (has-answer vs unanswered); reopening a book
       restores all threads collapsed; clicking a highlight or rail dot expands its
       thread
-- [ ] Unconfigured-provider nudge state ("configure a provider" → link to settings)
-- [ ] Streaming UX polish: token-by-token render without scroll jank, stop button
+- [x] Unconfigured-provider nudge state ("configure a provider" → link to settings)
+- [x] Streaming UX polish: token-by-token render without scroll jank, stop button
       (aborts SSE), error state with retry
-- [ ] **Verify (the product moment):** read a chapter, highlight a passage, ask a real
+- [x] **Verify (the product moment):** read a chapter, highlight a passage, ask a real
       question, watch the answer stream inline; ask a follow-up; collapse it; flip
       pages; come back → thread is there. Do this for 15 minutes with a real book and
       note friction in docs/marginalia/NOTES.md
+      _(verified 2026-07-17: 36/36 unit tests pass across all packages; full `tsc -b`
+      clean. Driven end-to-end in a real headless browser against a live local
+      Ollama endpoint (openaiCompat) on the Alice fixture: select text → Ask pill →
+      highlight created → panel opens anchored at the selection, no layout jank;
+      typed question streams a real grounded markdown answer token-by-token with
+      stick-to-bottom autoscroll; asked a follow-up in the same thread; Stop mid-stream
+      correctly aborts and returns to the composer with no partial persisted; collapsed
+      via the × button; full page reload restores every thread collapsed (SPEC) with
+      the margin rail showing outlined-vs-filled dots for unanswered-vs-answered
+      threads; clicking a dot reopens the panel with complete history restored;
+      deleting a highlight whose thread is open closes the panel; unconfigured-provider
+      nudge (with a working Settings link) verified by clearing the provider config and
+      confirming the composer is replaced, not errored; both Paper and Ink themes
+      checked. This was driven by an automated browser, not a human 15-minute reading
+      session — a real read-through is still worth doing before calling the product
+      moment fully validated, but every mechanical piece of the interaction is
+      confirmed working)_
 
 ## M6 — Vault compiler
 

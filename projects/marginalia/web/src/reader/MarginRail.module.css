@@ -26,11 +26,26 @@
 }
 
 .dotButton.active {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* Thread state (independent of "active" — the current-page ring above):
+   no thread = plain dot; a thread with no answer yet gets an accent
+   outline; once answered the dot fills solid. */
+.dotButton.hasThread {
+  background: var(--color-bg-raised);
+  border: 2px solid var(--color-accent);
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+.dotButton.hasThread.hasAnswer {
   background: var(--color-accent);
 }
 
 .dotButton.unanchored {
   background: var(--color-danger);
+  border-color: var(--color-danger);
 }
 
 .dotButton:focus-visible {

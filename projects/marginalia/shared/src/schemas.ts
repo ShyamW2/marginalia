@@ -150,7 +150,12 @@ export type ThreadWithMessages = z.infer<typeof ThreadWithMessagesSchema>;
 
 export const ThreadStreamEventSchema = z.union([
   z.object({ text: z.string() }),
-  z.object({ done: z.literal(true), messageId: z.string() }),
+  // SPEC-GAP: SPEC's done event is `{done: true, messageId}` only. The
+  // client needs the thread's id after the *first* message (when it had
+  // none) to target follow-ups at `/api/threads/:id/messages` and to update
+  // the margin rail's thread-summary state — added `threadId` here rather
+  // than an extra round-trip fetch after every first message.
+  z.object({ done: z.literal(true), messageId: z.string(), threadId: z.string() }),
   z.object({ error: z.string() }),
 ]);
 export type ThreadStreamEvent = z.infer<typeof ThreadStreamEventSchema>;
