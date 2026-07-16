@@ -1,0 +1,78 @@
+import { describe, expect, it } from "vitest";
+import { parseOpenAICompatSSE, sseLines } from "./openaiCompat.js";
+
+async function* fromChunks(chunks: string[]): AsyncGenerator<string> {
+  for (const chunk of chunks) yield chunk;
+}
+
+async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+  const out: T[] = [];
+  for await (const item of iterable) out.push(item);
+  return out;
+}
+
+describe("sseLines", () => {
+  it("splits a stream into lines regardless of chunk boundaries", async () => {
+    const lines = await collect(sseLines(fromChunks(["line one\nli", "ne two\nline three"])));
+    expect(lines).toEqual(["line one", "line two", "line three"]);
+  });
+
+  it("strips trailing carriage returns", async () => {
+    const lines = await collect(sseLines(fromChunks(["a\r\nb\r\n"])));
+    expect(lines).toEqual(["a", "b"]);
+  });
+});
+
+describe("parseOpenAICompatSSE", () => {
+  it("extracts delta content from data lines", async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"Hel"}}]}\n',
+      'data: {"choices":[{"delta":{"content":"lo"}}]}\n',
+      "data: [DONE]\n",
+    ];
+    const events = await collect(parseOpenAICompatSSE(fromChunks(chunks)));
+    expect(events).toEqual([{ text: "Hel" }, { text: "lo" }]);
+  });
+
+  it("stops at the [DONE] sentinel and ignores anything after", async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"a"}}]}\n',
+      "data: [DONE]\n",
+      'data: {"choices":[{"delta":{"content":"should not appear"}}]}\n',
+    ];
+    const events = await collect(parseOpenAICompatSSE(fromChunks(chunks)));
+    expect(events).toEqual([{ text: "a" }]);
+  });
+
+  it("skips non-data lines and empty deltas", async () => {
+    const chunks = [
+      ": heartbeat comment\n",
+      "\n",
+      'data: {"choices":[{"delta":{}}]}\n',
+      'data: {"choices":[{"delta":{"content":"real"}}]}\n',
+      "data: [DONE]\n",
+    ];
+    const events = await collect(parseOpenAICompatSSE(fromChunks(chunks)));
+    expect(events).toEqual([{ text: "real" }]);
+  });
+
+  it("handles a single data line split across multiple chunks", async () => {
+    const chunks = [
+      'data: {"choices":[{"delta"',
+      ':{"content":"split"}}]}\n',
+      "data: [DONE]\n",
+    ];
+    const events = await collect(parseOpenAICompatSSE(fromChunks(chunks)));
+    expect(events).toEqual([{ text: "split" }]);
+  });
+
+  it("skips malformed JSON without throwing", async () => {
+    const chunks = [
+      "data: {not valid json\n",
+      'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+      "data: [DONE]\n",
+    ];
+    const events = await collect(parseOpenAICompatSSE(fromChunks(chunks)));
+    expect(events).toEqual([{ text: "ok" }]);
+  });
+});

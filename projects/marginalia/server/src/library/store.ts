@@ -73,6 +73,30 @@ export function listResourceSummaries(
   }));
 }
 
+export interface ResourceTextSection {
+  spineIndex: number;
+  href: string;
+  text: string;
+}
+
+/** All extracted spine text for a resource, in spine order. */
+export function getResourceTextSections(
+  db: Database.Database,
+  resourceId: string,
+): ResourceTextSection[] {
+  const rows = db
+    .prepare(
+      `SELECT spine_index, href, text FROM resource_text
+       WHERE resource_id = ? ORDER BY spine_index`,
+    )
+    .all(resourceId) as { spine_index: number; href: string; text: string }[];
+  return rows.map((row) => ({
+    spineIndex: row.spine_index,
+    href: row.href,
+    text: row.text,
+  }));
+}
+
 export function getReadingPosition(
   db: Database.Database,
   resourceId: string,
