@@ -72,6 +72,21 @@ Append; don't rewrite history.
   button (`inset: -0.5rem`) would reveal itself and eat that same click. Fixed
   by moving the delete button to sit beside the dot instead of on top of it.
 
+- **2026-07-17 (M4):** `@anthropic-ai/sdk`'s `zodOutputFormat()` helper (used
+  by `messages.parse` for structured extraction) requires a **zod/v4**
+  schema instance (`import { z } from "zod/v4"`), not the classic
+  `import { z } from "zod"` (v3-shaped `ZodType<Output, Def, Input>`) used
+  everywhere else in this codebase for the HTTP boundary schemas in
+  `shared/`. The installed `zod` (3.25.76) actually ships both — `.`
+  resolves to the classic v3 API, `./v4` to the new one — so this compiles
+  as two structurally different `ZodType` types, not just a version bump.
+  `LLMProvider.extract()`'s `schema` param is typed against `zod/v4`
+  specifically (see the comment in `llm/provider.ts`); **M6's vault-compiler
+  concept-extraction schema must be built with `zod/v4`**, not the classic
+  import other shared schemas use. `OpenAICompatProvider.extract()` is
+  unaffected — it only calls `.safeParse()`, which exists on both zod
+  versions' `ZodType` with the same shape.
+
 ## Blockers
 
 _(none yet)_

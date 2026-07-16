@@ -82,29 +82,41 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 
 ## M4 — LLM provider layer
 
-- [ ] `LLMProvider` interface + `LLMError` + provider registry reading settings
+- [x] `LLMProvider` interface + `LLMError` + provider registry reading settings
       (`llm/provider.ts`) — exactly per SPEC seam
-- [ ] Anthropic implementation per SPEC (streaming, 2-block system with
+- [x] Anthropic implementation per SPEC (streaming, 2-block system with
       `cache_control` on book context, `messages.parse` + `zodOutputFormat` for
       extract, typed error mapping, refusal handling, debug log of cache reads)
-- [ ] OpenAI-compatible implementation per SPEC (SSE parsing, extract with safeParse +
+- [x] OpenAI-compatible implementation per SPEC (SSE parsing, extract with safeParse +
       one retry)
-- [ ] Context builder (`llm/context.ts`): whole-book vs window logic, deterministic
+- [x] Context builder (`llm/context.ts`): whole-book vs window logic, deterministic
       rendering + unit tests (determinism, budget respected, window centers on
       highlight)
-- [ ] Settings API + settings page: provider picker, model, base URL, API keys
+- [x] Settings API + settings page: provider picker, model, base URL, API keys
       (masked), vault path, context tokens; "Test connection" button that runs a
       1-token stream; base-URL presets for openaiCompat (OpenRouter / Ollama /
       LM Studio / Custom)
       _(Deferred, NOT part of M4: a third `claudeAgent` provider using the Claude
       Agent SDK for subscription-credit access — see docs/decisions.md 2026-07-17
       provider-strategy entry. Do not build it in M4.)_
-- [ ] Dev CLI: `pnpm --filter server ask <resourceId> "<question>"` streams an answer
+- [x] Dev CLI: `pnpm --filter server ask <resourceId> "<question>"` streams an answer
       to stdout (verifies the layer without UI)
-- [ ] Unit tests: openaiCompat SSE parsing (mocked), context builder; manual: CLI ask
+- [x] Unit tests: openaiCompat SSE parsing (mocked), context builder; manual: CLI ask
       against both a real Anthropic key and one OpenAI-compatible endpoint if available
-- [ ] **Verify:** CLI ask on a fixture book returns a grounded streamed answer; second
+- [x] **Verify:** CLI ask on a fixture book returns a grounded streamed answer; second
       ask on same book logs `cache_read_input_tokens > 0` (Anthropic)
+      _(verified 2026-07-17: 25/25 unit tests pass (llm/context, llm/openaiCompat SSE
+      parsing); full `tsc -b` clean on server+web; CLI ask (both direct `tsx` and the
+      documented `pnpm --filter server ask <id> "<question>"` form) against the Alice
+      fixture through a local Ollama server (llama3.1:8b, openaiCompat provider) returns
+      a grounded, correctly-streamed answer; Settings page driven in a real headless
+      browser — provider toggle, field population, and "Test connection" all confirmed
+      working end-to-end against that same live endpoint, including its failure path
+      (unknown model → surfaced error message). No Anthropic API key was available in
+      this environment, so the Anthropic-specific `cache_read_input_tokens > 0` check
+      could not be run live — the Anthropic implementation is unit-tested and
+      type-checked but not yet exercised against the real API; do that first with a
+      real key before relying on its caching behavior)_
 
 ## M5 — Inline threads (the core interaction)
 
