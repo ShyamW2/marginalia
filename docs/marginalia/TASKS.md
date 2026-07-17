@@ -155,6 +155,26 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 
 ## M6 — Vault compiler
 
+**M6 pre-flight fixes** — from the 2026-07-17 M4/M5 senior review (full
+detail + reproduction notes in NOTES.md, "Senior review + M4/M5 sign-off").
+Do these first, in order:
+
+- [ ] Fix message persistence: write the user+assistant message pair in one
+      transaction *after* the stream completes (SPEC: persist on completion);
+      error/abort persists nothing. Make UI Retry not duplicate the optimistic
+      user bubble. Verify: provider-500 → retry → thread has exactly one copy
+      of the question and no dangling rows
+- [ ] Security: remove `app.use(cors())` (same-origin via Vite proxy/static
+      serving — nothing needs CORS) and bind `app.listen(PORT, "127.0.0.1")`.
+      Verify: no `Access-Control-Allow-Origin` header; server unreachable from
+      non-loopback
+- [ ] `openaiCompat.ts`: send `max_tokens: THREAD_MAX_TOKENS` in stream and
+      extract request bodies (const currently declared but unused)
+- [ ] (Quick wins) Anthropic `capabilities()` context size per model, not
+      hardcoded 1M; trim provider error bodies from SSE `{error}` events (log
+      raw server-side); catch the `UNIQUE(highlight_id)` race in thread
+      creation and reuse the existing thread
+
 - [ ] Distill extraction call + schema (`vault/compiler.ts`) per SPEC
 - [ ] Concept matching in code (`vault/concepts.ts`): slug/alias/Levenshtein rules +
       unit tests (match, no-match, alias hit)
