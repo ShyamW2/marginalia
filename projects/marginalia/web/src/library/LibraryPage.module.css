@@ -143,14 +143,11 @@
 .card {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
   min-height: 130px;
   padding: 1rem 1.1rem;
   background: var(--color-bg-raised);
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  text-decoration: none;
-  color: inherit;
   transition:
     transform var(--duration-standard) var(--ease-standard),
     box-shadow var(--duration-standard) var(--ease-standard),
@@ -163,7 +160,17 @@
   border-color: var(--color-accent);
 }
 
-.card:focus-visible {
+.cardLink {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 0.35rem;
+  text-decoration: none;
+  color: inherit;
+  border-radius: 6px;
+}
+
+.cardLink:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
@@ -180,12 +187,47 @@
   color: var(--color-text-muted);
 }
 
-.cardMeta {
+.cardFooter {
   margin-top: auto;
   padding-top: 0.5rem;
   border-top: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.cardMeta {
   font-size: 0.75rem;
   color: var(--color-text-muted);
+}
+
+.publishButton {
+  background: none;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.72rem;
+  cursor: pointer;
+  transition:
+    color var(--duration-standard) var(--ease-standard),
+    border-color var(--duration-standard) var(--ease-standard);
+}
+
+.publishButton:hover:not(:disabled) {
+  color: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.publishButton:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.publishButton:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .empty {

@@ -415,3 +415,96 @@ suite still 46/46, `tsc -b` + `vite build` clean.
 
 **Next task: items 4–6 (quick wins) if picked up, then M6 proper — vault
 compiler** (first unchecked box after the pre-flight fixes in TASKS.md).
+
+## M6 — vault compiler landed — 2026-07-17 (Fable)
+
+Implemented the vault compiler proper (everything under M6 in TASKS.md
+except the still-open "quick wins" checklist item). New:
+`server/src/vault/{concepts,writeVaultFile,compiler,publishStore}.ts`,
+`server/src/routes/publish.ts`, `web/src/app/Toast.tsx`,
+`web/src/library/publish.ts`, publish buttons on the library card and in
+the reader header.
+
+### Spec gaps / design notes
+
+- **No YAML library in the stack.** SPEC's stack table doesn't name one, and
+  the compiler is the only writer of the frontmatter it later reads back
+  (concept `aliases`) — added a minimal hand-rolled frontmatter parser in
+  `concepts.ts` for exactly the shape we generate, rather than adding a
+  dependency for a format we fully control. Frontmatter scalar values are
+  written via `JSON.stringify` (a valid YAML flow scalar) so titles/aliases
+  with colons or quotes don't corrupt the document.
+- **"Up to date" in the idempotency rule (SPEC step 1) has no cheap
+  staleness signal.** The `publishes` table has no message-count/version
+  column, only `(thread_id, note_path, content_hash, published_at)`. Chose:
+  a thread with an existing `publishes` row is always "up to date" and never
+  re-extracted. The alternative (re-extract every publish, compare hashes)
+  would call the LLM on every single publish and isn't guaranteed
+  byte-identical output for identical input — that would break "publish
+  again → no changes" nondeterministically. Documented in a comment on
+  `publishResource`.
+- **Distill instructions spell out the exact JSON shape.** SPEC's
+  OpenAI-compat section only says request `response_format: json_object` +
+  `safeParse` + one retry with the validation error appended — already
+  implemented in M4 and left untouched. But a small local model (Ollama
+  llama3.1:8b) given only a prose description of the desired fields
+  invented its own unrelated JSON shape and failed both the first attempt
+  and the error-appended retry. This isn't a provider-layer bug — it's
+  `compiler.ts`'s own prompt content — so the fix was tightening
+  `DISTILL_INSTRUCTIONS` to include a literal JSON template. Confirmed via a
+  raw curl against Ollama before touching code, then again after: reliable
+  schema-conforming output. Worth remembering if M6-adjacent extraction
+  prompts get added later against weak local models.
+
+### Bugs found during live verification (fixed, with regression tests)
+
+- **A concept name containing a filesystem-unsafe character (e.g. "/")
+  broke its own wikilink.** `sanitizeFilename()` was applied to the
+  *filename* but the reading note's `[[Name]]` link used the model's raw,
+  unsanitized proposal — so a concept named "Cultural/Societal
+  Expectations" was written to `Concepts/Cultural-Societal Expectations.md`
+  but linked as `[[Cultural/Societal Expectations]]`, which Obsidian
+  resolves as a *folder* path, not the actual file. Caught by literally
+  reading the generated vault files during verification, not by a test —
+  the FakeProvider-based tests all used clean concept names. Fixed by
+  deriving the canonical `ExistingConcept.name` from the sanitized filename
+  everywhere (mention lines, reading-note links, in-run concept matching),
+  never from the model's raw proposal. Added a dedicated regression test
+  (`compiler.test.ts`, "sanitizes a concept name for the filename...").
+- **`deleteHighlight` didn't cascade to the `publishes` table.** The M6
+  migration's `publishes.thread_id` has a foreign key on `threads(id)`
+  (present since the M0 schema, unused until M6). Once a thread has been
+  published at least once, deleting its highlight started failing with
+  `FOREIGN KEY constraint failed` — reproduced live via `DELETE
+  /api/highlights/:id` against a highlight I'd just published. Fixed by
+  adding `DELETE FROM publishes WHERE thread_id IN (...)` to the same
+  transaction in `annotations/highlights.ts`'s `deleteHighlight`, ahead of
+  the messages/threads deletes. Regression test added to
+  `highlights.test.ts`.
+- **Toast covered the reader's Previous/Next pagination buttons.** The
+  shared `Toast` component defaults to bottom-center, which is fine on the
+  library page but collides with `ReaderPage`'s footer pagination bar.
+  Caught via a real headless-browser screenshot, not by unit tests (this is
+  exactly the kind of thing CLAUDE.md's "verify by driving the app" rule is
+  for). Added a `position="top"` variant, used only in the reader.
+
+### Verification method
+
+Real end-to-end run against a scratch vault (`$SCRATCHPAD/vault`) driven by
+`curl` against a live local Ollama endpoint (llama3.1:8b via the
+openaiCompat provider) — not mocked. 3 highlights + real streamed answers on
+Metamorphosis, published to 3 reading notes + 15 concept notes + a
+`_Book.md` overview; scripted check that every `[[wikilink]]` in the reading
+notes resolves to an actual `Concepts/*.md` file; second publish verified
+byte-identical via a full `sha256sum` diff of every vault file (empty diff)
+with the FakeProvider's queued-response test additionally proving zero
+re-extraction calls happen. Also drove the actual UI: `pnpm dev` +
+Playwright (cached Chromium, not a project dependency — installed ad hoc
+into the scratchpad dir) against the real Vite dev server, both the library
+card's and the reader's Publish button, in both Paper and Ink themes.
+Full suite 69/69 (`shared` 4, `server` 48, `web` 17), `tsc -b` + `vite
+build` clean.
+
+**Next task: the "quick wins" checklist item still open at the top of M6 in
+TASKS.md (Anthropic per-model context size, trimming SSE error bodies,
+UNIQUE(highlight_id) race), then M7 — beauty & revisit pass.**

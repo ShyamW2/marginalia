@@ -110,12 +110,17 @@ export function getHighlightById(
 
 /**
  * Deletes a highlight and cascades to its thread + messages (SPEC: "also
- * deletes its thread/messages"). Threads/messages tables exist from the M0
- * migration but nothing writes to them until M5 — this cascade is here now
- * so DELETE /api/highlights/:id is correct as soon as they do.
+ * deletes its thread/messages"). Also cascades to any `publishes` ledger row
+ * for that thread (M6) — `publishes.thread_id` has a foreign key on
+ * `threads(id)`, so deleting the thread without it fails the whole
+ * transaction once a thread has been published to the vault at least once.
  */
 export function deleteHighlight(db: Database.Database, id: string): boolean {
   const result = db.transaction(() => {
+    db.prepare(
+      `DELETE FROM publishes WHERE thread_id IN
+         (SELECT id FROM threads WHERE highlight_id = ?)`,
+    ).run(id);
     db.prepare(
       `DELETE FROM messages WHERE thread_id IN
          (SELECT id FROM threads WHERE highlight_id = ?)`,

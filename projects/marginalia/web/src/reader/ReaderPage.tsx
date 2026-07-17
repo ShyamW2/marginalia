@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Resource } from "@marginalia/shared";
+import { Toast } from "../app/Toast.js";
+import { formatPublishSummary, runPublish } from "../library/publish.js";
 import { ReaderView } from "./ReaderView.js";
 import styles from "./ReaderPage.module.css";
 
@@ -8,6 +10,8 @@ export function ReaderPage() {
   const { id } = useParams<{ id: string }>();
   const [resource, setResource] = useState<Resource | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -39,6 +43,18 @@ export function ReaderPage() {
     return <div className={styles.page} />;
   }
 
+  async function handlePublish() {
+    if (!resource) return;
+    setPublishing(true);
+    const outcome = await runPublish(resource.id);
+    setPublishing(false);
+    setToast(
+      outcome.ok
+        ? { message: formatPublishSummary(outcome.result), tone: "success" }
+        : { message: outcome.message, tone: "error" },
+    );
+  }
+
   return (
     <div className={styles.readerPage}>
       <div className={styles.titleBar}>
@@ -46,8 +62,24 @@ export function ReaderPage() {
         {resource.author && (
           <span className={styles.author}>{resource.author}</span>
         )}
+        <button
+          type="button"
+          className={styles.publishButton}
+          disabled={publishing}
+          onClick={handlePublish}
+        >
+          {publishing ? "Publishing…" : "Publish"}
+        </button>
       </div>
       <ReaderView resourceId={resource.id} />
+      {toast && (
+        <Toast
+          message={toast.message}
+          tone={toast.tone}
+          position="top"
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </div>
   );
 }

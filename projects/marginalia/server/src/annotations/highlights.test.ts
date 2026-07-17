@@ -76,4 +76,30 @@ describe("highlights store", () => {
     expect(deleteHighlight(db, "missing")).toBe(false);
     db.close();
   });
+
+  it("deletes a highlight whose thread has a publishes ledger row (M6)", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    const highlight = createHighlight(db, {
+      resourceId,
+      exact: "quote",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+    });
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO threads (id, highlight_id, created_at) VALUES ('thread-1', @highlightId, @now)`,
+    ).run({ highlightId: highlight.id, now });
+    db.prepare(
+      `INSERT INTO publishes (thread_id, note_path, content_hash, published_at)
+       VALUES ('thread-1', 'Readings/Book/01 - note.md', 'abc123', @now)`,
+    ).run({ now });
+
+    expect(deleteHighlight(db, highlight.id)).toBe(true);
+    expect(db.prepare("SELECT * FROM publishes WHERE thread_id = 'thread-1'").get()).toBeUndefined();
+    db.close();
+  });
 });

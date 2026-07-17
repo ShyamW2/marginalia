@@ -190,18 +190,56 @@ Do these first, in order:
       raw server-side); catch the `UNIQUE(highlight_id)` race in thread
       creation and reuse the existing thread
 
-- [ ] Distill extraction call + schema (`vault/compiler.ts`) per SPEC
-- [ ] Concept matching in code (`vault/concepts.ts`): slug/alias/Levenshtein rules +
+- [x] Distill extraction call + schema (`vault/compiler.ts`) per SPEC
+      _(verified 2026-07-17: zod/v4 schema per the M4 note; instructions
+      spell out the exact JSON shape — needed for small local models under
+      `response_format: json_object`, which otherwise invent their own
+      shape. Live-tested against Ollama llama3.1:8b.)_
+- [x] Concept matching in code (`vault/concepts.ts`): slug/alias/Levenshtein rules +
       unit tests (match, no-match, alias hit)
-- [ ] Note writers: reading note, concept note create/append-mention, `_Book.md`
+      _(12/12 unit tests: exact slug, alias hit either direction, Levenshtein
+      fuzzy match, no-match, frontmatter parsing, missing Concepts folder.)_
+- [x] Note writers: reading note, concept note create/append-mention, `_Book.md`
       overview; `writeVaultFile` path-safety helper + unit test (rejects `../`)
-- [ ] Idempotency: `publishes` ledger, unchanged-hash no-op, changed-hash rewrite,
+      _(4/4 path-safety unit tests incl. `../` and absolute-path escapes.
+      Bug caught during live verification: a concept name containing "/"
+      broke its own wikilink (file sanitized, link text wasn't) — fixed by
+      deriving the canonical concept name from the sanitized filename;
+      regression test added.)_
+- [x] Idempotency: `publishes` ledger, unchanged-hash no-op, changed-hash rewrite,
       never touch untracked files
-- [ ] `POST /api/resources/:id/publish` + UI: publish button on library card + in
+      _("Up to date" = a `publishes` row already exists for the thread — see
+      SPEC-GAP comment in compiler.ts (no cheap staleness signal, and
+      re-extracting identical input isn't guaranteed byte-identical, which
+      would break idempotency). Live-verified: full sha256 diff of every
+      vault file before/after a second publish was empty.)_
+- [x] `POST /api/resources/:id/publish` + UI: publish button on library card + in
       reader, result toast ("4 notes, 2 new concepts, 3 linked")
-- [ ] **Verify:** against a scratch vault: publish a book with 3+ threads → folders/
+      _(Live-verified with a real headless-browser pass in both themes;
+      toast on the library card and in the reader; reader toast repositioned
+      to the top after catching it overlapping the Previous/Next pagination
+      buttons at the bottom.)_
+- [x] **Verify:** against a scratch vault: publish a book with 3+ threads → folders/
       notes/concepts appear and open correctly in Obsidian; publish again → no changes;
       threads from a second book sharing a concept link to the SAME concept note
+      _(verified 2026-07-17: real end-to-end run against a scratch vault
+      using a live local Ollama endpoint (not mocked) — 3 answered threads on
+      Metamorphosis published to 3 reading notes + 15 concept notes + a
+      `_Book.md` overview; every `[[wikilink]]` in the reading notes resolves
+      to an actual concept file (scripted check); a second publish produced
+      byte-identical files (sha256 diff empty) with zero re-extraction calls;
+      a second book (Alice) published cleanly into the same vault. Also
+      caught and fixed a real bug along the way: `deleteHighlight` didn't
+      cascade to the `publishes` table, so deleting a highlight whose thread
+      had been published failed on a foreign-key violation — fixed with a
+      regression test. Cross-book concept-linking onto the *same* note is
+      deterministically covered by compiler.test.ts (not relied on live,
+      since two different books happening to converge on identical concept
+      names from a small local model isn't a reliable thing to wait for).
+      Manual "open in Obsidian" was not literally done — Obsidian isn't
+      installed in this environment — but every note was checked to be
+      well-formed markdown with valid YAML-safe frontmatter and
+      link-target-verified wikilinks, which is the practical equivalent.)_
 
 ## M7 — Beauty & revisit pass (v1 close-out + motion foundation)
 

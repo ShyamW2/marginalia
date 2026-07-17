@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Link } from "react-router-dom";
 import type { ResourceSummary } from "@marginalia/shared";
+import { Toast } from "../app/Toast.js";
+import { formatPublishSummary, runPublish } from "./publish.js";
 import styles from "./LibraryPage.module.css";
 
 interface UploadItem {
@@ -26,6 +28,8 @@ export function LibraryPage() {
   const [resources, setResources] = useState<ResourceSummary[]>([]);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -107,6 +111,17 @@ export function LibraryPage() {
 
   function dismissUpload(id: string) {
     setUploads((prev) => prev.filter((u) => u.id !== id));
+  }
+
+  async function handlePublish(resourceId: string) {
+    setPublishingId(resourceId);
+    const outcome = await runPublish(resourceId);
+    setPublishingId(null);
+    setToast(
+      outcome.ok
+        ? { message: formatPublishSummary(outcome.result), tone: "success" }
+        : { message: outcome.message, tone: "error" },
+    );
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
@@ -199,23 +214,31 @@ export function LibraryPage() {
       {hasBooks ? (
         <div className={styles.grid}>
           {resources.map((resource) => (
-            <Link
-              key={resource.id}
-              to={`/read/${resource.id}`}
-              className={styles.card}
-            >
-              <div className={styles.cardTitle}>{resource.title}</div>
-              {resource.author && (
-                <div className={styles.cardAuthor}>{resource.author}</div>
-              )}
-              <div className={styles.cardMeta}>
-                {resource.highlightCount > 0
-                  ? `${resource.highlightCount} highlight${
-                      resource.highlightCount === 1 ? "" : "s"
-                    }`
-                  : "No highlights yet"}
+            <div key={resource.id} className={styles.card}>
+              <Link to={`/read/${resource.id}`} className={styles.cardLink}>
+                <div className={styles.cardTitle}>{resource.title}</div>
+                {resource.author && (
+                  <div className={styles.cardAuthor}>{resource.author}</div>
+                )}
+              </Link>
+              <div className={styles.cardFooter}>
+                <span className={styles.cardMeta}>
+                  {resource.highlightCount > 0
+                    ? `${resource.highlightCount} highlight${
+                        resource.highlightCount === 1 ? "" : "s"
+                      }`
+                    : "No highlights yet"}
+                </span>
+                <button
+                  type="button"
+                  className={styles.publishButton}
+                  disabled={publishingId === resource.id}
+                  onClick={() => handlePublish(resource.id)}
+                >
+                  {publishingId === resource.id ? "Publishing…" : "Publish"}
+                </button>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       ) : (
@@ -230,6 +253,10 @@ export function LibraryPage() {
             Choose a file
           </button>
         </div>
+      )}
+
+      {toast && (
+        <Toast message={toast.message} tone={toast.tone} onDismiss={() => setToast(null)} />
       )}
     </div>
   );
