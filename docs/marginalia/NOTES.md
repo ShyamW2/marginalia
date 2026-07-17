@@ -381,3 +381,37 @@ fixes are required before/alongside M6** (checklist added to TASKS.md as
 TASKS.md (items 1–3 above are blocking; 4–6 are quick wins), then M6 —
 vault compiler.** Remember the zod/v4 note above for the M6 extraction
 schema.
+
+## M6 pre-flight fixes 1–3 landed — 2026-07-17 (Fable)
+
+Fixed the three blocking items from the senior review above (TASKS.md
+checkboxes now checked). Items 4–6 ("quick wins") are still open — not
+blocking, left for opportunistic pickup.
+
+- **Message persistence:** `routes/threads.ts` no longer calls `createMessage`
+  for the user question before streaming. `streamThreadReply` now takes the
+  pending `userContent` and, only on successful completion, writes both the
+  user and assistant rows together via a new `persistExchange()` helper
+  (`db.transaction`). Error/abort paths persist nothing — verified live
+  (pointed openaiCompat at an unreachable URL, confirmed zero messages after
+  the error; restored the endpoint, re-posted the same question, confirmed
+  exactly one user + one assistant row). `ThreadPanel.tsx` tracks the
+  optimistic bubble's id in `pendingMessageIdRef` and `handleRetry` passes it
+  back into `submit()` so retry reuses the existing bubble instead of pushing
+  a second one.
+- **CORS + key exfiltration:** removed `cors` entirely (import, middleware,
+  and the `cors`/`@types/cors` deps) and bound `app.listen(PORT,
+  "127.0.0.1", ...)`. Verified live: no `Access-Control-*` headers on any
+  response (incl. a preflight OPTIONS with an `Origin` header), and the
+  server refuses connections on the machine's LAN IP (loopback only).
+- **`openaiCompat.ts` `max_tokens`:** added `max_tokens: THREAD_MAX_TOKENS`
+  to both the `stream()` and `extract()` request bodies. Exercised live
+  against a local Ollama endpoint without incident.
+
+Verification method: ran the real server against a local Ollama
+(`llama3.1:8b`, openaiCompat) with `curl`, inspecting `data/marginalia.sqlite`
+directly with a one-off `better-sqlite3` script — not just unit tests. Full
+suite still 46/46, `tsc -b` + `vite build` clean.
+
+**Next task: items 4–6 (quick wins) if picked up, then M6 proper — vault
+compiler** (first unchecked box after the pre-flight fixes in TASKS.md).

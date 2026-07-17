@@ -1,5 +1,4 @@
 import express, { type ErrorRequestHandler } from "express";
-import cors from "cors";
 import path from "node:path";
 import fs from "node:fs";
 import { getDb } from "./db.js";
@@ -15,7 +14,6 @@ const PORT = Number(process.env.PORT ?? 5175);
 getDb();
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
 app.get("/api/health", (_req, res) => {
@@ -50,7 +48,7 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 };
 app.use(errorHandler);
 
-app.listen(PORT, () => {
+app.listen(PORT, "127.0.0.1", () => {
   // eslint-disable-next-line no-console
   console.log(`marginalia server listening on http://localhost:${PORT}`);
 });

@@ -42,6 +42,9 @@ export function ThreadPanel({
 
   const abortRef = useRef<AbortController | null>(null);
   const streamingTextRef = useRef("");
+  // Id of the optimistic user bubble for the most recent (possibly failed)
+  // submission — Retry reuses it instead of pushing a second copy.
+  const pendingMessageIdRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // Captured once at mount (the component remounts per-highlight via a
@@ -96,7 +99,7 @@ export function ThreadPanel({
     };
   }, [highlightId]);
 
-  async function submit(question: string) {
+  async function submit(question: string, retryMessageId?: string) {
     const trimmed = question.trim();
     if (!trimmed || streamingText !== null) return;
 
@@ -106,14 +109,22 @@ export function ThreadPanel({
     setStreamingText("");
     streamingTextRef.current = "";
 
-    const optimisticUser: Message = {
-      id: `pending-${Date.now()}`,
-      threadId: thread?.id ?? "",
-      role: "user",
-      content: trimmed,
-      createdAt: new Date().toISOString(),
-    };
-    setMessages((prev) => [...prev, optimisticUser]);
+    // Retry reuses the existing optimistic bubble from the failed attempt
+    // instead of appending a new one for the same question.
+    if (retryMessageId) {
+      pendingMessageIdRef.current = retryMessageId;
+    } else {
+      const optimisticId = `pending-${Date.now()}`;
+      pendingMessageIdRef.current = optimisticId;
+      const optimisticUser: Message = {
+        id: optimisticId,
+        threadId: thread?.id ?? "",
+        role: "user",
+        content: trimmed,
+        createdAt: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, optimisticUser]);
+    }
 
     const controller = new AbortController();
     abortRef.current = controller;
@@ -161,7 +172,7 @@ export function ThreadPanel({
   }
 
   function handleRetry() {
-    if (lastQuestion) submit(lastQuestion);
+    if (lastQuestion) submit(lastQuestion, pendingMessageIdRef.current ?? undefined);
   }
 
   function handleKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {

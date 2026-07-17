@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import type Database from "better-sqlite3";
 import {
   CreateThreadBodySchema,
   CreateThreadMessageBodySchema,
@@ -20,6 +21,25 @@ import { buildContext } from "../llm/context.js";
 export const threadsRouter: Router = Router();
 
 /**
+ * Persists the user question and the assistant's answer together, in one
+ * transaction, only once the answer is known — SPEC requires persisting on
+ * completion so a failed/aborted turn never leaves a dangling question row
+ * (which Retry would otherwise duplicate on re-post).
+ */
+function persistExchange(
+  db: Database.Database,
+  threadId: string,
+  userContent: string,
+  assistantContent: string,
+) {
+  const run = db.transaction(() => {
+    createMessage(db, threadId, "user", userContent);
+    return createMessage(db, threadId, "assistant", assistantContent);
+  });
+  return run();
+}
+
+/**
  * SSE contract (SPEC): `data: {"text": "..."}` per chunk, then either
  * `data: {"done": true, "messageId": ...}` on success or
  * `data: {"error": "..."}` on failure — never both. Aborts the provider
@@ -33,6 +53,7 @@ async function streamThreadReply(
   instructions: string,
   bookContext: string,
   messages: { role: "user" | "assistant"; content: string }[],
+  userContent: string,
 ): Promise<void> {
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream");
@@ -70,7 +91,7 @@ async function streamThreadReply(
       res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
     }
     if (!disconnected) {
-      const assistantMessage = createMessage(db, threadId, "assistant", fullText);
+      const assistantMessage = persistExchange(db, threadId, userContent, fullText);
       res.write(
         `data: ${JSON.stringify({ done: true, messageId: assistantMessage.id, threadId })}\n\n`,
       );
@@ -127,14 +148,22 @@ threadsRouter.post("/", async (req, res) => {
   // The highlight-quote framing only belongs on the thread's first question —
   // repeating it on every follow-up would waste tokens and read oddly.
   const userContent = priorMessages.length === 0 ? userMessage(question) : question;
-  createMessage(db, thread.id, "user", userContent);
 
   const providerMessages = [
     ...priorMessages.map((m) => ({ role: m.role, content: m.content })),
     { role: "user" as const, content: userContent },
   ];
 
-  await streamThreadReply(req, res, thread.id, provider, instructions, bookContext, providerMessages);
+  await streamThreadReply(
+    req,
+    res,
+    thread.id,
+    provider,
+    instructions,
+    bookContext,
+    providerMessages,
+    userContent,
+  );
 });
 
 threadsRouter.post("/:id/messages", async (req, res) => {
@@ -178,13 +207,21 @@ threadsRouter.post("/:id/messages", async (req, res) => {
     contextTokens: provider.capabilities().contextTokens,
   });
 
-  createMessage(db, thread.id, "user", question);
   const providerMessages = [
     ...priorMessages.map((m) => ({ role: m.role, content: m.content })),
     { role: "user" as const, content: question },
   ];
 
-  await streamThreadReply(req, res, thread.id, provider, instructions, bookContext, providerMessages);
+  await streamThreadReply(
+    req,
+    res,
+    thread.id,
+    provider,
+    instructions,
+    bookContext,
+    providerMessages,
+    question,
+  );
 });
 
 threadsRouter.get("/:id", (req, res) => {

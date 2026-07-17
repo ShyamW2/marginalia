@@ -16,7 +16,6 @@
     "@marginalia/shared": "workspace:*",
     "adm-zip": "^0.5.16",
     "better-sqlite3": "^11.7.0",
-    "cors": "^2.8.5",
     "express": "^5.0.1",
     "htmlparser2": "^9.1.0",
     "multer": "^2.2.0",
@@ -25,7 +24,6 @@
   "devDependencies": {
     "@types/adm-zip": "^0.5.5",
     "@types/better-sqlite3": "^7.6.12",
-    "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.10.2",

@@ -114,6 +114,7 @@ export class OpenAICompatProvider implements LLMProvider {
         body: JSON.stringify({
           model: this.config.model,
           stream: true,
+          max_tokens: THREAD_MAX_TOKENS,
           messages: [
             { role: "system", content: systemMessage },
             ...req.messages,
@@ -150,6 +151,7 @@ export class OpenAICompatProvider implements LLMProvider {
         body: JSON.stringify({
           model: this.config.model,
           response_format: { type: "json_object" },
+          max_tokens: THREAD_MAX_TOKENS,
           messages: [
             { role: "system", content: req.instructions },
             { role: "user", content: req.input },

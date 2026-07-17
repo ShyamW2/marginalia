@@ -159,17 +159,32 @@ before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 detail + reproduction notes in NOTES.md, "Senior review + M4/M5 sign-off").
 Do these first, in order:
 
-- [ ] Fix message persistence: write the user+assistant message pair in one
+- [x] Fix message persistence: write the user+assistant message pair in one
       transaction *after* the stream completes (SPEC: persist on completion);
       error/abort persists nothing. Make UI Retry not duplicate the optimistic
       user bubble. Verify: provider-500 → retry → thread has exactly one copy
       of the question and no dangling rows
-- [ ] Security: remove `app.use(cors())` (same-origin via Vite proxy/static
+      _(verified 2026-07-17: live against a local Ollama openaiCompat
+      endpoint — pointed the provider at an unreachable URL, asked a
+      question, confirmed the thread row exists with zero messages after the
+      `network: fetch failed` error; restored the working endpoint and
+      re-posted the same question (simulating UI Retry), confirmed the
+      thread ends with exactly one user + one assistant message, no
+      duplicate. `pnpm build` + `pnpm test` (46/46) clean.)_
+- [x] Security: remove `app.use(cors())` (same-origin via Vite proxy/static
       serving — nothing needs CORS) and bind `app.listen(PORT, "127.0.0.1")`.
       Verify: no `Access-Control-Allow-Origin` header; server unreachable from
       non-loopback
-- [ ] `openaiCompat.ts`: send `max_tokens: THREAD_MAX_TOKENS` in stream and
+      _(verified 2026-07-17: `curl` with an `Origin` header, including a
+      preflight OPTIONS, returns no `Access-Control-*` headers; `curl` to the
+      machine's LAN IP on the server port fails to connect (loopback-only),
+      confirming the exfiltration path via `/api/settings/test` is closed.
+      Also dropped the now-unused `cors`/`@types/cors` deps.)_
+- [x] `openaiCompat.ts`: send `max_tokens: THREAD_MAX_TOKENS` in stream and
       extract request bodies (const currently declared but unused)
+      _(verified 2026-07-17: added to both request bodies; exercised via the
+      live Ollama stream above without incident; `openaiCompat.test.ts`
+      still 7/7 green.)_
 - [ ] (Quick wins) Anthropic `capabilities()` context size per model, not
       hardcoded 1M; trim provider error bodies from SSE `{error}` events (log
       raw server-side); catch the `UNIQUE(highlight_id)` race in thread
