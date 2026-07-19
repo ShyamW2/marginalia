@@ -1,9 +1,20 @@
+import { lazy, Suspense } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
-import { LibraryPage } from "../library/LibraryPage.js";
-import { ReaderPage } from "../reader/ReaderPage.js";
-import { SettingsPage } from "../settings/SettingsPage.js";
 import { useTheme, type ThemeChoice } from "./useTheme.js";
 import styles from "./App.module.css";
+
+// Code-split per room: epub.js (the reader's biggest dependency) only loads
+// when the user actually navigates to /read/:id, instead of bloating the
+// single entry chunk every route paid for before this split.
+const LibraryPage = lazy(() =>
+  import("../library/LibraryPage.js").then((m) => ({ default: m.LibraryPage })),
+);
+const ReaderPage = lazy(() =>
+  import("../reader/ReaderPage.js").then((m) => ({ default: m.ReaderPage })),
+);
+const SettingsPage = lazy(() =>
+  import("../settings/SettingsPage.js").then((m) => ({ default: m.SettingsPage })),
+);
 
 const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
   { value: "paper", label: "Paper" },
@@ -58,11 +69,13 @@ export function App() {
         </nav>
       </header>
       <main className={styles.main}>
-        <Routes>
-          <Route path="/" element={<LibraryPage />} />
-          <Route path="/read/:id" element={<ReaderPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
+        <Suspense fallback={<div className={styles.routeFallback} />}>
+          <Routes>
+            <Route path="/" element={<LibraryPage />} />
+            <Route path="/read/:id" element={<ReaderPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Routes>
+        </Suspense>
       </main>
     </div>
   );

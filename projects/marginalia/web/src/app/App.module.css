@@ -70,3 +70,10 @@
 .main {
   flex: 1;
 }
+
+/* Route chunks resolve almost instantly off a local dev server / built
+   assets — an empty beat reads calmer than a spinner flash (CLAUDE.md: no
+   blocking spinners). */
+.routeFallback {
+  min-height: 100%;
+}
