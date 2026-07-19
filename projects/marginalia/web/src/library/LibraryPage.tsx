@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Link } from "react-router-dom";
 import type { ResourceSummary } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
+import { BookCover } from "./BookCover.js";
 import { formatPublishSummary, runPublish } from "./publish.js";
 import styles from "./LibraryPage.module.css";
 
@@ -216,6 +217,19 @@ export function LibraryPage() {
           {resources.map((resource) => (
             <div key={resource.id} className={styles.card}>
               <Link to={`/read/${resource.id}`} className={styles.cardLink}>
+                <div className={styles.coverWrap}>
+                  <BookCover resourceId={resource.id} title={resource.title} />
+                  {resource.threadCount > 0 && (
+                    <span
+                      className={styles.threadBadge}
+                      title={`${resource.threadCount} annotation thread${
+                        resource.threadCount === 1 ? "" : "s"
+                      }`}
+                    >
+                      {resource.threadCount}
+                    </span>
+                  )}
+                </div>
                 <div className={styles.cardTitle}>{resource.title}</div>
                 {resource.author && (
                   <div className={styles.cardAuthor}>{resource.author}</div>

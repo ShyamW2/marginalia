@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { UpdateReadingPositionBodySchema } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { importEpub } from "../library/importResource.js";
+import { extractCoverImage, guessImageMimeType } from "../library/epub.js";
 import {
   getReadingPosition,
   getResourceById,
@@ -61,6 +62,28 @@ resourcesRouter.get("/:id/file", (req, res) => {
   }
   res.type("application/epub+zip");
   res.sendFile(filePath);
+});
+
+resourcesRouter.get("/:id/cover", (req, res) => {
+  const resource = getResourceById(getDb(), req.params.id);
+  const filePath = getResourceFilePath(getDb(), req.params.id);
+  const coverHref = resource?.metadata.coverHref;
+  if (!resource || !coverHref || !filePath || !fs.existsSync(filePath)) {
+    res.status(404).json({ error: "no_cover" });
+    return;
+  }
+
+  const data = extractCoverImage(filePath, coverHref);
+  if (!data) {
+    res.status(404).json({ error: "no_cover" });
+    return;
+  }
+
+  // Resources are content-addressed and immutable-on-import — this id's
+  // cover bytes never change, so caching aggressively is safe.
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
+  res.type(guessImageMimeType(coverHref));
+  res.send(data);
 });
 
 resourcesRouter.get("/:id/position", (req, res) => {

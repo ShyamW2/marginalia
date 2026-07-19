@@ -46,7 +46,11 @@ export function getResourceFilePath(
   return row?.file_path;
 }
 
-/** Library list view: every resource plus its highlight/thread counts. */
+/**
+ * Library list view: every resource plus its highlight/thread counts,
+ * ordered by recency of reading — a book just read (or a freshly imported
+ * one nobody's opened yet) sorts above books that have sat untouched.
+ */
 export function listResourceSummaries(
   db: Database.Database,
 ): ResourceSummary[] {
@@ -54,14 +58,17 @@ export function listResourceSummaries(
     .prepare(
       `SELECT
          r.*,
+         rs.updated_at AS last_read_at,
          (SELECT COUNT(*) FROM highlights h WHERE h.resource_id = r.id) AS highlight_count,
          (SELECT COUNT(*) FROM highlights h
             JOIN threads t ON t.highlight_id = h.id
             WHERE h.resource_id = r.id) AS thread_count
        FROM resources r
-       ORDER BY r.imported_at DESC`,
+       LEFT JOIN reading_state rs ON rs.resource_id = r.id
+       ORDER BY COALESCE(rs.updated_at, r.imported_at) DESC`,
     )
     .all() as (ResourceRow & {
+    last_read_at: string | null;
     highlight_count: number;
     thread_count: number;
   })[];
@@ -70,6 +77,7 @@ export function listResourceSummaries(
     ...rowToResource(row),
     highlightCount: row.highlight_count,
     threadCount: row.thread_count,
+    lastReadAt: row.last_read_at,
   }));
 }
 

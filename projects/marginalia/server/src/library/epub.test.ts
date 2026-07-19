@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { extractEpub, htmlToText } from "./epub.js";
+import { extractCoverImage, extractEpub, guessImageMimeType, htmlToText } from "./epub.js";
 import { WORKSPACE_ROOT } from "../paths.js";
 
 const aliceBuffer = fs.readFileSync(
@@ -50,6 +50,60 @@ describe("extractEpub", () => {
     const a = extractEpub(aliceBuffer);
     const b = extractEpub(aliceBuffer);
     expect(a).toEqual(b);
+  });
+});
+
+describe("extractCoverImage", () => {
+  const aliceFilePath = path.join(WORKSPACE_ROOT, "fixtures", "alice-in-wonderland.epub");
+  const metamorphosisFilePath = path.join(
+    WORKSPACE_ROOT,
+    "fixtures",
+    "metamorphosis.epub",
+  );
+
+  it("reads the declared cover's real bytes out of the archive", () => {
+    const { metadata } = extractEpub(aliceBuffer);
+    expect(metadata.coverHref).toBeDefined();
+
+    const data = extractCoverImage(aliceFilePath, metadata.coverHref!);
+    expect(data).toBeDefined();
+    expect(data!.length).toBeGreaterThan(0);
+    // JPEG magic bytes — confirms this is real image data, not the zip
+    // entry's raw text or something malformed.
+    expect(data!.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+  });
+
+  it("is deterministic and file-specific across two different books", () => {
+    const alice = extractEpub(aliceBuffer);
+    const metamorphosis = extractEpub(metamorphosisBuffer);
+
+    const aliceCover = extractCoverImage(aliceFilePath, alice.metadata.coverHref!);
+    const metamorphosisCover = extractCoverImage(
+      metamorphosisFilePath,
+      metamorphosis.metadata.coverHref!,
+    );
+
+    expect(aliceCover).toEqual(extractCoverImage(aliceFilePath, alice.metadata.coverHref!));
+    expect(aliceCover).not.toEqual(metamorphosisCover);
+  });
+
+  it("returns undefined for a cover path absent from the archive", () => {
+    expect(extractCoverImage(aliceFilePath, "OEBPS/does-not-exist.jpg")).toBeUndefined();
+  });
+});
+
+describe("guessImageMimeType", () => {
+  it("maps common cover extensions to their content-type", () => {
+    expect(guessImageMimeType("OEBPS/cover.jpg")).toBe("image/jpeg");
+    expect(guessImageMimeType("OEBPS/cover.jpeg")).toBe("image/jpeg");
+    expect(guessImageMimeType("OEBPS/cover.PNG")).toBe("image/png");
+    expect(guessImageMimeType("OEBPS/cover.gif")).toBe("image/gif");
+    expect(guessImageMimeType("OEBPS/cover.svg")).toBe("image/svg+xml");
+    expect(guessImageMimeType("OEBPS/cover.webp")).toBe("image/webp");
+  });
+
+  it("falls back to a generic binary type for an unrecognized extension", () => {
+    expect(guessImageMimeType("OEBPS/cover.bmp")).toBe("application/octet-stream");
   });
 });
 

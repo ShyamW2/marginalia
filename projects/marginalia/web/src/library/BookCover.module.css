@@ -1,0 +1,29 @@
+.cover,
+.fallback {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+}
+
+.cover {
+  object-fit: cover;
+  background: var(--color-bg);
+}
+
+.fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(
+    160deg,
+    var(--color-bg) 0%,
+    var(--color-highlight) 140%
+  );
+}
+
+.initial {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  color: var(--color-text-muted);
+}

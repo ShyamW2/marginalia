@@ -36,6 +36,8 @@ export type Resource = z.infer<typeof ResourceSchema>;
 export const ResourceSummarySchema = ResourceSchema.extend({
   highlightCount: z.number().int().nonnegative(),
   threadCount: z.number().int().nonnegative(),
+  // Null if the book has never been opened (no reading_state row yet).
+  lastReadAt: z.string().nullable(),
 });
 export type ResourceSummary = z.infer<typeof ResourceSummarySchema>;
 

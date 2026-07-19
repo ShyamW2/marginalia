@@ -74,6 +74,35 @@ function readZipText(zip: AdmZip, entryName: string): string {
   return entry.getData().toString("utf-8").replace(BOM, "");
 }
 
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+};
+
+/** Guesses an image content-type from a cover entry's file extension. */
+export function guessImageMimeType(href: string): string {
+  return IMAGE_MIME_BY_EXTENSION[path.posix.extname(href).toLowerCase()] ?? "application/octet-stream";
+}
+
+/**
+ * Reads the resource's cover image bytes straight out of its stored EPUB
+ * archive (immutable-on-import, so this is always the same bytes for a
+ * given resource id — no derived file to cache separately). Returns
+ * `undefined` if the EPUB has no declared cover or the entry is missing.
+ */
+export function extractCoverImage(
+  epubFilePath: string,
+  coverHref: string,
+): Buffer | undefined {
+  const zip = new AdmZip(epubFilePath);
+  const entry = zip.getEntry(coverHref);
+  return entry?.getData();
+}
+
 function findRootfilePath(containerXml: string): string {
   let rootfilePath: string | undefined;
 
