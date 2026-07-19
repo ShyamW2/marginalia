@@ -42,6 +42,7 @@ describe("db migrations", () => {
         "settings",
         "shelf_state",
         "notepad",
+        "highlight_tags",
       ]),
     );
 
@@ -51,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(3);
+    expect(version).toBe(4);
     db.close();
   });
 
@@ -110,6 +111,32 @@ describe("db migrations", () => {
     }
   });
 
+  it("migration 004 adds highlights.importance, defaulting to 0, and highlight_tags is usable", () => {
+    const db = createDb(":memory:");
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO resources (id, title, author, format, file_path, metadata, imported_at)
+       VALUES ('res-1', 'Title', NULL, 'epub', '/tmp/x.epub', '{}', @now)`,
+    ).run({ now });
+    db.prepare(
+      `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, created_at)
+       VALUES ('h-1', 'res-1', 'q', '', '', 'epubcfi(/6/4!/4/2)', 0, @now)`,
+    ).run({ now });
+
+    const row = db
+      .prepare("SELECT importance FROM highlights WHERE id = 'h-1'")
+      .get() as { importance: number };
+    expect(row.importance).toBe(0);
+
+    db.prepare("INSERT INTO highlight_tags (highlight_id, tag) VALUES ('h-1', 'motif')").run();
+    const tags = db
+      .prepare("SELECT tag FROM highlight_tags WHERE highlight_id = 'h-1'")
+      .all() as { tag: string }[];
+    expect(tags).toEqual([{ tag: "motif" }]);
+
+    db.close();
+  });
+
   it("is idempotent — reopening an already-migrated database file is a no-op", () => {
     const tmpPath = tmpDbPath("idempotent");
 
@@ -120,7 +147,7 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(3);
+      expect(second.pragma("user_version", { simple: true })).toBe(4);
       second.close();
     } finally {
       cleanupDbFile(tmpPath);

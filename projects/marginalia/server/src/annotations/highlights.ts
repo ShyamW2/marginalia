@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
-import type { Highlight, HighlightKind, HighlightWithThread } from "@marginalia/shared";
+import type {
+  Highlight,
+  HighlightImportance,
+  HighlightKind,
+  HighlightWithThread,
+} from "@marginalia/shared";
 
 interface HighlightRow {
   id: string;
@@ -11,6 +16,7 @@ interface HighlightRow {
   cfi: string;
   spine_index: number;
   kind: string;
+  importance: number;
   created_at: string;
 }
 
@@ -24,6 +30,7 @@ function rowToHighlight(row: HighlightRow): Highlight {
     cfi: row.cfi,
     spineIndex: row.spine_index,
     kind: row.kind as HighlightKind,
+    importance: row.importance as HighlightImportance,
     createdAt: row.created_at,
   };
 }
@@ -49,6 +56,7 @@ export function createHighlight(
     cfi: input.cfi,
     spineIndex: input.spineIndex,
     kind: input.kind,
+    importance: 0, // matches the highlights.importance column's DEFAULT 0
     createdAt: new Date().toISOString(),
   };
 
@@ -100,6 +108,14 @@ export function listHighlightsWithThreadsForResource(
       ? { id: row.thread_id, hasAnswer: row.answer_count > 0 }
       : null,
   }));
+}
+
+export function setHighlightImportance(
+  db: Database.Database,
+  id: string,
+  importance: HighlightImportance,
+): void {
+  db.prepare("UPDATE highlights SET importance = ? WHERE id = ?").run(importance, id);
 }
 
 export function getHighlightById(

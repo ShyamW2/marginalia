@@ -17,6 +17,7 @@ import {
   setShelfState,
 } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
+import { buildScanData } from "../annotations/scan.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -141,4 +142,13 @@ resourcesRouter.get("/:id/highlights", (req, res) => {
     return;
   }
   res.json(listHighlightsWithThreadsForResource(getDb(), req.params.id));
+});
+
+resourcesRouter.get("/:id/scan", (req, res) => {
+  const data = buildScanData(getDb(), req.params.id);
+  if (!data) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json(data);
 });

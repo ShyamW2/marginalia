@@ -122,4 +122,22 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M9: the Scan (docs/marginalia/DESIGN.md). Importance is a user-set
+    // 1-3 star rating (0 = unset); tags are freeform per-highlight labels.
+    // `positionPercent` is deliberately NOT a column here — SPEC/TASKS calls
+    // for it server-*computed* from prefix+exact+suffix char offsets in
+    // resource_text (annotations/position.ts), not stored, so it never goes
+    // stale if resource_text itself is ever re-extracted.
+    version: 4,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN importance INTEGER NOT NULL DEFAULT 0;
+
+      CREATE TABLE highlight_tags (
+        highlight_id  TEXT NOT NULL REFERENCES highlights(id),
+        tag           TEXT NOT NULL,
+        PRIMARY KEY (highlight_id, tag)
+      );
+    `,
+  },
 ];

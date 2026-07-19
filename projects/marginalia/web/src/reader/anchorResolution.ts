@@ -5,36 +5,11 @@
  * highlight is "unanchored" but not dropped.
  */
 
-export interface AnchorText {
-  exact: string;
-  prefix: string;
-  suffix: string;
-}
+import { findAnchorInText } from "@marginalia/shared";
+import type { AnchorText, TextMatch } from "@marginalia/shared";
 
-export interface TextMatch {
-  start: number;
-  end: number;
-}
-
-/** Pure text search for the fallback anchoring step — no DOM involved. */
-export function findAnchorInText(
-  text: string,
-  anchor: AnchorText,
-): TextMatch | null {
-  const combined = anchor.prefix + anchor.exact + anchor.suffix;
-  const combinedIndex = text.indexOf(combined);
-  if (combinedIndex !== -1) {
-    const start = combinedIndex + anchor.prefix.length;
-    return { start, end: start + anchor.exact.length };
-  }
-
-  const exactIndex = text.indexOf(anchor.exact);
-  if (exactIndex !== -1) {
-    return { start: exactIndex, end: exactIndex + anchor.exact.length };
-  }
-
-  return null;
-}
+export { findAnchorInText };
+export type { AnchorText, TextMatch };
 
 /** Minimal structural shape a resolved CFI range must satisfy — matches the
  * DOM Range interface without requiring one in tests. */

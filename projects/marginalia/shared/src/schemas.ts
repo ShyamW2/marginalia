@@ -105,13 +105,37 @@ export type Anchor = z.infer<typeof AnchorSchema>;
 export const HighlightKindSchema = z.enum(["rose", "sage", "honey", "slate"]);
 export type HighlightKind = z.infer<typeof HighlightKindSchema>;
 
+/** 0 = unstarred; 1-3 stars (M9 "revisit queue" — DESIGN.md Room 3). */
+export const HighlightImportanceSchema = z.union([
+  z.literal(0),
+  z.literal(1),
+  z.literal(2),
+  z.literal(3),
+]);
+export type HighlightImportance = z.infer<typeof HighlightImportanceSchema>;
+
 export const HighlightSchema = AnchorSchema.extend({
   id: z.string(), // uuid v4
   resourceId: z.string(),
   kind: HighlightKindSchema,
+  importance: HighlightImportanceSchema,
   createdAt: z.string(),
 });
 export type Highlight = z.infer<typeof HighlightSchema>;
+
+export const UpdateHighlightImportanceBodySchema = z.object({
+  importance: HighlightImportanceSchema,
+});
+export type UpdateHighlightImportanceBody = z.infer<
+  typeof UpdateHighlightImportanceBodySchema
+>;
+
+const TagSchema = z.string().trim().min(1).max(40);
+
+export const HighlightTagsSchema = z.object({
+  tags: z.array(TagSchema),
+});
+export type HighlightTags = z.infer<typeof HighlightTagsSchema>;
 
 export const CreateHighlightBodySchema = AnchorSchema.extend({
   resourceId: z.string().min(1),
@@ -263,6 +287,48 @@ export type Settings = z.infer<typeof SettingsSchema>;
  */
 export const SettingsUpdateSchema = SettingsSchema.partial();
 export type SettingsUpdate = z.infer<typeof SettingsUpdateSchema>;
+
+// ---------------------------------------------------------------------------
+// Scan (M9 — the timeline/heat-map room, DESIGN.md "Room 3")
+// ---------------------------------------------------------------------------
+
+export const ScanChapterSchema = z.object({
+  spineIndex: z.number().int().nonnegative(),
+  label: z.string(),
+  startPercent: z.number().min(0).max(1),
+  lengthPercent: z.number().min(0).max(1),
+});
+export type ScanChapter = z.infer<typeof ScanChapterSchema>;
+
+/**
+ * One highlight rendered as a heat band. `positionPercent` is null when the
+ * server-side prefix+exact+suffix search can't locate the passage anymore
+ * (SPEC anchoring rule's "unanchored" outcome, computed without epub.js —
+ * see server/src/annotations/position.ts) — the scan simply omits that band
+ * rather than guessing a position.
+ */
+export const ScanHighlightSchema = z.object({
+  id: z.string(),
+  kind: HighlightKindSchema,
+  exact: z.string(),
+  importance: HighlightImportanceSchema,
+  tags: z.array(z.string()),
+  positionPercent: z.number().min(0).max(1).nullable(),
+  threadId: z.string().nullable(),
+  hasAnswer: z.boolean(),
+  threadMessageCount: z.number().int().nonnegative(),
+  threadFirstLine: z.string().nullable(),
+});
+export type ScanHighlight = z.infer<typeof ScanHighlightSchema>;
+
+export const ScanDataSchema = z.object({
+  resource: ResourceSchema,
+  totalHighlights: z.number().int().nonnegative(),
+  lastReadAt: z.string().nullable(),
+  chapters: z.array(ScanChapterSchema),
+  highlights: z.array(ScanHighlightSchema),
+});
+export type ScanData = z.infer<typeof ScanDataSchema>;
 
 // ---------------------------------------------------------------------------
 // Generic error envelope
