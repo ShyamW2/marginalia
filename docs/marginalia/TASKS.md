@@ -264,8 +264,16 @@ starting any milestone from here on.
       count), recently-read ordering
 - [x] Reader revisit affordances: "annotations" overview (list of all threads in book,
       jump-to), unanchored-highlight surfacing
-- [ ] Reading focus mode: `f` toggles all marks/tabs/rail dots for a clean page;
+- [x] Reading focus mode: `f` toggles all marks/tabs/rail dots for a clean page;
       subtle "notes hidden" indicator; persists for the session
+      _(verified 2026-07-19: headless-browser pass against the Alice fixture
+      — `f` hides the Annotations button behind a "Notes hidden" indicator,
+      hides the margin rail, and repaints every mark transparent; a second
+      `f` restores all three. Ignores the key while typing in the thread
+      panel. Live verification also surfaced and fixed a real pre-existing
+      epub.js mark-tracking bug — see NOTES.md, "reading focus mode + a real
+      epub.js mark-tracking bug" — that affected theme re-tinting and
+      highlight deletion too, not just focus mode.)_
 - [ ] Dark mode audit across every view; focus-visible states; reduced-motion respect
 - [ ] Error/edge audit: huge EPUB, EPUB with no metadata, provider down mid-stream,
       vault path unset → all degrade gracefully with designed states

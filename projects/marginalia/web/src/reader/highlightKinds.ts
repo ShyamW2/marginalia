@@ -28,7 +28,13 @@ interface MarkThemeInput {
 export function markStyleForKind(
   kind: HighlightKind,
   vars: MarkThemeInput,
+  hidden = false,
 ): Record<string, string> {
+  // Reading focus mode (DESIGN.md): marks stay attached (so state survives
+  // the toggle) but paint invisible — cheaper and simpler than tearing
+  // down and re-resolving every mark on every `f` press.
+  if (hidden) return { fill: "transparent", "fill-opacity": "0" };
+
   const isDark = vars.colorScheme === "dark";
   return {
     fill: vars.kindColors[kind],

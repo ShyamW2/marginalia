@@ -129,6 +129,66 @@ Append; don't rewrite history.
   if the request ever failed (offline, server restarting). Both wrapped in
   try/catch now, matching the pattern `LibraryPage.tsx` already used.
 
+## M7 — reading focus mode + a real epub.js mark-tracking bug — 2026-07-19 (Fable)
+
+Implemented reading focus mode (TASKS.md M7): `f` toggles a `focusMode` state
+that hides the Annotations button (replaced by a "Notes hidden — press F to
+show" indicator), the margin rail, and repaints every highlight mark
+transparent via `markStyleForKind(kind, vars, hidden)`; marks stay attached
+(cheaper than tearing down/re-resolving) rather than being removed. A
+window-level keydown handler ignores the key while focused in a
+textarea/input/contentEditable so it doesn't fight the thread panel's typing.
+
+**Found via live headless-browser verification, not a test:** two or more
+highlights that resolve to the *identical* CFI (a real scenario — asking a
+second question on the exact same selection, or two different original
+selections whose anchors both re-resolve to the same spot) broke focus mode
+only partially. Root cause is in epub.js itself, not our code:
+`View.highlight()` (`managers/views/iframe.js`) keys its internal
+`this.highlights` map by the raw CFI string but calls `pane.addMark()`
+unconditionally on every invocation — it never checks whether a mark already
+exists at that CFI. Calling `annotations.highlight()` twice at the same CFI
+therefore creates two SVG marks in the DOM but the map only ever tracks the
+most recent one; the earlier mark becomes permanently orphaned — invisible to
+future `annotations.remove()`/`annotations.highlight()` calls, so it survives
+theme re-tinting, focus-mode hiding, and (worse) surviving highlight
+*deletion* — a deleted highlight's mark could stay on the page forever if it
+shared a CFI with another highlight. This predates M7; it was latent in M3's
+mark-attach code and M6's delete path, just never triggered by the fixture
+data used in earlier verification passes until this session's Alice fixture
+happened to have three highlights on the same "over" occurrence.
+
+**Fix** (`ReaderView.tsx`): added `cfiOwnersRef` (`Map<cfi, highlightId[]>`,
+insertion order = ownership order) and three helpers — `attachOwnedMark`
+(only the first highlight to claim a CFI gets a real epub.js mark; later
+co-owners are tracked but stay invisible), `isMarkOwner` (gates the
+theme/focus re-tint loop so only the owner is touched), and `detachOwnedMark`
+(deleting a non-owner is a no-op on the DOM; deleting the owner transfers the
+mark — remove + re-attach with the next co-owner's id/kind — so the mark
+never orphans and never points at a deleted highlight). All four mark
+call-sites (initial section resolution, the theme/focus re-tint effect,
+highlight creation, highlight deletion) now go through these helpers instead
+of calling `rendition.annotations.*` directly.
+
+**Verified live** (headless Chromium, real dev server, real sqlite, Alice
+fixture — not mocked): before the fix, 3 highlights sharing one CFI produced
+6 DOM marks-pane rects but only 4 responded to focus-mode toggling (2 stuck
+visible forever). After the fix: 4 rects total (correctly deduped), all 4
+correctly go transparent on `f` and back on a second `f`; the Annotations
+button, "Notes hidden" indicator, and margin rail (8 dots — rail dots are
+per-highlight DOM, not tied to epub.js marks, so duplicates still each get
+their own dot) all toggle correctly. Separately verified the ownership-
+transfer path by deleting the owning highlight through the real rail UI:
+the DB correctly dropped the deleted row, the remaining co-owner's mark
+stayed visible (still 4 rects, no orphan), and its `data-highlight-id`
+correctly switched to the surviving highlight. Full suite 81/81
+(`pnpm test`), `pnpm build` clean. Also fixed an unrelated pre-existing test
+break found while running the suite: `shared/schemas.test.ts`'s smoke test
+never got updated with `lastReadAt` when the M7 library-polish commit
+(`e1239b3`) added that field to `ResourceSummarySchema`.
+
+**Next task:** dark mode audit (M7, next unchecked box in TASKS.md).
+
 ## Blockers
 
 _(none yet)_

@@ -138,6 +138,17 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   // fallback (a re-anchored CFI) rather than the original CFI resolving
   // clean — deleting must remove the mark at whichever CFI is really there.
   const attachedCfiRef = useRef<Map<string, string>>(new Map());
+  // Two different highlights can legitimately resolve to the identical CFI
+  // (e.g. asking a second question on the exact same selection). epub.js's
+  // View keys its internal highlight/mark tracking by the raw CFI string and
+  // unconditionally creates a new SVG mark on every `annotations.highlight()`
+  // call for that CFI without checking for an existing one — so attaching
+  // twice at the same CFI leaves an orphaned, untracked, unremovable mark
+  // that no future remove/re-tint call can ever reach. This map tracks which
+  // highlightIds currently share a CFI (insertion order = ownership order);
+  // only the first ("owner") ever gets a real epub.js-level mark, and
+  // ownership transfers to the next co-owner if the owner is deleted.
+  const cfiOwnersRef = useRef<Map<string, string[]>>(new Map());
   const themeVars = useEpubThemeVars();
   const stageControls = useAnimationControls();
   const stageReducedMotion = useReducedMotion();
@@ -175,6 +186,79 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   } | null>(null);
   const [providerConfigured, setProviderConfigured] = useState(false);
   const [showAnnotations, setShowAnnotations] = useState(false);
+  // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
+  // page. Local, resets on remount — same "no persistence needed" call as
+  // expandedThread above; "persists for the session" means it survives
+  // page turns and theme toggles within this reading session, not browser
+  // restarts.
+  const [focusMode, setFocusMode] = useState(false);
+  // Same story as themeVarsRef, for reading focus mode.
+  const focusModeRef = useRef(focusMode);
+  useEffect(() => {
+    focusModeRef.current = focusMode;
+  }, [focusMode]);
+
+  // Attach a mark for `highlightId` at `cfi`, but only actually create an
+  // epub.js-level mark for the first highlight to claim a given CFI (see
+  // cfiOwnersRef above) — later co-owners are tracked but stay invisible,
+  // since a second mark at an identical position would just orphan.
+  function attachOwnedMark(highlightId: string, cfi: string, kind: HighlightKind) {
+    attachedCfiRef.current.set(highlightId, cfi);
+    const owners = cfiOwnersRef.current.get(cfi) ?? [];
+    const alreadyOwned = owners.length > 0;
+    if (!owners.includes(highlightId)) owners.push(highlightId);
+    cfiOwnersRef.current.set(cfi, owners);
+    if (alreadyOwned) return;
+    renditionRef.current?.annotations.highlight(
+      cfi,
+      { highlightId },
+      undefined,
+      HIGHLIGHT_MARK_CLASS,
+      markStyleForKind(kind, themeVarsRef.current, focusModeRef.current),
+    );
+  }
+
+  function isMarkOwner(highlightId: string, cfi: string): boolean {
+    return cfiOwnersRef.current.get(cfi)?.[0] === highlightId;
+  }
+
+  // Detach highlightId's claim on cfi. If it wasn't the visible owner, the
+  // mark belongs to someone else and stays untouched. If it was the owner
+  // and other highlights still share the CFI, ownership transfers to the
+  // next one — remove and re-attach so the mark's data points at a highlight
+  // that still exists rather than the one just deleted.
+  function detachOwnedMark(
+    highlightId: string,
+    cfi: string,
+    remainingHighlights: HighlightWithThread[],
+  ) {
+    const owners = cfiOwnersRef.current.get(cfi) ?? [];
+    const wasOwner = owners[0] === highlightId;
+    const nextOwners = owners.filter((id) => id !== highlightId);
+
+    if (!wasOwner) {
+      cfiOwnersRef.current.set(cfi, nextOwners);
+      return;
+    }
+
+    renditionRef.current?.annotations.remove(cfi, "highlight");
+
+    if (nextOwners.length === 0) {
+      cfiOwnersRef.current.delete(cfi);
+      return;
+    }
+
+    cfiOwnersRef.current.set(cfi, nextOwners);
+    const newOwner = remainingHighlights.find((h) => h.id === nextOwners[0]);
+    if (!newOwner) return;
+    renditionRef.current?.annotations.highlight(
+      cfi,
+      { highlightId: newOwner.id },
+      undefined,
+      HIGHLIGHT_MARK_CLASS,
+      markStyleForKind(newOwner.kind, themeVarsRef.current, focusModeRef.current),
+    );
+  }
 
   useEffect(() => {
     highlightsRef.current = highlights;
@@ -199,6 +283,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     highlightsRef.current = [];
     resolvedIdsRef.current = new Set();
     attachedCfiRef.current = new Map();
+    cfiOwnersRef.current = new Map();
 
     // Our file route has no .epub extension for epub.js to sniff from the
     // URL, so it would otherwise be treated as an unpacked directory of
@@ -216,17 +301,6 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     });
     renditionRef.current = rendition;
     applyTheme(rendition, themeVars);
-
-    function attachHighlightMark(highlightId: string, cfi: string, kind: HighlightKind) {
-      attachedCfiRef.current.set(highlightId, cfi);
-      rendition.annotations.highlight(
-        cfi,
-        { highlightId },
-        undefined,
-        HIGHLIGHT_MARK_CLASS,
-        markStyleForKind(kind, themeVarsRef.current),
-      );
-    }
 
     function markUnanchored(highlightId: string) {
       setUnanchoredIds((prev) => {
@@ -260,7 +334,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
         });
 
         if (result.status === "cfi") {
-          attachHighlightMark(highlight.id, highlight.cfi, highlight.kind);
+          attachOwnedMark(highlight.id, highlight.cfi, highlight.kind);
         } else if (result.status === "fallback") {
           const range = rangeFromTextOffsets(
             contents.document,
@@ -268,7 +342,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
             result.match.end,
           );
           if (range) {
-            attachHighlightMark(highlight.id, contents.cfiFromRange(range), highlight.kind);
+            attachOwnedMark(highlight.id, contents.cfiFromRange(range), highlight.kind);
           } else {
             markUnanchored(highlight.id);
           }
@@ -391,11 +465,35 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     rendition.on("click", handleContentClick);
 
     function handleKeydown(event: KeyboardEvent) {
+      // This same handler is also bound to window (below) to catch keydowns
+      // outside the epub iframe — e.g. the thread panel's textarea, where
+      // ArrowLeft/Right/F are ordinary typing/editing keys, not page-turn or
+      // focus-mode shortcuts.
+      const target = event.target as HTMLElement | null;
+      const isTyping =
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "INPUT" ||
+        target?.isContentEditable;
+
+      if (isTyping) return;
+
       if (event.key === "ArrowLeft") turnPageRef.current("prev");
       else if (event.key === "ArrowRight") turnPageRef.current("next");
       else if (event.key === "Escape") {
         setPendingSelection(null);
         setExpandedThread(null);
+      } else if (
+        (event.key === "f" || event.key === "F") &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        setFocusMode((prev) => {
+          const next = !prev;
+          // A clean page and an open annotations list are contradictory.
+          if (next) setShowAnnotations(false);
+          return next;
+        });
       }
     }
     rendition.on("keydown", handleKeydown);
@@ -446,22 +544,25 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
 
     // Re-tint every already-attached mark: fill-opacity/blend-mode differ
     // between paper and ink (see highlightKinds.ts), so a highlight created
-    // under one theme must repaint when the user toggles to the other.
+    // under one theme must repaint when the user toggles to the other —
+    // and reading focus mode needs the same repaint to hide/reveal marks.
     // annotations.highlight() doesn't update an existing mark in place —
-    // it stacks a new one — so each mark is removed and re-added.
+    // it stacks a new one — so each mark is removed and re-added. Only the
+    // mark's owner (see cfiOwnersRef) is touched — a co-owner sharing the
+    // same CFI has no epub.js-level mark of its own to re-tint.
     for (const highlight of highlightsRef.current) {
       const cfi = attachedCfiRef.current.get(highlight.id);
-      if (!cfi) continue;
+      if (!cfi || !isMarkOwner(highlight.id, cfi)) continue;
       renditionRef.current.annotations.remove(cfi, "highlight");
       renditionRef.current.annotations.highlight(
         cfi,
         { highlightId: highlight.id },
         undefined,
         HIGHLIGHT_MARK_CLASS,
-        markStyleForKind(highlight.kind, themeVars),
+        markStyleForKind(highlight.kind, themeVars, focusMode),
       );
     }
-  }, [themeVars]);
+  }, [themeVars, focusMode]);
 
   // Page-turn feel (DESIGN.md, interim for M7): a fast dip-and-recover on
   // the page surface itself around the moment epub.js swaps content, so
@@ -521,14 +622,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
       resolvedIdsRef.current.add(created.id);
       // This CFI was just derived from the live, currently-rendered
       // document, so it's trusted without going through resolveAnchor again.
-      attachedCfiRef.current.set(created.id, created.cfi);
-      renditionRef.current?.annotations.highlight(
-        created.cfi,
-        { highlightId: created.id },
-        undefined,
-        HIGHLIGHT_MARK_CLASS,
-        markStyleForKind(created.kind, themeVars),
-      );
+      attachOwnedMark(created.id, created.cfi, created.kind);
       pendingSelection.contents.window.getSelection()?.removeAllRanges();
       if (openThread) {
         // Anchor the panel near the selection itself — the nicest, most
@@ -560,7 +654,8 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     });
     const attachedCfi = attachedCfiRef.current.get(highlight.id) ?? highlight.cfi;
     attachedCfiRef.current.delete(highlight.id);
-    renditionRef.current?.annotations.remove(attachedCfi, "highlight");
+    const remaining = highlightsRef.current.filter((h) => h.id !== highlight.id);
+    detachOwnedMark(highlight.id, attachedCfi, remaining);
     setExpandedThread((prev) => (prev?.highlightId === highlight.id ? null : prev));
   }
 
@@ -593,18 +688,22 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   return (
     <div className={styles.wrapper}>
       <div className={styles.topRow}>
-        <button
-          type="button"
-          className={styles.annotationsButton}
-          onClick={() => setShowAnnotations((prev) => !prev)}
-        >
-          Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
-          {unanchoredIds.size > 0 && (
-            <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
-              {unanchoredIds.size}
-            </span>
-          )}
-        </button>
+        {focusMode ? (
+          <span className={styles.focusIndicator}>Notes hidden — press F to show</span>
+        ) : (
+          <button
+            type="button"
+            className={styles.annotationsButton}
+            onClick={() => setShowAnnotations((prev) => !prev)}
+          >
+            Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
+            {unanchoredIds.size > 0 && (
+              <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
+                {unanchoredIds.size}
+              </span>
+            )}
+          </button>
+        )}
         <div className={styles.progress}>
           {progressPercent !== null ? `${progressPercent}%` : ""}
         </div>
@@ -665,14 +764,16 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
             )}
           </AnimatePresence>
         </div>
-        <MarginRail
-          highlights={highlights}
-          currentSpineIndex={currentSpineIndex}
-          unanchoredIds={unanchoredIds}
-          onNavigate={handleNavigateToHighlight}
-          onDelete={handleDeleteHighlight}
-          onOpenThread={handleOpenThread}
-        />
+        {!focusMode && (
+          <MarginRail
+            highlights={highlights}
+            currentSpineIndex={currentSpineIndex}
+            unanchoredIds={unanchoredIds}
+            onNavigate={handleNavigateToHighlight}
+            onDelete={handleDeleteHighlight}
+            onOpenThread={handleOpenThread}
+          />
+        )}
       </div>
 
       <div className={styles.footer}>
