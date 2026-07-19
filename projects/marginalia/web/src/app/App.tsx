@@ -6,8 +6,8 @@ import styles from "./App.module.css";
 // Code-split per room: epub.js (the reader's biggest dependency) only loads
 // when the user actually navigates to /read/:id, instead of bloating the
 // single entry chunk every route paid for before this split.
-const LibraryPage = lazy(() =>
-  import("../library/LibraryPage.js").then((m) => ({ default: m.LibraryPage })),
+const DeskPage = lazy(() =>
+  import("../desk/DeskPage.js").then((m) => ({ default: m.DeskPage })),
 );
 const ReaderPage = lazy(() =>
   import("../reader/ReaderPage.js").then((m) => ({ default: m.ReaderPage })),
@@ -71,7 +71,7 @@ export function App() {
       <main className={styles.main}>
         <Suspense fallback={<div className={styles.routeFallback} />}>
           <Routes>
-            <Route path="/" element={<LibraryPage />} />
+            <Route path="/" element={<DeskPage />} />
             <Route path="/read/:id" element={<ReaderPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>

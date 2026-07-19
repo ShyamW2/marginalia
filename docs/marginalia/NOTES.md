@@ -5,6 +5,26 @@ Append; don't rewrite history.
 
 ## Spec gaps
 
+- **2026-07-19 (M8):** DESIGN.md's desk hover strip lists "progress" among
+  the fields it shows. Real reading-progress percent only exists client-side
+  (epub.js's `book.locations.generate()`, computed against a CFI) — and the
+  whole point of the desk/reader split is that epub.js never loads outside
+  the reader (DESIGN.md "Technical foundations": "epub.js loads only in the
+  reader"). Showing "progress" on the desk would mean either loading
+  epub.js for every book on the shelf (defeats the code-split) or adding a
+  server-side percent (which M9 does, but only for *highlight* positions,
+  not overall reading position — there's no reading-position-to-percent
+  story at all yet). Boring choice: the hover strip shows a relative
+  "read Nd ago" from `reading_state.updated_at` instead of a percent.
+  Revisit if/when reading position itself grows a stored percent.
+- **2026-07-19 (M8):** DESIGN.md's cursor system calls for "custom cursors
+  per room" (e.g. "a hand/grab on the desk"). Built as CSS `cursor:
+  grab`/`grabbing` (the browser's built-in affordance cursors), not bespoke
+  cursor artwork — DESIGN.md doesn't specify actual imagery, and drawing/
+  licensing custom cursor assets is real scope beyond "boring core,
+  expressive surface" for M8. The `cursorStyle` setting still does its job
+  (grab/grabbing vs. plain `pointer`); swap in real art later without
+  touching the setting's shape.
 - **2026-07-11 (M0):** SPEC calls for Node 22+, but the dev machine has Node
   20.19.4 (homebrew `node@20`), and `corepack prepare pnpm@latest` fails on it
   (`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING` — pnpm 11 requires a newer Node).
@@ -690,3 +710,73 @@ build` clean.
 **Next task: the "quick wins" checklist item still open at the top of M6 in
 TASKS.md (Anthropic per-model context size, trimming SSE error bodies,
 UNIQUE(highlight_id) race), then M7 — beauty & revisit pass.**
+
+## M8 — the Desk
+
+Built the freeform bookshelf workspace: additive migration (`shelf_state`,
+`notepad`), a shared `useLibrary` data hook so the new Desk/List toggle
+doesn't fork the fetch/upload/publish pipeline, draggable `BookObject`s
+(spring lift/settle, hover info strip, scroll-to-open "crown" gesture),
+the desk notepad (autosave, publish-through-the-vault-compiler with its
+own content-hash ledger so republish is a no-op on unchanged text), and
+ambient physics (cursor-parallax tilt on the whole surface, a canvas
+ink-trail overlay) gated behind both a Settings toggle and
+`prefers-reduced-motion`.
+
+**Bug caught live, not hypothetical:** the hover info strip is a DOM child
+of its book's own `motion.div`, which has its own `z-index` (the drag
+"bring to front" stacking order). A screenshot taken mid-verification
+showed a hovered book's info strip painting *underneath* a neighboring book
+with a higher `zOrder` — `z-index` on a child only wins within its parent's
+own stacking context, not globally. Fixed by lifting the hovered book's own
+`z-index` to a very high sentinel while `isHovering` is true (which also
+reads as the natural "hover raises the book" cue DESIGN.md asks for), not
+just the strip's. Verified after the fix: hovered each of three
+deliberately-overlapping books and confirmed via
+`document.elementFromPoint` that the strip is the actual topmost element at
+its own center, for all three.
+
+### Verification method
+
+Real `pnpm dev` (Vite + server) driven by Playwright (ad hoc into the
+scratchpad, as in M6/M7 — not a project dependency), headless Chromium,
+against the real fixtures already in the library:
+- Dragged a book, reloaded, confirmed the new position persisted
+  (`x` displacement check on the reloaded bounding box) — not simulated,
+  a real `PUT /api/resources/:id/shelf` round-trip.
+- Toggled List ⇄ Desk repeatedly; List view renders the original accessible
+  grid unchanged (real `<a href="/read/:id">` links, unaffected by the
+  Desk refactor).
+- Hovered each book: info strip shows title/author/last-read/thread+
+  highlight counts and a working Publish action (see z-index bug above).
+- Scroll-to-open: wheel events while hovering a book accumulate and commit
+  to `navigate(/read/:id)` past the threshold — confirmed by watching the
+  URL actually change.
+- Notepad: typed content, watched the autosave debounce land ("Saved"
+  status), then published for real against the live `claude-agent`
+  subscription provider (no mocking) with a scratch vault path — produced
+  `Notes/Desk Notepad.md` plus three real extracted concept notes, all
+  wikilinks resolving. Re-verified the ledger is content-hash keyed (not
+  thread-keyed) by reading `notepad/store.test.ts`'s dedicated coverage.
+- Cursor trail: confirmed the canvas element exists and paints on real
+  `pointermove` events (screenshot); confirmed it's entirely absent when
+  `reducedMotion: "reduce"` is set at the browser level.
+- Reduced motion: drag is disabled (`drag={!reducedMotion}`), so a plain
+  click still opens the reader via `onTap`; parallax pointer handlers are
+  no-ops when disabled (tilt pinned at 0 by construction, not just visually
+  near-zero).
+- Settings: toggled cursor style to "System" and trail off, saved, reloaded
+  the page, confirmed both choices came back from the server (not just
+  local state) — then restored the defaults.
+- Left the shared dev server's actual `vaultPath` setting and notepad
+  content exactly as found (cleared both back to empty after testing) so
+  this session's manual verification doesn't leak into the running app's
+  real state.
+
+95/95 tests (`shared` 4, `server` 74 — new: `notepad/store.test.ts`,
+`publishNotepad` cases in `compiler.test.ts` — `web` 17 unchanged since the
+Desk isn't yet covered by an automated browser test, only manual/Playwright
+verification above), `tsc -b` + `vite build` clean, code-split
+(`DeskPage` is its own lazy chunk, same as the old `LibraryPage` was).
+
+**Next task: M9 — the Scan (timeline & heat map).**

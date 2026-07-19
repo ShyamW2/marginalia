@@ -1,0 +1,110 @@
+.book {
+  position: absolute;
+  width: 168px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.book.grabbing {
+  cursor: grabbing;
+}
+
+.book.systemCursor {
+  cursor: pointer;
+}
+
+.book.systemCursor.grabbing {
+  cursor: pointer;
+}
+
+.coverWrap {
+  position: relative;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(40, 30, 15, 0.18);
+  transition: box-shadow var(--duration-standard) var(--ease-standard);
+}
+
+.lifted {
+  box-shadow: 0 18px 34px rgba(20, 14, 6, 0.32);
+}
+
+.threadBadge {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.4rem;
+  min-width: 1.3rem;
+  height: 1.3rem;
+  padding: 0 0.3rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-size: 0.7rem;
+  font-weight: 600;
+  box-shadow: var(--shadow-panel);
+  pointer-events: none;
+}
+
+.crownRing {
+  position: absolute;
+  inset: -6px;
+  border-radius: 10px;
+  border: 2px solid var(--color-accent);
+  pointer-events: none;
+}
+
+.infoStrip {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 220px;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  box-shadow: var(--shadow-panel);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  z-index: 10000;
+  pointer-events: auto;
+}
+
+.infoTitle {
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  color: var(--color-text);
+  margin-bottom: 0.15rem;
+}
+
+.infoMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+}
+
+.infoActions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.infoAction {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.infoAction:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}

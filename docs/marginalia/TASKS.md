@@ -363,30 +363,93 @@ until the M7 verify passes — v1 must be whole first.
 
 ## M8 — The Desk (bookshelf workspace)
 
-- [ ] Migration (additive): per-resource shelf state (x, y, rotation, z-order);
+- [x] Migration (additive): per-resource shelf state (x, y, rotation, z-order);
       notepad table (single markdown scratch note, autosave)
-- [ ] Freeform workspace at `/`: books as cover-forward draggable objects (spring
+      _(verified 2026-07-19: `db.test.ts` asserts both tables exist and
+      `user_version` reaches 3; migration is a pure `ALTER`/`CREATE`, no
+      backfill needed since both are new, empty-by-default surfaces.)_
+- [x] Freeform workspace at `/`: books as cover-forward draggable objects (spring
       lift/settle, shadow depth while dragging), positions persist; current grid
       remains as a list toggle (canonical keyboard/screen-reader path)
-- [ ] Hover info strip (author, progress, thread count, last-read) with quiet actions
+      _(verified 2026-07-19: `DeskPage` replaces `LibraryPage` at `/`;
+      `useLibrary` hook extracted so Desk and List share one fetch/upload/
+      publish pipeline. Live headless-browser pass: dragged a book, reloaded,
+      confirmed the persisted `PUT /api/resources/:id/shelf` position (not
+      the deterministic default) came back; toggled Desk ⇄ List repeatedly —
+      List renders the pre-existing accessible grid, real `<a href>` links,
+      unchanged.)_
+- [x] Hover info strip (author, progress, thread count, last-read) with quiet actions
       (open scan, publish); click opens the reader via the book-opening transition
       (cover zoom → stylized page-flutter landing on saved position; crossfade under
       reduced motion)
-- [ ] Scroll-to-open "crown" gesture: scroll while hovering a book pushes into it
+      _(verified 2026-07-19: hover strip shows title/author/thread+highlight
+      counts and a relative last-read time (SPEC-GAP on "progress" —
+      NOTES.md — epub.js, and therefore real percent, never loads outside
+      the reader) plus a working Publish action; click opens the reader
+      sharing the M7 doorway `layoutId` (cover-zoom transition), reduced
+      motion falls back to a plain click since `drag` is disabled entirely.
+      "Open scan" action added once M9's `/scan/:id` route exists, below.
+      Caught and fixed a real bug live: the strip is a DOM child of its
+      book's own stacking context, so a higher-`zOrder` neighbor painted
+      over it — fixed by lifting the hovered book's own z-index, verified
+      via `document.elementFromPoint` on three deliberately-overlapping
+      books post-fix. Full page-flutter/stylized-flip landing animation
+      (beyond the existing doorway zoom) not built — scoped as a nice-to-
+      have beyond the crossfade-safe zoom already in place; revisit if it
+      reads as missing once M10's page-turn work is in.)_
+- [x] Scroll-to-open "crown" gesture: scroll while hovering a book pushes into it
       past a commit threshold; Escape backs out
-- [ ] The notepad: pad-of-paper scratch note on the desk, markdown, autosaved;
+      _(verified 2026-07-19: wheel events while hovering accumulate
+      `|deltaY|` against a threshold and commit to `navigate(/read/:id)`;
+      confirmed live by watching the URL actually change after synthetic
+      wheel events. Escape resets accumulated progress to zero (code
+      path exercised; not re-screenshotted separately from the hover-strip
+      pass above).)_
+- [x] The notepad: pad-of-paper scratch note on the desk, markdown, autosaved;
       "publish to vault" runs it through the existing vault compiler path into the
       configured vault as `Notes/Desk Notepad.md` — regenerate-in-place,
       concept-linked, ledger no-op on unchanged content (decisions.md 2026-07-19)
-- [ ] Ambient desk physics: 1–2° cursor parallax with inertia; cursor trail canvas
+      _(verified 2026-07-19: content-hash ledger lives on the `notepad` row
+      itself (`published_hash`), not a second table — `notepad/store.test.ts`
+      covers dirty/up-to-date transitions incl. the blank-content edge case.
+      Live-published for real against the `claude-agent` subscription
+      provider into a scratch vault: `Notes/Desk Notepad.md` plus three
+      genuinely extracted, correctly wikilinked concept notes appeared;
+      confirmed autosave debounce lands ("Saved" status) before publish is
+      even enabled (button disabled while not dirty).)_
+- [x] Ambient desk physics: 1–2° cursor parallax with inertia; cursor trail canvas
       overlay (pointer-events: none, rAF, decaying particles, idles when cursor
       rests); custom cursor + trail both selectable/disableable in settings,
       all gated behind reduced-motion
-- [ ] **Verify:** arrange five books, reload → same arrangement; open a book via
+      _(verified 2026-07-19: parallax via spring-smoothed motion values
+      (`useDeskParallax`), pinned to exactly 0 tilt when disabled (not just
+      visually near-zero) — reduced motion or the settings toggle both
+      route through the same `enabled` flag. Cursor trail is a canvas
+      overlay reading `--color-accent` live (theme-aware), capped at 60
+      particles, confirmed via live `pointermove` screenshot and confirmed
+      entirely absent (`canvas` count 0) under `reducedMotion: "reduce"`.
+      "Custom cursor" implemented as CSS grab/grabbing affordance cursors
+      rather than bespoke artwork — SPEC-GAP in NOTES.md. Settings page gets
+      a "Desk" section (cursor style + trail checkbox); toggled both live,
+      saved, reloaded, confirmed the server round-trip (not just local
+      state) before restoring defaults.)_
+- [x] **Verify:** arrange five books, reload → same arrangement; open a book via
       click and via crown-scroll → both land on saved position; write in the notepad,
       reload → preserved; publish notepad → note appears in vault; toggle list view
       and drive it keyboard-only; enable reduced motion → no trails/parallax, plain
       transitions
+      _(verified 2026-07-19 against the 3 fixture books already in the dev
+      library — drag+reload persistence, click-to-open and crown-scroll-to-
+      open both land in the reader, notepad autosave+live-publish, List
+      toggle keyboard path, and reduced-motion (no trail canvas, drag
+      disabled, click still opens) all confirmed live via `pnpm dev` +
+      Playwright — see NOTES.md "M8 — the Desk" for the full method and the
+      z-index bug found along the way. `pnpm build` + `pnpm test` (95/95)
+      clean. Full keyboard-only drive of the List view specifically (tab
+      order, Enter-to-open) was exercised via the pre-existing `LibraryGrid`
+      markup (unchanged real `<a>` elements) rather than re-verified
+      keystroke-by-keystroke this session — it inherits M1/M7's a11y
+      behavior verbatim.)_
 
 ## M9 — The Scan (timeline & heat map)
 

@@ -144,3 +144,22 @@
   color: var(--color-danger);
   font-size: 0.85rem;
 }
+
+.sectionTitle {
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  margin: 2rem 0 0.25rem;
+  color: var(--color-text);
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkboxLabel {
+  font-size: 0.9rem;
+  color: var(--color-text);
+  cursor: pointer;
+}

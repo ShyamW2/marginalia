@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { LLMProviderId, Settings, SettingsUpdate } from "@marginalia/shared";
+import type { CursorStyleChoice, LLMProviderId, Settings, SettingsUpdate } from "@marginalia/shared";
 import styles from "./SettingsPage.module.css";
 
 const BASE_URL_PRESETS = [
@@ -263,6 +263,46 @@ export function SettingsPage() {
           </div>
         </>
       )}
+
+      <h2 className={styles.sectionTitle}>Desk</h2>
+      <div className={styles.field}>
+        <label className={styles.label}>Cursor</label>
+        <div className={styles.providerToggle} role="group" aria-label="Cursor style">
+          {(
+            [
+              { value: "custom", label: "Custom (grab/grabbing)" },
+              { value: "system", label: "System" },
+            ] satisfies { value: CursorStyleChoice; label: string }[]
+          ).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={
+                form.cursorStyle === option.value
+                  ? `${styles.providerButton} ${styles.providerButtonActive}`
+                  : styles.providerButton
+              }
+              aria-pressed={form.cursorStyle === option.value}
+              onClick={() => update("cursorStyle", option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className={styles.field}>
+        <div className={styles.checkboxRow}>
+          <input
+            id="cursor-trail"
+            type="checkbox"
+            checked={form.cursorTrailEnabled}
+            onChange={(e) => update("cursorTrailEnabled", e.target.checked)}
+          />
+          <label className={styles.checkboxLabel} htmlFor="cursor-trail">
+            Ink trail on the desk
+          </label>
+        </div>
+      </div>
 
       <div className={styles.field}>
         <label className={styles.label} htmlFor="vault-path">
