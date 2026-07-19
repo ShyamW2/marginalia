@@ -308,10 +308,26 @@ starting any milestone from here on.
       went wrong... Retry" with zero messages persisted, confirmed via the
       API; publishing with vault path unset shows "Set a vault path in
       Settings first." as a dismissible toast. 81/81 tests, build clean.)_
-- [ ] **Verify:** full walkthrough (import → read → highlight → ask → follow-up →
+- [x] **Verify:** full walkthrough (import → read → highlight → ask → follow-up →
       publish → open vault in Obsidian) in both themes; create one highlight of each
       of the four kinds and confirm the washes read clearly on paper and ink; fix
       anything that feels rough before calling v1 done
+      _(verified 2026-07-19: ran the whole loop live against a real local
+      Ollama endpoint on Metamorphosis — one highlight of each kind, a real
+      streamed answer, a follow-up, then publish. Found and fixed a real bug
+      along the way (not hypothetical — reproduced by this session's own two
+      different scratch vaults): the `publishes` ledger has no vault-path
+      column, so publishing after the vault path setting changes silently
+      skipped already-ledgered threads while `_Book.md` kept linking to
+      notes that only existed in the old vault. Fixed in
+      `vault/compiler.ts` (idempotency and the book-overview note list now
+      both require the file to actually exist at the *current* vault path,
+      not just a ledger row) with a regression test. All four highlight
+      kinds' washes confirmed visually distinct from each other and from
+      their rail dots in both Paper and Ink via screenshot. Obsidian isn't
+      installed here (same substitute as M6): every vault file checked
+      well-formed with fully-resolving wikilinks instead of an actual open.
+      82/82 tests, build clean. v1 is whole — see NOTES.md for full detail.)_
 
 ## Checkpoint — live provider verification (manual; NOT a Sonnet task)
 

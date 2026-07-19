@@ -242,6 +242,49 @@ describe("publishResource", () => {
     expect(note).not.toContain("[[Cultural/Societal Expectations]]");
   });
 
+  it("re-publishes into a new vault path even though the ledger already has a row", async () => {
+    seedResource(db, "res-1", "Metamorphosis");
+    seedHighlight(db, "h-1", "res-1", "passage one");
+    seedAnsweredThread(db, "t-1", "h-1");
+
+    const provider = new FakeProvider([
+      { title: "First Note", summary: "Summary one.", concepts: [] },
+    ]);
+    await publishResource(db, provider, "res-1", vaultPath);
+    expect(
+      fs.existsSync(path.join(vaultPath, "Readings", "Metamorphosis", "01 - first-note.md")),
+    ).toBe(true);
+
+    // Same ledger (same db), but a *different* vault directory — as if the
+    // user changed the vault path setting (moved vaults, pointed at a fresh
+    // one, etc). The old note doesn't exist here even though a `publishes`
+    // row for this thread does.
+    const newVaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "marginalia-vault-new-"));
+    try {
+      const provider2 = new FakeProvider([
+        { title: "First Note", summary: "Summary one.", concepts: [] },
+      ]);
+      const result = await publishResource(db, provider2, "res-1", newVaultPath);
+
+      // Must actually re-extract and write into the new vault, not silently
+      // no-op because the ledger thinks it's already published.
+      expect(result).toEqual({ notes: 1, conceptsCreated: 0, conceptsLinked: 0 });
+      expect(
+        fs.existsSync(path.join(newVaultPath, "Readings", "Metamorphosis", "01 - first-note.md")),
+      ).toBe(true);
+
+      // The book overview in the new vault must only link notes that
+      // actually exist there — never a phantom link to the old vault's note.
+      const overview = fs.readFileSync(
+        path.join(newVaultPath, "Readings", "Metamorphosis", "_Book.md"),
+        "utf8",
+      );
+      expect(overview).toContain("01 - first-note");
+    } finally {
+      fs.rmSync(newVaultPath, { recursive: true, force: true });
+    }
+  });
+
   it("links threads from a second book to the same concept note as the first", async () => {
     seedResource(db, "res-1", "Book One");
     seedHighlight(db, "h-1", "res-1", "passage one");

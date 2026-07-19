@@ -157,12 +157,22 @@ Sources: ${resource.title} by ${author}
 `;
 }
 
+/** A note the ledger remembers publishing, but that isn't actually on disk
+ * at this vault path — e.g. the vault path setting changed since the ledger
+ * row was written. Filtering these out keeps _Book.md from linking to files
+ * that don't exist. */
+function existsInVault(vaultPath: string, notePath: string): boolean {
+  return fs.existsSync(path.join(path.resolve(vaultPath), notePath));
+}
+
 function writeBookOverview(
   db: Database.Database,
   vaultPath: string,
   resource: Resource,
 ): void {
-  const notes = listPublishedNotesForResource(db, resource.id);
+  const notes = listPublishedNotesForResource(db, resource.id).filter((n) =>
+    existsInVault(vaultPath, n.notePath),
+  );
   if (notes.length === 0) return;
 
   const author = resource.author ?? "Unknown";
@@ -191,7 +201,8 @@ ${noteLines}
  * Compiles every not-yet-published thread of a resource into the vault
  * (SPEC vault/compiler.ts). "Up to date" has no cheap staleness signal
  * beyond a publishes row existing — the ledger has no message-count/version
- * column — so a thread with a row is treated as up to date and never
+ * column — so a thread with a row (and whose note is still actually present
+ * at this vault path — see existsInVault) is treated as up to date and never
  * re-extracted. Re-running extract() unconditionally on identical input
  * isn't guaranteed byte-identical (LLM output varies run to run), which
  * would break the "publish again -> no changes" idempotency contract; the
@@ -224,7 +235,12 @@ export async function publishResource(
     const highlight = answeredHighlights[i];
     const threadId = highlight.thread.id;
 
-    if (getPublishRecord(db, threadId)) continue;
+    // A ledger row alone isn't enough — if the vault path changed since this
+    // thread was published (a different vault, or the same vault re-created
+    // elsewhere), the note it points at may no longer exist. Re-publish in
+    // that case rather than silently leaving the new vault without it.
+    const existingRecord = getPublishRecord(db, threadId);
+    if (existingRecord && existsInVault(vaultPath, existingRecord.notePath)) continue;
 
     const nn = String(i + 1).padStart(2, "0");
     const messages = listMessagesForThread(db, threadId);

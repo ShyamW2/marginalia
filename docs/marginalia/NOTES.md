@@ -248,6 +248,69 @@ being reused as living verification data by prior sessions.
 **Next task:** the M7 final Verify step (full walkthrough, both themes, all
 four highlight kinds) — the last item before v1 is whole.
 
+## M7 — final verify: found and fixed a real vault-path bug — 2026-07-19 (Fable)
+
+Ran the full walkthrough live against real services, not a dry read of the
+code: opened Metamorphosis (already in the library from M1), created one
+highlight of each kind (rose/sage/honey via the pill's kind dots, slate via
+Ask), asked a real question through the actual local Ollama endpoint,
+watched it stream token-by-token, asked a follow-up, then published to a
+scratch Obsidian vault.
+
+**Found a real bug this way, not by reasoning about the code abstractly:**
+the scratch vault's `_Book.md` linked to three reading notes
+(`01 -`, `02 -`, `03 -`) that didn't exist anywhere in that vault — only the
+fourth note (the one from *this* session) was actually on disk. Root cause:
+Metamorphosis had 3 threads published during M6's live verification
+(2026-07-17) into a *different* scratch vault that no longer exists on this
+machine — but the `publishes` ledger (sqlite, permanent) has no `vault_path`
+column, so `publishResource`'s idempotency check
+(`server/src/vault/compiler.ts`) only ever asked "does a ledger row exist for
+this thread?", never "does the file the row points at actually exist at
+*this* vault path?". Any user who ever changes their vault path setting
+(moves vaults, points at a fresh one) would hit this: publishing again
+silently skips every previously-published thread (ledger row exists) while
+`_Book.md` keeps linking to notes that live only in the old, now-irrelevant
+vault. This isn't a hypothetical — it's exactly what happened via two
+different session scratch directories in this environment, and would happen
+identically to a real user's real vault move.
+
+**Fix:** added `existsInVault(vaultPath, notePath)` and require *both* the
+ledger row *and* the file's actual presence at the current `vaultPath`
+before treating a thread as "up to date" (`compiler.ts`'s main loop); apply
+the same filter before building `_Book.md`'s note list, so it can never link
+to a file that isn't there. `recordPublish` was already an upsert
+(`ON CONFLICT(thread_id) DO UPDATE`), so re-publishing the same thread into
+a new vault needed no ledger-side change. Added a regression test
+(`compiler.test.ts`, "re-publishes into a new vault path even though the
+ledger already has a row") that publishes into one vault, then publishes the
+same resource/ledger into a second, empty vault directory and asserts the
+note actually gets (re-)written and `_Book.md` only lists notes present
+there. Verified live too: re-ran publish against the real scratch vault
+after the fix — all 3 missing notes reappeared, `_Book.md` now lists exactly
+the 4 notes that exist, and every wikilink across every reading note
+resolves to a real concept file (scripted check, not eyeballed).
+
+**Verify checklist:**
+- Full walkthrough (import → read → highlight → ask → follow-up → publish):
+  done live against a real local Ollama endpoint, not mocked.
+- Both themes: screenshotted the same four-highlight passage in Paper and
+  Ink; all four kind washes (rose/sage/honey/slate) are visually
+  distinguishable from each other and from the rail's matching dot colors
+  in both.
+- Open vault in Obsidian: Obsidian isn't installed in this environment (same
+  substitute as M6) — every note verified to be well-formed markdown with
+  valid frontmatter and fully-resolving wikilinks instead.
+- 82/82 tests, `pnpm build` clean.
+- Vault path setting reset back to empty afterward (was unset before this
+  session; the scratch path used for testing won't exist once this session
+  ends).
+
+**v1 is whole.** All of M0–M7 is checked off in TASKS.md. The only remaining
+item is the manual operator checkpoint (live provider verification against a
+real Anthropic key) between M7 and M8, which is explicitly not a Sonnet/
+implementation-session task per decisions.md 2026-07-19.
+
 ## Blockers
 
 _(none yet)_
