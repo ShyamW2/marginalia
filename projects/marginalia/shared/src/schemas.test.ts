@@ -17,6 +17,7 @@ describe("schemas smoke test", () => {
       importedAt: new Date().toISOString(),
       highlightCount: 0,
       threadCount: 0,
+      lastReadAt: null,
     });
     expect(result.success).toBe(true);
   });
