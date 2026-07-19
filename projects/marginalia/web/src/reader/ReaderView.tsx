@@ -17,6 +17,7 @@ import { markStyleForKind } from "./highlightKinds.js";
 import { AskPill } from "./AskPill.js";
 import { MarginRail } from "./MarginRail.js";
 import { ThreadPanel } from "../threads/ThreadPanel.js";
+import { AnnotationsOverview } from "./AnnotationsOverview.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -173,6 +174,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     top: number;
   } | null>(null);
   const [providerConfigured, setProviderConfigured] = useState(false);
+  const [showAnnotations, setShowAnnotations] = useState(false);
 
   useEffect(() => {
     highlightsRef.current = highlights;
@@ -570,6 +572,14 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     setExpandedThread({ highlightId: highlight.id, top: DEFAULT_THREAD_PANEL_TOP });
   }
 
+  /** Annotations overview "jump-to": same as clicking a margin-rail dot,
+   * plus closing the overview so the destination isn't obscured. */
+  function handleJumpToHighlight(highlight: HighlightWithThread) {
+    handleNavigateToHighlight(highlight);
+    handleOpenThread(highlight);
+    setShowAnnotations(false);
+  }
+
   function handleThreadChange(highlightId: string, thread: ThreadSummary) {
     setHighlights((prev) =>
       prev.map((h) => (h.id === highlightId ? { ...h, thread } : h)),
@@ -582,8 +592,22 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
 
   return (
     <div className={styles.wrapper}>
-      <div className={styles.progress}>
-        {progressPercent !== null ? `${progressPercent}%` : ""}
+      <div className={styles.topRow}>
+        <button
+          type="button"
+          className={styles.annotationsButton}
+          onClick={() => setShowAnnotations((prev) => !prev)}
+        >
+          Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
+          {unanchoredIds.size > 0 && (
+            <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
+              {unanchoredIds.size}
+            </span>
+          )}
+        </button>
+        <div className={styles.progress}>
+          {progressPercent !== null ? `${progressPercent}%` : ""}
+        </div>
       </div>
 
       <div className={styles.readerRow}>
@@ -625,6 +649,18 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
                 providerConfigured={providerConfigured}
                 onClose={() => setExpandedThread(null)}
                 onThreadChange={handleThreadChange}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {showAnnotations && (
+              <AnnotationsOverview
+                key="annotations-overview"
+                highlights={highlights}
+                unanchoredIds={unanchoredIds}
+                onJumpTo={handleJumpToHighlight}
+                onDelete={handleDeleteHighlight}
+                onClose={() => setShowAnnotations(false)}
               />
             )}
           </AnimatePresence>

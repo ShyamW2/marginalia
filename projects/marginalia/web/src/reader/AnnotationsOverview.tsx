@@ -1,0 +1,114 @@
+import { motion, useReducedMotion } from "motion/react";
+import type { HighlightWithThread } from "@marginalia/shared";
+import { KIND_LABELS } from "./highlightKinds.js";
+import styles from "./AnnotationsOverview.module.css";
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max).trim()}…` : text;
+}
+
+interface AnnotationsOverviewProps {
+  highlights: HighlightWithThread[];
+  unanchoredIds: Set<string>;
+  onJumpTo: (highlight: HighlightWithThread) => void;
+  onDelete: (highlight: HighlightWithThread) => void;
+  onClose: () => void;
+}
+
+/**
+ * Reader revisit affordance (M7, DESIGN.md): every thread in the book in
+ * one scrollable list, jump-to on click — the answer to "wait, where were
+ * all my questions again?" without hunting margin-rail dots one page at a
+ * time. Unanchored highlights (CFI + text-search both failed to relocate
+ * them) surface here too, clearly marked, since they can't be jumped to but
+ * still need to be findable — typically to just delete them.
+ */
+export function AnnotationsOverview({
+  highlights,
+  unanchoredIds,
+  onJumpTo,
+  onDelete,
+  onClose,
+}: AnnotationsOverviewProps) {
+  const reducedMotion = useReducedMotion();
+  const unanchoredCount = highlights.filter((h) => unanchoredIds.has(h.id)).length;
+
+  return (
+    <motion.div
+      className={styles.panel}
+      role="dialog"
+      aria-label="Annotations in this book"
+      initial={{ opacity: 0, x: reducedMotion ? 0 : -16 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: reducedMotion ? 0 : -12 }}
+      transition={
+        reducedMotion
+          ? { duration: 0.12 }
+          : { type: "spring", stiffness: 420, damping: 34 }
+      }
+    >
+      <div className={styles.header}>
+        <span className={styles.title}>
+          Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
+        </span>
+        <button type="button" className={styles.closeButton} aria-label="Close" onClick={onClose}>
+          ×
+        </button>
+      </div>
+
+      {unanchoredCount > 0 && (
+        <div className={styles.unanchoredNotice}>
+          {unanchoredCount} highlight{unanchoredCount === 1 ? "" : "s"} couldn't be
+          relocated in this text and can't be jumped to — delete or leave them.
+        </div>
+      )}
+
+      {highlights.length === 0 ? (
+        <div className={styles.empty}>No highlights yet in this book.</div>
+      ) : (
+        <ul className={styles.list}>
+          {highlights.map((highlight) => {
+            const unanchored = unanchoredIds.has(highlight.id);
+            const hasThread = highlight.thread !== null;
+            const hasAnswer = highlight.thread?.hasAnswer ?? false;
+            const status = unanchored
+              ? "Unanchored"
+              : hasAnswer
+                ? "Answered"
+                : hasThread
+                  ? "Awaiting answer"
+                  : KIND_LABELS[highlight.kind];
+
+            return (
+              <li key={highlight.id} className={styles.item}>
+                <button
+                  type="button"
+                  className={`${styles.entry} ${styles[highlight.kind]} ${
+                    unanchored ? styles.unanchored : ""
+                  }`}
+                  disabled={unanchored}
+                  onClick={() => onJumpTo(highlight)}
+                >
+                  <span className={styles.dot} aria-hidden="true" />
+                  <span className={styles.entryBody}>
+                    <span className={styles.quote}>&ldquo;{truncate(highlight.exact, 90)}&rdquo;</span>
+                    <span className={styles.status}>{status}</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.deleteButton}
+                  aria-label="Delete highlight"
+                  title="Delete highlight"
+                  onClick={() => onDelete(highlight)}
+                >
+                  ×
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </motion.div>
+  );
+}

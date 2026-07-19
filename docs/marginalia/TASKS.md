@@ -262,7 +262,7 @@ starting any milestone from here on.
       (proof of the motion system; plain crossfade under reduced motion)
 - [x] Library polish: covers extracted from EPUBs, annotated-book indicator (thread
       count), recently-read ordering
-- [ ] Reader revisit affordances: "annotations" overview (list of all threads in book,
+- [x] Reader revisit affordances: "annotations" overview (list of all threads in book,
       jump-to), unanchored-highlight surfacing
 - [ ] Reading focus mode: `f` toggles all marks/tabs/rail dots for a clean page;
       subtle "notes hidden" indicator; persists for the session
