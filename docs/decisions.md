@@ -3,6 +3,33 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-19 — Checkpoint executed: `claude-agent` subscription provider
+- **Subscription-first billing.** The operator wants Claude usage billed to
+  their Pro/Max subscription, not per-token API keys; API keys become the
+  fallback only if subscription limits are hit. This activates the deferred
+  `claudeAgent` provider from the 2026-07-17 provider-strategy entry.
+- **Implementation:** third `LLMProvider` — `claude-agent` (`llm/claudeAgent.ts`)
+  — via `@anthropic-ai/claude-agent-sdk`. `tools: []` (pure text/JSON — "LLM
+  proposes, code disposes" holds), `settingSources: []`, `maxTurns: 1` for
+  streams, native `outputFormat: json_schema` for extract, ANTHROPIC_API_KEY
+  stripped from the subprocess env so billing can't silently switch to the API.
+  Auth is the machine's Claude Code login (`claude /login` or
+  `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`) — no secret stored in
+  Marginalia. Default model `claude-sonnet-5` (subscription-friendly;
+  changeable in Settings, accepts any model id/alias incl. `[1m]` variants).
+- Thread history is rendered as a labeled transcript (the Agent SDK takes one
+  prompt string, not role-structured messages) — acceptable for short Q&A
+  threads; revisit only if follow-up fidelity suffers.
+- Settings GUI provider picker is now a three-way swap: Claude (subscription) /
+  Anthropic API key / OpenAI-compatible. Test-connection supports all three.
+- **Live-verified 2026-07-19** (stream + extract against real fixtures, zero
+  operator setup — existing Claude Code login was picked up). Bug caught live:
+  zod v4 `toJSONSchema` emits a 2020-12 `$schema` marker the CLI's draft-07
+  validator rejects — fixed with `{target: "draft-7"}` + marker strip,
+  regression-tested.
+- ChatGPT-subscription OAuth: still nothing to build (per 2026-07-17 — no
+  usable endpoint; would enter through `openaiCompat` if one appears).
+
 ## 2026-07-19 — Highlight kinds, user tags, and the M7→M8 checkpoint
 - **Highlight kinds (colors) land in M7.** Four semantic kinds chosen at capture time:
   **rose** = passage to revisit / general annotation; **sage** = definition of a new

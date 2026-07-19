@@ -335,12 +335,26 @@ Between M7 and M8. The operator connects real providers (Anthropic API key;
 optionally OpenRouter or another OpenAI-compatible endpoint) following instructions
 provided at the time; then a session verifies against the live APIs:
 
-- [ ] Streamed thread answer from the reader against real Anthropic
-- [ ] Second ask on the same book logs `cache_read_input_tokens > 0` (the M4 check
-      that couldn't run without a key)
-- [ ] One publish exercising `extract` (structured output) against real Anthropic
-- [ ] Any additional configured endpoint: stream + extract smoke test
-- [ ] Record results + date here
+- [x] Streamed thread answer against real Claude — via the new `claude-agent`
+      **subscription** provider (decisions.md 2026-07-19 checkpoint entry), not
+      an API key: operator chose subscription credits over per-token billing
+- [x] One `extract` (structured output) round-trip against real Claude —
+      live-verified via the subscription provider (caught + fixed a real bug:
+      zod v4's 2020-12 `$schema` marker rejected by the CLI's draft-07
+      validator)
+- [x] Additional configured endpoint: Ollama (openaiCompat) already
+      live-verified through M4–M6
+- [ ] ~~`cache_read_input_tokens > 0` on the Anthropic API-key path~~ —
+      **deliberately deferred**: no API key configured by choice; the Agent SDK
+      harness manages caching internally on the subscription path. Run this
+      check if/when the operator falls back to API-key billing after hitting
+      subscription limits
+- [x] Results recorded 2026-07-19: `claude-agent` provider built (Claude Agent
+      SDK, `tools: []`, subscription login inherited from the machine's Claude
+      Code auth), wired into the registry, `/api/settings/test`, and the
+      Settings GUI provider picker (three-way swap); 87/87 tests green, full
+      build clean; streaming + extract both verified live against the Alice /
+      Metamorphosis fixtures with zero operator setup
 
 ---
 

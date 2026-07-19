@@ -189,7 +189,11 @@ export type PublishResult = z.infer<typeof PublishResultSchema>;
 // Settings
 // ---------------------------------------------------------------------------
 
-export const LLMProviderIdSchema = z.enum(["anthropic", "openai-compatible"]);
+export const LLMProviderIdSchema = z.enum([
+  "anthropic",
+  "openai-compatible",
+  "claude-agent",
+]);
 export type LLMProviderId = z.infer<typeof LLMProviderIdSchema>;
 
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset. */
@@ -197,6 +201,7 @@ export const SettingsSchema = z.object({
   provider: LLMProviderIdSchema,
   anthropicModel: z.string(),
   anthropicApiKey: z.string(), // masked
+  claudeAgentModel: z.string(), // claude-agent provider: model id or alias (no key — uses local Claude Code login)
   openaiBaseUrl: z.string(),
   openaiModel: z.string(),
   openaiApiKey: z.string(), // masked

@@ -5,6 +5,7 @@ const DEFAULTS = {
   provider: "anthropic" as LLMProviderId,
   anthropic_model: "claude-opus-4-8",
   anthropic_api_key: "",
+  claude_agent_model: "claude-sonnet-5",
   openai_base_url: "",
   openai_model: "",
   openai_api_key: "",
@@ -18,6 +19,7 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   provider: "provider",
   anthropic_model: "anthropicModel",
   anthropic_api_key: "anthropicApiKey",
+  claude_agent_model: "claudeAgentModel",
   openai_base_url: "openaiBaseUrl",
   openai_model: "openaiModel",
   openai_api_key: "openaiApiKey",
@@ -46,6 +48,7 @@ export function getRawSettings(db: Database.Database): {
   provider: LLMProviderId;
   anthropicModel: string;
   anthropicApiKey: string;
+  claudeAgentModel: string;
   openaiBaseUrl: string;
   openaiModel: string;
   openaiApiKey: string;
@@ -57,6 +60,7 @@ export function getRawSettings(db: Database.Database): {
     provider: raw.provider as LLMProviderId,
     anthropicModel: raw.anthropic_model,
     anthropicApiKey: raw.anthropic_api_key,
+    claudeAgentModel: raw.claude_agent_model,
     openaiBaseUrl: raw.openai_base_url,
     openaiModel: raw.openai_model,
     openaiApiKey: raw.openai_api_key,

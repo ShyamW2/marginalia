@@ -3,6 +3,7 @@ import { SettingsUpdateSchema } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { getRawSettings, getSettings, updateSettings } from "../settings/store.js";
 import { AnthropicProvider } from "../llm/anthropic.js";
+import { ClaudeAgentProvider } from "../llm/claudeAgent.js";
 import { OpenAICompatProvider } from "../llm/openaiCompat.js";
 import { LLMError, type LLMProvider } from "../llm/provider.js";
 
@@ -46,6 +47,8 @@ settingsRouter.post("/test", async (req, res) => {
       return;
     }
     provider = new AnthropicProvider(candidate.anthropicApiKey, candidate.anthropicModel);
+  } else if (candidate.provider === "claude-agent") {
+    provider = new ClaudeAgentProvider(candidate.claudeAgentModel);
   } else if (candidate.provider === "openai-compatible") {
     if (!candidate.openaiBaseUrl || !candidate.openaiModel) {
       res.json({ ok: false, error: "Base URL and model are required." });

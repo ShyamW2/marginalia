@@ -8,6 +8,7 @@ import type { z } from "zod/v4";
 import type Database from "better-sqlite3";
 import { getRawSettings } from "../settings/store.js";
 import { AnthropicProvider } from "./anthropic.js";
+import { ClaudeAgentProvider } from "./claudeAgent.js";
 import { OpenAICompatProvider } from "./openaiCompat.js";
 
 export type LLMErrorCode =
@@ -45,7 +46,7 @@ export interface LLMExtractRequest<T> {
 }
 
 export interface LLMProvider {
-  readonly id: "anthropic" | "openai-compatible";
+  readonly id: "anthropic" | "openai-compatible" | "claude-agent";
   capabilities(): { contextTokens: number; supportsCaching: boolean };
   stream(req: LLMStreamRequest): AsyncIterable<{ text: string }>;
   extract<T>(req: LLMExtractRequest<T>): Promise<T>;
@@ -62,6 +63,12 @@ export function getProvider(db: Database.Database): LLMProvider | null {
   if (settings.provider === "anthropic") {
     if (!settings.anthropicApiKey) return null;
     return new AnthropicProvider(settings.anthropicApiKey, settings.anthropicModel);
+  }
+
+  if (settings.provider === "claude-agent") {
+    // No key needed — the Agent SDK uses the machine's Claude Code login.
+    // A missing/expired login surfaces as an LLMError("auth") at call time.
+    return new ClaudeAgentProvider(settings.claudeAgentModel);
   }
 
   if (settings.provider === "openai-compatible") {

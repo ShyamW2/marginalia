@@ -95,6 +95,7 @@ export function SettingsPage() {
   }
 
   const isAnthropic = form.provider === "anthropic";
+  const isClaudeAgent = form.provider === "claude-agent";
 
   return (
     <div className={styles.page}>
@@ -110,7 +111,8 @@ export function SettingsPage() {
         <div className={styles.providerToggle} role="group" aria-label="Provider">
           {(
             [
-              { value: "anthropic", label: "Anthropic" },
+              { value: "claude-agent", label: "Claude (subscription)" },
+              { value: "anthropic", label: "Anthropic API key" },
               { value: "openai-compatible", label: "OpenAI-compatible" },
             ] satisfies { value: LLMProviderId; label: string }[]
           ).map((option) => (
@@ -131,7 +133,29 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {isAnthropic ? (
+      {isClaudeAgent ? (
+        <>
+          <p className={styles.hint}>
+            Uses your Claude Pro/Max subscription via the local Claude Code
+            login — no API key, no per-token billing. Sign in once with{" "}
+            <code>claude /login</code> in a terminal (or set a long-lived token
+            with <code>claude setup-token</code>), then test the connection.
+          </p>
+          <div className={styles.field}>
+            <label className={styles.label} htmlFor="claude-agent-model">
+              Model
+            </label>
+            <input
+              id="claude-agent-model"
+              className={styles.input}
+              type="text"
+              value={form.claudeAgentModel}
+              placeholder="claude-sonnet-5"
+              onChange={(e) => update("claudeAgentModel", e.target.value)}
+            />
+          </div>
+        </>
+      ) : isAnthropic ? (
         <>
           <div className={styles.field}>
             <label className={styles.label} htmlFor="anthropic-model">

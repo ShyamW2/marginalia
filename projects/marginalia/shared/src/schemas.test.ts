@@ -51,6 +51,7 @@ describe("schemas smoke test", () => {
       provider: "anthropic",
       anthropicModel: "claude-opus-4-8",
       anthropicApiKey: "***",
+      claudeAgentModel: "claude-sonnet-5",
       openaiBaseUrl: "",
       openaiModel: "",
       openaiApiKey: "",
