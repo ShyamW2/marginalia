@@ -12,7 +12,6 @@
   box-shadow: var(--shadow-panel);
   z-index: 10;
   overflow: hidden;
-  animation: slideIn var(--duration-standard) var(--ease-standard);
 }
 
 /* The highlight's kind tints the panel's spine — a folded sticky note's
@@ -28,23 +27,6 @@
 }
 .slate {
   --spine-kind: var(--kind-slate);
-}
-
-@keyframes slideIn {
-  from {
-    opacity: 0;
-    transform: translateX(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .panel {
-    animation: none;
-  }
 }
 
 .header {

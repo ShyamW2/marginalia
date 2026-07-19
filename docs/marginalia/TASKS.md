@@ -254,13 +254,13 @@ starting any milestone from here on.
       slate); marks, rail dots, and thread-panel spine tinted by kind — muted
       theme-aware washes per DESIGN.md reference hues, contrast-checked in both
       themes
-- [ ] Adopt `motion` (framer-motion successor); code-split routes with `React.lazy`
+- [x] Adopt `motion` (framer-motion successor); code-split routes with `React.lazy`
       (epub.js loads only in the reader; kills the 552KB single-chunk build warning)
-- [ ] Motion pass: panel open/close, pill appearance, page-turn feel (150–200ms
+- [x] Motion pass: panel open/close, pill appearance, page-turn feel (150–200ms
       ease-out, no jank); transitions interruptible, `transform`/`opacity` only
-- [ ] First doorway transition: library card → reader as a shared-element zoom
+- [x] First doorway transition: library card → reader as a shared-element zoom
       (proof of the motion system; plain crossfade under reduced motion)
-- [ ] Library polish: covers extracted from EPUBs, annotated-book indicator (thread
+- [x] Library polish: covers extracted from EPUBs, annotated-book indicator (thread
       count), recently-read ordering
 - [ ] Reader revisit affordances: "annotations" overview (list of all threads in book,
       jump-to), unanchored-highlight surfacing

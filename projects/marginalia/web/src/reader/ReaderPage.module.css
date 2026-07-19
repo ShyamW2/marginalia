@@ -17,11 +17,22 @@
 .titleBar {
   position: relative;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
   gap: 0.6rem;
   padding: 0.6rem 1rem 0;
   font-family: var(--font-serif);
+}
+
+.coverThumb {
+  width: 1.35rem;
+  flex-shrink: 0;
+}
+
+.coverThumb img,
+.coverThumb > div {
+  display: block;
+  border-radius: 3px;
 }
 
 .title {

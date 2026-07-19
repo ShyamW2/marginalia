@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ePub from "epubjs";
 import type { Book, Contents, Location, Rendition } from "epubjs";
+import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "motion/react";
 import type {
   CreateHighlightBody,
   HighlightKind,
@@ -137,6 +138,12 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   // clean — deleting must remove the mark at whichever CFI is really there.
   const attachedCfiRef = useRef<Map<string, string>>(new Map());
   const themeVars = useEpubThemeVars();
+  const stageControls = useAnimationControls();
+  const stageReducedMotion = useReducedMotion();
+  // The book-loading effect's internal handlers (keydown, click-to-turn)
+  // close over `rendition` directly and don't re-run per-render, so they
+  // reach the current turnPage through this ref rather than a stale closure.
+  const turnPageRef = useRef<(direction: "prev" | "next") => void>(() => {});
   // The book-loading effect below is set up once per resourceId and
   // deliberately excludes themeVars from its deps (see the comment near its
   // end) — attachHighlightMark, defined inside that effect, reads the
@@ -374,16 +381,16 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
       const visibleX = iframeRect.left + event.clientX - containerRect.left;
 
       if (visibleX < containerRect.width * 0.3) {
-        rendition.prev();
+        turnPageRef.current("prev");
       } else if (visibleX > containerRect.width * 0.7) {
-        rendition.next();
+        turnPageRef.current("next");
       }
     }
     rendition.on("click", handleContentClick);
 
     function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "ArrowLeft") rendition.prev();
-      else if (event.key === "ArrowRight") rendition.next();
+      if (event.key === "ArrowLeft") turnPageRef.current("prev");
+      else if (event.key === "ArrowRight") turnPageRef.current("next");
       else if (event.key === "Escape") {
         setPendingSelection(null);
         setExpandedThread(null);
@@ -453,6 +460,42 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
       );
     }
   }, [themeVars]);
+
+  // Page-turn feel (DESIGN.md, interim for M7): a fast dip-and-recover on
+  // the page surface itself around the moment epub.js swaps content, so
+  // turning feels physical without faking real paper (that's M10). Plain
+  // instant turn under reduced motion.
+  const turnPage = useCallback(
+    async (direction: "prev" | "next") => {
+      const rendition = renditionRef.current;
+      if (!rendition) return;
+      if (stageReducedMotion) {
+        if (direction === "prev") rendition.prev();
+        else rendition.next();
+        return;
+      }
+      const dx = direction === "next" ? -6 : 6;
+      await stageControls.start({
+        opacity: 0.55,
+        x: dx,
+        transition: { duration: 0.09, ease: "easeOut" },
+      });
+      if (direction === "prev") rendition.prev();
+      else rendition.next();
+      await stageControls.start({
+        opacity: 1,
+        x: 0,
+        transition: { duration: 0.13, ease: "easeOut" },
+      });
+    },
+    [stageControls, stageReducedMotion],
+  );
+
+  useEffect(() => {
+    turnPageRef.current = (direction) => {
+      void turnPage(direction);
+    };
+  }, [turnPage]);
 
   /** Creates a highlight from the pending selection and attaches its mark;
    * shared by the pill's per-kind dots (no thread) and Ask (slate, opens
@@ -545,37 +588,46 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
 
       <div className={styles.readerRow}>
         <div className={styles.stage}>
-          <div ref={containerRef} className={styles.epubContainer} />
+          <motion.div
+            ref={containerRef}
+            className={styles.epubContainer}
+            animate={stageControls}
+          />
           {status === "loading" && (
             <div className={styles.overlay}>Loading book…</div>
           )}
           {status === "error" && (
             <div className={styles.overlay}>Couldn't load this book.</div>
           )}
-          {pendingSelection && (
-            <AskPill
-              left={pendingSelection.left}
-              top={pendingSelection.top}
-              onPickKind={handlePickKind}
-              onAsk={handleAsk}
-            />
-          )}
-          {expandedThread && expandedHighlight && (
-            <ThreadPanel
-              // Remount per highlight — simpler and more robust than
-              // threading highlight-identity changes through internal
-              // effect dependency arrays for "reset state on switch".
-              key={expandedHighlight.id}
-              highlightId={expandedHighlight.id}
-              highlightExact={expandedHighlight.exact}
-              highlightKind={expandedHighlight.kind}
-              thread={expandedHighlight.thread}
-              top={expandedThread.top}
-              providerConfigured={providerConfigured}
-              onClose={() => setExpandedThread(null)}
-              onThreadChange={handleThreadChange}
-            />
-          )}
+          <AnimatePresence>
+            {pendingSelection && (
+              <AskPill
+                key="ask-pill"
+                left={pendingSelection.left}
+                top={pendingSelection.top}
+                onPickKind={handlePickKind}
+                onAsk={handleAsk}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {expandedThread && expandedHighlight && (
+              <ThreadPanel
+                // Remount per highlight — simpler and more robust than
+                // threading highlight-identity changes through internal
+                // effect dependency arrays for "reset state on switch".
+                key={expandedHighlight.id}
+                highlightId={expandedHighlight.id}
+                highlightExact={expandedHighlight.exact}
+                highlightKind={expandedHighlight.kind}
+                thread={expandedHighlight.thread}
+                top={expandedThread.top}
+                providerConfigured={providerConfigured}
+                onClose={() => setExpandedThread(null)}
+                onThreadChange={handleThreadChange}
+              />
+            )}
+          </AnimatePresence>
         </div>
         <MarginRail
           highlights={highlights}
@@ -592,7 +644,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
           type="button"
           className={styles.navButton}
           disabled={atStart}
-          onClick={() => renditionRef.current?.prev()}
+          onClick={() => turnPage("prev")}
         >
           ← Previous
         </button>
@@ -600,7 +652,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
           type="button"
           className={styles.navButton}
           disabled={atEnd}
-          onClick={() => renditionRef.current?.next()}
+          onClick={() => turnPage("next")}
         >
           Next →
         </button>

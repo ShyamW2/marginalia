@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Link } from "react-router-dom";
+import { motion, useReducedMotion } from "motion/react";
 import type { ResourceSummary } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
 import { BookCover } from "./BookCover.js";
+import { coverLayoutId } from "./coverLayoutId.js";
 import { formatPublishSummary, runPublish } from "./publish.js";
 import styles from "./LibraryPage.module.css";
 
@@ -33,6 +35,7 @@ export function LibraryPage() {
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const reducedMotion = useReducedMotion();
 
   useEffect(() => {
     fetchResources();
@@ -217,7 +220,10 @@ export function LibraryPage() {
           {resources.map((resource) => (
             <div key={resource.id} className={styles.card}>
               <Link to={`/read/${resource.id}`} className={styles.cardLink}>
-                <div className={styles.coverWrap}>
+                <motion.div
+                  className={styles.coverWrap}
+                  layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
+                >
                   <BookCover resourceId={resource.id} title={resource.title} />
                   {resource.threadCount > 0 && (
                     <span
@@ -229,7 +235,7 @@ export function LibraryPage() {
                       {resource.threadCount}
                     </span>
                   )}
-                </div>
+                </motion.div>
                 <div className={styles.cardTitle}>{resource.title}</div>
                 {resource.author && (
                   <div className={styles.cardAuthor}>{resource.author}</div>

@@ -1,6 +1,13 @@
-.pill {
+/* Positioning lives on this static wrapper, not the motion.div — motion
+   drives that element's own `transform` (scale/y) for the pop-in spring, so
+   the two can't share one transform without one clobbering the other. */
+.pillPosition {
   position: absolute;
   transform: translate(-50%, calc(-100% - 8px));
+  z-index: 5;
+}
+
+.pill {
   display: flex;
   align-items: center;
   gap: 0.35rem;
@@ -10,8 +17,6 @@
   padding: 0.35rem 0.5rem;
   box-shadow: var(--shadow-panel);
   white-space: nowrap;
-  z-index: 5;
-  animation: rise var(--duration-standard) var(--ease-standard);
 }
 
 .dot {
@@ -65,15 +70,4 @@
 .askButton:focus-visible {
   outline: 2px solid var(--color-text);
   outline-offset: 2px;
-}
-
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translate(-50%, calc(-100% - 2px));
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, calc(-100% - 8px));
-  }
 }

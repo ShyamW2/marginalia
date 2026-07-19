@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { motion, useReducedMotion } from "motion/react";
 import type { HighlightKind, Message, ThreadSummary, ThreadWithMessages } from "@marginalia/shared";
 import { renderMarkdown } from "./markdown.js";
 import { streamThread } from "./streamThread.js";
@@ -187,13 +188,22 @@ export function ThreadPanel({
   }
 
   const isStreaming = streamingText !== null;
+  const reducedMotion = useReducedMotion();
 
   return (
-    <div
+    <motion.div
       className={`${styles.panel} ${styles[highlightKind]}`}
       style={{ top }}
       role="dialog"
       aria-label="Ask about this passage"
+      initial={{ opacity: 0, x: reducedMotion ? 0 : 16 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: reducedMotion ? 0 : 12 }}
+      transition={
+        reducedMotion
+          ? { duration: 0.12 }
+          : { type: "spring", stiffness: 420, damping: 34 }
+      }
     >
       <div className={styles.header}>
         <span className={styles.quote}>&ldquo;{highlightExact}&rdquo;</span>
@@ -278,6 +288,6 @@ export function ThreadPanel({
           </Link>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
