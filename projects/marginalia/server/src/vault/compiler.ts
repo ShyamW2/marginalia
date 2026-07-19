@@ -11,6 +11,7 @@ import type { HighlightWithThread, Message, PublishResult, Resource } from "@mar
 import { listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
 import { listMessagesForThread } from "../annotations/threads.js";
 import { getResourceById } from "../library/store.js";
+import { getNotepadForPublish, recordNotepadPublish } from "../notepad/store.js";
 import type { LLMProvider } from "../llm/provider.js";
 import {
   listExistingConcepts,
@@ -281,4 +282,92 @@ export async function publishResource(
   writeBookOverview(db, vaultPath, resource);
 
   return { notes, conceptsCreated, conceptsLinked };
+}
+
+const NOTEPAD_DISTILLATION_SCHEMA = z.object({
+  concepts: z
+    .array(
+      z.object({
+        name: z.string(),
+        aliases: z.array(z.string()),
+        gloss: z.string(),
+      }),
+    )
+    .max(5),
+});
+
+const NOTEPAD_DISTILL_INSTRUCTIONS = `You review a reader's freeform scratch notes and identify
+concepts worth tracking as personal knowledge-graph nodes.
+
+Respond with a single JSON object with exactly this key:
+{
+  "concepts": [ { "name": "Canonical Title Case concept name", "aliases": ["alternate names"], "gloss": "one-line definition" } ]
+}
+
+Include at most 5 concepts worth tracking. If none are worth tracking, use an
+empty array. Return only the JSON object, no other text.`;
+
+const NOTEPAD_NOTE_PATH = "Notes/Desk Notepad.md";
+// Fixed pseudo-thread id: the notepad is a single mutable note, not a
+// per-thread one, but concept-mention idempotency (appendMention) keys off
+// a stable id so republishing an unchanged concept list doesn't duplicate
+// its "## Mentions" line.
+const NOTEPAD_MENTION_ID = "desk-notepad";
+
+function renderNotepadNote(content: string, conceptNames: string[]): string {
+  const conceptLines = conceptNames.map((name) => `- [[${name}]]`).join("\n");
+  return `---
+title: "Desk Notepad"
+updated: ${yamlString(new Date().toISOString())}
+---
+
+${content}
+${conceptLines ? `\n## Concepts\n\n${conceptLines}\n` : ""}`;
+}
+
+/**
+ * Publishes the desk notepad (M8, DESIGN.md "The notepad") through the same
+ * vault/concept-linking machinery as thread publishing, but keyed on content
+ * hash instead of a per-thread ledger row — the notepad is one mutable note,
+ * republished in place each time its content changes (see notepad/store.ts).
+ */
+export async function publishNotepad(
+  db: Database.Database,
+  provider: LLMProvider,
+  vaultPath: string,
+): Promise<PublishResult> {
+  const { content, upToDate } = getNotepadForPublish(db);
+  if (upToDate) {
+    return { notes: 0, conceptsCreated: 0, conceptsLinked: 0 };
+  }
+
+  let conceptsCreated = 0;
+  let conceptsLinked = 0;
+  const knownConcepts = listExistingConcepts(vaultPath);
+
+  const distillation = await provider.extract({
+    instructions: NOTEPAD_DISTILL_INSTRUCTIONS,
+    input: content,
+    schema: NOTEPAD_DISTILLATION_SCHEMA,
+  });
+
+  const conceptNames: string[] = [];
+  for (const proposed of distillation.concepts) {
+    const match = matchConcept(knownConcepts, proposed);
+    if (match) {
+      appendMention(vaultPath, match, NOTEPAD_NOTE_PATH, NOTEPAD_MENTION_ID);
+      conceptNames.push(match.name);
+      conceptsLinked++;
+    } else {
+      const created = createConceptNote(vaultPath, proposed, NOTEPAD_NOTE_PATH, NOTEPAD_MENTION_ID);
+      knownConcepts.push(created);
+      conceptNames.push(created.name);
+      conceptsCreated++;
+    }
+  }
+
+  writeVaultFile(vaultPath, NOTEPAD_NOTE_PATH, renderNotepadNote(content, conceptNames));
+  recordNotepadPublish(db, content);
+
+  return { notes: 1, conceptsCreated, conceptsLinked };
 }

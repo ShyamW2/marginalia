@@ -32,12 +32,30 @@ export const ResourceSchema = z.object({
 });
 export type Resource = z.infer<typeof ResourceSchema>;
 
+// ---------------------------------------------------------------------------
+// Shelf state (M8 — the Desk's freeform workspace)
+// ---------------------------------------------------------------------------
+
+export const ShelfStateSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  rotation: z.number(),
+  zOrder: z.number().int(),
+});
+export type ShelfState = z.infer<typeof ShelfStateSchema>;
+
+export const UpdateShelfStateBodySchema = ShelfStateSchema;
+export type UpdateShelfStateBody = z.infer<typeof UpdateShelfStateBodySchema>;
+
 /** Library list view: a Resource plus counts for the grid. */
 export const ResourceSummarySchema = ResourceSchema.extend({
   highlightCount: z.number().int().nonnegative(),
   threadCount: z.number().int().nonnegative(),
   // Null if the book has never been opened (no reading_state row yet).
   lastReadAt: z.string().nullable(),
+  // Null until the book is first arranged on the desk (DeskPage assigns a
+  // default position on first render and persists it via PUT .../shelf).
+  shelf: ShelfStateSchema.nullable(),
 });
 export type ResourceSummary = z.infer<typeof ResourceSummarySchema>;
 
@@ -175,6 +193,24 @@ export const ThreadStreamEventSchema = z.union([
 export type ThreadStreamEvent = z.infer<typeof ThreadStreamEventSchema>;
 
 // ---------------------------------------------------------------------------
+// Notepad (M8 — the Desk's scratch pad)
+// ---------------------------------------------------------------------------
+
+export const NotepadSchema = z.object({
+  content: z.string(),
+  updatedAt: z.string(),
+  // Whether `content` differs from what's currently published — drives the
+  // notepad's "publish" button state.
+  dirty: z.boolean(),
+});
+export type Notepad = z.infer<typeof NotepadSchema>;
+
+export const UpdateNotepadBodySchema = z.object({
+  content: z.string(),
+});
+export type UpdateNotepadBody = z.infer<typeof UpdateNotepadBodySchema>;
+
+// ---------------------------------------------------------------------------
 // Publish (vault compiler) result
 // ---------------------------------------------------------------------------
 
@@ -196,6 +232,14 @@ export const LLMProviderIdSchema = z.enum([
 ]);
 export type LLMProviderId = z.infer<typeof LLMProviderIdSchema>;
 
+/**
+ * Desk cursor prefs (DESIGN.md "Cursor system"): a custom cursor per room
+ * and the ink/phosphor trail overlay are each independently disableable,
+ * on top of the app-wide reduced-motion gate.
+ */
+export const CursorStyleSchema = z.enum(["system", "custom"]);
+export type CursorStyleChoice = z.infer<typeof CursorStyleSchema>;
+
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset. */
 export const SettingsSchema = z.object({
   provider: LLMProviderIdSchema,
@@ -207,6 +251,8 @@ export const SettingsSchema = z.object({
   openaiApiKey: z.string(), // masked
   openaiContextTokens: z.number().int().positive(),
   vaultPath: z.string(),
+  cursorStyle: CursorStyleSchema,
+  cursorTrailEnabled: z.boolean(),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

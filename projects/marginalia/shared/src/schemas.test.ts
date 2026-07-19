@@ -18,6 +18,7 @@ describe("schemas smoke test", () => {
       highlightCount: 0,
       threadCount: 0,
       lastReadAt: null,
+      shelf: null,
     });
     expect(result.success).toBe(true);
   });
@@ -57,6 +58,8 @@ describe("schemas smoke test", () => {
       openaiApiKey: "",
       openaiContextTokens: 32768,
       vaultPath: "",
+      cursorStyle: "custom",
+      cursorTrailEnabled: true,
     });
     expect(result.success).toBe(true);
   });

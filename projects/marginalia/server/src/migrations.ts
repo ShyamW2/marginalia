@@ -96,4 +96,30 @@ export const MIGRATIONS: Migration[] = [
         WHERE id IN (SELECT highlight_id FROM threads);
     `,
   },
+  {
+    // M8: the Desk (docs/marginalia/DESIGN.md). Per-resource freeform
+    // shelf position/rotation/z-order, and a single-row notepad (the desk's
+    // scratch pad) with its own publish ledger — `published_hash` compares
+    // against the current content so "publish" is a no-op when nothing
+    // changed, mirroring the `publishes` table's idempotency for threads
+    // without needing a second table for a single row.
+    version: 3,
+    sql: `
+      CREATE TABLE shelf_state (
+        resource_id   TEXT PRIMARY KEY REFERENCES resources(id),
+        x             REAL NOT NULL,
+        y             REAL NOT NULL,
+        rotation      REAL NOT NULL DEFAULT 0,
+        z_order       INTEGER NOT NULL DEFAULT 0,
+        updated_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE notepad (
+        id              INTEGER PRIMARY KEY CHECK (id = 1),
+        content         TEXT NOT NULL DEFAULT '',
+        published_hash  TEXT,
+        updated_at      TEXT NOT NULL
+      );
+    `,
+  },
 ];

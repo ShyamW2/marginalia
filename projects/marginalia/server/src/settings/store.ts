@@ -1,5 +1,10 @@
 import type Database from "better-sqlite3";
-import type { LLMProviderId, Settings, SettingsUpdate } from "@marginalia/shared";
+import type {
+  CursorStyleChoice,
+  LLMProviderId,
+  Settings,
+  SettingsUpdate,
+} from "@marginalia/shared";
 
 const DEFAULTS = {
   provider: "anthropic" as LLMProviderId,
@@ -11,6 +16,8 @@ const DEFAULTS = {
   openai_api_key: "",
   openai_context_tokens: "32768",
   vault_path: "",
+  cursor_style: "custom" as CursorStyleChoice,
+  cursor_trail_enabled: "true",
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -25,6 +32,8 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   openai_api_key: "openaiApiKey",
   openai_context_tokens: "openaiContextTokens",
   vault_path: "vaultPath",
+  cursor_style: "cursorStyle",
+  cursor_trail_enabled: "cursorTrailEnabled",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -54,6 +63,8 @@ export function getRawSettings(db: Database.Database): {
   openaiApiKey: string;
   openaiContextTokens: number;
   vaultPath: string;
+  cursorStyle: CursorStyleChoice;
+  cursorTrailEnabled: boolean;
 } {
   const raw = readRaw(db);
   return {
@@ -66,6 +77,8 @@ export function getRawSettings(db: Database.Database): {
     openaiApiKey: raw.openai_api_key,
     openaiContextTokens: Number.parseInt(raw.openai_context_tokens, 10),
     vaultPath: raw.vault_path,
+    cursorStyle: raw.cursor_style as CursorStyleChoice,
+    cursorTrailEnabled: raw.cursor_trail_enabled === "true",
   };
 }
 

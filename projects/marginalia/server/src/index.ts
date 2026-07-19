@@ -9,6 +9,7 @@ import { highlightsRouter } from "./routes/highlights.js";
 import { settingsRouter } from "./routes/settings.js";
 import { threadsRouter } from "./routes/threads.js";
 import { publishRouter } from "./routes/publish.js";
+import { notepadRouter } from "./routes/notepad.js";
 
 const PORT = Number(process.env.PORT ?? 5175);
 
@@ -27,6 +28,7 @@ app.use("/api/resources", publishRouter);
 app.use("/api/highlights", highlightsRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/threads", threadsRouter);
+app.use("/api/notepad", notepadRouter);
 
 // Serve the built web app in production. In dev, Vite serves the web app on
 // its own port and proxies /api here — this branch is a no-op then.

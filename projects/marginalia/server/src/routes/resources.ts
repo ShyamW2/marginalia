@@ -1,7 +1,10 @@
 import { Router } from "express";
 import multer from "multer";
 import fs from "node:fs";
-import { UpdateReadingPositionBodySchema } from "@marginalia/shared";
+import {
+  UpdateReadingPositionBodySchema,
+  UpdateShelfStateBodySchema,
+} from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { importEpub } from "../library/importResource.js";
 import { extractCoverImage, guessImageMimeType } from "../library/epub.js";
@@ -11,6 +14,7 @@ import {
   getResourceFilePath,
   listResourceSummaries,
   setReadingPosition,
+  setShelfState,
 } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
 
@@ -113,6 +117,21 @@ resourcesRouter.put("/:id/position", (req, res) => {
     parsed.data.location,
   );
   res.json(position);
+});
+
+resourcesRouter.put("/:id/shelf", (req, res) => {
+  const resource = getResourceById(getDb(), req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const parsed = UpdateShelfStateBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  setShelfState(getDb(), req.params.id, parsed.data);
+  res.json(parsed.data);
 });
 
 resourcesRouter.get("/:id/highlights", (req, res) => {

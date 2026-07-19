@@ -5,7 +5,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { createDb } from "../db.js";
 import type { LLMProvider, LLMExtractRequest, LLMStreamRequest } from "../llm/provider.js";
-import { publishResource } from "./compiler.js";
+import { updateNotepadContent } from "../notepad/store.js";
+import { publishNotepad, publishResource } from "./compiler.js";
 
 type Db = ReturnType<typeof createDb>;
 
@@ -318,5 +319,67 @@ describe("publishResource", () => {
     const conceptNote = fs.readFileSync(path.join(vaultPath, "Concepts", "Absurdism.md"), "utf8");
     expect(conceptNote).toContain("<!-- thread:t-1 -->");
     expect(conceptNote).toContain("<!-- thread:t-2 -->");
+  });
+});
+
+describe("publishNotepad", () => {
+  let db: Db;
+  let vaultPath: string;
+
+  beforeEach(() => {
+    db = createDb(":memory:");
+    vaultPath = fs.mkdtempSync(path.join(os.tmpdir(), "marginalia-vault-"));
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(vaultPath, { recursive: true, force: true });
+  });
+
+  it("is a no-op on blank content — no extract call, nothing written", async () => {
+    const provider = new FakeProvider([]);
+    const result = await publishNotepad(db, provider, vaultPath);
+    expect(result).toEqual({ notes: 0, conceptsCreated: 0, conceptsLinked: 0 });
+    expect(provider.calls).toBe(0);
+    expect(fs.existsSync(path.join(vaultPath, "Notes"))).toBe(false);
+  });
+
+  it("writes Notes/Desk Notepad.md and links a new concept", async () => {
+    updateNotepadContent(db, "Loose thought about entropy and decay.");
+    const provider = new FakeProvider([
+      { concepts: [{ name: "Entropy", aliases: [], gloss: "Disorder increases." }] },
+    ]);
+
+    const result = await publishNotepad(db, provider, vaultPath);
+    expect(result).toEqual({ notes: 1, conceptsCreated: 1, conceptsLinked: 0 });
+
+    const note = fs.readFileSync(path.join(vaultPath, "Notes", "Desk Notepad.md"), "utf8");
+    expect(note).toContain("Loose thought about entropy and decay.");
+    expect(note).toContain("[[Entropy]]");
+  });
+
+  it("republishing unchanged content is a no-op — no re-extraction", async () => {
+    updateNotepadContent(db, "Stable thought.");
+    const provider = new FakeProvider([{ concepts: [] }]);
+    await publishNotepad(db, provider, vaultPath);
+
+    const result = await publishNotepad(db, provider, vaultPath);
+    expect(result).toEqual({ notes: 0, conceptsCreated: 0, conceptsLinked: 0 });
+    expect(provider.calls).toBe(1);
+  });
+
+  it("editing the content after a publish triggers a fresh regenerate-in-place publish", async () => {
+    updateNotepadContent(db, "First version.");
+    const provider = new FakeProvider([{ concepts: [] }]);
+    await publishNotepad(db, provider, vaultPath);
+
+    updateNotepadContent(db, "Second, edited version.");
+    const provider2 = new FakeProvider([{ concepts: [] }]);
+    const result = await publishNotepad(db, provider2, vaultPath);
+
+    expect(result).toEqual({ notes: 1, conceptsCreated: 0, conceptsLinked: 0 });
+    const note = fs.readFileSync(path.join(vaultPath, "Notes", "Desk Notepad.md"), "utf8");
+    expect(note).toContain("Second, edited version.");
+    expect(note).not.toContain("First version.");
   });
 });

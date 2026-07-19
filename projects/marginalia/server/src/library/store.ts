@@ -3,6 +3,7 @@ import type {
   ReadingPosition,
   Resource,
   ResourceSummary,
+  ShelfState,
 } from "@marginalia/shared";
 
 interface ResourceRow {
@@ -62,15 +63,24 @@ export function listResourceSummaries(
          (SELECT COUNT(*) FROM highlights h WHERE h.resource_id = r.id) AS highlight_count,
          (SELECT COUNT(*) FROM highlights h
             JOIN threads t ON t.highlight_id = h.id
-            WHERE h.resource_id = r.id) AS thread_count
+            WHERE h.resource_id = r.id) AS thread_count,
+         ss.x AS shelf_x,
+         ss.y AS shelf_y,
+         ss.rotation AS shelf_rotation,
+         ss.z_order AS shelf_z_order
        FROM resources r
        LEFT JOIN reading_state rs ON rs.resource_id = r.id
+       LEFT JOIN shelf_state ss ON ss.resource_id = r.id
        ORDER BY COALESCE(rs.updated_at, r.imported_at) DESC`,
     )
     .all() as (ResourceRow & {
     last_read_at: string | null;
     highlight_count: number;
     thread_count: number;
+    shelf_x: number | null;
+    shelf_y: number | null;
+    shelf_rotation: number | null;
+    shelf_z_order: number | null;
   })[];
 
   return rows.map((row) => ({
@@ -78,7 +88,36 @@ export function listResourceSummaries(
     highlightCount: row.highlight_count,
     threadCount: row.thread_count,
     lastReadAt: row.last_read_at,
+    shelf:
+      row.shelf_x === null
+        ? null
+        : {
+            x: row.shelf_x,
+            y: row.shelf_y as number,
+            rotation: row.shelf_rotation as number,
+            zOrder: row.shelf_z_order as number,
+          },
   }));
+}
+
+export function setShelfState(
+  db: Database.Database,
+  resourceId: string,
+  shelf: ShelfState,
+): void {
+  db.prepare(
+    `INSERT INTO shelf_state (resource_id, x, y, rotation, z_order, updated_at)
+     VALUES (@resourceId, @x, @y, @rotation, @zOrder, @updatedAt)
+     ON CONFLICT(resource_id) DO UPDATE SET
+       x = @x, y = @y, rotation = @rotation, z_order = @zOrder, updated_at = @updatedAt`,
+  ).run({
+    resourceId,
+    x: shelf.x,
+    y: shelf.y,
+    rotation: shelf.rotation,
+    zOrder: shelf.zOrder,
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 export interface ResourceTextSection {
