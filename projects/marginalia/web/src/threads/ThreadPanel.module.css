@@ -50,6 +50,15 @@
   overflow: hidden;
 }
 
+.metaRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
 .closeButton {
   border: none;
   background: transparent;

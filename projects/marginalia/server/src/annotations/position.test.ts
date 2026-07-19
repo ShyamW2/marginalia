@@ -73,13 +73,43 @@ describe("computeHighlightPositionPercent", () => {
     expect(percent).toBeNull();
   });
 
-  it("returns null when the spine section doesn't exist", () => {
+  it("falls back to searching every section when the recorded spineIndex is stale (real data shape found in a pre-M9 database)", () => {
+    // Section 0: 20 chars of unrelated boilerplate — this is what the
+    // (wrong) recorded spineIndex points at. The real text lives in
+    // section 1, 30 chars in.
+    seedSection(db, "res-1", 0, "boilerplate front matter!!!!");
+    seedSection(db, "res-1", 1, "x".repeat(30) + "REAL TEXT" + "y".repeat(20));
+
+    const percent = computeHighlightPositionPercent(db, "res-1", 0, {
+      exact: "REAL TEXT",
+      prefix: "x",
+      suffix: "y",
+    });
+
+    const expectedGlobalOffset = "boilerplate front matter!!!!".length + 30;
+    const totalLength = "boilerplate front matter!!!!".length + 30 + 9 + 20;
+    expect(percent).toBeCloseTo(expectedGlobalOffset / totalLength, 10);
+  });
+
+  it("still finds the text via fallback even when the recorded spineIndex doesn't exist at all", () => {
     seedSection(db, "res-1", 0, "only section");
 
     const percent = computeHighlightPositionPercent(db, "res-1", 5, {
       exact: "only",
       prefix: "",
       suffix: " section",
+    });
+
+    expect(percent).not.toBeNull();
+  });
+
+  it("returns null when the text is unfindable in any section, regardless of spineIndex", () => {
+    seedSection(db, "res-1", 0, "only section");
+
+    const percent = computeHighlightPositionPercent(db, "res-1", 5, {
+      exact: "nowhere to be found",
+      prefix: "",
+      suffix: "",
     });
 
     expect(percent).toBeNull();

@@ -4,6 +4,7 @@ import type { Book, Contents, Location, Rendition } from "epubjs";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "motion/react";
 import type {
   CreateHighlightBody,
+  HighlightImportance,
   HighlightKind,
   HighlightWithThread,
   ReadingPosition,
@@ -125,9 +126,13 @@ interface PendingSelection {
 
 interface ReaderViewProps {
   resourceId: string;
+  /** Arriving via the scan's airlock transition (DESIGN.md): land on this
+   * highlight's position and open its thread, instead of the saved reading
+   * position. */
+  initialHighlightId?: string;
 }
 
-export function ReaderView({ resourceId }: ReaderViewProps) {
+export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   const saveTimerRef = useRef<number | undefined>(undefined);
@@ -510,9 +515,16 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
         highlightsRef.current = resourceHighlights;
         setHighlights(resourceHighlights);
 
-        await rendition.display(position?.location ?? undefined);
+        const jumpTarget = initialHighlightId
+          ? resourceHighlights.find((h) => h.id === initialHighlightId)
+          : undefined;
+
+        await rendition.display(jumpTarget?.cfi ?? position?.location ?? undefined);
         if (cancelled) return;
         setStatus("ready");
+        if (jumpTarget) {
+          setExpandedThread({ highlightId: jumpTarget.id, top: DEFAULT_THREAD_PANEL_TOP });
+        }
 
         // Locations let epub.js compute a whole-book percentage from a CFI;
         // generating them is async, so the initial relocated event may fire
@@ -681,6 +693,12 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     );
   }
 
+  function handleImportanceChange(highlightId: string, importance: HighlightImportance) {
+    setHighlights((prev) =>
+      prev.map((h) => (h.id === highlightId ? { ...h, importance } : h)),
+    );
+  }
+
   const expandedHighlight = expandedThread
     ? highlights.find((h) => h.id === expandedThread.highlightId)
     : undefined;
@@ -743,11 +761,13 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
                 highlightId={expandedHighlight.id}
                 highlightExact={expandedHighlight.exact}
                 highlightKind={expandedHighlight.kind}
+                highlightImportance={expandedHighlight.importance}
                 thread={expandedHighlight.thread}
                 top={expandedThread.top}
                 providerConfigured={providerConfigured}
                 onClose={() => setExpandedThread(null)}
                 onThreadChange={handleThreadChange}
+                onImportanceChange={handleImportanceChange}
               />
             )}
           </AnimatePresence>

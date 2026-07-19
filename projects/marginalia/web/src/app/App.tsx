@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { useTheme, type ThemeChoice } from "./useTheme.js";
+import { AirlockOverlay } from "./AirlockOverlay.js";
 import styles from "./App.module.css";
 
 // Code-split per room: epub.js (the reader's biggest dependency) only loads
@@ -11,6 +12,9 @@ const DeskPage = lazy(() =>
 );
 const ReaderPage = lazy(() =>
   import("../reader/ReaderPage.js").then((m) => ({ default: m.ReaderPage })),
+);
+const ScanPage = lazy(() =>
+  import("../scan/ScanPage.js").then((m) => ({ default: m.ScanPage })),
 );
 const SettingsPage = lazy(() =>
   import("../settings/SettingsPage.js").then((m) => ({ default: m.SettingsPage })),
@@ -73,10 +77,12 @@ export function App() {
           <Routes>
             <Route path="/" element={<DeskPage />} />
             <Route path="/read/:id" element={<ReaderPage />} />
+            <Route path="/scan/:id" element={<ScanPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </Suspense>
       </main>
+      <AirlockOverlay />
     </div>
   );
 }

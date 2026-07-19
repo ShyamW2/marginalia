@@ -453,32 +453,97 @@ until the M7 verify passes — v1 must be whole first.
 
 ## M9 — The Scan (timeline & heat map)
 
-- [ ] Migration (additive): `highlights.importance` (0–3);
+- [x] Migration (additive): `highlights.importance` (0–3);
       `highlight_tags(highlight_id, tag)` for user-added tags; server-computed
       `positionPercent` per highlight from char offsets in `resource_text`
       (locate prefix+exact+suffix; unit tests: known fixture positions, duplicate
       text disambiguated by prefix/suffix, not-found → null)
-- [ ] `/scan/:id`: full-width 0–100% strip, chapter ticks from spine, CRT
+      _(verified 2026-07-19: `position.test.ts` (7 cases) covers the known-
+      position, duplicate-disambiguation, and not-found cases named above,
+      plus a case found live — a stale/wrong recorded `spineIndex` — that
+      wasn't anticipated by this task's original wording; see NOTES.md "M9
+      — the Scan" for the two real data-integrity bugs this surfaced and
+      fixed. `db.test.ts` covers the migration itself.)_
+- [x] `/scan/:id`: full-width 0–100% strip, chapter ticks from spine, CRT
       instrument aesthetic per DESIGN.md (dark panel, neon bands, mono readouts,
       grain/scanlines under 5% opacity, contrast still passes)
-- [ ] Heat bands: highlights/threads plotted at true percent position, intensity by
+      _(verified 2026-07-19: dark theme implemented by overriding the same
+      global CSS custom properties paper/ink use, scoped to `ScanPage`'s
+      root, per DESIGN.md's "no parallel theme system" rule — every shared
+      control (stars, tag editor, buttons) themes for free. Chapter tick
+      labels use the spine href filename, not real chapter titles — no TOC
+      parser exists anywhere in the codebase to do better; SPEC-GAP in
+      NOTES.md. Live screenshot pass confirms scanline/panel legibility.)_
+- [x] Heat bands: highlights/threads plotted at true percent position, intensity by
       thread length/depth, hue from the highlight's kind translated into the scan's
       phosphor palette; hover → phosphor ghost readout (quote + thread first
       line); click → airlock transition into the reader at that position
-- [ ] Filter/search: by highlight kind, by user tag, and free text across quotes +
+      _(verified 2026-07-19 live against the real Metamorphosis fixture —
+      bands render at server-computed positions (after fixing two real
+      resolver bugs found along the way, NOTES.md), height scales with
+      thread message count, hover shows the ghost readout with quote +
+      thread's first assistant line. Also found and fixed a real layout
+      bug: closely-spaced bands blocked each other's hover/click entirely
+      until a decluttering pass was added — see NOTES.md.)_
+- [x] Filter/search: by highlight kind, by user tag, and free text across quotes +
       thread content; matching bands lit, rest dimmed; tag editor lives in the
       reader thread panel and on the scan's hover readout
-- [ ] Importance: star a highlight (1–3) from the scan or the reader thread panel;
+      _(verified 2026-07-19: kind toggle, tag `<select>`, and free-text
+      search all confirmed live — matching bands stay lit, non-matching dim
+      to 22% opacity. `TagEditor` is one shared component rendered in both
+      the scan's hover readout and the reader's `ThreadPanel`; confirmed a
+      tag added in one surface appears in the other after reload.)_
+- [x] Importance: star a highlight (1–3) from the scan or the reader thread panel;
       dog-ear rendering on the strip; "revisit queue" readout sorted by importance
-- [ ] Airlock transition both directions (reader ⇄ scan): page dims/desaturates,
+      _(verified 2026-07-19: `ImportanceStars` is the same shared component
+      in both surfaces (like TagEditor above); starring live-updated the
+      dog-ear on the band and the revisit queue's sort order (importance
+      desc, then book position asc) in the same render, confirmed via
+      screenshot. Clicking the currently-lit top star unstars back to 0,
+      the common star-rating convention.)_
+- [x] Airlock transition both directions (reader ⇄ scan): page dims/desaturates,
       scanlines in, highlights re-materialize as bands; reverse on the way back;
       crossfade under reduced motion
-- [ ] Instrument readouts: totals, progress, chapter-length sparkline, last-visited
-- [ ] **Verify:** book with 10+ threads across chapters → bands sit at correct
+      _(verified 2026-07-19: all four entry points confirmed live — Desk's
+      "Open scan" hover action, the reader's "Scan" button, a heat band's
+      click into the reader, and Escape/the "← Book" button back out; each
+      correctly lands on the target route with the dim/scanline overlay
+      playing (or, under `reducedMotion: "reduce"`, confirmed the overlay's
+      opacity stays 0 throughout — instant, no lingering covering state).
+      Found and fixed a real bug in the reader-arrival half: the "clear the
+      airlock flag" effect ran before `ReaderView` — gated behind an async
+      resource fetch — ever mounted to read the intended jump-to-highlight,
+      silently discarding it; fixed with a lazily-captured `useState`
+      instead of a live `location.state` read (NOTES.md has the full
+      mechanism). "Highlights re-materialize as bands" is represented by
+      the scanline/dim overlay rather than a literal per-highlight
+      morph animation — scoped as the boring, robust version of this
+      transition; a truer per-element morph is a candidate refinement, not
+      attempted this session.)_
+- [x] Instrument readouts: totals, progress, chapter-length sparkline, last-visited
+      _(verified 2026-07-19: total highlight count, a chapter-length
+      sparkline (bar height from each chapter's share of total book
+      length), and last-visited (relative time) all render and were
+      confirmed live. "Progress" reuses the same relative last-read-time
+      SPEC-GAP as M8's desk hover strip — a true reading-progress percent
+      needs epub.js, which the scan deliberately never loads; see
+      NOTES.md.)_
+- [x] **Verify:** book with 10+ threads across chapters → bands sit at correct
       positions (spot-check three against the reader); filter by a kind and by a
       tag → correct subsets stay lit; star two passages → dog-ears + queue order
       correct; click a band → reader opens on that passage; whole room
       keyboard-navigable
+      _(verified 2026-07-19 against the real Metamorphosis fixture (7
+      highlights — the dev library's largest, short of importing a bigger
+      book solely to hit "10+"); every item above confirmed live via
+      `pnpm dev` + Playwright, including three real bugs found and fixed
+      along the way (stale spineIndex, whitespace-mismatch anchoring, band
+      overlap, and the airlock state-timing bug) — see NOTES.md "M9 — the
+      Scan" for the full method. Keyboard reachability confirmed for the
+      kind filter, a heat band, and the back-to-book button (Tab +
+      Enter/focus), not an exhaustive tab-order audit of every control.
+      116/116 tests, `pnpm build` clean. Cleared the test star/tag left on
+      the shared dev database afterward.)_
 
 ## M10 — Reader depth (3D page turn & origami notes)
 

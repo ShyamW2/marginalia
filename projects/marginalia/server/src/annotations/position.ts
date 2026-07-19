@@ -9,8 +9,16 @@ import { getResourceTextSections } from "../library/store.js";
  * prefix+exact+suffix within its own spine section (reusing the same
  * disambiguation rule as the reader's CFI-fallback anchoring — see
  * shared/src/anchorText.ts), then adds the char length of every earlier
- * section. Returns null if the section is missing or the text can no longer
- * be found (same "unanchored" outcome the reader surfaces).
+ * section. Returns null if the text can no longer be found anywhere in the
+ * book (same "unanchored" outcome the reader surfaces).
+ *
+ * The recorded `spineIndex` is trusted first (fast path), but isn't assumed
+ * correct — a real, pre-M9 database was found with a handful of highlights
+ * whose stored spineIndex doesn't match where their text actually lives
+ * (off by one, likely a client-side timing artifact from the M3-era capture
+ * code, not reproduced deterministically enough to chase down there). Rather
+ * than silently dropping those highlights from the scan, fall back to
+ * searching every section in spine order.
  */
 export function computeHighlightPositionPercent(
   db: Database.Database,
@@ -24,16 +32,24 @@ export function computeHighlightPositionPercent(
   const totalLength = sections.reduce((sum, s) => sum + s.text.length, 0);
   if (totalLength === 0) return null;
 
-  const target = sections.find((s) => s.spineIndex === spineIndex);
-  if (!target) return null;
+  function offsetWithin(target: (typeof sections)[number]): number | null {
+    const match = findAnchorInText(target.text, anchor);
+    if (!match) return null;
+    const precedingLength = sections
+      .filter((s) => s.spineIndex < target.spineIndex)
+      .reduce((sum, s) => sum + s.text.length, 0);
+    return precedingLength + match.start;
+  }
 
-  const match = findAnchorInText(target.text, anchor);
-  if (!match) return null;
+  const claimed = sections.find((s) => s.spineIndex === spineIndex);
+  const claimedOffset = claimed ? offsetWithin(claimed) : null;
+  const globalOffset =
+    claimedOffset ??
+    sections
+      .map((s) => offsetWithin(s))
+      .find((offset): offset is number => offset !== null) ??
+    null;
 
-  const precedingLength = sections
-    .filter((s) => s.spineIndex < spineIndex)
-    .reduce((sum, s) => sum + s.text.length, 0);
-
-  const globalOffset = precedingLength + match.start;
+  if (globalOffset === null) return null;
   return Math.min(1, Math.max(0, globalOffset / totalLength));
 }

@@ -45,9 +45,9 @@
   color: var(--color-text-muted);
 }
 
-.publishButton {
+.publishButton,
+.scanButton {
   position: absolute;
-  right: 1rem;
   top: 50%;
   transform: translateY(-50%);
   background: none;
@@ -63,12 +63,22 @@
     border-color var(--duration-standard) var(--ease-standard);
 }
 
-.publishButton:hover:not(:disabled) {
+.publishButton {
+  right: 1rem;
+}
+
+.scanButton {
+  right: 6.5rem;
+}
+
+.publishButton:hover:not(:disabled),
+.scanButton:hover:not(:disabled) {
   color: var(--color-accent);
   border-color: var(--color-accent);
 }
 
-.publishButton:focus-visible {
+.publishButton:focus-visible,
+.scanButton:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }

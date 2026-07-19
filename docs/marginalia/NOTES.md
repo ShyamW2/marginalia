@@ -780,3 +780,121 @@ verification above), `tsc -b` + `vite build` clean, code-split
 (`DeskPage` is its own lazy chunk, same as the old `LibraryPage` was).
 
 **Next task: M9 — the Scan (timeline & heat map).**
+
+## M9 — the Scan
+
+Built the timeline/heat-map room: additive migration (`highlights.importance`,
+`highlight_tags`), a server-side position resolver
+(`annotations/position.ts`) that locates each highlight's
+prefix+exact+suffix in `resource_text` char offsets with no epub.js
+involved, `ScanPage` (chapter ticks, heat bands, hover ghost readout,
+kind/tag/text filters, importance stars, revisit queue), and the airlock
+transition wiring both directions (Desk → Scan, Reader ⇄ Scan).
+`ImportanceStars`/`TagEditor` are shared components used identically in the
+scan's hover readout and the reader's thread panel (DESIGN.md's two
+prescribed editing surfaces for the same data) — confirmed live that a star
++ tag set in one surface round-trips correctly into the other.
+
+**Three real bugs found live, not hypothetical** (this milestone's server
+work is the first thing that ever cross-checks a highlight's stored
+`spineIndex`/`prefix`/`exact`/`suffix` against the server's own
+`resource_text`, which nothing before M9 did):
+
+1. **A pre-existing M3-era data-quality bug surfaced immediately**: several
+   real highlights in the dev database (created across earlier milestones'
+   verification sessions) have a `spineIndex` that doesn't match where
+   their text actually lives (off by one) — not reproduced deterministically
+   enough to chase down in the client capture code, so rather than silently
+   dropping those highlights from the scan, `computeHighlightPositionPercent`
+   now falls back to searching every section in spine order when the
+   recorded section doesn't contain the text. Regression test added
+   (`position.test.ts`, "falls back to searching every section...").
+2. **A real whitespace-representation mismatch**: the server's `htmlToText`
+   extraction inserts `"\n"` for a `<br>` tag; a browser's live text
+   selection across that same `<br>` inserts nothing (no character at all).
+   Two otherwise-correct highlights on a real book (Metamorphosis) were
+   unfindable server-side purely because of this — `findAnchorInText`
+   (shared/src/anchorText.ts, used by both the reader's CFI-fallback
+   anchoring and the scan's position resolver) now falls back to a
+   whitespace-collapsed comparison, mapping the match back to original-text
+   offsets. This is a shared-algorithm fix, so it also strengthens the
+   reader's own text-search fallback, not just the scan. A third highlight
+   in the same book ("It was not a dream") stayed correctly unresolved —
+   verified that exact phrase genuinely appears nowhere in the extracted
+   text, i.e. stale/corrupted test data, not a resolver bug.
+3. **Closely-spaced bands blocked each other's hover/click entirely**: two
+   highlights positioned within ~0.2% of each other on the strip made the
+   later-in-DOM band's hit-area cover the earlier one's, so it could never
+   be hovered or clicked (confirmed live via Playwright: a `hover()` on the
+   first band timed out because the second band's subtree was intercepting
+   pointer events). Fixed with a decluttering layout pass in `HeatStrip.tsx`
+   that enforces a minimum percent-gap between adjacent bands' *drawn*
+   position without touching the *true* `positionPercent` shown in the
+   readout or used for filtering/sorting.
+
+**Simplifications / SPEC-GAPs**, recorded rather than silently deviated from:
+- The book-opening "stylized page-flutter" from DESIGN.md's doorway
+  transition wasn't built beyond the existing M7 cover-zoom `layoutId`
+  crossfade — scoped out as a nice-to-have distinct from the airlock (which
+  *was* built in full, both directions, per the M9 task list).
+- Chapter tick labels use the spine href's filename (e.g. `wrap0000`) since
+  no chapter-title extraction exists anywhere in the codebase (M1's
+  extraction never parsed the TOC/nav document) — good enough for tick
+  landmarks, not real chapter names. Would need a TOC parser to do better.
+- The scan's dark theme is implemented exactly as DESIGN.md prescribes —
+  overriding the *same* CSS custom properties paper/ink use, scoped to
+  `ScanPage`'s root — rather than a parallel variable namespace, so every
+  shared component (`ImportanceStars`, `TagEditor`, buttons) themes for
+  free. Minor known cosmetic gap: on a very short scan (few highlights,
+  tall viewport), the dark panel's `.page` div doesn't always stretch to
+  the full remaining viewport height, leaving a sliver of the light body
+  background below it — a flexbox min-height percentage-resolution
+  question, not a functional defect (didn't chase further given the size
+  of this milestone already).
+
+### Verification method
+
+Same real `pnpm dev` + Playwright approach as M8 (ad hoc into the
+scratchpad). Against the live dev library's real Metamorphosis fixture
+(7 highlights, 4 threads, accumulated across earlier milestones' own
+verification sessions — not synthetic fixtures):
+- Confirmed bands actually render at server-computed positions and found +
+  fixed the two data-integrity bugs above by directly inspecting
+  `resource_text` and the `highlights` table with `better-sqlite3` when the
+  scan first showed 3 of 7 highlights as unpositioned.
+- Hovered a band → ghost readout with quote, thread first line, tag editor,
+  stars; starred a highlight from the readout → dog-ear + revisit-queue
+  entry appeared live, correct sort order confirmed with two stars.
+- Added a tag from the readout, reloaded, filtered by that tag → correct
+  subset lit, rest dimmed; same for kind filter and free-text search.
+- Clicked a band → airlock → landed in the reader on the right page with
+  the thread panel open, showing the *same* star/tag state just set in the
+  scan (round-trip confirmed). Found and fixed a real bug here too: the
+  "clear the airlock flag" effect in `ReaderPage` ran on its own first
+  commit, before `ReaderView` (gated behind an async resource fetch) ever
+  mounted to read `location.state` — so the jump-to-highlight intent was
+  wiped before anything used it. Fixed by capturing `location.state` once
+  via a lazy `useState` initializer instead of reading it live on every
+  render; applied the same defensive pattern in `ScanPage` even though its
+  bug didn't manifest there (no async gate ahead of its first render).
+- Reader's "Scan" button → airlock → scan; Escape in the scan → airlock →
+  book; Desk's "Open scan" hover action → airlock → scan. All four
+  navigation entry points confirmed landing on the correct route.
+- Reduced motion (browser-level `reducedMotion: "reduce"`): airlock overlay
+  opacity stays 0 throughout, click-to-open still works instantly.
+- Keyboard: kind-filter swatches, a heat band, and the back-to-book button
+  all confirmed reachable via Tab and activatable via Enter/keyboard focus
+  (not a full pointer-free walkthrough of every control, but the
+  representative path DESIGN.md's verify step asks for).
+- Cleared the test star/tag left on the shared dev database's Metamorphosis
+  highlight back to empty afterward, same housekeeping discipline as prior
+  milestones.
+
+116/116 tests (`shared` 7 — new: `anchorText.test.ts` — `server` 92 — new:
+`position.test.ts`, `scan.test.ts`, `tags.test.ts`, plus db/compiler
+migration-4 coverage — `web` 17 unchanged, Scan verified live/manually like
+Desk was in M8), `tsc -b` + `vite build` clean, `ScanPage` is its own
+code-split chunk.
+
+**v1.5 (M8, M9) is whole. Next task: M10 — reader depth (3D page turn &
+origami notes), or a fresh senior review of M8/M9 before starting it.**

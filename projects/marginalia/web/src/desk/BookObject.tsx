@@ -2,6 +2,7 @@ import { useRef, useState, type KeyboardEvent, type WheelEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, useMotionValue, type PanInfo } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
+import { playAirlock } from "../app/airlockBus.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import styles from "./BookObject.module.css";
@@ -64,6 +65,13 @@ export function BookObject({
     if (openedRef.current) return;
     openedRef.current = true;
     navigate(`/read/${resource.id}`);
+  }
+
+  async function openScan() {
+    if (openedRef.current) return;
+    openedRef.current = true;
+    await playAirlock("out", reducedMotion ? 0 : 360);
+    navigate(`/scan/${resource.id}`, { state: { viaAirlock: true } });
   }
 
   function handleDragStart() {
@@ -173,6 +181,16 @@ export function BookObject({
             </span>
           </div>
           <div className={styles.infoActions}>
+            <button
+              type="button"
+              className={styles.infoAction}
+              onClick={(e) => {
+                e.stopPropagation();
+                void openScan();
+              }}
+            >
+              Open scan
+            </button>
             <button
               type="button"
               className={styles.infoAction}

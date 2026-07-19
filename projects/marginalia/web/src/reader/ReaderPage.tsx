@@ -1,21 +1,39 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type { Resource } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
+import { playAirlock } from "../app/airlockBus.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { formatPublishSummary, runPublish } from "../library/publish.js";
 import { ReaderView } from "./ReaderView.js";
 import styles from "./ReaderPage.module.css";
 
+interface ReaderLocationState {
+  jumpToHighlightId?: string;
+  viaAirlock?: boolean;
+}
+
 export function ReaderPage() {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [resource, setResource] = useState<Resource | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
-  const reducedMotion = useReducedMotion();
+  const reducedMotion = Boolean(useReducedMotion());
+  // Captured once, lazily, at mount — not read live from `location` on every
+  // render. ReaderView only mounts once `resource` finishes its async fetch
+  // below; a live read would see `null` by the time that happens, because
+  // the "clear the flag" effect just below fires on THIS component's first
+  // commit (immediately), well before that fetch resolves. Found live: the
+  // scan's "click a band" jump landed on the right page (CFI still worked)
+  // but silently never opened the thread panel.
+  const [initialLocationState] = useState<ReaderLocationState | null>(
+    () => location.state as ReaderLocationState | null,
+  );
 
   useEffect(() => {
     if (!id) return;
@@ -31,6 +49,25 @@ export function ReaderPage() {
       })
       .catch(() => setNotFound(true));
   }, [id]);
+
+  // Arrived via the scan's airlock (a heat band click) — play the "in" half
+  // (scanlines fading back out to reveal the book) once, then clear the flag
+  // so a plain reload of this URL doesn't replay it.
+  useEffect(() => {
+    if (!initialLocationState?.viaAirlock) return;
+    void playAirlock("in", reducedMotion ? 0 : 360);
+    navigate(location.pathname, { replace: true, state: null });
+    // Runs once per mount by design — re-checking on every location.state
+    // change would replay the "in" animation on unrelated in-page
+    // navigations.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleOpenScan() {
+    if (!id) return;
+    await playAirlock("out", reducedMotion ? 0 : 360);
+    navigate(`/scan/${id}`, { state: { viaAirlock: true } });
+  }
 
   if (!id) return null;
 
@@ -75,6 +112,9 @@ export function ReaderPage() {
         {resource.author && (
           <span className={styles.author}>{resource.author}</span>
         )}
+        <button type="button" className={styles.scanButton} onClick={handleOpenScan}>
+          Scan
+        </button>
         <button
           type="button"
           className={styles.publishButton}
@@ -84,7 +124,7 @@ export function ReaderPage() {
           {publishing ? "Publishing…" : "Publish"}
         </button>
       </div>
-      <ReaderView resourceId={resource.id} />
+      <ReaderView resourceId={resource.id} initialHighlightId={initialLocationState?.jumpToHighlightId} />
       {toast && (
         <Toast
           message={toast.message}

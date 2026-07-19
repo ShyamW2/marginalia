@@ -1,7 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
-import type { HighlightKind, Message, ThreadSummary, ThreadWithMessages } from "@marginalia/shared";
+import type {
+  HighlightImportance,
+  HighlightKind,
+  Message,
+  ThreadSummary,
+  ThreadWithMessages,
+} from "@marginalia/shared";
+import { ImportanceStars } from "../highlights/ImportanceStars.js";
+import { TagEditor } from "../highlights/TagEditor.js";
+import {
+  fetchHighlightTags,
+  updateHighlightImportance,
+  updateHighlightTags,
+} from "../highlights/highlightMeta.js";
 import { renderMarkdown } from "./markdown.js";
 import { streamThread } from "./streamThread.js";
 import styles from "./ThreadPanel.module.css";
@@ -19,23 +32,49 @@ interface ThreadPanelProps {
   highlightId: string;
   highlightExact: string;
   highlightKind: HighlightKind;
+  highlightImportance: HighlightImportance;
   thread: ThreadSummary | null;
   top: number;
   providerConfigured: boolean;
   onClose: () => void;
   onThreadChange: (highlightId: string, thread: ThreadSummary) => void;
+  onImportanceChange: (highlightId: string, importance: HighlightImportance) => void;
 }
 
 export function ThreadPanel({
   highlightId,
   highlightExact,
   highlightKind,
+  highlightImportance,
   thread,
   top,
   providerConfigured,
   onClose,
   onThreadChange,
+  onImportanceChange,
 }: ThreadPanelProps) {
+  const [tags, setTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchHighlightTags(highlightId).then((fetched) => {
+      if (!cancelled) setTags(fetched);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [highlightId]);
+
+  function handleTagsChange(next: string[]) {
+    setTags(next);
+    void updateHighlightTags(highlightId, next);
+  }
+
+  function handleImportanceChange(next: HighlightImportance) {
+    onImportanceChange(highlightId, next);
+    void updateHighlightImportance(highlightId, next);
+  }
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [draft, setDraft] = useState("");
@@ -210,6 +249,11 @@ export function ThreadPanel({
         <button type="button" className={styles.closeButton} aria-label="Collapse thread" onClick={onClose}>
           ×
         </button>
+      </div>
+
+      <div className={styles.metaRow}>
+        <ImportanceStars value={highlightImportance} onChange={handleImportanceChange} size="small" />
+        <TagEditor tags={tags} onChange={handleTagsChange} />
       </div>
 
       <div className={styles.messages} ref={scrollRef}>
