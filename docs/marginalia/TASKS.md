@@ -274,7 +274,24 @@ starting any milestone from here on.
       epub.js mark-tracking bug — see NOTES.md, "reading focus mode + a real
       epub.js mark-tracking bug" — that affected theme re-tinting and
       highlight deletion too, not just focus mode.)_
-- [ ] Dark mode audit across every view; focus-visible states; reduced-motion respect
+- [x] Dark mode audit across every view; focus-visible states; reduced-motion respect
+      _(verified 2026-07-19: static audit found zero hardcoded colors anywhere
+      in `web/src` outside `theme.css`/`highlightKinds.ts`/`useEpubThemeVars.ts`
+      (the three theme-aware files) — every component already themes purely
+      through CSS custom properties. Both `outline: none` occurrences
+      (ThreadPanel textarea, SettingsPage input) have a compensating
+      `:focus-visible` border/box-shadow, not a silently removed focus ring;
+      every other interactive element either has an explicit
+      `:focus-visible` rule or falls back to the browser's native ring (no
+      global button/outline reset strips it). All 6 components using
+      `motion` call `useReducedMotion` and actually gate their
+      transform/layoutId values on it (checked each call site, not just the
+      import); `theme.css` also globally floors animation/transition
+      duration under `prefers-reduced-motion`. Headless-browser screenshot
+      pass in both Paper and Ink across library grid, reader (with all four
+      highlight-kind washes visible and legible), annotations overview,
+      thread panel with a live streamed answer, Ask pill's four kind dots,
+      and settings — no contrast or legibility issues in either theme.)_
 - [ ] Error/edge audit: huge EPUB, EPUB with no metadata, provider down mid-stream,
       vault path unset → all degrade gracefully with designed states
 - [ ] **Verify:** full walkthrough (import → read → highlight → ask → follow-up →
