@@ -3,6 +3,38 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-19 — Highlight kinds, user tags, and the M7→M8 checkpoint
+- **Highlight kinds (colors) land in M7.** Four semantic kinds chosen at capture time:
+  **rose** = passage to revisit / general annotation; **sage** = definition of a new
+  word or phrase; **honey** = important quote; **slate** = a question about the text
+  (the kind most likely to open a thread). Additive migration `highlights.kind`;
+  backfill existing rows: has a thread → slate, else rose. The selection pill grows
+  four kind dots + Ask; Ask without an explicit pick defaults to slate. Kinds are
+  labels, not behavior — any kind can host a thread. Colors are muted, theme-aware
+  washes that sit inside the paper/ink aesthetic (reference hues in DESIGN.md),
+  explicitly not saturated marker defaults.
+- **User tags on highlights land in M9** (additive `highlight_tags` table; tag editing
+  from the reader thread panel and the scan). Scan filtering = kind + tags + free
+  text. The vault-concept filter originally sketched for M9 is dropped from the
+  milestone: concepts aren't persisted in SQLite and only exist for *published*
+  threads, so they're the wrong v1.5 filter axis.
+- **Post-v1.5 refinement (recorded, not scheduled):** an LLM pass that reviews
+  highlight notes/tags and supplements them inline — proposing concept tags
+  (persisted in SQLite) and fleshing out notes so concept-level search works across
+  the library. Same "LLM proposes, code disposes" contract. Do not build during
+  M7–M10; refine after the rooms exist.
+- **Notepad vault destination (M8):** the desk notepad publishes into the
+  already-configured vault (`vault_path` setting) as `Notes/Desk Notepad.md` —
+  regenerated in place, concept-linked via the existing compiler, no-op when content
+  is unchanged (publishes-ledger entry keyed on notepad content hash).
+- **M6 quick-wins fold into M7** as its first task. **Live provider verification is a
+  manual operator checkpoint between M7 and M8**, not a Sonnet task: the operator
+  gets connection instructions (Anthropic API key; optional OpenAI-compatible
+  endpoints), connects, then a session verifies streaming + caching + extract against
+  the real APIs before M8 begins.
+- PRODUCT.md open questions closed: threads strictly user-initiated; highlight kinds
+  answered above; pagination won over scroll.
+
 ## 2026-07-17 — Provider strategy: subscription OAuth & endpoint presets
 - Target provider lineup (long-term): Anthropic API key, OpenAI-compatible endpoints
   (OpenRouter, local Ollama/LM Studio, any Bearer-token bridge incl. a future

@@ -185,10 +185,8 @@ Do these first, in order:
       _(verified 2026-07-17: added to both request bodies; exercised via the
       live Ollama stream above without incident; `openaiCompat.test.ts`
       still 7/7 green.)_
-- [ ] (Quick wins) Anthropic `capabilities()` context size per model, not
-      hardcoded 1M; trim provider error bodies from SSE `{error}` events (log
-      raw server-side); catch the `UNIQUE(highlight_id)` race in thread
-      creation and reuse the existing thread
+- [x] (Quick wins) — **moved to M7** as its first task (decisions.md 2026-07-19);
+      nothing left to do here
 
 - [x] Distill extraction call + schema (`vault/compiler.ts`) per SPEC
       _(verified 2026-07-17: zod/v4 schema per the M4 note; instructions
@@ -246,6 +244,16 @@ Do these first, in order:
 Design direction for M7–M10 lives in docs/marginalia/DESIGN.md — read it before
 starting any milestone from here on.
 
+- [x] M6 carry-over quick wins: Anthropic `capabilities()` context size per model,
+      not hardcoded 1M; trim provider error bodies from SSE `{error}` events (log
+      raw server-side); catch the `UNIQUE(highlight_id)` race in thread creation
+      and reuse the existing thread
+- [x] Highlight kinds (decisions.md 2026-07-19): additive migration
+      `highlights.kind` ∈ rose|sage|honey|slate (backfill: has-thread → slate,
+      else rose); selection pill shows four kind dots + Ask (Ask without a pick =
+      slate); marks, rail dots, and thread-panel spine tinted by kind — muted
+      theme-aware washes per DESIGN.md reference hues, contrast-checked in both
+      themes
 - [ ] Adopt `motion` (framer-motion successor); code-split routes with `React.lazy`
       (epub.js loads only in the reader; kills the 552KB single-chunk build warning)
 - [ ] Motion pass: panel open/close, pill appearance, page-turn feel (150–200ms
@@ -262,8 +270,22 @@ starting any milestone from here on.
 - [ ] Error/edge audit: huge EPUB, EPUB with no metadata, provider down mid-stream,
       vault path unset → all degrade gracefully with designed states
 - [ ] **Verify:** full walkthrough (import → read → highlight → ask → follow-up →
-      publish → open vault in Obsidian) in both themes; fix anything that feels rough
-      before calling v1 done
+      publish → open vault in Obsidian) in both themes; create one highlight of each
+      of the four kinds and confirm the washes read clearly on paper and ink; fix
+      anything that feels rough before calling v1 done
+
+## Checkpoint — live provider verification (manual; NOT a Sonnet task)
+
+Between M7 and M8. The operator connects real providers (Anthropic API key;
+optionally OpenRouter or another OpenAI-compatible endpoint) following instructions
+provided at the time; then a session verifies against the live APIs:
+
+- [ ] Streamed thread answer from the reader against real Anthropic
+- [ ] Second ask on the same book logs `cache_read_input_tokens > 0` (the M4 check
+      that couldn't run without a key)
+- [ ] One publish exercising `extract` (structured output) against real Anthropic
+- [ ] Any additional configured endpoint: stream + extract smoke test
+- [ ] Record results + date here
 
 ---
 
@@ -284,7 +306,9 @@ until the M7 verify passes — v1 must be whole first.
 - [ ] Scroll-to-open "crown" gesture: scroll while hovering a book pushes into it
       past a commit threshold; Escape backs out
 - [ ] The notepad: pad-of-paper scratch note on the desk, markdown, autosaved;
-      "publish to vault" runs it through the existing vault compiler path
+      "publish to vault" runs it through the existing vault compiler path into the
+      configured vault as `Notes/Desk Notepad.md` — regenerate-in-place,
+      concept-linked, ledger no-op on unchanged content (decisions.md 2026-07-19)
 - [ ] Ambient desk physics: 1–2° cursor parallax with inertia; cursor trail canvas
       overlay (pointer-events: none, rAF, decaying particles, idles when cursor
       rests); custom cursor + trail both selectable/disableable in settings,
@@ -295,9 +319,10 @@ until the M7 verify passes — v1 must be whole first.
       and drive it keyboard-only; enable reduced motion → no trails/parallax, plain
       transitions
 
-## M9 — The Scan (timeline & heat map) — requires M6 (concepts)
+## M9 — The Scan (timeline & heat map)
 
-- [ ] Migration (additive): `highlights.importance` (0–3); server-computed
+- [ ] Migration (additive): `highlights.importance` (0–3);
+      `highlight_tags(highlight_id, tag)` for user-added tags; server-computed
       `positionPercent` per highlight from char offsets in `resource_text`
       (locate prefix+exact+suffix; unit tests: known fixture positions, duplicate
       text disambiguated by prefix/suffix, not-found → null)
@@ -305,10 +330,12 @@ until the M7 verify passes — v1 must be whole first.
       instrument aesthetic per DESIGN.md (dark panel, neon bands, mono readouts,
       grain/scanlines under 5% opacity, contrast still passes)
 - [ ] Heat bands: highlights/threads plotted at true percent position, intensity by
-      thread length/depth; hover → phosphor ghost readout (quote + thread first
+      thread length/depth, hue from the highlight's kind translated into the scan's
+      phosphor palette; hover → phosphor ghost readout (quote + thread first
       line); click → airlock transition into the reader at that position
-- [ ] Filter/search: by concept tag (from M6) and free text across quotes + thread
-      content; matching bands lit, rest dimmed
+- [ ] Filter/search: by highlight kind, by user tag, and free text across quotes +
+      thread content; matching bands lit, rest dimmed; tag editor lives in the
+      reader thread panel and on the scan's hover readout
 - [ ] Importance: star a highlight (1–3) from the scan or the reader thread panel;
       dog-ear rendering on the strip; "revisit queue" readout sorted by importance
 - [ ] Airlock transition both directions (reader ⇄ scan): page dims/desaturates,
@@ -316,9 +343,10 @@ until the M7 verify passes — v1 must be whole first.
       crossfade under reduced motion
 - [ ] Instrument readouts: totals, progress, chapter-length sparkline, last-visited
 - [ ] **Verify:** book with 10+ threads across chapters → bands sit at correct
-      positions (spot-check three against the reader); filter by a concept → correct
-      subset stays lit; star two passages → dog-ears + queue order correct; click a
-      band → reader opens on that passage; whole room keyboard-navigable
+      positions (spot-check three against the reader); filter by a kind and by a
+      tag → correct subsets stay lit; star two passages → dog-ears + queue order
+      correct; click a band → reader opens on that passage; whole room
+      keyboard-navigable
 
 ## M10 — Reader depth (3D page turn & origami notes)
 
@@ -334,3 +362,15 @@ until the M7 verify passes — v1 must be whole first.
 - [ ] **Verify:** page through a chapter with notes attached — notes ride the turning
       page; fold/unfold threads repeatedly with no jank; reduced motion → slide
       turns, instant fold; reading with all effects on still feels calm
+
+---
+
+## Parked (post-v1.5) — recorded so they aren't relitigated
+
+- LLM note supplementation: a pass that reviews highlight notes/tags, responds
+  inline with supplementary detail, and proposes concept tags (persisted in SQLite)
+  to power concept-level search across the library. "LLM proposes, code disposes."
+  (decisions.md 2026-07-19)
+- Vault-concept filtering on the scan (depends on the above).
+- Notepad v2 "drift" brainstorm surface; sound design; PDF/Markdown formats;
+  `claudeAgent` subscription provider (decisions.md 2026-07-17).

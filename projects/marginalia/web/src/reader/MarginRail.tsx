@@ -33,6 +33,7 @@ export function MarginRail({
         const hasAnswer = highlight.thread?.hasAnswer ?? false;
         const className = [
           styles.dotButton,
+          styles[highlight.kind],
           active ? styles.active : "",
           unanchored ? styles.unanchored : "",
           hasThread ? styles.hasThread : "",

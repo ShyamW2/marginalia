@@ -9,16 +9,32 @@ import { getHighlightById } from "../annotations/highlights.js";
 import { getResourceById, getResourceTextSections } from "../library/store.js";
 import {
   createMessage,
-  createThread,
-  getThreadByHighlightId,
+  getOrCreateThread,
   getThreadById,
   getThreadWithMessages,
   listMessagesForThread,
 } from "../annotations/threads.js";
-import { getProvider, LLMError, type LLMProvider } from "../llm/provider.js";
+import { getProvider, LLMError, type LLMErrorCode, type LLMProvider } from "../llm/provider.js";
 import { buildContext } from "../llm/context.js";
 
 export const threadsRouter: Router = Router();
+
+/**
+ * Human-facing SSE `{error}` message per LLMError code. Provider error
+ * bodies (raw HTTP text, SDK exception messages) can contain endpoint
+ * details, stack-shaped text, or in principle provider-side account info —
+ * none of that belongs in a client-visible stream. The raw `err.message` is
+ * logged server-side instead (see streamThreadReply's catch block).
+ */
+const ERROR_MESSAGES: Record<LLMErrorCode, string> = {
+  auth: "Authentication with the LLM provider failed. Check the API key in Settings.",
+  rate_limit: "The LLM provider is rate-limiting requests right now. Try again shortly.",
+  context_too_large: "This book is too large for the configured provider's context window.",
+  extract_parse_failed: "The model's response couldn't be understood.",
+  network: "Couldn't reach the LLM provider. Check the connection or endpoint settings.",
+  refused: "The model declined to answer that question.",
+  unknown: "Something went wrong talking to the LLM provider.",
+};
 
 /**
  * Persists the user question and the assistant's answer together, in one
@@ -98,8 +114,10 @@ async function streamThreadReply(
     }
   } catch (err) {
     if (!disconnected) {
+      // eslint-disable-next-line no-console
+      console.error("[threads] provider error:", err);
       const message =
-        err instanceof LLMError ? `${err.code}: ${err.message}` : "Something went wrong.";
+        err instanceof LLMError ? ERROR_MESSAGES[err.code] : ERROR_MESSAGES.unknown;
       res.write(`data: ${JSON.stringify({ error: message })}\n\n`);
     }
   } finally {
@@ -133,7 +151,7 @@ threadsRouter.post("/", async (req, res) => {
     return;
   }
 
-  const thread = getThreadByHighlightId(db, highlightId) ?? createThread(db, highlightId);
+  const thread = getOrCreateThread(db, highlightId);
   const priorMessages = listMessagesForThread(db, thread.id);
 
   const sections = getResourceTextSections(db, resource.id);

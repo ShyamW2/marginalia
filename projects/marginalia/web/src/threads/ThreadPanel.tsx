@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import type { Message, ThreadSummary, ThreadWithMessages } from "@marginalia/shared";
+import type { HighlightKind, Message, ThreadSummary, ThreadWithMessages } from "@marginalia/shared";
 import { renderMarkdown } from "./markdown.js";
 import { streamThread } from "./streamThread.js";
 import styles from "./ThreadPanel.module.css";
@@ -17,6 +17,7 @@ function displayableQuestion(content: string): string {
 interface ThreadPanelProps {
   highlightId: string;
   highlightExact: string;
+  highlightKind: HighlightKind;
   thread: ThreadSummary | null;
   top: number;
   providerConfigured: boolean;
@@ -27,6 +28,7 @@ interface ThreadPanelProps {
 export function ThreadPanel({
   highlightId,
   highlightExact,
+  highlightKind,
   thread,
   top,
   providerConfigured,
@@ -187,7 +189,12 @@ export function ThreadPanel({
   const isStreaming = streamingText !== null;
 
   return (
-    <div className={styles.panel} style={{ top }} role="dialog" aria-label="Ask about this passage">
+    <div
+      className={`${styles.panel} ${styles[highlightKind]}`}
+      style={{ top }}
+      role="dialog"
+      aria-label="Ask about this passage"
+    >
       <div className={styles.header}>
         <span className={styles.quote}>&ldquo;{highlightExact}&rdquo;</span>
         <button type="button" className={styles.closeButton} aria-label="Collapse thread" onClick={onClose}>

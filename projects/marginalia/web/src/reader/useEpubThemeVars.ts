@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import type { HighlightKind } from "@marginalia/shared";
+import { HIGHLIGHT_KINDS } from "./highlightKinds.js";
 
 export interface EpubThemeVars {
   bg: string;
@@ -8,11 +10,21 @@ export interface EpubThemeVars {
   highlight: string;
   highlightActive: string;
   border: string;
+  /** Reference hue per highlight kind (docs/marginalia/DESIGN.md). */
+  kindColors: Record<HighlightKind, string>;
+  /** The theme actually in effect right now — resolved via `color-scheme`,
+   * which theme.css sets explicitly for both the "paper"/"ink" override and
+   * the prefers-color-scheme fallback, so this always matches what's on
+   * screen regardless of which path produced it. */
+  colorScheme: "light" | "dark";
 }
 
 function readVars(): EpubThemeVars {
   const style = getComputedStyle(document.documentElement);
   const v = (name: string) => style.getPropertyValue(name).trim();
+  const kindColors = Object.fromEntries(
+    HIGHLIGHT_KINDS.map((kind) => [kind, v(`--kind-${kind}`)]),
+  ) as Record<HighlightKind, string>;
   return {
     bg: v("--color-bg"),
     text: v("--color-text"),
@@ -21,6 +33,8 @@ function readVars(): EpubThemeVars {
     highlight: v("--color-highlight"),
     highlightActive: v("--color-highlight-active"),
     border: v("--color-border"),
+    kindColors,
+    colorScheme: style.colorScheme === "dark" ? "dark" : "light",
   };
 }
 

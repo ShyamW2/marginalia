@@ -62,6 +62,15 @@ The design work here is restraint plus two signature elements.
   it. The panel is paper, not glass: slight grain, a real drop shadow, the highlight's
   tint on its spine. M5 builds the panel plain (fade/slide, correct anchoring); the
   fold animation is a later layer over the same component.
+- **Highlight kinds.** Four semantic colors chosen at capture (decisions.md
+  2026-07-19): **rose** — passage to revisit / general annotation; **sage** —
+  definition of a new word or phrase; **honey** — important quote; **slate** — a
+  question about the text (the kind Ask defaults to). These are muted washes, not
+  marker colors: they tint the paper, they never fight the ink. Reference hues
+  (tune in situ; contrast-check both themes): rose `#c98a8a`, sage `#8faa84`,
+  honey `#c9a869`, slate `#7f97b3` — rendered as ~20%-opacity washes on paper,
+  slightly luminous lifted tints on ink. The kind also tints the highlight's rail
+  dot and the thread panel's spine, and gives the scan's heat bands their hue.
 - **Reading focus mode.** One keystroke (`f`) hides every mark, tab, and rail dot for
   a clean page; a subtle indicator shows notes are hidden. State persists per session.
   This also becomes the guard rail: any future effect must be *inside* focus mode's
@@ -86,9 +95,11 @@ dark panel, neon strokes, scanline grain, data readouts in a mono face).
   server can compute exact percent positions by locating each highlight's
   `prefix+exact+suffix` in `resource_text` char offsets — no epub.js needed, so the
   scan loads instantly without opening the book.
-- **Filter & search.** Filter bands by concept/tag (concepts arrive in M6 — the scan
-  ships after) or free-text search across `exact` quotes and thread content; matching
-  bands stay lit, the rest dim to embers.
+- **Filter & search.** Filter bands by highlight kind, by user-added tags (M9
+  migration), or free-text search across `exact` quotes and thread content; matching
+  bands stay lit, the rest dim to embers. Bands take their kind's hue translated
+  into the scan's phosphor palette. (Vault-concept filtering is a post-v1.5
+  refinement — concepts aren't persisted in SQLite; decisions.md 2026-07-19.)
 - **Importance / revisit marks.** Mark any highlight 1–3 stars (additive
   `highlights.importance` migration). On the scan, important passages render as
   **dog-ears** — folded corners on the strip — with a brighter bloom. A "revisit queue"
@@ -165,9 +176,11 @@ collapses all of the above to crossfades (M7 already requires this).
   warning); epub.js loads only in the reader; heatmap/trails are canvas/SVG, not DOM
   churn; `will-change` only during an active animation.
 - **Data additions** (all additive migrations, land with their milestone):
+  - M7: `highlights.kind` (rose/sage/honey/slate — see Room 2; backfill:
+    has-thread → slate, else rose).
   - M8: shelf state (per-resource x/y/rotation/z), notepad content.
-  - M9: `highlights.importance`; server-computed `positionPercent` per highlight
-    (derived from char offsets in `resource_text`).
+  - M9: `highlights.importance`; `highlight_tags` (user-added tags); server-computed
+    `positionPercent` per highlight (derived from char offsets in `resource_text`).
 - **Theming.** Rooms are theme *contexts* layered on the existing CSS custom
   properties — paper/ink stays the global axis; the scan is dark-native (its "light
   mode" is just a slightly lifted panel). No parallel theme system.
@@ -185,8 +198,9 @@ collapses all of the above to crossfades (M7 already requires this).
   the first shared-element transition (library card → reader) as the proof of the
   motion system.
 - **New milestones** (see TASKS.md): **M8 The Desk**, **M9 The Scan**, **M10 Reader
-  depth** (3D page turn + origami fold polish). Ordered so each ships something whole;
-  M9 follows M6 because tag filtering needs concepts.
+  depth** (3D page turn + origami fold polish). Ordered so each ships something
+  whole. (M9's filter axes are highlight kinds + user tags, not vault concepts —
+  decisions.md 2026-07-19.)
 
 ## Anti-goals
 

@@ -27,6 +27,7 @@ describe("highlights store", () => {
       suffix: "",
       cfi: "epubcfi(/6/8!/4/2)",
       spineIndex: 2,
+      kind: "rose",
     });
     createHighlight(db, {
       resourceId,
@@ -35,6 +36,7 @@ describe("highlights store", () => {
       suffix: "",
       cfi: "epubcfi(/6/4!/4/2)",
       spineIndex: 0,
+      kind: "rose",
     });
 
     const highlights = listHighlightsForResource(db, resourceId);
@@ -53,6 +55,7 @@ describe("highlights store", () => {
       suffix: " after",
       cfi: "epubcfi(/6/4!/4/2)",
       spineIndex: 0,
+      kind: "rose",
     });
 
     db.prepare(
@@ -88,6 +91,7 @@ describe("highlights store", () => {
       suffix: "",
       cfi: "epubcfi(/6/4!/4/2)",
       spineIndex: 0,
+      kind: "rose",
     });
     const now = new Date().toISOString();
     db.prepare(

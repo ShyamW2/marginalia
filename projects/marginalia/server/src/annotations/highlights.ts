@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
-import type { Highlight, HighlightWithThread } from "@marginalia/shared";
+import type { Highlight, HighlightKind, HighlightWithThread } from "@marginalia/shared";
 
 interface HighlightRow {
   id: string;
@@ -10,6 +10,7 @@ interface HighlightRow {
   suffix: string;
   cfi: string;
   spine_index: number;
+  kind: string;
   created_at: string;
 }
 
@@ -22,6 +23,7 @@ function rowToHighlight(row: HighlightRow): Highlight {
     suffix: row.suffix,
     cfi: row.cfi,
     spineIndex: row.spine_index,
+    kind: row.kind as HighlightKind,
     createdAt: row.created_at,
   };
 }
@@ -35,6 +37,7 @@ export function createHighlight(
     suffix: string;
     cfi: string;
     spineIndex: number;
+    kind: HighlightKind;
   },
 ): Highlight {
   const highlight: Highlight = {
@@ -45,12 +48,13 @@ export function createHighlight(
     suffix: input.suffix,
     cfi: input.cfi,
     spineIndex: input.spineIndex,
+    kind: input.kind,
     createdAt: new Date().toISOString(),
   };
 
   db.prepare(
-    `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, created_at)
-     VALUES (@id, @resourceId, @exact, @prefix, @suffix, @cfi, @spineIndex, @createdAt)`,
+    `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, kind, created_at)
+     VALUES (@id, @resourceId, @exact, @prefix, @suffix, @cfi, @spineIndex, @kind, @createdAt)`,
   ).run(highlight);
 
   return highlight;

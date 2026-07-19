@@ -3,6 +3,7 @@ import ePub from "epubjs";
 import type { Book, Contents, Location, Rendition } from "epubjs";
 import type {
   CreateHighlightBody,
+  HighlightKind,
   HighlightWithThread,
   ReadingPosition,
   Settings,
@@ -11,6 +12,7 @@ import type {
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
+import { markStyleForKind } from "./highlightKinds.js";
 import { AskPill } from "./AskPill.js";
 import { MarginRail } from "./MarginRail.js";
 import { ThreadPanel } from "../threads/ThreadPanel.js";
@@ -135,6 +137,14 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   // clean — deleting must remove the mark at whichever CFI is really there.
   const attachedCfiRef = useRef<Map<string, string>>(new Map());
   const themeVars = useEpubThemeVars();
+  // The book-loading effect below is set up once per resourceId and
+  // deliberately excludes themeVars from its deps (see the comment near its
+  // end) — attachHighlightMark, defined inside that effect, reads the
+  // *current* theme through this ref rather than a stale closure value.
+  const themeVarsRef = useRef(themeVars);
+  useEffect(() => {
+    themeVarsRef.current = themeVars;
+  }, [themeVars]);
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">(
     "loading",
@@ -198,13 +208,14 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
     renditionRef.current = rendition;
     applyTheme(rendition, themeVars);
 
-    function attachHighlightMark(highlightId: string, cfi: string) {
+    function attachHighlightMark(highlightId: string, cfi: string, kind: HighlightKind) {
       attachedCfiRef.current.set(highlightId, cfi);
       rendition.annotations.highlight(
         cfi,
         { highlightId },
         undefined,
         HIGHLIGHT_MARK_CLASS,
+        markStyleForKind(kind, themeVarsRef.current),
       );
     }
 
@@ -240,7 +251,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
         });
 
         if (result.status === "cfi") {
-          attachHighlightMark(highlight.id, highlight.cfi);
+          attachHighlightMark(highlight.id, highlight.cfi, highlight.kind);
         } else if (result.status === "fallback") {
           const range = rangeFromTextOffsets(
             contents.document,
@@ -248,7 +259,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
             result.match.end,
           );
           if (range) {
-            attachHighlightMark(highlight.id, contents.cfiFromRange(range));
+            attachHighlightMark(highlight.id, contents.cfiFromRange(range), highlight.kind);
           } else {
             markUnanchored(highlight.id);
           }
@@ -421,10 +432,35 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
   }, [resourceId]);
 
   useEffect(() => {
-    if (renditionRef.current) applyTheme(renditionRef.current, themeVars);
+    if (!renditionRef.current) return;
+    applyTheme(renditionRef.current, themeVars);
+
+    // Re-tint every already-attached mark: fill-opacity/blend-mode differ
+    // between paper and ink (see highlightKinds.ts), so a highlight created
+    // under one theme must repaint when the user toggles to the other.
+    // annotations.highlight() doesn't update an existing mark in place —
+    // it stacks a new one — so each mark is removed and re-added.
+    for (const highlight of highlightsRef.current) {
+      const cfi = attachedCfiRef.current.get(highlight.id);
+      if (!cfi) continue;
+      renditionRef.current.annotations.remove(cfi, "highlight");
+      renditionRef.current.annotations.highlight(
+        cfi,
+        { highlightId: highlight.id },
+        undefined,
+        HIGHLIGHT_MARK_CLASS,
+        markStyleForKind(highlight.kind, themeVars),
+      );
+    }
   }, [themeVars]);
 
-  async function handleAsk() {
+  /** Creates a highlight from the pending selection and attaches its mark;
+   * shared by the pill's per-kind dots (no thread) and Ask (slate, opens
+   * the thread panel). */
+  async function createHighlightFromSelection(
+    kind: HighlightKind,
+    openThread: boolean,
+  ) {
     if (!pendingSelection) return;
     const created = await postHighlight({
       resourceId,
@@ -433,6 +469,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
       suffix: pendingSelection.suffix,
       cfi: pendingSelection.cfi,
       spineIndex: pendingSelection.spineIndex,
+      kind,
     });
     if (created) {
       setHighlights((prev) => [...prev, created]);
@@ -445,13 +482,24 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
         { highlightId: created.id },
         undefined,
         HIGHLIGHT_MARK_CLASS,
+        markStyleForKind(created.kind, themeVars),
       );
       pendingSelection.contents.window.getSelection()?.removeAllRanges();
-      // Anchor the panel near the selection itself — the nicest, most
-      // literal "visually anchored to the highlight" case (a fresh Ask).
-      setExpandedThread({ highlightId: created.id, top: pendingSelection.top });
+      if (openThread) {
+        // Anchor the panel near the selection itself — the nicest, most
+        // literal "visually anchored to the highlight" case (a fresh Ask).
+        setExpandedThread({ highlightId: created.id, top: pendingSelection.top });
+      }
     }
     setPendingSelection(null);
+  }
+
+  function handlePickKind(kind: HighlightKind) {
+    void createHighlightFromSelection(kind, false);
+  }
+
+  function handleAsk() {
+    void createHighlightFromSelection("slate", true);
   }
 
   async function handleDeleteHighlight(highlight: HighlightWithThread) {
@@ -508,7 +556,8 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
             <AskPill
               left={pendingSelection.left}
               top={pendingSelection.top}
-              onClick={handleAsk}
+              onPickKind={handlePickKind}
+              onAsk={handleAsk}
             />
           )}
           {expandedThread && expandedHighlight && (
@@ -519,6 +568,7 @@ export function ReaderView({ resourceId }: ReaderViewProps) {
               key={expandedHighlight.id}
               highlightId={expandedHighlight.id}
               highlightExact={expandedHighlight.exact}
+              highlightKind={expandedHighlight.kind}
               thread={expandedHighlight.thread}
               top={expandedThread.top}
               providerConfigured={providerConfigured}

@@ -59,6 +59,37 @@ export function createThread(db: Database.Database, highlightId: string): Thread
   return thread;
 }
 
+function isUniqueConstraintError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    "code" in err &&
+    typeof (err as { code?: unknown }).code === "string" &&
+    (err as { code: string }).code.startsWith("SQLITE_CONSTRAINT")
+  );
+}
+
+/**
+ * Finds or creates the thread for a highlight, recovering from the
+ * `UNIQUE(highlight_id)` race: two near-simultaneous first-questions on the
+ * same highlight can both see no existing thread and both attempt to
+ * create one — the loser's insert fails the unique constraint. Rather than
+ * surfacing that as a 500, reuse the thread the winner just created.
+ */
+export function getOrCreateThread(db: Database.Database, highlightId: string): Thread {
+  const existing = getThreadByHighlightId(db, highlightId);
+  if (existing) return existing;
+
+  try {
+    return createThread(db, highlightId);
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      const thread = getThreadByHighlightId(db, highlightId);
+      if (thread) return thread;
+    }
+    throw err;
+  }
+}
+
 export function listMessagesForThread(db: Database.Database, threadId: string): Message[] {
   const rows = db
     .prepare("SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at")

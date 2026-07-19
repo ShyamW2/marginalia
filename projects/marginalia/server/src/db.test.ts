@@ -2,7 +2,22 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import BetterSqlite3 from "better-sqlite3";
 import { createDb } from "./db.js";
+import { MIGRATIONS } from "./migrations.js";
+
+function tmpDbPath(label: string): string {
+  return path.join(
+    os.tmpdir(),
+    `marginalia-test-${label}-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`,
+  );
+}
+
+function cleanupDbFile(dbPath: string): void {
+  fs.rmSync(dbPath, { force: true });
+  fs.rmSync(`${dbPath}-wal`, { force: true });
+  fs.rmSync(`${dbPath}-shm`, { force: true });
+}
 
 describe("db migrations", () => {
   it("creates every table from migration 001 in a fresh database", () => {
@@ -34,15 +49,67 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(1);
+    expect(version).toBe(2);
     db.close();
   });
 
+  it("migration 002 adds highlights.kind, defaulting to rose, and backfills pre-existing threaded highlights to slate", () => {
+    // Migration 2's backfill runs once, against whatever data already
+    // exists at migration time — so this has to simulate a real pre-M7
+    // database (migration 1 only) rather than insert data into an
+    // already-fully-migrated one, or there'd be nothing to backfill.
+    const tmpPath = tmpDbPath("kind-backfill");
+    try {
+      const legacy = new BetterSqlite3(tmpPath);
+      legacy.exec(MIGRATIONS[0].sql);
+      legacy.pragma("user_version = 1");
+      const now = new Date().toISOString();
+      legacy
+        .prepare(
+          `INSERT INTO resources (id, title, author, format, file_path, metadata, imported_at)
+           VALUES ('res-1', 'Title', NULL, 'epub', '/tmp/x.epub', '{}', @now)`,
+        )
+        .run({ now });
+      // A highlight with a thread (pre-M7 data) — should backfill to slate.
+      legacy
+        .prepare(
+          `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, created_at)
+           VALUES ('h-threaded', 'res-1', 'q', '', '', 'epubcfi(/6/4!/4/2)', 0, @now)`,
+        )
+        .run({ now });
+      legacy
+        .prepare(
+          `INSERT INTO threads (id, highlight_id, created_at) VALUES ('t-1', 'h-threaded', @now)`,
+        )
+        .run({ now });
+      // A highlight with no thread — should keep the default.
+      legacy
+        .prepare(
+          `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, created_at)
+           VALUES ('h-plain', 'res-1', 'q2', '', '', 'epubcfi(/6/8!/4/2)', 1, @now)`,
+        )
+        .run({ now });
+      legacy.close();
+
+      // Reopening via createDb runs the pending migration (2) against this
+      // pre-existing data.
+      const db = createDb(tmpPath);
+      const rows = db
+        .prepare("SELECT id, kind FROM highlights ORDER BY id")
+        .all() as { id: string; kind: string }[];
+
+      expect(rows).toEqual([
+        { id: "h-plain", kind: "rose" },
+        { id: "h-threaded", kind: "slate" },
+      ]);
+      db.close();
+    } finally {
+      cleanupDbFile(tmpPath);
+    }
+  });
+
   it("is idempotent — reopening an already-migrated database file is a no-op", () => {
-    const tmpPath = path.join(
-      os.tmpdir(),
-      `marginalia-test-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`,
-    );
+    const tmpPath = tmpDbPath("idempotent");
 
     try {
       const first = createDb(tmpPath);
@@ -51,12 +118,10 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(1);
+      expect(second.pragma("user_version", { simple: true })).toBe(2);
       second.close();
     } finally {
-      fs.rmSync(tmpPath, { force: true });
-      fs.rmSync(`${tmpPath}-wal`, { force: true });
-      fs.rmSync(`${tmpPath}-shm`, { force: true });
+      cleanupDbFile(tmpPath);
     }
   });
 });

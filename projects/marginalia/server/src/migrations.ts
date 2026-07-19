@@ -78,4 +78,22 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_messages_thread ON messages(thread_id);
     `,
   },
+  {
+    // M7: highlight kinds (docs/decisions.md 2026-07-19). Four semantic
+    // kinds chosen at capture time — rose (revisit/general), sage
+    // (definition), honey (quote), slate (question, what Ask defaults to).
+    // The enum itself is enforced at the zod boundary (shared/schemas.ts),
+    // not a SQL CHECK, to avoid ALTER TABLE ADD COLUMN CHECK-constraint
+    // portability concerns across better-sqlite3's bundled SQLite versions.
+    version: 2,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN kind TEXT NOT NULL DEFAULT 'rose';
+
+      -- Backfill: a pre-existing highlight that already opened a thread was
+      -- functionally a question, even though "kind" didn't exist yet.
+      -- Everything else keeps the neutral default above.
+      UPDATE highlights SET kind = 'slate'
+        WHERE id IN (SELECT highlight_id FROM threads);
+    `,
+  },
 ];

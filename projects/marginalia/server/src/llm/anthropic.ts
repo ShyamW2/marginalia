@@ -9,6 +9,30 @@ import {
 
 const THREAD_MAX_TOKENS = 8192;
 
+// Context window per model (see docs/marginalia/SPEC.md's LLM layer section).
+// Every current Claude model is 1M except the Haiku family, which caps at
+// 200K — hardcoding 1M regardless of the configured model would overshoot
+// the context builder's budget and risk a context_too_large error on Haiku.
+const DEFAULT_CONTEXT_TOKENS = 1_000_000;
+const MODEL_CONTEXT_TOKENS: Record<string, number> = {
+  "claude-haiku-4-5": 200_000,
+  "claude-haiku-4-5-20251001": 200_000,
+  "claude-3-5-haiku-20241022": 200_000,
+  "claude-3-haiku-20240307": 200_000,
+};
+
+/**
+ * Looks up the context window for a configured model string. Falls back to
+ * matching on "haiku" in the id (covers future/unlisted Haiku snapshots)
+ * before defaulting to the 1M ceiling every other current model shares.
+ */
+export function contextTokensForModel(model: string): number {
+  const exact = MODEL_CONTEXT_TOKENS[model];
+  if (exact !== undefined) return exact;
+  if (model.includes("haiku")) return 200_000;
+  return DEFAULT_CONTEXT_TOKENS;
+}
+
 export class AnthropicProvider implements LLMProvider {
   readonly id = "anthropic" as const;
   private readonly client: Anthropic;
@@ -20,7 +44,7 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   capabilities(): { contextTokens: number; supportsCaching: boolean } {
-    return { contextTokens: 1_000_000, supportsCaching: true };
+    return { contextTokens: contextTokensForModel(this.model), supportsCaching: true };
   }
 
   async *stream(req: LLMStreamRequest): AsyncIterable<{ text: string }> {

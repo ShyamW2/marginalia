@@ -8,6 +8,22 @@
   padding-right: 0.75rem;
 }
 
+/* One custom-property-setting class per highlight kind (docs/marginalia/
+   DESIGN.md) — referenced generically below so the thread-state rules don't
+   need a full kind × state matrix. */
+.rose {
+  --dot-kind: var(--kind-rose);
+}
+.sage {
+  --dot-kind: var(--kind-sage);
+}
+.honey {
+  --dot-kind: var(--kind-honey);
+}
+.slate {
+  --dot-kind: var(--kind-slate);
+}
+
 .dotButton {
   position: relative;
   width: 0.6rem;
@@ -15,7 +31,7 @@
   border-radius: 50%;
   border: none;
   padding: 0;
-  background: var(--color-border);
+  background: var(--dot-kind, var(--color-border));
   cursor: pointer;
   transition: background var(--duration-standard) var(--ease-standard),
     transform var(--duration-standard) var(--ease-standard);
@@ -29,18 +45,20 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 
-/* Thread state (independent of "active" — the current-page ring above):
-   no thread = plain dot; a thread with no answer yet gets an accent
-   outline; once answered the dot fills solid. */
+/* Thread state (independent of "active" — the current-page ring above and
+   the kind tint above that): no thread = solid kind-colored dot; a thread
+   with no answer yet gets a hollow kind-colored ring; once answered the
+   dot fills solid again. */
 .dotButton.hasThread {
   background: var(--color-bg-raised);
-  border: 2px solid var(--color-accent);
+  border: 2px solid var(--dot-kind, var(--color-accent));
   width: 0.5rem;
   height: 0.5rem;
 }
 
 .dotButton.hasThread.hasAnswer {
-  background: var(--color-accent);
+  background: var(--dot-kind, var(--color-accent));
+  border-color: transparent;
 }
 
 .dotButton.unanchored {

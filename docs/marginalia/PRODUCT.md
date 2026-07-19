@@ -69,9 +69,11 @@ one OpenAI-compatible endpoint).
 Out (explicitly deferred): PDF, Markdown, free-floating chat, two-way vault sync,
 embeddings/semantic search, multi-device, OCR, mobile.
 
-## Open questions
+## Open questions — all resolved (2026-07-19)
 
-- Does a thread ever *start* from the model (proactive margin notes), or is v1 strictly
-  user-initiated? (Leaning: strictly user-initiated.)
-- Highlight colors / kinds (question vs. mark-for-later) — v1 or later?
-- How much of the reading surface is pagination vs. scroll? (Prototype both, feel wins.)
+- Proactive model-initiated threads: **no** — v1/v1.5 threads are strictly
+  user-initiated. (An LLM supplementation pass over existing notes is parked
+  post-v1.5 — see TASKS.md "Parked".)
+- Highlight colors / kinds: **yes, in M7** — four semantic kinds
+  (rose/sage/honey/slate), muted washes per DESIGN.md; user tags follow in M9.
+- Pagination vs. scroll: **pagination won** (shipped in M2, feel confirmed).

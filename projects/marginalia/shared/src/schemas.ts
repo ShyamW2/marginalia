@@ -75,15 +75,27 @@ export type Anchor = z.infer<typeof AnchorSchema>;
 // Highlight
 // ---------------------------------------------------------------------------
 
+/**
+ * Four semantic kinds chosen at capture time (docs/decisions.md 2026-07-19):
+ * rose = passage to revisit / general annotation; sage = definition of a new
+ * word or phrase; honey = important quote; slate = a question about the
+ * text (the kind Ask defaults to). Labels, not behavior — any kind can host
+ * a thread.
+ */
+export const HighlightKindSchema = z.enum(["rose", "sage", "honey", "slate"]);
+export type HighlightKind = z.infer<typeof HighlightKindSchema>;
+
 export const HighlightSchema = AnchorSchema.extend({
   id: z.string(), // uuid v4
   resourceId: z.string(),
+  kind: HighlightKindSchema,
   createdAt: z.string(),
 });
 export type Highlight = z.infer<typeof HighlightSchema>;
 
 export const CreateHighlightBodySchema = AnchorSchema.extend({
   resourceId: z.string().min(1),
+  kind: HighlightKindSchema,
 });
 export type CreateHighlightBody = z.infer<typeof CreateHighlightBodySchema>;
 

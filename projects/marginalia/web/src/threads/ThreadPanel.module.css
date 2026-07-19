@@ -7,11 +7,27 @@
   flex-direction: column;
   background: var(--color-bg-raised);
   border: 1px solid var(--color-border);
+  border-left: 3px solid var(--spine-kind, var(--color-border));
   border-radius: 10px;
   box-shadow: var(--shadow-panel);
   z-index: 10;
   overflow: hidden;
   animation: slideIn var(--duration-standard) var(--ease-standard);
+}
+
+/* The highlight's kind tints the panel's spine — a folded sticky note's
+   edge color (docs/marginalia/DESIGN.md). */
+.rose {
+  --spine-kind: var(--kind-rose);
+}
+.sage {
+  --spine-kind: var(--kind-sage);
+}
+.honey {
+  --spine-kind: var(--kind-honey);
+}
+.slate {
+  --spine-kind: var(--kind-slate);
 }
 
 @keyframes slideIn {

@@ -131,6 +131,11 @@ render time, search the spine item's text for `prefix + exact + suffix`, then `e
 alone; if still not found, show the highlight in the margin rail as "unanchored" rather
 than dropping it. Anchoring resolution logic gets unit tests.
 
+**Additive migrations (M7+).** The schema above is migration 001 and is never edited
+retroactively. Later milestones add numbered additive migrations, defined per-milestone
+in TASKS.md/DESIGN.md: M7 `highlights.kind`; M8 shelf state + notepad; M9
+`highlights.importance` + `highlight_tags` + server-computed `positionPercent`.
+
 ## HTTP API
 
 All JSON bodies validated with zod schemas from `shared/`. Errors: `{ error: string }`

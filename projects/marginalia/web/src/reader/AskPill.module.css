@@ -3,32 +3,68 @@
   transform: translate(-50%, calc(-100% - 8px));
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  background: var(--color-accent);
-  color: var(--color-accent-text);
-  border: none;
+  gap: 0.35rem;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
   border-radius: 999px;
-  padding: 0.4rem 0.85rem;
-  font-family: var(--font-sans);
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
+  padding: 0.35rem 0.5rem;
   box-shadow: var(--shadow-panel);
   white-space: nowrap;
   z-index: 5;
   animation: rise var(--duration-standard) var(--ease-standard);
 }
 
-.pill:focus-visible {
+.dot {
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  transition: transform var(--duration-standard) var(--ease-standard);
+}
+
+.dot:hover {
+  transform: scale(1.2);
+}
+
+.dot:focus-visible {
   outline: 2px solid var(--color-text);
   outline-offset: 2px;
 }
 
-.dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  background: var(--color-highlight-active);
+.rose {
+  background: var(--kind-rose);
+}
+
+.sage {
+  background: var(--kind-sage);
+}
+
+.honey {
+  background: var(--kind-honey);
+}
+
+.slate {
+  background: var(--kind-slate);
+}
+
+.askButton {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border: none;
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: 0.15rem;
+}
+
+.askButton:focus-visible {
+  outline: 2px solid var(--color-text);
+  outline-offset: 2px;
 }
 
 @keyframes rise {

@@ -23,6 +23,18 @@
   --color-highlight-active: #eac96a;
   --color-danger: #a13d3d;
 
+  /*
+   * Highlight kinds (docs/marginalia/DESIGN.md, docs/decisions.md
+   * 2026-07-19): rose = revisit/general, sage = definition, honey = quote,
+   * slate = question (Ask's default). Same reference hue in both themes —
+   * only the *treatment* (wash opacity, blend mode) differs per theme; see
+   * reader/highlightKinds.ts for where these get applied to epub.js marks.
+   */
+  --kind-rose: #c98a8a;
+  --kind-sage: #8faa84;
+  --kind-honey: #c9a869;
+  --kind-slate: #7f97b3;
+
   --shadow-panel: 0 8px 24px rgba(40, 30, 15, 0.12);
   --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
   --duration-standard: 180ms;
