@@ -1,6 +1,7 @@
 import express, { type ErrorRequestHandler } from "express";
 import path from "node:path";
 import fs from "node:fs";
+import multer from "multer";
 import { getDb } from "./db.js";
 import { WORKSPACE_ROOT } from "./paths.js";
 import { resourcesRouter } from "./routes/resources.js";
@@ -45,6 +46,14 @@ app.use("/api", (_req, res) => {
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   // eslint-disable-next-line no-console
   console.error(err);
+  // A too-large upload is an expected client input error, not a server
+  // fault — give it a structured code + 413 (per the app's convention of
+  // structured error codes over raw messages) instead of falling through
+  // to the generic 500 below.
+  if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
+    res.status(413).json({ error: "file_too_large" });
+    return;
+  }
   const message = err instanceof Error ? err.message : "internal_error";
   res.status(500).json({ error: message });
 };

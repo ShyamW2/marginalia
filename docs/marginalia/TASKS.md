@@ -292,8 +292,22 @@ starting any milestone from here on.
       highlight-kind washes visible and legible), annotations overview,
       thread panel with a live streamed answer, Ask pill's four kind dots,
       and settings — no contrast or legibility issues in either theme.)_
-- [ ] Error/edge audit: huge EPUB, EPUB with no metadata, provider down mid-stream,
+- [x] Error/edge audit: huge EPUB, EPUB with no metadata, provider down mid-stream,
       vault path unset → all degrade gracefully with designed states
+      _(verified 2026-07-19: drove all four live, not just read the code —
+      see NOTES.md "M7 — error/edge audit" for the full method. Huge EPUB
+      (a real 201MB file) was the one real gap: it was rejected safely but
+      via the generic 500/raw-message fallback, not a designed state; fixed
+      by special-casing multer's LIMIT_FILE_SIZE into a structured 413
+      `file_too_large` the client renders as "That file is over the 200MB
+      import limit". The other three were already correct: a hand-built
+      no-metadata EPUB imports and reads cleanly (designed "Untitled"
+      fallback cover, no author line, no crash); a provider that dies
+      mid-stream (tested via a throwaway fake endpoint, not the user's real
+      Ollama service) streams partial text then cleanly shows "Something
+      went wrong... Retry" with zero messages persisted, confirmed via the
+      API; publishing with vault path unset shows "Set a vault path in
+      Settings first." as a dismissible toast. 81/81 tests, build clean.)_
 - [ ] **Verify:** full walkthrough (import → read → highlight → ask → follow-up →
       publish → open vault in Obsidian) in both themes; create one highlight of each
       of the four kinds and confirm the washes read clearly on paper and ink; fix

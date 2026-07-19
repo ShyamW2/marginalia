@@ -189,6 +189,65 @@ never got updated with `lastReadAt` when the M7 library-polish commit
 
 **Next task:** dark mode audit (M7, next unchecked box in TASKS.md).
 
+## M7 — error/edge audit — 2026-07-19 (Fable)
+
+Drove all four named edge cases live rather than reasoning about the code in
+the abstract:
+
+- **Huge EPUB:** a real 201MB file (`truncate -s 201M`, multer's
+  `limits.fileSize` is 200MB) was correctly rejected, but only via the
+  generic catch-all error handler — 500 status, raw `err.message`. Fixed:
+  `index.ts`'s error handler now special-cases `multer.MulterError` with
+  code `LIMIT_FILE_SIZE` into a structured `{error: "file_too_large"}` at
+  413 (matching the app's structured-error-code convention used everywhere
+  else — `vault_path_unset`, `unsupported_format`, etc. — rather than a raw
+  message that happened to be readable by coincidence). `LibraryPage.tsx`
+  maps it to "That file is over the 200MB import limit". Verified live via
+  the real drag-drop/file-picker UI, not just curl: clean inline dismissible
+  error, no hang, no crash.
+- **EPUB with no metadata:** already handled — `epub.ts`'s `parseOpf` falls
+  back title to `"Untitled"` and author to `null` (this predates M7);
+  `LibraryPage.tsx`/`ReaderPage.tsx` already conditionally render the author
+  line. Built a minimal hand-crafted EPUB with no `dc:title`/`dc:creator` at
+  all and imported it through the real UI: library card shows a designed
+  fallback cover (a soft-gradient placeholder with a big initial, "U"),
+  "Untitled", no author line, "No highlights yet" — not a broken layout.
+  Reader opens and renders the book text with no crash. No fix needed.
+- **Provider down mid-stream:** the real risk of testing this against the
+  system's actual local Ollama service (a persistent `ollama serve` daemon,
+  not something this session started) is disrupting it for the user's other
+  uses, so this used a tiny throwaway HTTP server instead — mimics an
+  OpenAI-compatible stream, sends a few real SSE chunks, then destroys the
+  socket mid-stream (no `[DONE]`, no clean close), standing in for "the
+  provider process died" without touching Ollama. Pointed settings at it
+  temporarily (restored immediately after), asked a real question through
+  the actual reader UI: streamed "The White Rabbit" for a few chunks, then
+  cleanly surfaced "Something went wrong talking to the LLM provider. Retry"
+  with the composer restored — confirmed via the API afterward that the
+  thread persisted **zero** messages despite the partial text having been
+  shown on screen, matching the SPEC "persist on completion only" contract
+  (`threads.ts`'s `streamThreadReply` only calls `persistExchange` after the
+  `for await` loop completes without throwing). No fix needed — this was
+  already correct, just never verified against a genuine mid-stream drop
+  specifically (earlier M5/M6 verification only exercised "unreachable from
+  the start" and "client-initiated Stop").
+- **Vault path unset:** already handled — `routes/publish.ts` returns
+  `{error: "vault_path_unset"}` at 400, `web/src/library/publish.ts` maps it
+  to "Set a vault path in Settings first.", shown as a dismissible toast.
+  Verified live by clicking Publish with the real (currently unset) vault
+  path in this environment's settings. No fix needed.
+
+Full suite 81/81, `pnpm build` clean after the one fix. Cleaned up all test
+artifacts (deleted the throwaway highlight/thread created for the mid-stream
+test, stopped the throwaway HTTP server) except the no-metadata "Untitled"
+book, which was left in the library — there's no delete-resource route
+(deliberate per the immutable-on-import decision), and it's harmless local
+test data consistent with how the Alice/Metamorphosis fixtures were already
+being reused as living verification data by prior sessions.
+
+**Next task:** the M7 final Verify step (full walkthrough, both themes, all
+four highlight kinds) — the last item before v1 is whole.
+
 ## Blockers
 
 _(none yet)_

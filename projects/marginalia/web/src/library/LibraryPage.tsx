@@ -20,6 +20,7 @@ function parseErrorMessage(responseText: string): string {
   try {
     const body = JSON.parse(responseText) as { error?: string };
     if (body.error === "unsupported_format") return "Only .epub files are supported";
+    if (body.error === "file_too_large") return "That file is over the 200MB import limit";
     if (body.error) return body.error;
   } catch {
     // fall through to generic message
