@@ -3,6 +3,82 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-20 — v1.6 feedback pass: design translations
+
+Operator feedback after living with v1.5 on the Mac. Recorded here as *design
+decisions* so the implementation milestones (M11–M15 in TASKS.md) don't re-decide
+them. Each item below translates a subjective note into a buildable rule.
+
+- **The curl is a fold, not a hinge.** Today's `PageCurl` rotates the departing
+  page's bitmap rigidly about the spine (`rotateY` up to 108° at `transformOrigin
+  100%/50%`) — a swinging door. Apple Books deforms the sheet: the corner nearest
+  the pointer lifts and the paper folds about the **perpendicular bisector of the
+  line from the grabbed corner to the pointer**, with the back of the sheet visible
+  (mirrored, dimmed) and the page beneath revealed through the gap. That bisector
+  model — not a full cylindrical mesh — is the target: it is what Apple Books
+  actually does geometrically, and it is expressible in **canvas 2D** (clip to the
+  fold half-plane, draw the mirrored texture through a reflection matrix, round the
+  crease with a short gradient) with **no three.js**. DESIGN.md's "no WebGL until a
+  named effect needs it" therefore still holds — the named effect was the curl, and
+  the 2D fold discharges it. Per-frame canvas redraw is the one sanctioned
+  exception to "animate transform/opacity only"; budget is one canvas, ≤60fps,
+  redraw only while a fold is live.
+- **Grab anywhere, not a strip.** The 18px `edgeGrab` strips become the outer
+  **semicircular zones** (below) — the whole outer band of the page is grabbable,
+  and the fold anchors to whichever corner is nearest the grab point. This is what
+  "the nearest part of the page gets dragged along" means operationally.
+- **Turn zones are semicircular and announce themselves.** The existing invisible
+  30%/70% click zones (`ReaderView.tsx` ~L483) keep their hit-testing logic but gain
+  (a) a semicircular shape via `clip-path: ellipse()`, (b) a directional cursor, and
+  (c) a soft vignette that fades in on hover. Constraint discovered while specifying:
+  a parent-document overlay cannot own this, because anything with `pointer-events`
+  over the iframe kills text selection — the *cursor* is set by writing
+  `contents.document.body.style.cursor` from the pointermove handler that already
+  computes `visibleX`, and the vignette is a `pointer-events: none` sibling. The
+  reader's "no ambient effects" law is respected: the vignette only exists while the
+  pointer is inside a turn zone.
+- **Two-page spread peels the near leaf only.** `spread: "auto"` renders both pages
+  as columns in one epub.js iframe, so the fold must be **leaf-relative**: the fold
+  canvas is sized and positioned to one half of the stage, not the whole stage.
+  Spread is a persisted per-user setting with a single-page fallback below a minimum
+  width.
+- **The `%` readout is an instrument, not a label.** Click = the existing popover;
+  click-and-**drag** = a retro-camera scrub dial (ticks, chapter marks, live preview
+  readout) that commits the jump on release. epub.js `book.locations` already
+  backs this — `cfiFromPercentage()` is the seam; the readout at
+  `ReaderView.tsx` L883 is the anchor.
+- **Notes are a first-class column, not a thread message.** Additive migration adds
+  `highlights.note`. Rationale: the vault compiler distils *threads* into concept
+  notes (settled decision 7); a personal note is not a transcript and must not be
+  swept into that pipeline, so it needs to be separable at the schema level, not by
+  role-flag heuristics.
+- **Settings is a modal, not a room.** The three-room model (DESIGN.md) has exactly
+  three rooms; settings was never one of them, and a full-page route breaks the
+  reading context to change a model name. It becomes an overlay over the current
+  page. `/settings` keeps working as a deep link (renders the modal over the desk).
+- **The scan is an instrument panel, so it fills the glass.** `max-width: 1100px`
+  centred in the viewport reads as a web page, not an instrument
+  (`ScanPage.module.css` L24–25). The scan fills the viewport; the strip grows to
+  take the slack.
+- **CRT distortion applies to the graphics layer only.** Barrel warp
+  (`feDisplacementMap` driven by a radial gradient), bloom/fuzz on the strokes, and
+  chromatic fringing wrap **the strip and its heat graphics** — never the mono
+  readouts, labels, or the revisit queue. DESIGN.md's legibility rule ("glow is an
+  accent on a dark neutral, not text-on-noise", contrast still passes) is binding and
+  outranks the effect; warping body text would violate it. Intensity is a setting,
+  and reduced-motion disables warp and fringing outright.
+- **Heat is a continuous field.** Discrete bands are replaced by a summed-gaussian
+  density field on canvas with a cool→hot colour ramp, so clusters bleed into one
+  another with no discrete markings. The bands survive underneath as invisible
+  hit-targets — hover/click/filter behaviour and the airlock jump are unchanged.
+- **The desk hover jump is a real bug with a known cause** (not a tuning problem):
+  `BookObject.tsx` binds the shelf position to a motion value (`style={{ x, y }}`)
+  and *also* animates the same `y` in `whileHover={{ y: -4 }}`. `whileHover`'s `-4`
+  is absolute, not relative, so hovering a book resting at `y: 340` animates it to
+  `y: -4` — a 344px leap, and the further you drag a book from the origin the worse
+  it gets, exactly as reported. The lift must move a **different element** (an inner
+  wrapper) so it can never fight the drag-owned motion value.
+
 ## 2026-07-19 — Checkpoint executed: `claude-agent` subscription provider
 - **Subscription-first billing.** The operator wants Claude usage billed to
   their Pro/Max subscription, not per-token API keys; API keys become the

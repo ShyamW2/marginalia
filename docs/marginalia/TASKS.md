@@ -633,6 +633,207 @@ until the M7 verify passes — v1 must be whole first.
 
 ---
 
+## v1.6 — operator feedback pass (M11–M15)
+
+Source: operator feedback after living with v1.5, translated into design decisions in
+`docs/decisions.md` (2026-07-20 entry) — **read that entry before starting M11**. It
+resolves every "make it feel like X" note into a buildable rule; do not re-derive them.
+
+Ordering is deliberate: cheap, low-risk fixes ship first (M11), the hardest single
+effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
+
+### M11 — Reading surface fixes (quick wins)
+
+- [ ] **Fix the desk hover jump.** `web/src/desk/BookObject.tsx`: `style={{ x, y }}`
+      binds the shelf position to motion values while `whileHover={{ y: -4 }}`
+      animates that *same* `y` to an absolute -4 — a book resting at `y: 340` leaps
+      344px on hover. Remove `y` from `whileHover` entirely; apply the lift to an
+      inner wrapper element instead (the existing `.coverWrap` `motion.div` is the
+      natural home, but it owns `layoutId` — if the layout animation and the lift
+      fight, add a dedicated wrapper between them rather than dropping `layoutId`).
+      _Acceptance: drag a book to the far corner of the desk, hover it — it lifts by
+      the same few px as an undragged book, and returns exactly to where it was
+      dropped. Position persists correctly across a reload after hovering._
+- [ ] **Page spacing.** Text currently runs to the page edges. Add generous inner
+      padding to the rendered page via the epub.js theme (`useEpubThemeVars.ts` /
+      `applyTheme` in `ReaderView.tsx` — set body padding there, *not* on the
+      container, so pagination accounts for it) and cap the measure so lines stay in
+      the 60–75 character range at wide viewports.
+      _Acceptance: no glyph sits within ~2.5rem of the page edge at any window size;
+      pagination still lands whole lines (no clipped last line); highlights still
+      anchor correctly after the change._
+- [ ] **Arrow nav buttons.** Replace the `← Previous` / `Next →` text buttons
+      (`ReaderView.tsx` L974–991) with icon-only left/right arrow controls; keep the
+      disabled-at-start/end behaviour and add `aria-label`s ("Previous page" /
+      "Next page") so the keyboard/SR path is unchanged.
+      _Acceptance: buttons are legible icon targets ≥40px, keyboard-reachable, and
+      screen-reader-labelled; visual weight is quieter than the text buttons were._
+- [ ] **Semicircular turn zones with a directional cursor.** Keep the existing
+      hit-testing (`ReaderView.tsx` ~L481–486 computes `visibleX` against the
+      container). Add: a `clip-path: ellipse()` semicircular zone on each far edge; a
+      directional cursor set by writing `contents.document.body.style.cursor` from
+      the existing iframe pointermove handler when the pointer is inside a zone
+      (a data-URI SVG arrow, or `w-resize`/`e-resize` as the fallback); and a soft
+      vignette that fades in on hover, rendered as a **`pointer-events: none`**
+      sibling in the parent document.
+      **Do not** put an interactive overlay over the iframe — it kills text
+      selection. See the decisions entry.
+      _Acceptance: moving toward either edge shows the arrow cursor and vignette;
+      clicking there turns the page; selecting text that starts inside a zone still
+      works and still opens the Ask pill; zones disappear in focus mode._
+- [ ] **Settings becomes a modal.** Convert `SettingsPage` from a route-level page to
+      an overlay rendered above the current room (dialog semantics: focus trap,
+      Escape closes, backdrop click closes, `aria-modal`). `/settings` stays a valid
+      deep link — it renders the desk with the modal open, so existing links and the
+      nav item keep working.
+      _Acceptance: opening settings from the reader leaves the page visible and
+      scrolled where it was behind the modal; Escape returns focus to the control
+      that opened it; the connection test still works from inside the modal._
+- [ ] **Verify:** drag books around the desk and hover them (no jumps); read a chapter
+      (comfortable margins, arrow nav, edge cursors); open settings from all three
+      rooms.
+
+### M12 — Book traversal
+
+- [ ] **Scrub dial on the `%` readout.** `ReaderView.tsx` L883 is the anchor.
+      Click (no drag) keeps today's popover (% / pages / chapters). Click-and-drag
+      opens a horizontal dial — retro-camera zoom-ring feel: tick marks, chapter
+      boundaries as taller ticks, current position centred — that scrubs as the
+      pointer moves left/right and commits on release. Resolve target position
+      through `book.locations.cfiFromPercentage()` (locations are already generated —
+      see the comment at `ReaderView.tsx` ~L548) and show a live preview readout
+      (chapter name + %) while dragging; do **not** re-render the book on every
+      frame, only on commit.
+      _Acceptance: a slow drag scrubs smoothly with a live readout and no page
+      re-render per frame; release lands on the previewed position; Escape mid-drag
+      cancels and returns to the original position; the dial is also operable by
+      keyboard (arrows step, Enter commits) or has a documented keyboard equivalent._
+- [ ] **Jump up and down the book.** Add chapter-level navigation: previous/next
+      chapter controls plus a table-of-contents popover (epub.js `book.navigation.toc`)
+      that jumps on select, with keyboard shortcuts (`[` / `]` for chapter, and the
+      TOC reachable without a pointer).
+      _Acceptance: chapter jumps land at chapter starts and save position; TOC lists
+      real chapter titles from the fixture EPUBs; jumping does not break highlight
+      anchoring on arrival._
+- [ ] **Two-page spread (iPad view).** Switch the rendition to `spread: "auto"` with a
+      sensible `minSpreadWidth` (`ReaderView.tsx` L318–325 currently hardcodes
+      `spread: "none"`), behind a persisted user setting, falling back to single page
+      below the threshold. Audit everything that assumes one page per stage: the turn
+      zones, the margin rail's anchoring, the Ask pill and thread panel positioning,
+      and snapshot capture.
+      _Acceptance: at a wide window two pages render side by side with a visible
+      gutter; highlights, the margin rail, and the thread panel all anchor to the
+      correct leaf; turning advances by a spread, not a page; narrow windows fall
+      back cleanly; the setting survives a reload._
+- [ ] **Verify:** traverse a full fixture book by dial, by chapter jump, and by paging,
+      in both single and spread modes, with highlights present throughout.
+
+### M13 — Notes on annotations
+
+- [ ] **Migration + API:** additive migration adding `highlights.note` (TEXT, default
+      empty), exposed through the existing highlight update route and schemas
+      (`shared/src/schemas.ts`, `server/src/annotations/highlights.ts`). Follow the
+      existing migration pattern and add coverage alongside the current db tests.
+- [ ] **Note field in the panel.** `ThreadPanel.tsx` currently offers only the
+      LLM composer (textarea at L336). Add a plain note field **above** the thread:
+      free text, debounced autosave, no LLM involvement, visually distinct from the
+      conversation (it is the reader's own voice). The LLM composer stays exactly as
+      it is beneath it.
+      _Acceptance: typing a note autosaves and survives reload; a highlight can have
+      a note with no thread, a thread with no note, or both; the note is visible
+      when the panel opens without extra clicks._
+- [ ] **Note affordance elsewhere.** A highlight with a note reads as annotated in the
+      margin rail and the annotations overview (same treatment as has-thread, or a
+      distinguishable one), and the note is searchable in the scan's free-text search
+      alongside `exact` quotes and thread content.
+- [ ] **Compiler boundary:** confirm the vault compiler still distils *threads* only —
+      notes must not silently enter the vault as transcripts (settled decision 7). If
+      notes should publish, that is a separate, deliberate decision; do not make it
+      here.
+      _Acceptance: a highlight with a note and no thread produces no vault output._
+- [ ] **Verify:** annotate a passage with a note only, converse on another, and confirm
+      both round-trip through reader → scan → reload.
+
+### M14 — The Scan instrument
+
+- [ ] **Fullscreen.** Remove the `max-width: 1100px` / `margin: 0 auto` page framing
+      (`ScanPage.module.css` L24–25) so the scan fills the viewport; the strip grows
+      to take the slack rather than sitting in a letterboxed column.
+      _Acceptance: no page-like margins at any window size; the strip scales with the
+      viewport; readouts stay legible and don't stretch into unreadable rows._
+- [ ] **CRT treatment.** Fuzz the strokes (layered blur/bloom rather than crisp 1px
+      lines) and add the barrel warp — an `feDisplacementMap` driven by a radial
+      gradient, plus vignette and subtle chromatic fringing — applied to **the strip
+      and its graphics only, never the mono readouts or the revisit queue** (see the
+      decisions entry; legibility outranks the effect). Intensity is a setting;
+      reduced motion disables warp and fringing.
+      _Acceptance: the strip visibly bows like a CRT face and the lines glow rather
+      than hairline; all text still passes contrast and none of it is warped;
+      reduced-motion renders the flat, crisp version._
+- [ ] **Chapter timeline.** Replace the current arbitrary ticks with a real chapter
+      axis: chapters by number, with a toggle to show names where the EPUB provides
+      them. Handle the crowded case (many short chapters) by thinning labels, not by
+      overlapping them.
+      _Acceptance: tick count matches the book's real chapter count; numbers are
+      always readable; the name toggle degrades gracefully on a book with 40+
+      chapters._
+- [ ] **Bleeding heat field.** Replace discrete bands with a continuous density field
+      on canvas: each highlight contributes a gaussian bloom, summed across the book
+      and mapped through a cool→hot ramp, so clusters bleed together with no discrete
+      markings. Intensity keeps its current meaning (note length / thread depth).
+      The existing bands remain as invisible hit-targets so hover readouts, click →
+      airlock, filtering, and dimming all behave exactly as they do now.
+      _Acceptance: a cluster of nearby highlights reads as one hot region with no
+      visible edges; an isolated highlight is a soft point; hover/click/filter/search
+      behaviour is unchanged from v1.5; the field redraws correctly on filter changes
+      and window resize._
+- [ ] **Verify:** open the scan on a book with a dozen highlights in clusters — the
+      heat reads at a glance, every readout is legible through the CRT treatment, and
+      every v1.5 interaction (hover, click-to-jump, filter, search, stars, tags) still
+      works.
+
+### M15 — The paper fold (Apple Books curl)
+
+The hardest item; isolated so it can take the time it needs. **Read the 2026-07-20
+decisions entry first** — the geometry is specified there and is not open for
+re-derivation.
+
+- [ ] **Fold geometry on canvas.** Replace `PageCurl.tsx`'s rigid spine hinge
+      (`rotateY` about `transformOrigin 100%/50%`) with the perpendicular-bisector
+      fold: given the grabbed corner `C` and the pointer `P`, the sheet folds about
+      the perpendicular bisector of `CP`. Draw in **canvas 2D**, no three.js: clip to
+      the fold half-plane, draw the departing page's existing snapshot bitmap, then
+      draw the folded portion through a reflection matrix about the fold line —
+      dimmed, as the back of the sheet — with a short gradient rounding the crease
+      and a soft shadow cast onto the page beneath.
+      _Acceptance: the whole page is drawn (not a strip), the back face is visibly
+      the mirrored page, the live page beneath shows through the opening, and the
+      fold line tracks the pointer continuously._
+- [ ] **Grab anywhere in the outer band.** Retire the 18px `edgeGrab` strips; the
+      M11 semicircular zones become the grab surface, and the fold anchors to
+      whichever corner is nearest the grab point (so grabbing low-right folds the
+      bottom-right corner up, not the whole right edge). **Keep
+      `setPointerCapture`** — see the M10 notes and NOTES.md: without it a drag
+      crossing into the sandboxed epub.js iframe crashed the tab outright. This is a
+      real, reproduced crash, not a theoretical one.
+      _Acceptance: folds initiate from any corner region; a drag that travels across
+      the iframe never leaks events into it; release still commits past threshold or
+      springs back below it._
+- [ ] **Spread-aware.** In two-page mode the fold canvas is sized and positioned to
+      the **near leaf only**, not the whole stage.
+      _Acceptance: in spread mode the right leaf folds away revealing the next leaf,
+      while the left page stays flat and undisturbed._
+- [ ] **Perf & fallbacks.** One canvas, redraw only while a fold is live, target
+      60fps; keep the existing reduced-motion and low-fps slide fallbacks and the
+      snapshot-capture timeout (a stalled capture must never freeze reading — see
+      M10). Log any new epub.js/html2canvas quirks in NOTES.md.
+      _Acceptance: sustained 60fps through a fold on the dev machine; reduced motion
+      still renders zero canvas/fold elements; a failed snapshot degrades to a slide._
+- [ ] **Verify:** page through a chapter by folding from several different corners,
+      with notes attached and in both single and spread modes — the paper reads as
+      paper, notes ride the folding sheet as they do today, and reading with the
+      effect on still feels calm.
+
 ## Parked (post-v1.5) — recorded so they aren't relitigated
 
 - LLM note supplementation: a pass that reviews highlight notes/tags, responds
@@ -640,5 +841,7 @@ until the M7 verify passes — v1 must be whole first.
   to power concept-level search across the library. "LLM proposes, code disposes."
   (decisions.md 2026-07-19)
 - Vault-concept filtering on the scan (depends on the above).
-- Notepad v2 "drift" brainstorm surface; sound design; PDF/Markdown formats;
-  `claudeAgent` subscription provider (decisions.md 2026-07-17).
+- Notepad v2 "drift" brainstorm surface; sound design; PDF/Markdown formats.
+  _(The `claudeAgent` subscription provider was parked here on 2026-07-17 but was
+  un-parked and shipped on 2026-07-19 — see that decisions.md entry and
+  `server/src/llm/claudeAgent.ts`. No longer parked.)_
