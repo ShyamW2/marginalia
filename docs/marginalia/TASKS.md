@@ -661,7 +661,7 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       `(716, 553)`, hovered: outer box moved 0.005px (no jump), reload
       confirmed the dragged position persisted (0.02px drift). 109/109 tests,
       `pnpm build` clean.)_
-- [ ] **Page spacing.** Text currently runs to the page edges. Add generous inner
+- [x] **Page spacing.** Text currently runs to the page edges. Add generous inner
       padding to the rendered page via the epub.js theme (`useEpubThemeVars.ts` /
       `applyTheme` in `ReaderView.tsx` — set body padding there, *not* on the
       container, so pagination accounts for it) and cap the measure so lines stay in
@@ -669,6 +669,23 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       _Acceptance: no glyph sits within ~2.5rem of the page edge at any window size;
       pagination still lands whole lines (no clipped last line); highlights still
       anchor correctly after the change._
+      _(verified 2026-07-20: SPEC-GAP — body-padding-via-theme is a dead end,
+      epub.js overwrites it with its own inline `!important` padding on
+      every layout pass; the real lever is the `gap` render option
+      (NOTES.md "M11" has the full trace). Gap is computed from the
+      measured container width — not a fixed constant — targeting a
+      ~520px/70ch column with a 40px/2.5rem floor and a 240px column-width
+      floor for tiny windows, and re-derived on real window resizes (a
+      second epub.js quirk: the manager keeps its own one-time-copied
+      settings object, so `rendition.settings.gap` must be mutated on the
+      manager directly, and `updateLayout()` called directly since the
+      public `resize()` no-ops when outer stage size didn't change). Live
+      Playwright: 69-72 chars/line at a 1400px window (in the 60-75 target),
+      40px padding at a 500px window with no negative/crushed layout,
+      resizing 500→1400px live re-widens the gap to 117px: existing
+      highlights still resolve (no "unanchored" badge) and the Ask pill
+      still appears on a fresh selection. 109/109 tests, `pnpm build`
+      clean.)_
 - [ ] **Arrow nav buttons.** Replace the `← Previous` / `Next →` text buttons
       (`ReaderView.tsx` L974–991) with icon-only left/right arrow controls; keep the
       disabled-at-start/end behaviour and add `aria-label`s ("Previous page" /

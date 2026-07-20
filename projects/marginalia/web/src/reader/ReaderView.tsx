@@ -49,6 +49,37 @@ interface ViewWithContents {
   contents: Contents;
 }
 
+// epub.js's bundled RenditionOptions typings omit `gap`, though the runtime
+// supports it (layout.js reads `this.settings.gap`) — see the SPEC-GAP
+// comment at the renderTo() call below for why it's needed at all.
+interface RenditionOptionsWithGap {
+  width: string;
+  height: string;
+  flow: string;
+  manager: string;
+  spread: string;
+  allowScriptedContent: boolean;
+  gap: number;
+}
+
+// Acceptance bar: nothing within ~2.5rem of the page edge at any window
+// size, and the measure stays in the 60-75ch range at wide viewports.
+// gap (epub.js splits it evenly into left/right padding) is computed from
+// the actual rendered container width rather than a fixed constant, since a
+// gap generous enough to cap the measure on a normal-width window would
+// crush a genuinely narrow one down to a sliver of a column.
+const READER_MIN_EDGE_PADDING = 40; // 2.5rem at the default 16px root
+const READER_TARGET_COLUMN_WIDTH = 520; // ~70ch at 16px body text (Bringhurst range)
+const READER_MIN_COLUMN_WIDTH = 240; // floor below which we accept less edge margin instead
+
+function computeReaderGap(containerWidth: number): number {
+  const columnWidth = Math.min(
+    READER_TARGET_COLUMN_WIDTH,
+    Math.max(containerWidth - READER_MIN_EDGE_PADDING * 2, READER_MIN_COLUMN_WIDTH),
+  );
+  return Math.max(containerWidth - columnWidth, 0);
+}
+
 function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
   rendition.themes.register("app", {
     "html, body": {
@@ -58,7 +89,12 @@ function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
     body: {
       "font-family": `${vars.fontSerif} !important`,
       "line-height": "1.65 !important",
-      padding: "0 2rem !important",
+      // Real page margin comes from the `gap` render option (see
+      // READER_PAGE_GAP / the SPEC-GAP comment at renderTo below) — epub.js
+      // overwrites body padding with its own inline `!important` on every
+      // layout pass, so this rule only matters for the brief pre-layout
+      // flash and any non-paginated fallback rendering.
+      padding: "0 3rem !important",
     },
     a: { color: `${vars.accent} !important` },
     "::selection": { background: `${vars.highlightActive} !important` },
@@ -322,9 +358,50 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       manager: "default",
       spread: "none",
       allowScriptedContent: false,
-    });
+      // SPEC-GAP: M11 "page spacing" asked for margin via the theme's body
+      // padding, but epub.js's own column layout (contents.columns() in
+      // its default manager) recomputes and re-applies inline
+      // `padding-left/right: <gap/2>px !important` on every render/resize —
+      // an inline !important always wins over a stylesheet !important, so
+      // theme-set body padding is silently discarded the moment epub.js
+      // lays out a section. Passing `gap` here is what actually reaches the
+      // page edge: with it set, epub.js skips its own auto-gap formula
+      // (floor(width/12), see layout.js) and uses this value instead, split
+      // evenly left/right — see computeReaderGap above.
+      gap: computeReaderGap(containerRef.current.getBoundingClientRect().width),
+    } as RenditionOptionsWithGap);
     renditionRef.current = rendition;
     applyTheme(rendition, themeVars);
+
+    // computeReaderGap's result only fits the container's width at mount —
+    // re-derive it on real resizes (window resize, not just page turns) so
+    // a narrower window doesn't stay crushed to a mount-time gap, and a
+    // widened one doesn't stay narrower than it needs to. Two epub.js
+    // internals quirks make this more than "set gap, call resize()":
+    // (1) the manager's own `settings` is a one-time shallow *copy* of
+    // `rendition.settings` (`extend()` in epubjs/utils/core.js copies
+    // property values at construction, not a live reference) — mutating
+    // `rendition.settings.gap` later never reaches the manager, so the
+    // manager's own settings object must be mutated directly; (2) the
+    // public `Rendition.resize()` no-ops when the outer stage size hasn't
+    // changed since its last layout, which would swallow this update on
+    // anything other than a genuine window resize — calling the manager's
+    // `updateLayout()` directly re-lays-out unconditionally instead.
+    let lastGapWidth = containerRef.current.getBoundingClientRect().width;
+    function handleWindowResize() {
+      const container = containerRef.current;
+      if (!container) return;
+      const width = container.getBoundingClientRect().width;
+      if (Math.abs(width - lastGapWidth) < 8) return;
+      lastGapWidth = width;
+      const manager = (
+        rendition as unknown as { manager?: { settings: { gap?: number }; updateLayout?: () => void } }
+      ).manager;
+      if (!manager) return;
+      manager.settings.gap = computeReaderGap(width);
+      manager.updateLayout?.();
+    }
+    window.addEventListener("resize", handleWindowResize);
 
     function markUnanchored(highlightId: string) {
       setUnanchoredIds((prev) => {
@@ -560,6 +637,7 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       cancelled = true;
       window.clearTimeout(saveTimerRef.current);
       window.removeEventListener("keydown", handleKeydown);
+      window.removeEventListener("resize", handleWindowResize);
       renditionRef.current = null;
       rendition.destroy();
       book.destroy();

@@ -1015,3 +1015,25 @@ code-split chunk.
 
 **v1.5 (M8, M9) is whole. Next task: M10 — reader depth (3D page turn &
 origami notes), or a fresh senior review of M8/M9 before starting it.**
+
+## M11 — reading surface fixes (in progress)
+
+**SPEC-GAP: page-spacing task named the wrong lever.** TASKS.md's M11 "page
+spacing" item said to set body padding via the epub.js theme
+(`applyTheme`/`rendition.themes.register`). Tried that first — it's a dead
+end. epub.js's default manager recomputes layout on every render/resize via
+`Contents.columns()` (`epubjs/src/contents.js`), which sets
+`padding-left`/`padding-right: <gap/2>px` as an **inline style with
+`!important`** on `<body>` every time. An inline `!important` always beats a
+stylesheet `!important` in the same cascade origin, so no CSS we register
+through the theme API can survive a single relayout — confirmed live: body
+computed padding stayed at 31px (epub.js's own auto-gap default,
+`floor(width/12)` from `layout.js`) no matter what the theme's `padding`
+said. The actual lever is the `gap` option epub.js's layout engine reads
+from `rendition.settings.gap` (`layout.js`'s `calculate()`: an explicit
+`gap` skips the auto formula entirely) — passed via `book.renderTo(el, {
+..., gap })`. Not in the bundled TS types (`RenditionOptionsWithGap` local
+cast in `ReaderView.tsx`), but very much real at runtime. Left the theme's
+CSS padding in place too (harmless, covers the brief pre-layout paint) but
+the real fix is the `gap` render option. `READER_PAGE_GAP = 96` → 48px
+(3rem) each side.
