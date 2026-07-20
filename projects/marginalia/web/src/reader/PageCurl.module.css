@@ -1,0 +1,44 @@
+.wrap {
+  position: absolute;
+  inset: 0;
+  perspective: 1400px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.leaf {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+/* A moving shade plane synced to the same rotation as the leaf, standing in
+   for the light catching a curling sheet of paper — a soft dark gradient
+   from the turning edge, never a hard line. */
+.shade {
+  position: absolute;
+  inset: 0;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
+.shadeNext {
+  background: linear-gradient(
+    to left,
+    rgba(0, 0, 0, 0.45),
+    rgba(0, 0, 0, 0) 45%
+  );
+}
+
+.shadePrev {
+  background: linear-gradient(
+    to right,
+    rgba(0, 0, 0, 0.45),
+    rgba(0, 0, 0, 0) 45%
+  );
+}

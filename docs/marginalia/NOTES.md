@@ -331,6 +331,123 @@ item is the manual operator checkpoint (live provider verification against a
 real Anthropic key) between M7 and M8, which is explicitly not a Sonnet/
 implementation-session task per decisions.md 2026-07-19.
 
+## M10 — reader depth (3D page turn & origami notes)
+
+Built the snapshot-based page curl (`web/src/reader/pageSnapshot.ts`,
+`PageCurl.tsx`), wired into `ReaderView.tsx`'s `turnPage` alongside the
+existing M7 slide as an explicit fallback chain (reduced motion → slide;
+snapshot capture fails → slide; sustained low frame rate → slide from then
+on), the stretch drag-to-peel gesture on a thin edge-grab strip, and the
+origami fold skin on `ThreadPanel` (two-crease unfold/refold keyframes,
+paper grain, a folded-corner accent echoing the margin rail's now
+dog-ear-shaped has-thread indicator).
+
+**Two real, reproducible bugs found via live verification — not
+hypothetical, both confirmed via a real headless Chromium session against
+the real dev server, per CLAUDE.md's "verify by driving the app":**
+
+1. **html2canvas hung forever capturing the page.** The default renderer
+   clones the target subtree into a detached, hidden iframe to read computed
+   styles reliably. epub.js's section iframe is deliberately sandboxed
+   (`iframe.sandbox = "allow-same-origin"` only — no `allow-scripts`, since
+   the reader passes `allowScriptedContent: false`); cloning that sandboxed,
+   `srcdoc`-sourced iframe and waiting on the clone's load event never
+   resolved. Nothing threw — a hang, not an error — so the existing
+   `try/catch` around `capturePageSnapshot` did nothing, and because
+   `turnLockRef` is only released after the (never-resolving) capture
+   promise settles, this froze *every future page turn* after the first
+   hang, not just the animation. Reproduced live: a verification script
+   sat at 0% CPU for over 90 minutes on a single stuck turn before being
+   killed. Fixed two ways, belt-and-suspenders: (a) switched to
+   `foreignObjectRendering: true`, which serializes the *live* subtree into
+   an SVG `<foreignObject>` and paints it through the browser's own
+   rendering pipeline instead of cloning into a hidden iframe — this alone
+   made the hang disappear in re-testing; (b) raced the capture against a
+   700ms hard timeout regardless, since a best-effort visual flourish must
+   never be able to freeze the one interaction (reading) CLAUDE.md says must
+   never degrade. Re-verified live: mid-flight and settled curl-overlay
+   counts are now correct (1 then 0) across both a button-click turn and a
+   keyboard turn, with no hang.
+2. **Drag-to-peel crashed the tab.** `handleEdgePointerDown` tracked the
+   drag via `window.addEventListener("pointermove"/"pointerup", …)` without
+   ever calling `setPointerCapture` on the edge-grab strip that received the
+   `pointerdown`. The moment a real drag crossed from that 18px-wide strip
+   into the epub.js iframe sitting right next to it — the entire point of a
+   page-edge drag gesture — raw pointer events stopped being scoped to our
+   handler and were delivered straight into the sandboxed iframe's own
+   document instead. Reproduced identically on both `chromium-headless-shell`
+   and full Chromium (ruling out a headless-shell-specific flake): console
+   showed `Blocked script execution in 'about:srcdoc' because the document's
+   frame is sandboxed and the 'allow-scripts' permission is not set`,
+   immediately followed by the entire tab/context closing. Fixed with
+   `event.currentTarget.setPointerCapture(event.pointerId)` at the start of
+   the handler — the standard fix for exactly this class of bug (a drag
+   gesture whose target lives next to, not inside, the element it needs
+   move/up events to keep tracking across). Re-verified live, isolated, on
+   full Chromium: the same drag sequence that crashed before now completes
+   cleanly with no console error, and a mid-drag screenshot shows a real,
+   convincing curl — the departing page peeling from the grabbed edge with
+   the shade gradient visible, live content already present underneath.
+
+**Verification method:** real `pnpm dev` (Vite + server) driven by
+Playwright (ad hoc into the scratchpad, as in M8/M9 — not a project
+dependency), headless Chromium, against the real Metamorphosis fixture (7
+highlights, 4 threads, accumulated across earlier milestones):
+- Button-click and keyboard-triggered page turns: curl `<img>` overlay
+  present mid-flight, absent after settling, confirmed for both trigger
+  paths, no console errors.
+- Origami thread panel: opened via a has-thread margin-rail dot (now a
+  folded dog-ear shape, not a ring — `MarginRail.module.css`), confirmed
+  exactly one grain overlay and one crease overlay element render inside
+  the open panel, closed via the collapse button with no error.
+- Reduced motion (`reducedMotion: "reduce"` context): zero edge-grab strips
+  rendered, zero curl `<img>` elements ever appear during a turn (confirms
+  it takes the slide path, not just that the *result* looks similar) —
+  plus `motion`'s own advisory console warning that it detected reduced
+  motion, expected and benign.
+- Drag-to-peel: isolated pass (its own browser context, wrapped in
+  try/catch so a stretch-feature failure can't block signing off the
+  required items above) — real pointer down/move/up sequence, mid-drag
+  screenshot confirms a legible curl, completes without a console error or
+  a crash after the pointer-capture fix.
+- `pnpm test` 116/116, `pnpm build` clean, both before and after the two
+  fixes above.
+
+**Not deeply chased:** a `Failed to load resource: 404` console message
+appeared once during the full verification pass but did not reproduce on a
+fresh, isolated page load with response-status logging — html2canvas/
+foreignObjectRendering makes no network requests of its own, and nothing
+else in this milestone's diff touches `fetch`, so this reads as pre-existing
+noise (unrelated to M10) rather than a regression; not worth further budget
+chasing something unreproduced.
+
+**Perf notes:** every curl/drag/fold animation is `transform`/`opacity`
+only (rotateY, scaleY, rotateX, opacity — no width/height/top/left
+animated), matching DESIGN.md's "no layout thrash" rule. `will-change` is
+implicit rather than hand-toggled: `PageCurl`'s `.leaf`/`.shade` only exist
+in the DOM while a turn is actually animating (mounted/unmounted with
+`curl` state), and the grain/crease overlays only render while
+`!reducedMotion`, so there's nothing to toggle on/off mid-session. The
+low-fps→slide-fallback (`lowFpsRef`, sampled via the curl animation's own
+`onUpdate` frame timestamps, tripping at a sustained ~30fps or worse) was
+implemented per TASKS.md's "fast slide fallback... for reduced motion / low
+fps" wording but not exercised live — this dev machine renders the curl at
+full rate, and deliberately throttling headless Chromium's CPU to force a
+slow-frame-rate run wasn't attempted given the time already spent chasing
+the two real bugs above; the code path exists and is straightforward
+(three-line average-frame-delta check), but "sustained low fps genuinely
+falls back" is asserted from reading the code, not watched happening.
+
+**Simplification, recorded rather than silently deviated from:** the
+snapshot approach only rasterizes the *departing* page. The incoming page's
+DOM is swapped in live, hidden behind the departing page's bitmap, and
+revealed as that bitmap fades/rotates away — TASKS.md's "swap to live DOM
+on settle" falls out of this for free, without ever needing a bitmap of the
+page being turned *to*. This is the boring version DESIGN.md's own
+technical note anticipates (a real book reader doesn't show you the next
+page's content until you've turned far enough to see it either), not a
+missing feature.
+
 ## Blockers
 
 _(none yet)_

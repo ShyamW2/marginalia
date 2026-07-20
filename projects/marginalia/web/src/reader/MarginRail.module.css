@@ -46,24 +46,76 @@
 }
 
 /* Thread state (independent of "active" — the current-page ring above and
-   the kind tint above that): no thread = solid kind-colored dot; a thread
-   with no answer yet gets a hollow kind-colored ring; once answered the
-   dot fills solid again. */
+   the kind tint above that). No thread: a plain solid kind-colored dot
+   (rule above). A thread — answered or not — is a small folded paper
+   corner instead: "a sticky note's corner visible in a closed book"
+   (DESIGN.md Room 2, M10). Awaiting an answer: a hollow/outline fold with
+   only the underside triangle tinted; once answered, the whole fold
+   fills with the kind color. Hover "lifts" it — a real DOM translate +
+   growing shadow, not just a color change — the collapsed-thread half of
+   M10's origami skin (the panel itself carries the unfold/refold
+   animation — see ThreadPanel.module.css). */
 .dotButton.hasThread {
-  background: var(--color-bg-raised);
-  border: 2px solid var(--dot-kind, var(--color-accent));
-  width: 0.5rem;
-  height: 0.5rem;
+  position: relative;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 1px 1px 1px 6px;
+  background: transparent;
+  border: none;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 28% 100%);
+  transition: transform var(--duration-standard) var(--ease-standard),
+    box-shadow var(--duration-standard) var(--ease-standard);
 }
 
-.dotButton.hasThread.hasAnswer {
+.dotButton.hasThread::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--color-bg-raised);
+  border: 1.5px solid var(--dot-kind, var(--color-accent));
+  clip-path: inherit;
+}
+
+.dotButton.hasThread::after {
+  /* The folded-under triangle — the fold's "underside" catching a sliver
+     of shadow, same motif as a real dog-eared page corner. */
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 55%;
+  height: 55%;
   background: var(--dot-kind, var(--color-accent));
-  border-color: transparent;
+  clip-path: polygon(100% 0, 100% 100%, 0 0);
+  opacity: 0.55;
+}
+
+.dotButton.hasThread:hover {
+  transform: translateY(-2px) scale(1.15);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.28);
+}
+
+.dotButton.hasThread.hasAnswer::before {
+  background: var(--dot-kind, var(--color-accent));
+}
+
+.dotButton.hasThread.hasAnswer::after {
+  opacity: 1;
+  background: color-mix(in srgb, var(--dot-kind, var(--color-accent)) 70%, black);
 }
 
 .dotButton.unanchored {
   background: var(--color-danger);
   border-color: var(--color-danger);
+  clip-path: none;
+  border-radius: 50%;
+}
+
+/* An unanchored highlight can't be jumped to no matter what state its
+   thread is in — the plain danger dot always wins over the fold visual. */
+.dotButton.unanchored::before,
+.dotButton.unanchored::after {
+  display: none;
 }
 
 .dotButton:focus-visible {

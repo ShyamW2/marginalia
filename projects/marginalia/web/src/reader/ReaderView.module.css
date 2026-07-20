@@ -98,6 +98,32 @@
   border: none;
 }
 
+/* Stretch: drag-to-peel grab affordance (M10, DESIGN.md). Deliberately
+   narrow — the existing 30% click-turn zones live inside the epub iframe's
+   own content and stay untouched; this is just a literal "grab the page
+   edge" strip layered on top of them. */
+.edgeGrab {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 18px;
+  z-index: 6;
+  cursor: grab;
+  touch-action: none;
+}
+
+.edgeGrab:active {
+  cursor: grabbing;
+}
+
+.edgeGrabLeft {
+  left: 0;
+}
+
+.edgeGrabRight {
+  right: 0;
+}
+
 .overlay {
   position: absolute;
   inset: 0;

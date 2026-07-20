@@ -12,6 +12,7 @@
   "dependencies": {
     "@marginalia/shared": "workspace:*",
     "epubjs": "^0.3.93",
+    "html2canvas": "^1.4.1",
     "motion": "^12.42.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

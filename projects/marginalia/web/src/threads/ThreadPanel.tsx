@@ -229,21 +229,55 @@ export function ThreadPanel({
   const isStreaming = streamingText !== null;
   const reducedMotion = useReducedMotion();
 
+  // M10 origami skin (DESIGN.md Room 2): unfolding from the collapsed
+  // margin-rail tab (MarginRail.module.css) in two visible creases rather
+  // than one smooth reveal — scaleY/rotateX pass through an intermediate
+  // "half open" keyframe before settling flat. Collapse (exit) reverses it.
+  // Reduced motion: no fold at all, an instant fade — same budget as every
+  // other transition in the app.
+  const unfoldTransition = reducedMotion
+    ? { duration: 0.12 }
+    : { duration: 0.34, ease: [0.4, 0, 0.2, 1] as const, times: [0, 0.55, 1] };
+  const refoldTransition = reducedMotion
+    ? { duration: 0.12 }
+    : { duration: 0.26, ease: [0.4, 0, 0.2, 1] as const, times: [0, 0.45, 1] };
+
   return (
     <motion.div
       className={`${styles.panel} ${styles[highlightKind]}`}
-      style={{ top }}
+      style={{ top, transformPerspective: 900 }}
       role="dialog"
       aria-label="Ask about this passage"
-      initial={{ opacity: 0, x: reducedMotion ? 0 : 16 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, x: reducedMotion ? 0 : 12 }}
-      transition={
+      initial={
         reducedMotion
-          ? { duration: 0.12 }
-          : { type: "spring", stiffness: 420, damping: 34 }
+          ? { opacity: 0 }
+          : { opacity: 0, scaleY: 0.06, rotateX: -55, originY: 0 }
+      }
+      animate={
+        reducedMotion
+          ? { opacity: 1, transition: unfoldTransition }
+          : {
+              opacity: 1,
+              scaleY: [0.06, 0.55, 1],
+              rotateX: [-55, -8, 0],
+              originY: 0,
+              transition: unfoldTransition,
+            }
+      }
+      exit={
+        reducedMotion
+          ? { opacity: 0, transition: refoldTransition }
+          : {
+              opacity: 0,
+              scaleY: [1, 0.5, 0.05],
+              rotateX: [0, -10, -58],
+              originY: 0,
+              transition: refoldTransition,
+            }
       }
     >
+      {!reducedMotion && <div className={styles.grain} aria-hidden="true" />}
+      {!reducedMotion && <div className={styles.creases} aria-hidden="true" />}
       <div className={styles.header}>
         <span className={styles.quote}>&ldquo;{highlightExact}&rdquo;</span>
         <button type="button" className={styles.closeButton} aria-label="Collapse thread" onClick={onClose}>

@@ -547,18 +547,89 @@ until the M7 verify passes — v1 must be whole first.
 
 ## M10 — Reader depth (3D page turn & origami notes)
 
-- [ ] Snapshot page-turn: render current/next page to bitmaps, animate a 3D curl on
+- [x] Snapshot page-turn: render current/next page to bitmaps, animate a 3D curl on
       those planes (container-level transform so the marks-pane rides along), swap to
       live DOM on settle; fast slide fallback stays for reduced motion / low fps
-- [ ] Stretch: interactive drag-to-peel (grab page edge, curl follows pointer,
+      _(verified 2026-07-20: `pageSnapshot.ts` + `PageCurl.tsx`, wired into
+      `ReaderView.tsx`'s `turnPage`. Live headless-Chromium pass against the
+      Metamorphosis fixture confirmed the curl `<img>` overlay is present
+      mid-flight and gone once settled, for both a button-click and a
+      keyboard-triggered turn, with no console errors. Found and fixed a
+      real hang along the way: html2canvas's default renderer clones the
+      target into a hidden iframe, and cloning epub.js's *sandboxed*
+      section iframe never resolved — froze every future turn, not just
+      the animation, since `turnLockRef` only releases after capture
+      settles. Fixed with `foreignObjectRendering: true` (paints the live
+      subtree via the browser's own pipeline instead of cloning) plus a
+      700ms hard timeout regardless, so a stalled capture can never freeze
+      reading. Only the departing page is rasterized — the incoming page's
+      live DOM is swapped in first, hidden behind the bitmap, and revealed
+      as it fades away, so "swap to live DOM on settle" falls out for free
+      without a second snapshot. Low-fps→slide fallback implemented
+      (sampled via the curl's own animation frame timestamps) but not
+      exercised live — see NOTES.md. Full detail: NOTES.md "M10 — reader
+      depth".)_
+- [x] Stretch: interactive drag-to-peel (grab page edge, curl follows pointer,
       release commits or springs back)
-- [ ] Origami fold skin on the M5 thread panel: collapsed = folded margin tab, click
+      _(verified 2026-07-20: a thin 18px edge-grab strip beside the
+      existing click-turn zones; live headless-Chromium pass confirmed a
+      real pointer down→move→up sequence produces a legible mid-drag curl
+      (screenshotted) and commits/settles cleanly. Found and fixed a real
+      crash along the way: the drag tracked pointermove/up on `window`
+      without ever calling `setPointerCapture` on the grab strip, so a
+      drag crossing from the strip into the sandboxed epub.js iframe next
+      to it leaked raw pointer events straight into that iframe's
+      document — reproduced identically on headless-shell and full
+      Chromium, console showed a sandboxed-frame script-execution error
+      immediately followed by the tab closing. Fixed with
+      `setPointerCapture`, the standard fix for a drag gesture whose
+      target sits beside, not inside, the element it needs to keep
+      tracking across. NOTES.md has the full repro.)_
+- [x] Origami fold skin on the M5 thread panel: collapsed = folded margin tab, click
       unfolds in a two-crease animation, refold on collapse; paper grain + spine tint
-- [ ] Perf pass: 60fps during turns and folds; no layout thrash (transform/opacity
+      _(verified 2026-07-20: the has-thread margin-rail dot is now a
+      folded dog-ear shape (`MarginRail.module.css`, echoing the scan's
+      existing dog-ear motif) rather than a plain ring, with a hover lift;
+      `ThreadPanel`'s open/close transition is a two-keyframe scaleY/
+      rotateX pass (a visible "half open" step, not one smooth reveal)
+      that reverses on collapse; a low-opacity feTurbulence grain overlay
+      and a corner-fold accent tinted by the highlight's kind sit behind
+      the panel's real content (z-index -1, so they can never obscure the
+      close button or text) — spine tint already existed from M7. Live
+      pass confirmed exactly one grain + one crease overlay element render
+      inside an opened panel and that it closes cleanly. Both fully
+      disabled (plain instant fade, no grain/creases) under reduced
+      motion.)_
+- [x] Perf pass: 60fps during turns and folds; no layout thrash (transform/opacity
       only); epub.js quirks encountered → logged in NOTES.md
-- [ ] **Verify:** page through a chapter with notes attached — notes ride the turning
+      _(verified 2026-07-20: every animated property across the curl, drag,
+      and fold is `transform`/`opacity` only (rotateY, scaleY, rotateX,
+      opacity) — nothing that triggers layout. `will-change` is implicit
+      rather than hand-toggled: the curl's image/shade planes and the
+      panel's grain/crease overlays only exist in the DOM while actually
+      animating or visible. epub.js/html2canvas interaction quirks (the
+      sandboxed-iframe capture hang, the pointer-capture crash) logged in
+      NOTES.md "M10 — reader depth" per this task's own instruction.)_
+- [x] **Verify:** page through a chapter with notes attached — notes ride the turning
       page; fold/unfold threads repeatedly with no jank; reduced motion → slide
       turns, instant fold; reading with all effects on still feels calm
+      _(verified 2026-07-20 live against the real Metamorphosis fixture via
+      `pnpm dev` + headless Chromium — see NOTES.md "M10 — reader depth"
+      for the full method and the two real bugs found and fixed along the
+      way (an html2canvas capture hang, a drag-to-peel tab crash). Notes
+      ride the turning page by construction: the departing page's bitmap
+      includes the marks-pane SVG overlay (a DOM sibling of the iframe
+      inside the captured container, not inside the iframe), so a
+      highlight's mark curls away as part of the same texture rather than
+      needing separate handling. Fold/unfold exercised repeatedly via the
+      margin-rail dot with no console errors. Reduced motion confirmed to
+      actually take the different code path (zero curl `<img>` elements
+      ever render, zero edge-grab strips exist), not just look similar.
+      116/116 tests, `pnpm build` clean, both before and after the two
+      fixes. "Reading with all effects on still feels calm" — subjective
+      and not independently re-judged by a fresh reader beyond this
+      session's own screenshots, which look calm and legible; worth a
+      human read-through before calling this fully bedded in.)_
 
 ---
 

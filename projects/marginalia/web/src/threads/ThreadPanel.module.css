@@ -14,6 +14,67 @@
   overflow: hidden;
 }
 
+/* M10 origami skin: a folded-corner echo of the collapsed margin-rail tab
+   (MarginRail.module.css) at rest, so the panel reads as the *same* piece
+   of paper that tab was — just unfolded, not a different surface. */
+/* z-index: -1 on all three decorative layers below keeps them tucked
+   behind the panel's real (static, non-positioned) content — header,
+   messages, composer — which always paints above negative-z-index
+   positioned descendants regardless of DOM order, so there's no risk of
+   the fold/grain/crease decoration ever sitting over the close button or
+   text. */
+.panel::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 22px;
+  height: 22px;
+  background: var(--spine-kind, var(--color-border));
+  clip-path: polygon(100% 0, 100% 100%, 0 0);
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* Subtle paper grain (DESIGN.md "paper, not glass") — a feTurbulence noise
+   tile, kept under 5% opacity (same ceiling the scan's own grain uses) so
+   it reads as texture, never as visible speckle. `overlay` blend keeps it
+   correct in both paper and ink without a separate per-theme value. */
+.grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  opacity: 0.045;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Two crease-shadow bars that flash across the panel in sync with the
+   unfold/refold animation (ThreadPanel.tsx) — the "two-crease origami"
+   DESIGN.md asks for, made legible as two distinct folds rather than one
+   smooth reveal. */
+.creases {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    linear-gradient(
+      to bottom,
+      transparent calc(33% - 1px),
+      rgba(0, 0, 0, 0.22) 33%,
+      transparent calc(33% + 1px)
+    ),
+    linear-gradient(
+      to bottom,
+      transparent calc(66% - 1px),
+      rgba(0, 0, 0, 0.22) 66%,
+      transparent calc(66% + 1px)
+    );
+}
+
 /* The highlight's kind tints the panel's spine — a folded sticky note's
    edge color (docs/marginalia/DESIGN.md). */
 .rose {
