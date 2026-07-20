@@ -644,7 +644,7 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
 
 ### M11 — Reading surface fixes (quick wins)
 
-- [ ] **Fix the desk hover jump.** `web/src/desk/BookObject.tsx`: `style={{ x, y }}`
+- [x] **Fix the desk hover jump.** `web/src/desk/BookObject.tsx`: `style={{ x, y }}`
       binds the shelf position to motion values while `whileHover={{ y: -4 }}`
       animates that *same* `y` to an absolute -4 — a book resting at `y: 340` leaps
       344px on hover. Remove `y` from `whileHover` entirely; apply the lift to an
@@ -654,6 +654,13 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       _Acceptance: drag a book to the far corner of the desk, hover it — it lifts by
       the same few px as an undragged book, and returns exactly to where it was
       dropped. Position persists correctly across a reload after hovering._
+      _(verified 2026-07-20: added a dedicated `liftWrap` motion.div between
+      the outer positioned element (owns x/y/rotate/drag) and `coverWrap`
+      (owns `layoutId`); `whileHover` now animates only `liftWrap`'s own,
+      always-zero-based `y`. Live Playwright pass — dragged Metamorphosis to
+      `(716, 553)`, hovered: outer box moved 0.005px (no jump), reload
+      confirmed the dragged position persisted (0.02px drift). 109/109 tests,
+      `pnpm build` clean.)_
 - [ ] **Page spacing.** Text currently runs to the page edges. Add generous inner
       padding to the rendered page via the epub.js theme (`useEpubThemeVars.ts` /
       `applyTheme` in `ReaderView.tsx` — set body padding there, *not* on the

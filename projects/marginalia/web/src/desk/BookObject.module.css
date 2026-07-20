@@ -17,6 +17,10 @@
   cursor: pointer;
 }
 
+.liftWrap {
+  display: block;
+}
+
 .coverWrap {
   position: relative;
   border-radius: 6px;

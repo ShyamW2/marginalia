@@ -150,21 +150,32 @@ export function BookObject({
       tabIndex={0}
       role="link"
       aria-label={`Open ${resource.title}`}
-      whileHover={reducedMotion ? undefined : { y: -4 }}
       animate={{ scale }}
       transition={{ type: "spring", stiffness: 420, damping: 30 }}
     >
+      {/* Lift lives on its own wrapper, separate from the outer element's
+          x/y motion values (drag position) and from coverWrap's layoutId
+          (the doorway transition) — sharing whileHover's y with either of
+          those animates it to an *absolute* -4, which for a book dragged
+          away from the origin is a multi-hundred-px jump on hover, not a
+          few-px lift (the M11 "desk hover jump" bug). */}
       <motion.div
-        className={`${styles.coverWrap} ${isDragging ? styles.lifted : ""}`}
-        layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
+        className={styles.liftWrap}
+        whileHover={reducedMotion ? undefined : { y: -4 }}
+        transition={{ type: "spring", stiffness: 420, damping: 30 }}
       >
-        <BookCover resourceId={resource.id} title={resource.title} />
-        {resource.threadCount > 0 && (
-          <span className={styles.threadBadge}>{resource.threadCount}</span>
-        )}
-        {crownProgress > 0 && (
-          <div className={styles.crownRing} style={{ opacity: crownProgress }} />
-        )}
+        <motion.div
+          className={`${styles.coverWrap} ${isDragging ? styles.lifted : ""}`}
+          layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
+        >
+          <BookCover resourceId={resource.id} title={resource.title} />
+          {resource.threadCount > 0 && (
+            <span className={styles.threadBadge}>{resource.threadCount}</span>
+          )}
+          {crownProgress > 0 && (
+            <div className={styles.crownRing} style={{ opacity: crownProgress }} />
+          )}
+        </motion.div>
       </motion.div>
 
       {isHovering && !isDragging && (
