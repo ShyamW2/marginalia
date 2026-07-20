@@ -686,12 +686,19 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       highlights still resolve (no "unanchored" badge) and the Ask pill
       still appears on a fresh selection. 109/109 tests, `pnpm build`
       clean.)_
-- [ ] **Arrow nav buttons.** Replace the `← Previous` / `Next →` text buttons
+- [x] **Arrow nav buttons.** Replace the `← Previous` / `Next →` text buttons
       (`ReaderView.tsx` L974–991) with icon-only left/right arrow controls; keep the
       disabled-at-start/end behaviour and add `aria-label`s ("Previous page" /
       "Next page") so the keyboard/SR path is unchanged.
       _Acceptance: buttons are legible icon targets ≥40px, keyboard-reachable, and
       screen-reader-labelled; visual weight is quieter than the text buttons were._
+      _(verified 2026-07-20: small inline SVG chevron component, 40×40px
+      ghost buttons (transparent until hover, borderless) replacing the
+      bordered text buttons; `aria-label`s unchanged in wording from the
+      task. Live Playwright: `getByRole("button", { name: "Previous
+      page"/"Next page" })` resolves each to one 40×40px element; disabled
+      state and click-to-turn both still work. 109/109 tests, `pnpm build`
+      clean.)_
 - [ ] **Semicircular turn zones with a directional cursor.** Keep the existing
       hit-testing (`ReaderView.tsx` ~L481–486 computes `visibleX` against the
       container). Add: a `clip-path: ellipse()` semicircular zone on each far edge; a

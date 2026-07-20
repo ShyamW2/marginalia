@@ -90,10 +90,10 @@ function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
       "font-family": `${vars.fontSerif} !important`,
       "line-height": "1.65 !important",
       // Real page margin comes from the `gap` render option (see
-      // READER_PAGE_GAP / the SPEC-GAP comment at renderTo below) — epub.js
-      // overwrites body padding with its own inline `!important` on every
-      // layout pass, so this rule only matters for the brief pre-layout
-      // flash and any non-paginated fallback rendering.
+      // computeReaderGap / the SPEC-GAP comment at renderTo below) —
+      // epub.js overwrites body padding with its own inline `!important` on
+      // every layout pass, so this rule only matters for the brief
+      // pre-layout flash and any non-paginated fallback rendering.
       padding: "0 3rem !important",
     },
     a: { color: `${vars.accent} !important` },
@@ -104,6 +104,15 @@ function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
     },
   });
   rendition.themes.select("app");
+}
+
+function ChevronIcon({ direction }: { direction: "left" | "right" }) {
+  const d = direction === "left" ? "M14 5l-6 7 6 7" : "M10 5l6 7-6 7";
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d={d} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
 }
 
 async function fetchPosition(
@@ -1054,17 +1063,19 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
           type="button"
           className={styles.navButton}
           disabled={atStart}
+          aria-label="Previous page"
           onClick={() => turnPage("prev")}
         >
-          ← Previous
+          <ChevronIcon direction="left" />
         </button>
         <button
           type="button"
           className={styles.navButton}
           disabled={atEnd}
+          aria-label="Next page"
           onClick={() => turnPage("next")}
         >
-          Next →
+          <ChevronIcon direction="right" />
         </button>
       </div>
     </div>

@@ -143,20 +143,25 @@
 }
 
 .navButton {
-  font-family: var(--font-sans);
-  font-size: 0.9rem;
-  color: var(--color-text);
-  background: var(--color-bg-raised);
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  color: var(--color-text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
   cursor: pointer;
   transition: background var(--duration-standard) var(--ease-standard),
-    border-color var(--duration-standard) var(--ease-standard);
+    border-color var(--duration-standard) var(--ease-standard),
+    color var(--duration-standard) var(--ease-standard);
 }
 
 .navButton:hover:not(:disabled) {
-  border-color: var(--color-accent);
+  color: var(--color-text);
+  background: var(--color-bg-raised);
+  border-color: var(--color-border);
 }
 
 .navButton:disabled {
