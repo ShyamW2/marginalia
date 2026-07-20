@@ -2,3 +2,10 @@ packages:
   - "shared"
   - "server"
   - "web"
+
+# Native modules pnpm 10 must be allowed to compile/relink on install.
+# Without this, better-sqlite3's build script is silently skipped and the
+# server crashes at startup with ERR_DLOPEN_FAILED / a missing bindings file.
+onlyBuiltDependencies:
+  - better-sqlite3
+  - esbuild

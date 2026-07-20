@@ -16,7 +16,7 @@
     "@anthropic-ai/sdk": "^0.112.1",
     "@marginalia/shared": "workspace:*",
     "adm-zip": "^0.5.16",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^12.4.1",
     "express": "^5.0.1",
     "htmlparser2": "^9.1.0",
     "multer": "^2.2.0",
