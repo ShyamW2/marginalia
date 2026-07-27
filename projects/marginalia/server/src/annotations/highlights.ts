@@ -17,6 +17,7 @@ interface HighlightRow {
   spine_index: number;
   kind: string;
   importance: number;
+  note: string;
   created_at: string;
 }
 
@@ -31,6 +32,7 @@ function rowToHighlight(row: HighlightRow): Highlight {
     spineIndex: row.spine_index,
     kind: row.kind as HighlightKind,
     importance: row.importance as HighlightImportance,
+    note: row.note,
     createdAt: row.created_at,
   };
 }
@@ -57,6 +59,7 @@ export function createHighlight(
     spineIndex: input.spineIndex,
     kind: input.kind,
     importance: 0, // matches the highlights.importance column's DEFAULT 0
+    note: "", // matches the highlights.note column's DEFAULT ''
     createdAt: new Date().toISOString(),
   };
 
@@ -116,6 +119,11 @@ export function setHighlightImportance(
   importance: HighlightImportance,
 ): void {
   db.prepare("UPDATE highlights SET importance = ? WHERE id = ?").run(importance, id);
+}
+
+/** M13: the reader's own note — plain text, autosaved, never sent to an LLM. */
+export function setHighlightNote(db: Database.Database, id: string, note: string): void {
+  db.prepare("UPDATE highlights SET note = ? WHERE id = ?").run(note, id);
 }
 
 export function getHighlightById(

@@ -149,7 +149,7 @@ export function ScanPage() {
       if (filterKind && h.kind !== filterKind) continue;
       if (filterTag && !h.tags.includes(filterTag)) continue;
       if (needle) {
-        const haystack = `${h.exact} ${h.threadFirstLine ?? ""}`.toLowerCase();
+        const haystack = `${h.exact} ${h.note} ${h.threadFirstLine ?? ""}`.toLowerCase();
         if (!haystack.includes(needle)) continue;
       }
       set.add(h.id);

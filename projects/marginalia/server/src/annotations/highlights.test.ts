@@ -5,6 +5,7 @@ import {
   deleteHighlight,
   getHighlightById,
   listHighlightsForResource,
+  setHighlightNote,
 } from "./highlights.js";
 
 function seedResource(db: ReturnType<typeof createDb>, id = "res-1") {
@@ -104,6 +105,27 @@ describe("highlights store", () => {
 
     expect(deleteHighlight(db, highlight.id)).toBe(true);
     expect(db.prepare("SELECT * FROM publishes WHERE thread_id = 'thread-1'").get()).toBeUndefined();
+    db.close();
+  });
+
+  it("creates a highlight with an empty note by default and setHighlightNote updates it", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    const highlight = createHighlight(db, {
+      resourceId,
+      exact: "quote",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose",
+    });
+    expect(highlight.note).toBe("");
+    expect(getHighlightById(db, highlight.id)?.note).toBe("");
+
+    setHighlightNote(db, highlight.id, "the reader's own note");
+    expect(getHighlightById(db, highlight.id)?.note).toBe("the reader's own note");
     db.close();
   });
 });

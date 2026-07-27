@@ -119,6 +119,10 @@ export const HighlightSchema = AnchorSchema.extend({
   resourceId: z.string(),
   kind: HighlightKindSchema,
   importance: HighlightImportanceSchema,
+  // M13: the reader's own plain-text note, separate from the LLM thread —
+  // never sent to a provider, never distilled into the vault (settled
+  // decision 7). Empty string, not null, matching the column's default.
+  note: z.string(),
   createdAt: z.string(),
 });
 export type Highlight = z.infer<typeof HighlightSchema>;
@@ -129,6 +133,11 @@ export const UpdateHighlightImportanceBodySchema = z.object({
 export type UpdateHighlightImportanceBody = z.infer<
   typeof UpdateHighlightImportanceBodySchema
 >;
+
+export const UpdateHighlightNoteBodySchema = z.object({
+  note: z.string(),
+});
+export type UpdateHighlightNoteBody = z.infer<typeof UpdateHighlightNoteBodySchema>;
 
 const TagSchema = z.string().trim().min(1).max(40);
 
@@ -320,6 +329,7 @@ export const ScanHighlightSchema = z.object({
   exact: z.string(),
   importance: HighlightImportanceSchema,
   tags: z.array(z.string()),
+  note: z.string(),
   positionPercent: z.number().min(0).max(1).nullable(),
   threadId: z.string().nullable(),
   hasAnswer: z.boolean(),

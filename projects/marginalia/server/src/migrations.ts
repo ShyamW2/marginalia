@@ -140,4 +140,15 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M13: a plain free-text note per highlight — the reader's own voice,
+    // separate from the LLM thread (docs/marginalia/TASKS.md M13, settled
+    // decision 7 in CLAUDE.md: distilled notes, not transcripts — the vault
+    // compiler must keep reading only `threads`/`messages`, never this
+    // column; see vault/compiler.ts, unchanged by this migration).
+    version: 5,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN note TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];

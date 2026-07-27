@@ -13,6 +13,7 @@ import { TagEditor } from "../highlights/TagEditor.js";
 import {
   fetchHighlightTags,
   updateHighlightImportance,
+  updateHighlightNote,
   updateHighlightTags,
 } from "../highlights/highlightMeta.js";
 import { renderMarkdown } from "./markdown.js";
@@ -28,17 +29,23 @@ function displayableQuestion(content: string): string {
   return match ? match[1] : content;
 }
 
+// M13: same debounce as the desk notepad (Notepad.tsx) — plain autosave,
+// no LLM involvement.
+const NOTE_AUTOSAVE_DELAY_MS = 800;
+
 interface ThreadPanelProps {
   highlightId: string;
   highlightExact: string;
   highlightKind: HighlightKind;
   highlightImportance: HighlightImportance;
+  highlightNote: string;
   thread: ThreadSummary | null;
   top: number;
   providerConfigured: boolean;
   onClose: () => void;
   onThreadChange: (highlightId: string, thread: ThreadSummary) => void;
   onImportanceChange: (highlightId: string, importance: HighlightImportance) => void;
+  onNoteChange: (highlightId: string, note: string) => void;
 }
 
 export function ThreadPanel({
@@ -46,12 +53,14 @@ export function ThreadPanel({
   highlightExact,
   highlightKind,
   highlightImportance,
+  highlightNote,
   thread,
   top,
   providerConfigured,
   onClose,
   onThreadChange,
   onImportanceChange,
+  onNoteChange,
 }: ThreadPanelProps) {
   const location = useLocation();
   const [tags, setTags] = useState<string[]>([]);
@@ -74,6 +83,33 @@ export function ThreadPanel({
   function handleImportanceChange(next: HighlightImportance) {
     onImportanceChange(highlightId, next);
     void updateHighlightImportance(highlightId, next);
+  }
+
+  // M13: a plain free-text note, separate from the LLM composer below —
+  // autosaved on the same debounce as the desk notepad, no LLM involved.
+  const [noteDraft, setNoteDraft] = useState(highlightNote);
+  const [noteSaveState, setNoteSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const noteSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (noteSaveTimerRef.current) clearTimeout(noteSaveTimerRef.current);
+    };
+  }, []);
+
+  function handleNoteChange(next: string) {
+    setNoteDraft(next);
+    // Updates the parent's highlight list immediately, so the margin rail /
+    // annotations overview reflect "has a note" without waiting on the
+    // network round trip below.
+    onNoteChange(highlightId, next);
+    if (noteSaveTimerRef.current) clearTimeout(noteSaveTimerRef.current);
+    setNoteSaveState("idle");
+    noteSaveTimerRef.current = setTimeout(async () => {
+      setNoteSaveState("saving");
+      await updateHighlightNote(highlightId, next);
+      setNoteSaveState("saved");
+    }, NOTE_AUTOSAVE_DELAY_MS);
   }
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -289,6 +325,22 @@ export function ThreadPanel({
       <div className={styles.metaRow}>
         <ImportanceStars value={highlightImportance} onChange={handleImportanceChange} size="small" />
         <TagEditor tags={tags} onChange={handleTagsChange} />
+      </div>
+
+      <div className={styles.noteSection}>
+        <div className={styles.noteHeader}>
+          <span className={styles.noteLabel}>Note</span>
+          <span className={styles.noteStatus}>
+            {noteSaveState === "saving" ? "Saving…" : noteSaveState === "saved" ? "Saved" : ""}
+          </span>
+        </div>
+        <textarea
+          className={styles.noteTextarea}
+          placeholder="Your own note on this passage…"
+          value={noteDraft}
+          onChange={(e) => handleNoteChange(e.target.value)}
+          rows={2}
+        />
       </div>
 
       <div className={styles.messages} ref={scrollRef}>

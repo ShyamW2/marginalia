@@ -71,13 +71,17 @@ export function AnnotationsOverview({
             const unanchored = unanchoredIds.has(highlight.id);
             const hasThread = highlight.thread !== null;
             const hasAnswer = highlight.thread?.hasAnswer ?? false;
-            const status = unanchored
+            const hasNote = highlight.note.trim().length > 0;
+            const baseStatus = unanchored
               ? "Unanchored"
               : hasAnswer
                 ? "Answered"
                 : hasThread
                   ? "Awaiting answer"
                   : KIND_LABELS[highlight.kind];
+            // M13: a note reads as annotated here too, distinguishable from
+            // (and stackable with) the thread status.
+            const status = hasNote && !unanchored ? `${baseStatus} \u00b7 Note` : baseStatus;
 
             return (
               <li key={highlight.id} className={styles.item}>

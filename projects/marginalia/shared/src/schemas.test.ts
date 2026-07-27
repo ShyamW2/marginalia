@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   CreateHighlightBodySchema,
+  HighlightSchema,
   ResourceSummarySchema,
   SettingsSchema,
   ThreadStreamEventSchema,
+  UpdateHighlightNoteBodySchema,
 } from "./schemas.js";
 
 describe("schemas smoke test", () => {
@@ -63,5 +65,26 @@ describe("schemas smoke test", () => {
       spreadMode: "single",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("parses a highlight with an empty note (M13 default) and rejects a missing one", () => {
+    const base = {
+      id: "h1",
+      resourceId: "abc123",
+      exact: "a passage",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose" as const,
+      importance: 0 as const,
+      createdAt: new Date().toISOString(),
+    };
+    expect(HighlightSchema.safeParse({ ...base, note: "" }).success).toBe(true);
+    expect(HighlightSchema.safeParse(base).success).toBe(false);
+  });
+
+  it("accepts an UpdateHighlightNoteBody", () => {
+    expect(UpdateHighlightNoteBodySchema.safeParse({ note: "a thought" }).success).toBe(true);
   });
 });

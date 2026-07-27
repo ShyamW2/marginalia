@@ -153,6 +153,21 @@ describe("publishResource", () => {
     expect(fs.existsSync(path.join(vaultPath, "Readings"))).toBe(false);
   });
 
+  it("a highlight with only a note and no thread produces no vault output (settled decision 7)", async () => {
+    seedResource(db, "res-1", "Metamorphosis");
+    db.prepare(
+      `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, note, created_at)
+       VALUES ('h-1', 'res-1', 'a private thought', '', '', 'epubcfi(/6/4!/4/2)', 0, 'my own note, not a question', @createdAt)`,
+    ).run({ createdAt: new Date().toISOString() });
+
+    const provider = new FakeProvider([]); // extract() must never be called
+    const result = await publishResource(db, provider, "res-1", vaultPath);
+
+    expect(result).toEqual({ notes: 0, conceptsCreated: 0, conceptsLinked: 0 });
+    expect(provider.calls).toBe(0);
+    expect(fs.existsSync(path.join(vaultPath, "Readings"))).toBe(false);
+  });
+
   it("re-publishing is a no-op: no re-extraction, identical file bytes", async () => {
     seedResource(db, "res-1", "Metamorphosis");
     seedHighlight(db, "h-1", "res-1", "passage one");

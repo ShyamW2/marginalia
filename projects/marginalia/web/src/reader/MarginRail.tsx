@@ -31,22 +31,29 @@ export function MarginRail({
         const active = highlight.spineIndex === currentSpineIndex;
         const hasThread = highlight.thread !== null;
         const hasAnswer = highlight.thread?.hasAnswer ?? false;
+        const hasNote = highlight.note.trim().length > 0;
         const className = [
           styles.dotButton,
           styles[highlight.kind],
           active ? styles.active : "",
           unanchored ? styles.unanchored : "",
-          hasThread ? styles.hasThread : "",
+          // M13: a note reads with the same folded-corner treatment as a
+          // thread (DESIGN.md's dog-ear motif) — "annotated," not a plain dot.
+          hasThread || hasNote ? styles.hasThread : "",
           hasAnswer ? styles.hasAnswer : "",
         ]
           .filter(Boolean)
           .join(" ");
 
         const threadState = hasAnswer ? "answered" : hasThread ? "awaiting an answer" : null;
+        const suffixParts = [
+          threadState ? `thread ${threadState}` : null,
+          hasNote ? "note" : null,
+        ].filter((part): part is string => part !== null);
         const title = unanchored
           ? `Couldn't relocate: "${truncate(highlight.exact, 80)}"`
-          : threadState
-            ? `${truncate(highlight.exact, 80)} (thread ${threadState})`
+          : suffixParts.length > 0
+            ? `${truncate(highlight.exact, 80)} (${suffixParts.join(", ")})`
             : truncate(highlight.exact, 80);
 
         return (

@@ -52,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(4);
+    expect(version).toBe(5);
     db.close();
   });
 
@@ -111,6 +111,33 @@ describe("db migrations", () => {
     }
   });
 
+
+  it("migration 005 adds highlights.note, defaulting to empty string", () => {
+    const db = createDb(":memory:");
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO resources (id, title, author, format, file_path, metadata, imported_at)
+       VALUES ('res-1', 'Title', NULL, 'epub', '/tmp/x.epub', '{}', @now)`,
+    ).run({ now });
+    db.prepare(
+      `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, created_at)
+       VALUES ('h-1', 'res-1', 'q', '', '', 'epubcfi(/6/4!/4/2)', 0, @now)`,
+    ).run({ now });
+
+    const row = db.prepare("SELECT note FROM highlights WHERE id = 'h-1'").get() as {
+      note: string;
+    };
+    expect(row.note).toBe("");
+
+    db.prepare("UPDATE highlights SET note = 'a plain note' WHERE id = 'h-1'").run();
+    const updated = db.prepare("SELECT note FROM highlights WHERE id = 'h-1'").get() as {
+      note: string;
+    };
+    expect(updated.note).toBe("a plain note");
+
+    db.close();
+  });
+
   it("migration 004 adds highlights.importance, defaulting to 0, and highlight_tags is usable", () => {
     const db = createDb(":memory:");
     const now = new Date().toISOString();
@@ -147,7 +174,7 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(4);
+      expect(second.pragma("user_version", { simple: true })).toBe(5);
       second.close();
     } finally {
       cleanupDbFile(tmpPath);

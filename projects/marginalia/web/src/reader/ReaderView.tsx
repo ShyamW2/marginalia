@@ -1188,6 +1188,12 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     );
   }
 
+  function handleNoteChange(highlightId: string, note: string) {
+    setHighlights((prev) =>
+      prev.map((h) => (h.id === highlightId ? { ...h, note } : h)),
+    );
+  }
+
   /** The iframe's own mousemove never fires once the pointer leaves it
    * entirely (into the parent document, or out of the window) — this
    * catches that case so the vignette/cursor don't get stuck lit. */
@@ -1348,12 +1354,14 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
                 highlightExact={expandedHighlight.exact}
                 highlightKind={expandedHighlight.kind}
                 highlightImportance={expandedHighlight.importance}
+                highlightNote={expandedHighlight.note}
                 thread={expandedHighlight.thread}
                 top={expandedThread.top}
                 providerConfigured={providerConfigured}
                 onClose={() => setExpandedThread(null)}
                 onThreadChange={handleThreadChange}
                 onImportanceChange={handleImportanceChange}
+                onNoteChange={handleNoteChange}
               />
             )}
           </AnimatePresence>

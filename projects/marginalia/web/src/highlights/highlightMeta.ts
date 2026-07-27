@@ -50,3 +50,17 @@ export async function updateHighlightImportance(
     // best-effort — a failed star/unstar just doesn't persist this time
   }
 }
+
+/** M13: the reader's own plain-text note — autosaved from the thread panel. */
+export async function updateHighlightNote(highlightId: string, note: string): Promise<void> {
+  try {
+    await fetch(`/api/highlights/${highlightId}/note`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    });
+  } catch {
+    // best-effort — a failed autosave tick doesn't block typing; the next
+    // debounce tick (or the next open) tries again
+  }
+}

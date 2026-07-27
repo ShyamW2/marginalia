@@ -67,6 +67,7 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
       exact: h.exact,
       importance: h.importance,
       tags: tagsByHighlight.get(h.id) ?? [],
+      note: h.note,
       positionPercent,
       threadId: h.thread?.id ?? null,
       hasAnswer: h.thread?.hasAnswer ?? false,

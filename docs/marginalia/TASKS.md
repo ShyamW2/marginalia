@@ -895,11 +895,23 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
 
 ### M13 — Notes on annotations
 
-- [ ] **Migration + API:** additive migration adding `highlights.note` (TEXT, default
+- [x] **Migration + API:** additive migration adding `highlights.note` (TEXT, default
       empty), exposed through the existing highlight update route and schemas
       (`shared/src/schemas.ts`, `server/src/annotations/highlights.ts`). Follow the
       existing migration pattern and add coverage alongside the current db tests.
-- [ ] **Note field in the panel.** `ThreadPanel.tsx` currently offers only the
+      _(verified 2026-07-27: migration 5, following the exact pattern of
+      migrations 2/4 (a plain additive `ALTER TABLE ... ADD COLUMN ... DEFAULT`,
+      no backfill needed since it's new). No existing generic "highlight
+      update" route exists — importance and tags each already have their own
+      dedicated `PUT /:id/...` route, so `PUT /api/highlights/:id/note`
+      follows that same established pattern rather than inventing a new one.
+      `note` was added directly to `HighlightSchema` (not a side-table like
+      tags) since it's a single scalar column, mirroring how `importance`
+      already flows through `HighlightWithThread` automatically. 95/95
+      server tests green including new coverage in db.test.ts (migration +
+      default), highlights.test.ts (create default + setHighlightNote), and
+      schemas.test.ts (HighlightSchema requires it, UpdateHighlightNoteBodySchema).)_
+- [x] **Note field in the panel.** `ThreadPanel.tsx` currently offers only the
       LLM composer (textarea at L336). Add a plain note field **above** the thread:
       free text, debounced autosave, no LLM involvement, visually distinct from the
       conversation (it is the reader's own voice). The LLM composer stays exactly as
@@ -907,17 +919,83 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       _Acceptance: typing a note autosaves and survives reload; a highlight can have
       a note with no thread, a thread with no note, or both; the note is visible
       when the panel opens without extra clicks._
-- [ ] **Note affordance elsewhere.** A highlight with a note reads as annotated in the
+      _(verified 2026-07-27: same 800ms-debounce autosave pattern as the M8
+      desk notepad, with its own "Saving…"/"Saved" status line. Styled
+      apart from the LLM messages below via `ThreadPanel.module.css`'s new
+      `.noteSection` — serif italic, a thin kind-tinted left rule reusing
+      the panel's existing `--spine-kind` custom property, a slightly
+      raised paper tone — so it reads as "written in the margin," not
+      another chat bubble. Since `ThreadPanel` already remounts per
+      highlight (`key={highlight.id}` in ReaderView), the note textarea
+      seeds fresh from `highlightNote` on every open with zero extra
+      wiring; a parent-state `onNoteChange` callback (mirroring the
+      existing `onImportanceChange`) updates the reader's highlight list
+      immediately so the margin rail / overview reflect a new note without
+      waiting on the network round trip. Live-verified: typed a note,
+      watched "Saved" appear, confirmed via the API it persisted, reloaded
+      the page, reopened the same highlight and read the identical text
+      back; opened a second, different highlight in the same session and
+      confirmed its note field started genuinely empty (no bleed-over).)_
+- [x] **Note affordance elsewhere.** A highlight with a note reads as annotated in the
       margin rail and the annotations overview (same treatment as has-thread, or a
       distinguishable one), and the note is searchable in the scan's free-text search
       alongside `exact` quotes and thread content.
-- [ ] **Compiler boundary:** confirm the vault compiler still distils *threads* only —
+      _(verified 2026-07-27: took the task's explicitly-allowed "same
+      treatment" option rather than inventing new visual language — a
+      note-only highlight now triggers the exact same folded dog-ear shape
+      in `MarginRail.tsx`/css as a thread does (`hasThread || hasNote`
+      drives the existing `.hasThread` class; the fill only activates via
+      the separate, unaffected `hasAnswer` check, so a note-only highlight
+      renders as the same outlined fold a fresh unanswered thread would).
+      The rail dot's title and the annotations overview's status line both
+      append a "note" / "· Note" marker so it's still distinguishable on
+      inspection, not just visually merged. Scan search: `ScanHighlight`
+      gained a `note` field (server: `scan.ts` now copies `h.note` through
+      same as it already does for tags); `ScanPage.tsx`'s free-text search
+      haystack now includes it alongside `exact` and `threadFirstLine`.
+      Live-verified against a real, properly-anchored highlight in the
+      Alice fixture: searching for a phrase that only appeared in its note
+      (not its quote or any thread) left exactly 1 of 8 rendered heat bands
+      lit and dimmed the other 7 — confirmed via the DOM's dimmed/lit class
+      split, not just reading the filter code. Also confirmed the reverse
+      (a synthetic highlight with an unresolvable anchor never gets a
+      rendered band at all — the scan's own designed behavior for
+      unanchorable highlights, unrelated to this task — so a note search
+      against it correctly produces zero false lights rather than a
+      phantom match).)_
+- [x] **Compiler boundary:** confirm the vault compiler still distils *threads* only —
       notes must not silently enter the vault as transcripts (settled decision 7). If
       notes should publish, that is a separate, deliberate decision; do not make it
       here.
       _Acceptance: a highlight with a note and no thread produces no vault output._
-- [ ] **Verify:** annotate a passage with a note only, converse on another, and confirm
+      _(verified 2026-07-27: code audit confirms `compiler.ts` only ever
+      reads via `listHighlightsWithThreadsForResource` filtered to
+      `h.thread !== null && h.thread.hasAnswer` — a note-only highlight (no
+      thread) is filtered out before the compiler's extraction step ever
+      runs, no code changes needed. Added a regression test to
+      compiler.test.ts asserting exactly this: a highlight seeded with a
+      real note and zero thread rows produces `{notes: 0, ...}`, zero
+      `FakeProvider.calls`, and no `Readings/` directory ever created.)_
+- [x] **Verify:** annotate a passage with a note only, converse on another, and confirm
       both round-trip through reader → scan → reload.
+      _(verified 2026-07-27: live Playwright pass against the real Alice
+      fixture. Created a note-only highlight (uniquely marked text, matched
+      by exact `aria-label` this time to avoid a title-substring collision
+      with pre-existing library fixture data that an earlier draft of this
+      same check accidentally tripped over and had to clean back up) and a
+      separate highlight opened for a real conversation. On the note-only
+      one: typed a note, "Saved" appeared, confirmed server-side via the
+      API before ever reloading, reloaded the whole page, reopened the
+      highlight and got the identical text back, and confirmed both the
+      margin rail dot and the annotations overview marked it as annotated.
+      On the second highlight: asked a real question through the composer
+      against the live `claude-agent` subscription provider and got back a
+      genuine streamed, grounded answer (not mocked) — satisfying "converse
+      on another." Scan free-text search on the note's own unique text lit
+      exactly the one matching band and dimmed the rest. Cleaned up both
+      synthetic test highlights and a note accidentally written to
+      pre-existing fixture data afterward, leaving the shared dev database
+      as found. 121/121 tests, `pnpm build` clean.)_
 
 ### M14 — The Scan instrument
 

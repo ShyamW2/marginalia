@@ -1132,3 +1132,67 @@ reading at a normal pace, and the reduced-motion slide fallback, both
 verified clean and reliable in spread mode — this is a stress-test edge
 case in an already-known-fragile shared mechanism, not a break in normal
 use.
+
+
+## M13 — notes on annotations
+
+Straightforward add: `highlights.note` (migration 5, plain additive column,
+default `''`), a `PUT /api/highlights/:id/note` route following the exact
+shape of the pre-existing `/importance` and `/tags` routes (there was no
+single generic "update a highlight" route to hook into, despite TASKS.md's
+wording — importance and tags each already have their own dedicated route,
+so this is a third one in the same family, not a new pattern), and `note`
+folded directly into `HighlightSchema` (not a side table like tags) since
+it's one scalar column — it now flows through `HighlightWithThread`
+automatically the same way `importance` already does, with zero extra
+fetch plumbing anywhere that already handles highlights.
+
+The note field in `ThreadPanel.tsx` reuses the desk notepad's exact
+800ms-autosave shape (`Notepad.tsx`), styled deliberately apart from the
+LLM messages below it — serif italic, a thin rule tinted by the panel's
+existing `--spine-kind` custom property (M7), a slightly raised paper
+tone — so it reads as the reader's own handwriting in the margin, not
+another chat bubble. Because `ThreadPanel` already remounts per highlight
+(`key={highlight.id}` in ReaderView, an M5-era decision to keep
+per-highlight state trivially isolated), the note textarea gets fresh
+state on every open for free — confirmed live that opening a second,
+different highlight in the same session shows a genuinely empty note
+field, not a stale one.
+
+For "note affordance elsewhere" (margin rail, annotations overview), took
+the task's explicitly-sanctioned "same treatment as has-thread" option
+rather than inventing new visual language: a note-only highlight now
+triggers the identical folded dog-ear CSS as a thread does. This was a
+real design fork worth naming — the alternative (a visually distinct
+note-only marker) would need a fourth rail-dot state on top of
+rose/sage/honey/slate × thread/answered/unanchored, and the task text
+explicitly allowed the simpler option, so that's what shipped. The rail
+dot's title and the overview's status line both still append a "note" /
+"· Note" text marker, so it's distinguishable on inspection even though
+the shape is shared.
+
+**A live-verification lesson worth recording:** the first pass at the
+final M13 Verify used a Playwright selector that matched a highlight's
+margin-rail dot by *substring* on its title (`title.includes("White
+Rabbit")`). The shared dev library's Alice fixture already had two
+unrelated pre-existing "White Rabbit" highlights left over from M3/M5
+sessions, so the substring match silently grabbed the wrong one and wrote
+a test note into real fixture data instead of the freshly-created test
+highlight. Caught it by cross-checking the API response by highlight *id*
+after the fact, not by anything failing loudly — the UI-level checks all
+looked correct because the note feature itself worked fine, just against
+the wrong target. Fixed by re-running with a highlight given deliberately
+unique marker text and matched via the DOM's *exact* `aria-label`
+(`[aria-label="Go to highlight: ${MARKER}"]`) instead of a substring, and
+cleaned up both the accidental note on the pre-existing fixture highlight
+and the synthetic test highlights afterward — shared dev database left as
+found, same discipline as M9's tag/star cleanup. Lesson: any Playwright
+check against this shared, accumulating dev library should match by a
+unique marker + exact selector, never by a substring that could coincide
+with years of prior sessions' leftover data.
+
+Compiler boundary required no code changes — `compiler.ts` already only
+ever reads highlights via `h.thread !== null && h.thread.hasAnswer`, so a
+note-only highlight was already filtered out before extraction. Added a
+regression test asserting exactly that (`compiler.test.ts`) rather than
+leaving it as an unverified code-reading claim.
