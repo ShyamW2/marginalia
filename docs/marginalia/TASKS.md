@@ -1560,11 +1560,19 @@ Bugs first: both are daily-reading irritations in shipped code.
 
 ### M17 — The book digest & AI context
 
-The premise correction that produced this milestone is in the decisions entry: the LLM
-already receives the **whole book** (or the largest fitting window) — it has since M4.
-What is missing is structure, position-awareness, and a compact summary for books too
-long to send whole. Build shared infrastructure here: the digest is also the semantic
-scan's theme source (M18) and pass 1 of the audio cast scan (M22).
+The premise correction that produced this milestone is in the v1.8 decisions entry: the
+LLM already receives the **whole book** (or the largest fitting window) — it has since
+M4. What is missing is structure, position-awareness, and a compact summary that can
+*replace* the book when the book is too long or too expensive to send.
+
+**Read the 2026-07-28 (later) decisions entry before starting** — it settles chunking,
+the chapter-keyed store, the spotlight, the context ladder, and usage accounting, and
+supersedes the shorter M17 sketch in the v1.8 entry.
+
+Shared infrastructure: the digest is also M18's theme source and pass 1 of M22's audio
+cast scan. Build it once.
+
+#### Context plumbing (independent of the digest — do these first)
 
 - [ ] **Label sections with real chapter titles.** `llm/context.ts` renders sections as
       `--- [section 4] ---`, so the model cannot reason about or cite structure. Use the
@@ -1586,19 +1594,116 @@ scan's theme source (M18) and pass 1 of the audio cast scan (M22).
       whole book, say so in the thread — quietly, once, not as an error.
       _Acceptance: on a book that exceeds the budget the thread shows the notice and the
       answer still lands; on a book that fits, no notice ever appears._
-- [ ] **The digest itself.** User-triggered scan (a button in the reader and on the desk
-      hover strip) producing a per-book digest — synopsis, cast, themes, per-chapter
-      summaries — via the existing `extract` seam with a zod schema, stored in **SQLite**
-      (additive migration). Prepended to the book context on every question thereafter.
-      Re-scannable; a failed scan leaves no half-written digest. **The vault stays
-      one-way** — the digest is not read from or written to it in this milestone.
-      _Acceptance: scanning a fixture book produces a digest whose chapter summaries
-      match the book; answers measurably improve on a long book that doesn't fit the
-      window (compare the same question before and after, and record both in NOTES.md);
-      a book with no digest still answers exactly as it does today._
-- [ ] **Verify:** ask the same three questions on a short book and a long one, before and
-      after scanning; confirm chapter citations are real, no spoilers leak, and the
-      digest survives a reload.
+
+#### Usage accounting (needed before running digests, not after)
+
+- [ ] **The usage ledger.** `llm_usage` table (additive migration): one row per call —
+      provider, model, operation (`thread` | `extract` | `digest` | `cast`), input/output/
+      cache tokens, cost when known, duration, timestamp. Written from **one place in the
+      seam**, so no call site can forget. Every number carries its **provenance**:
+      `reported` (provider returned counts), `measured` (locally tokenized), or
+      `estimated` (the existing `CHARS_PER_TOKEN = 3.5` heuristic, ±30%). An estimate is
+      never displayed as a measurement.
+      _Acceptance: a thread question and a digest run both leave correct ledger rows on
+      every provider including a local Ollama model; provenance is recorded per row;
+      totals survive a restart._
+- [ ] **Provider-reported usage, opportunistically.** `LLMProvider` gains **optional**
+      members (`reportedUsage?`, `planLimits?`) — optional so every existing
+      implementation stays valid. `claude-agent`: read `usage` and `total_cost_usd` off
+      the result messages the provider already iterates (stable API). `anthropic`: usage
+      from stream events plus `anthropic-ratelimit-*` response headers. `openaiCompat`:
+      `stream_options: {include_usage: true}`, falling back to measured/estimated when
+      the endpoint ignores it.
+      _Acceptance: reported counts appear for each provider that supports them; an
+      endpoint that ignores `include_usage` still produces a complete ledger row marked
+      `measured`/`estimated`, never a missing one._
+- [ ] ⚠️ **Plan limits, feature-detected and non-fatal.** The Agent SDK exposes real
+      5-hour / 7-day / per-model utilization with reset times via
+      `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`. **That name is a
+      contract**: unstable, removable without notice. Behind a capability check, wrapped,
+      never on a hot path; missing, throwing, or shape-changed all degrade to "plan limits
+      unavailable" with everything else still working. The SDK's own
+      `rate_limits_available: false` (API key, Bedrock, Vertex) is a legitimate
+      unavailable, not an error.
+      _Acceptance: limits render with reset times on the subscription path; simulate the
+      call throwing and confirm the app is unaffected beyond that one panel; local models
+      show no quota UI at all — tokens and context percentage only._
+- [ ] **Context-window readout.** Tokens over window size, where the window is
+      `capabilities().contextTokens` (for local models, the `openaiContextTokens` setting
+      the user already configures). Shown per call and live during a digest run.
+      _Acceptance: "context 78K / 200K (39%)" renders on a local model exactly as on
+      Claude; the figure is labelled with its provenance._
+
+#### The digest
+
+- [ ] **Chapter-keyed store + map-reduce build.** Additive migration: one digest row per
+      (`resource_id`, `spine_index`) — summary, local themes, characters seen, source
+      hash, generated-at — plus one book-level row for synopsis/cast/theme set. **Map**:
+      one call per chapter, input capped at ~25% of `capabilities().contextTokens`;
+      over-long chapters split at paragraph boundaries with a small overlap; on
+      `LLMError('context_too_large')` re-split once automatically, then mark that chapter
+      failed and **continue the run**. **Reduce**: over all currently available chapter
+      rows (hierarchically in batches if that itself exceeds budget), regenerated on every
+      run so the book summary always matches its parts. All via the existing `extract`
+      seam with zod schemas.
+      _Acceptance: digesting a book whose text far exceeds the context window succeeds;
+      re-digesting one chapter replaces exactly that row and leaves neighbours untouched;
+      a deliberately over-long chapter is split and still produces one coherent row;
+      unit tests cover chunk sizing, the re-split path, and hierarchical reduce._
+- [ ] **Rate-limit resilience.** Sequential by default (concurrency is a setting, 1 on the
+      subscription path). A rate-limit error is a **paused state, not a failure**: back
+      off with jitter, honour `Retry-After`/`resets_at`, show "Rate limited — resuming at
+      14:32", resume automatically, allow cancel. Chapters commit as they complete, so a
+      run that dies at chapter 38 of 40 resumes at 38 and never re-pays for 1–37.
+      Pre-flight before committing: chapter count, estimated tokens and calls, and current
+      plan utilization when available. A token-budget ceiling setting aborts a run that
+      would exceed it.
+      _Acceptance: kill the provider mid-run and resume — no chapter is processed twice
+      and none is skipped; force a rate-limit error and confirm the run pauses and
+      resumes rather than failing; the pre-flight estimate is within ~25% of actual
+      recorded usage._
+- [ ] **The spotlight.** Range picker on the scan's 0–100% axis, shown **only when
+      initiating a digest** — not a persistent mode. Snaps to chapter boundaries by
+      default (chapters are the storage unit); free-drag with a modifier resolves to the
+      chapters it touches. Digested regions render as a coverage line on the timeline.
+      ⚠️ **Do not show page numbers as if they were stable** — reflowable EPUBs have none,
+      and epub.js's page-ish counts exist only in the reader at one font size and window
+      width, so M16's text-size setting changes them. The readout is chapters and percent,
+      with approximate pages only where genuinely available, labelled as approximate.
+      Plus a reader-side "digest this chapter" shortcut that does the same thing without
+      visiting the scan.
+      _Acceptance: select chapters 1–8, digest, then select 9–16 later — the second run
+      only processes 9–16 and the coverage line grows to match; an overlapping re-scan
+      replaces rather than duplicates; the timeline shows gaps honestly._
+- [ ] **The digest page (markdown projection).** A readable page reachable from the desk
+      alongside the scan (and from the reader), rendering the digest as markdown assembled
+      in book order with gaps marked ("not yet digested: chapters 9–12"). **SQLite stays
+      the source of truth**; the markdown is a deterministically regenerated projection at
+      `data/digests/<resourceId>.md` — same pattern as the vault compiler, and never
+      parsed back (settled decision 6). Hand-edits are overwritten on the next run and the
+      UI must say so rather than implying a round trip.
+      _Acceptance: the page reads as a genuinely useful book summary; regenerating
+      produces a byte-identical file when nothing changed; a partially-digested book shows
+      its gaps; deleting the .md and regenerating restores it exactly._
+- [ ] **The context ladder (brain button).** Three levels, remembered per book: **Off**
+      (passage + surrounding pages), **Digest** (digest of the covering chapters +
+      surrounding pages), **Full** (whole book, today's behaviour). **Default is Digest
+      once a book has a digest**, Full otherwise — this is where the token saving actually
+      is. Only chapters with digest rows contribute; if the highlight's own chapter is not
+      covered, the UI says so rather than silently answering from less. The toggle row
+      also carries the **web-search control, present but inert** until M23.
+      _Acceptance: the same question at each level produces visibly different context
+      sizes in the ledger, with Digest well below Full; switching a book to Digest and
+      reloading remembers it; an undigested chapter surfaces the notice._
+- [ ] **Answer transparency.** Every answer records the context depth used and which
+      chapter digests fed it, surfaced in the thread. Non-negotiable: an answer grounded
+      in 12% of a book that doesn't say so just looks like the model got worse.
+      _Acceptance: a Digest-level answer shows which chapters it drew on; a Full answer
+      says so; the record persists with the thread and survives a reload._
+- [ ] **Verify:** digest a long fixture book in two passes (first half, then second),
+      watching the ledger and the context readout; confirm resumability by killing a run
+      mid-way; read the digest page; then ask the same three questions at each ladder
+      level and compare answer quality against recorded token cost in NOTES.md.
 
 ### M18 — Scan v2: the instrument face
 
@@ -1641,8 +1746,10 @@ and the two-channel colour model are specified there.
       switching to density-only mode reproduces today's appearance._
 - [ ] **Two scan modes: by kind, by theme.** A mode toggle re-colours the same field and
       the same hit targets — a palette swap, not a second component. Themes come from
-      M17's digest, tagged onto each highlight (quote + note + thread) by an `extract`
-      pass, persisted in SQLite. This un-parks the 2026-07-19 "LLM note supplementation"
+      M17's digest — the book-level theme set from its reduce step — tagged onto each
+      highlight (quote + note + thread) by an `extract` pass, persisted in SQLite. Only
+      highlights in **digested chapters** can be themed; the rest stay uncoloured in
+      theme mode and the coverage line explains why. This un-parks the 2026-07-19 "LLM note supplementation"
       item, which is what this ask really is; concepts from the vault are **not** the
       source (M9's reasoning still holds — they exist only for published threads).
       _Acceptance: theme mode colours every highlight that has a theme and visibly greys
@@ -1665,12 +1772,21 @@ and the two-channel colour model are specified there.
 ### M19 — Settings as a binder
 
 - [ ] **Binder shell.** Rebuild `SettingsPage`'s flat field list as a book/binder: tabbed
-      dividers down the side — **Reading, LLM, Scan, Audio, Desk** — with a page-turn
+      dividers down the side — **Reading, LLM, Usage, Scan, Audio, Desk** — with a page-turn
       animation between sections, inside M11's existing modal shell (dialog semantics,
       focus trap, Escape, backdrop click, and the `/settings` deep link all stay).
       Existing fields move; none are redesigned here.
       _Acceptance: every setting that exists today is still reachable and still saves;
       the deep link still opens over the current room; Escape still restores focus._
+- [ ] **The Usage divider.** Surface M17's ledger: totals for today / 7 days, broken down
+      by book and by operation (thread, digest, cast); the last digest run's cost; and —
+      **only where the provider reports them** — plan utilization with reset times. Local
+      models show tokens, context percentage, and speed, with no quota UI at all. Every
+      figure is labelled with its provenance (reported / measured / estimated); an
+      estimate is never dressed up as a measurement.
+      _Acceptance: the panel is correct on a local model and on the subscription path;
+      with plan limits unavailable it reads "plan limits unavailable" and everything else
+      still renders; the numbers match the ledger._
 - [ ] **A11y and motion.** The dividers are a real tablist/tabpanel (arrow-key
       navigation between tabs, correct roles and `aria-selected`) — never divs with click
       handlers. The page turn collapses to an instant swap under reduced motion.
@@ -1820,6 +1936,33 @@ to in one voice, with the page following along, before any casting exists.
 - [ ] **Verify:** scan the cast on a dialogue-heavy fixture, listen to a chapter in
       multi-voice, override a voice, and listen again. Confirm every M17 behaviour
       (tint, auto-turn, pause-on-interaction, position) is unchanged in multi-voice mode.
+
+### M23 — Web search
+
+Scoped out of M17 deliberately (decisions.md 2026-07-28 later): it needs its own seam,
+not a flag, and it is a **second cloud dependency** — which amends CLAUDE.md's
+"local-first: no cloud dependencies except the LLM endpoint itself". Permitted,
+per-provider, **off by default, never silently on**.
+
+- [ ] **The seam.** One narrow `WebSearch` interface (`search(query) → results`,
+      `fetch(url) → text`), with implementations chosen by provider capability: the
+      Anthropic API's server-side web tool; the Agent SDK's built-in WebSearch (which
+      means relaxing `tools: []` on that path — a deliberate, documented exception, still
+      read-only, still no file access); and a direct implementation (Brave/Tavily API key,
+      or a local SearXNG instance) for endpoints with nothing of their own, so local
+      models are not permanently excluded.
+      _Acceptance: the same question with web enabled works on all three provider paths;
+      disabling it removes the capability entirely, not just the UI._
+- [ ] **Wire the M17 toggle.** The inert web control in the thread composer becomes live,
+      per-thread, off by default and never remembered as on across books.
+      _Acceptance: enabling it visibly changes the answer and the ledger's token count;
+      results are cited in the answer with their source URLs._
+- [ ] **Cost and trust.** Web results are context: they go through the ledger like
+      everything else, and cited sources are shown so an answer's grounding is inspectable.
+      _Acceptance: a web-enabled answer records its extra tokens; every claim drawn from
+      the web is attributable to a listed source._
+- [ ] **Verify:** ask a question needing outside knowledge on each provider path, with
+      web off and on; confirm off costs nothing extra and on is fully attributed.
 
 ## Parked (post-v1.5) — recorded so they aren't relitigated
 

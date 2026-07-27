@@ -3,6 +3,153 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-28 (later) — The digest in detail: chunking, the spotlight, the context ladder, usage accounting
+
+Follow-up to the v1.8 entry below, answering four operator questions about M17: how the
+digest survives context limits, how it survives rate limits, whether a *region* of a
+book can be digested, and whether usage/limits can be monitored in settings. This
+supersedes the M17 sketch in the v1.8 entry wherever they differ.
+
+### The chapter is the unit of everything
+
+The single decision that makes the rest easy: **digests are stored per chapter**
+(`resource_id` + `spine_index`), never as one blob per book. Consequences, all of which
+fall out for free rather than needing their own machinery:
+
+- **Context limits** — a chapter always fits; a book may not. The digest is a
+  **map-reduce**: one *map* call per chapter producing that chapter's summary, local
+  themes, and characters seen; one *reduce* call over the chapter summaries producing
+  the synopsis, cast, and book-level theme set. The digest never depends on the whole
+  book fitting in the window, which is the failure the whole-book approach would have
+  hit on any real novel.
+- **Incremental scanning** — "digest chapters 1–8 now, 9–16 later" is just writing more
+  chapter rows. **Append, overlap, and merge stop being problems**: re-digesting a
+  chapter replaces that chapter's row, so a re-scan is idempotent by construction and
+  overlapping ranges cannot produce duplicated or contradictory text.
+- **Coverage is queryable** — which chapters have rows *is* the coverage map. The scan
+  timeline underlays it; the digest page marks gaps ("not yet digested: chapters 9–12");
+  a question can be told honestly that its chapter isn't covered.
+- **Resumability** — see rate limits below. A 40-chapter run that dies at 38 resumes at
+  38, because 37 rows are already committed.
+
+Chunking rules: cap each map call's input at ~25% of `capabilities().contextTokens` so
+instructions and output have room; split an over-long chapter at paragraph boundaries
+with a small overlap; on `LLMError('context_too_large')` re-split once automatically,
+then mark that chapter failed and **continue the run** rather than aborting it. If the
+reduce input itself exceeds budget (a book with 200 chapters), reduce hierarchically in
+batches. The reduce regenerates from *all* currently available chapter rows on every
+run, so the book-level summary is always consistent with its parts.
+
+### Rate limits (hosted providers only)
+
+- **Sequential by default**, never a parallel blast. Concurrency is a setting and stays
+  at 1 for the subscription path.
+- A rate-limit error is a **paused state, not a failure**: back off with jitter, honour
+  `Retry-After` / `resets_at` where the provider gives one, show "Rate limited —
+  resuming at 14:32", resume automatically, allow manual cancel. Completed chapters are
+  never lost or re-paid for.
+- **Pre-flight before committing**: show the range's chapter count, estimated tokens and
+  call count, and — when the provider reports it — current plan utilization, so a run
+  that would burn the rest of a weekly window is a visible choice rather than a
+  surprise. A token-budget ceiling setting stops a run that exceeds it.
+- Local models have no quotas; the same machinery just never trips.
+
+### The spotlight
+
+- **It exists only when initiating a digest** — it is a range picker for "how much of
+  the book to digest right now", not a persistent context-scoping mode.
+- It lives on the scan's existing 0–100% axis (with M18's zoom/pan), snapping to chapter
+  boundaries by default because chapters are the storage unit; free-drag with a modifier
+  resolves to the chapters it touches.
+- ⚠️ **"Pages 1–50" has no stable meaning in an EPUB** — reflowable text has no page
+  numbers, and epub.js's page-ish counts exist only inside the reader at one specific
+  font size and window width, so they'd change under M16's own text-size setting. The
+  spotlight readout is **chapters and percent**, with approximate page numbers shown
+  only where they're actually available. Say this in the UI rather than showing a page
+  number that lies.
+- Digested regions render as a coverage line on the scan timeline.
+- A reader-side shortcut ("digest this chapter") creates the same thing without visiting
+  the scan.
+
+### The markdown is a projection, not the source of truth
+
+The digest must be user-readable markdown, in a page reachable from the desk alongside
+the scan. **SQLite stays the source of truth**; the markdown is a deterministically
+regenerated projection at `data/digests/<resourceId>.md`, assembled in book order with
+gaps marked — exactly the pattern the vault compiler already uses, and for the same
+reason settled decision 6 gives: we never parse it back. Hand-edits are overwritten on
+the next run, and the UI must say so rather than implying a round trip. Publishing the
+digest into the vault remains a legal later option; it is not this milestone.
+
+### The context ladder (the brain button)
+
+The operator's framing was a toggle that *adds* the digest to context. Worth stating
+plainly because it inverts the goal: **a digest added on top costs more tokens, not
+fewer** — it's small next to a whole book. The saving comes from letting it *replace*
+the book. So the control is a three-level depth, not a switch:
+
+| Level | Sends | For |
+|---|---|---|
+| **Off** | passage + surrounding pages | cheapest; tightly local questions |
+| **Digest** | digest of the covering chapters + surrounding pages | the default once a digest exists — best answers per token |
+| **Full** | the whole book (today's behaviour) | maximum fidelity, maximum cost |
+
+Remembered per book. **Default becomes Digest once a book has one**, Full otherwise —
+this is the change that actually cuts subscription burn on long books. Two rules that
+keep it honest: only chapters with digest rows contribute, and if the highlight's own
+chapter isn't covered the UI says so rather than silently answering from less; and every
+answer records the depth used and which chapter digests fed it, surfaced in the thread.
+Transparency is not optional here — an answer grounded in 12% of a book that doesn't say
+so just looks like the model got worse.
+
+### Usage accounting
+
+**Local accounting is the source of truth and must work for every provider, including
+local models with no reporting at all.** A `llm_usage` ledger row per call — provider,
+model, operation (thread / extract / digest / cast), tokens, cost if known, duration —
+written from one place in the seam so no call site can forget.
+
+Every number carries its **provenance**, and the UI shows which:
+
+- **reported** — the provider returned real counts. `claude-agent` gets `usage` and
+  `total_cost_usd` on every result message (stable API, already iterated in
+  `claudeAgent.ts`); the Anthropic path gets usage from stream events plus
+  `anthropic-ratelimit-*` response headers; `openaiCompat` gets it via `stream_options:
+  {include_usage: true}` where the endpoint honours it (OpenAI, OpenRouter, recent
+  Ollama/LM Studio do; not guaranteed).
+- **measured** — we tokenized locally with a real tokenizer.
+- **estimated** — the existing `CHARS_PER_TOKEN = 3.5` heuristic, which is ±30% and must
+  **never be presented as a measurement**.
+
+Context-window usage works everywhere: tokens (by whichever tier) over the window size,
+which for local models is the `openaiContextTokens` setting the user already configures.
+So a digest run shows "context 78K / 200K (39%)" on a local model exactly as it does on
+Claude — the only thing local models lack is a quota, and the quota UI simply doesn't
+render for them.
+
+**Plan limits are opportunistic.** The Claude Agent SDK does expose real 5-hour / 7-day
+/ per-model utilization with reset times — but via
+`usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`, whose name is a contract:
+unstable, removable without notice. Use it **feature-detected and non-fatal** — behind a
+capability check, wrapped, never on a hot path, and if it's missing, throws, or changes
+shape the panel reads "plan limits unavailable" while everything else keeps working. The
+SDK's own `rate_limits_available: false` (API key, Bedrock, Vertex) is a legitimate
+"unavailable", not an error.
+
+**Seam impact:** `LLMProvider` gains **optional** members only (`reportedUsage?`,
+`planLimits?`). Optional keeps every existing implementation valid and encodes "not all
+providers can do this" in the type system rather than in comments.
+
+### Web search → its own milestone (M23)
+
+Deliberately scoped out of M17, which ships the toggle row with the web control present
+but inert. It splits three ways — the Agent SDK has a built-in WebSearch tool (but we
+run `tools: []` on purpose), the Anthropic API has a server-side web tool, and local
+endpoints have nothing, so they need us to call a search API (Brave/Tavily, or a local
+SearXNG) ourselves — which means it needs its own seam, not a flag. It is also a
+**second cloud dependency**, which amends CLAUDE.md's "no cloud dependencies except the
+LLM endpoint itself": permitted, per-provider, off by default, and never silently on.
+
 ## 2026-07-28 — v1.8: scan instrument v2, the book digest, QOL & bug fixes
 
 Operator feedback after using the shipped M14/M15. Same contract as the last two
@@ -119,12 +266,18 @@ one-block edit if daily reading wants it sooner.
   sheet in *every* theme. Fix by making one token the source of truth for both, so they
   cannot drift apart again — not by hand-matching two values.
 - **Highlights respond to the cursor.** Hovering a mark pops it to its full kind colour.
-  Technically cheap and worth recording because the codebase says otherwise: the note in
-  `highlightKinds.ts` that "CSS never reaches the marks" is about `rendition.themes`
-  (which injects into the *iframe*). The marks-pane SVG lives in the **parent**
-  document, so an ordinary app stylesheet can target it — and a CSS rule beats the
-  inline presentation attributes epub.js writes. Must respect focus mode (a hidden mark
-  stays hidden on hover).
+  Must respect focus mode (a hidden mark stays hidden on hover).
+  > **Corrected 2026-07-28, after M16 shipped.** This bullet originally prescribed a
+  > plain CSS `:hover` rule, reasoning that the marks-pane SVG lives in the parent
+  > document so an app stylesheet can reach it. That reasoning had a hole, found and
+  > proven during implementation (NOTES.md, "M16"): the marks-pane root carries
+  > `pointer-events="none"` as a **load-bearing** attribute — removing it lets the
+  > overlay intercept mousedown over highlighted text and kills native text selection
+  > there, the exact regression this task's own acceptance criteria guard against.
+  > `pointer-events` inherits and is never re-declared on the marks, so hit-testing
+  > skips them entirely and `:hover` cannot fire. Shipped instead by extending the
+  > existing forwarded-mousemove handler. Recorded rather than silently rewritten: the
+  > mistake was asserting a mechanism from reading rather than probing it.
 
 ### Settings as a binder
 

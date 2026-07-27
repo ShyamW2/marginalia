@@ -149,7 +149,13 @@ whole `data/audio/` tree deleted mid-session.
 User-initiated, never automatic. Two passes, both through the **existing** LLM seam
 (`extract`, zod-validated) and the existing context builder — no new provider code.
 
-**Pass 1 — the cast** (one call, whole-book context, cached in SQLite):
+**Pass 1 — the cast.** ⚠️ **Amended 2026-07-28: do not build a second scanner.** This was
+originally specified as one call over whole-book context, which does not survive a novel
+that exceeds the window. The cast now comes from **M17's book digest** — its map step
+already records characters seen per chapter, and its reduce step already produces the
+cast. Running a cast scan on an undigested book runs (or resumes) the digest first. The
+schema below is the shape the digest's reduce step must produce for this consumer; it is
+one pipeline with two consumers, not two pipelines.
 
 ```ts
 const CastSchema = z.object({

@@ -185,8 +185,27 @@ export interface LLMProvider {
     input: string;
     schema: z.ZodType<T>;
   }): Promise<T>;
+
+  // --- M17 usage accounting. OPTIONAL by design: not every provider can report
+  // these, and optionality keeps every existing implementation valid while
+  // encoding "may be absent" in the type system rather than in a comment.
+  // Absence is a normal state the UI renders, never an error.
+  /** Token/cost counts for the most recent call, when the provider reports them. */
+  reportedUsage?(): { inputTokens: number; outputTokens: number;
+                      cacheReadTokens?: number; costUsd?: number } | null;
+  /** Plan/quota utilization, when the provider exposes it (hosted only). */
+  planLimits?(): Promise<{ windows: { label: string; utilization: number | null;
+                           resetsAt: string | null }[] } | null>;
 }
 ```
+
+Usage accounting rule (decisions.md 2026-07-28 later): the **local ledger is the source
+of truth**, written from one place in the seam so no call site can forget, and every
+figure carries its provenance — `reported` (from the provider), `measured` (locally
+tokenized), or `estimated` (the `CHARS_PER_TOKEN` heuristic, ±30%). An estimate is never
+displayed as a measurement. `planLimits` on the `claude-agent` path goes through an
+API the SDK itself marks experimental and removable — feature-detect it, wrap it, and
+degrade to "unavailable" rather than failing.
 
 `LLMError` carries a machine-readable `code` (`auth`, `rate_limit`, `context_too_large`,
 `extract_parse_failed`, `network`, `refused`, `unknown`) — routes map these to HTTP

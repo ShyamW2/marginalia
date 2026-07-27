@@ -48,14 +48,22 @@ doc), never by drift.
    distilled notes into it; we never parse the vault back for anchoring.
 7. **Distilled notes, not transcripts.** The vault receives concept notes distilled from
    threads. Raw chat transcripts stay in the reader as the "sticky notes."
-8. **Whole-resource context by default.** A question about a highlight ships the full book
-   (or the largest window that fits) with provider-side caching where available; the
-   passage is the focus, not the limit, of context.
+8. **Whole-resource context by default — until a digest exists.** A question about a
+   highlight ships the full book (or the largest window that fits) with provider-side
+   caching where available; the passage is the focus, not the limit, of context.
+   *Amended 2026-07-28 (M17):* once a book has a digest, the default becomes the
+   **Digest** rung of the context ladder (digest of the covering chapters + surrounding
+   pages) — same grounding at a fraction of the tokens. Full-book remains one click
+   away and remains the default for undigested books.
 9. **TTS is local, behind its own seam.** Audio goes through one narrow `TTSEngine`
    interface (`server/src/audio/engine.ts`, spec'd in AUDIO.md), first implemented with
    Kokoro in-process via ONNX — no cloud TTS, no Python sidecar. A more expressive
    GPU engine later is a second implementation, not new call sites.
-10. **The model never returns positions.** An extension of decision 2, learned at
+10. **Local-first, with one named exception per cloud dependency.** The LLM endpoint was
+   the only one. Web search (M23) is the second — permitted per-provider, **off by
+   default, never silently on**. Any further exception is a decisions.md entry, not a
+   pull request.
+11. **The model never returns positions.** An extension of decision 2, learned at
    casting: the LLM returns *text* (a quoted string, a concept name) and code locates
    it. Never ask a model for char offsets, indices, or counts and then trust them.
 
@@ -81,8 +89,9 @@ doc), never by drift.
   most fragile part of the system.
 - **Structured outputs are schemas.** Every JSON the LLM returns has a validated schema
   (zod). A parse failure is a handled state, never a crash.
-- **Local-first.** No cloud dependencies except the LLM endpoint itself. Everything —
-  library, annotations, vault — is files/SQLite on this machine and survives offline.
+- **Local-first.** Everything — library, annotations, vault, TTS — is files/SQLite on
+  this machine and survives offline. Cloud dependencies are enumerated, not assumed:
+  the LLM endpoint, and web search (M23, off by default). See settled decision 10.
 - **Boring core, expressive surface.** Server code stays plain and obvious; spend the
   creativity budget on the UI.
 
