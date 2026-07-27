@@ -5,13 +5,20 @@
   max-height: calc(100% - 2rem);
   display: flex;
   flex-direction: column;
-  background: var(--color-bg-raised);
+  /* M14 "sticky notes" (decisions.md 2026-07-27): a warmer paper tone than
+     the panel chrome elsewhere in the reader — a small, fixed-hue mix so it
+     reads as a warmer sheet of paper in both Paper and Ink. */
+  background: color-mix(in srgb, var(--color-bg-raised) 90%, #e8c583 10%);
   border: 1px solid var(--color-border);
   border-left: 3px solid var(--spine-kind, var(--color-border));
   border-radius: 10px;
   box-shadow: var(--shadow-panel);
   z-index: 10;
   overflow: hidden;
+}
+
+.headerDragging {
+  cursor: grabbing;
 }
 
 /* M10 origami skin: a folded-corner echo of the collapsed margin-rail tab
@@ -51,29 +58,13 @@
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* Two crease-shadow bars that flash across the panel in sync with the
-   unfold/refold animation (ThreadPanel.tsx) — the "two-crease origami"
-   DESIGN.md asks for, made legible as two distinct folds rather than one
-   smooth reveal. */
-.creases {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  background:
-    linear-gradient(
-      to bottom,
-      transparent calc(33% - 1px),
-      rgba(0, 0, 0, 0.22) 33%,
-      transparent calc(33% + 1px)
-    ),
-    linear-gradient(
-      to bottom,
-      transparent calc(66% - 1px),
-      rgba(0, 0, 0, 0.22) 66%,
-      transparent calc(66% + 1px)
-    );
-}
+/* M14 (decisions.md 2026-07-27): the .creases bars used to live here — two
+   static 22%-black bars that read as ruled lines across the note and never
+   actually synced with the unfold/refold animation (they were painted for
+   the panel's whole lifetime). Removed; the "two-crease origami" reading
+   DESIGN.md asks for survives in the unfold/refold keyframes themselves
+   (ThreadPanel.tsx's scaleY/rotateX pass through a visible half-open step).
+*/
 
 /* The highlight's kind tints the panel's spine — a folded sticky note's
    edge color (docs/marginalia/DESIGN.md). */
@@ -96,6 +87,10 @@
   gap: 0.5rem;
   padding: 0.75rem 0.75rem 0.6rem;
   border-bottom: 1px solid var(--color-border);
+  /* M14: draggable by the header (decisions.md 2026-07-27) — the close
+     button inside it opts back out via handleHeaderPointerDown. */
+  cursor: grab;
+  touch-action: none;
 }
 
 .quote {

@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type {
   CursorStyleChoice,
   LLMProviderId,
+  ReaderMargin,
   Settings,
   SettingsUpdate,
   SpreadMode,
@@ -23,6 +24,9 @@ const DEFAULTS = {
   // (today's behavior, unchanged until a reader opts in) is the boring
   // choice.
   spread_mode: "single" as SpreadMode,
+  // M14: "normal" matches the pre-M14 fixed edge padding — unchanged until a
+  // reader opts into something wider or narrower.
+  reader_margin: "normal" as ReaderMargin,
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -40,6 +44,7 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   cursor_style: "cursorStyle",
   cursor_trail_enabled: "cursorTrailEnabled",
   spread_mode: "spreadMode",
+  reader_margin: "readerMargin",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -72,6 +77,7 @@ export function getRawSettings(db: Database.Database): {
   cursorStyle: CursorStyleChoice;
   cursorTrailEnabled: boolean;
   spreadMode: SpreadMode;
+  readerMargin: ReaderMargin;
 } {
   const raw = readRaw(db);
   return {
@@ -87,6 +93,7 @@ export function getRawSettings(db: Database.Database): {
     cursorStyle: raw.cursor_style as CursorStyleChoice,
     cursorTrailEnabled: raw.cursor_trail_enabled === "true",
     spreadMode: raw.spread_mode as SpreadMode,
+    readerMargin: raw.reader_margin as ReaderMargin,
   };
 }
 

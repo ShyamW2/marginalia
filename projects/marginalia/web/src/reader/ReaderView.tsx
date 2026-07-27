@@ -14,11 +14,13 @@ import type {
   HighlightImportance,
   HighlightKind,
   HighlightWithThread,
+  ReaderMargin,
   ReadingPosition,
   Settings,
   SpreadMode,
   ThreadSummary,
 } from "@marginalia/shared";
+import { onSettingsSaved } from "../settings/settingsBus.js";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
@@ -69,6 +71,14 @@ function turnZoneForVisibleX(
 const SCRUB_DRAG_THRESHOLD_PX = 4;
 const SCRUB_KEYBOARD_STEP_PERCENT = 1;
 
+// M14 fullscreen: how close (in px) the pointer must be to the top/bottom
+// edge to reveal the floating top row / footer, and how much of the width
+// (from the right) counts as the "top-right corner region" the margin rail
+// reveals from — deliberately not the whole right edge, so it never fights
+// the M11 turn-zone vignette's own right-edge hover.
+const FULLSCREEN_REVEAL_BAND_PX = 72;
+const FULLSCREEN_RAIL_CORNER_FRACTION = 0.25;
+
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
@@ -93,38 +103,46 @@ interface RenditionOptionsWithGap {
   gap: number;
 }
 
-// Acceptance bar: nothing within ~2.5rem of the page edge at any window
-// size, and the measure stays in the 60-75ch range at wide viewports.
-// gap (epub.js splits it evenly into left/right padding) is computed from
-// the actual rendered container width rather than a fixed constant, since a
-// gap generous enough to cap the measure on a normal-width window would
-// crush a genuinely narrow one down to a sliver of a column.
-const READER_MIN_EDGE_PADDING = 40; // 2.5rem at the default 16px root
+// M14 (decisions.md 2026-07-27): the outer edge margin used to be gap's job
+// too (M11), but epub.js derives *both* the outer edge padding and the
+// inter-leaf column gap from that single number — so a spread's spine
+// gutter and the single-page edge margin were forced to share one value.
+// The outer margin now lives on a padded wrapper *around* the element
+// epub.js renders into (containerRef itself stays padding-free, since
+// epub.js sizes the stage from it — see the marginWrapper div below); gap's
+// only remaining job is capping the single-page measure at a comfortable
+// width and, in spread mode, being the book-spine gutter.
 const READER_TARGET_COLUMN_WIDTH = 520; // ~70ch at 16px body text (Bringhurst range)
-const READER_MIN_COLUMN_WIDTH = 240; // floor below which we accept less edge margin instead
 
 // M12 two-page spread: epub.js's own layout.js falls back from "auto" to a
 // single column below this stage width — mirrored here (not read back from
-// epub.js) so the *gap* strategy (a wide comfortable-measure margin for one
-// page vs. a narrow book-spine gutter for two) can be chosen consistently
-// with whatever epub.js is about to do at the same width.
+// epub.js) so the *gap* strategy (a measure cap for one page vs. a narrow
+// book-spine gutter for two) can be chosen consistently with whatever
+// epub.js is about to do at the same width.
 const SPREAD_MIN_WIDTH = 960;
-// The same `gap` value becomes both the outer edge margin *and* the native
-// CSS column-gap between the two visible leaves (epub.js's contents.js
-// sets both from one `gap` — see NOTES.md "M12"), so it has to be small
-// enough to read as a spine gutter, not the wide single-page margin.
+// The same `gap` value becomes both leaves' native CSS column-gap — this is
+// deliberately independent of readerMargin (decisions.md 2026-07-27: "the
+// spine gutter in spread mode is independently visible and unchanged by the
+// margin setting").
 const SPREAD_GUTTER = 64;
 
 function computeReaderGap(containerWidth: number, spreadMode: SpreadMode): number {
   if (spreadMode === "auto" && containerWidth >= SPREAD_MIN_WIDTH) {
     return SPREAD_GUTTER;
   }
-  const columnWidth = Math.min(
-    READER_TARGET_COLUMN_WIDTH,
-    Math.max(containerWidth - READER_MIN_EDGE_PADDING * 2, READER_MIN_COLUMN_WIDTH),
-  );
-  return Math.max(containerWidth - columnWidth, 0);
+  return Math.max(containerWidth - READER_TARGET_COLUMN_WIDTH, 0);
 }
+
+// M14 "customisable page margins": the outer padding on both axes around the
+// rendered page, applied via a CSS wrapper rather than epub.js's own gap
+// option (see computeReaderGap above). "wide" is the acceptance bar's named
+// value (~4rem); the others scale from it.
+const READER_MARGIN_PX: Record<ReaderMargin, number> = {
+  narrow: 24, // 1.5rem
+  normal: 40, // 2.5rem — matches the old fixed M11 edge padding
+  wide: 64, // 4rem
+  generous: 96, // 6rem
+};
 
 function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
   rendition.themes.register("app", {
@@ -229,6 +247,9 @@ interface ReaderViewProps {
 
 export function ReaderView({ resourceId, initialHighlightId, spreadMode }: ReaderViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // M14: the reader's stage — the thread panel's drag is constrained to it,
+  // and a stale panel offset gets clamped back into its bounds on reopen.
+  const stageRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   // M12 scrub dial / chapter nav need direct book access (locations,
   // navigation, spine) outside the load effect's own closure.
@@ -313,6 +334,10 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     top: number;
   } | null>(null);
   const [providerConfigured, setProviderConfigured] = useState(false);
+  // M14: persisted, but must take effect live while this component stays
+  // mounted underneath the settings modal (M11) — settingsBus is how a
+  // save reaches this component without a reload or a remount.
+  const [readerMargin, setReaderMargin] = useState<ReaderMargin>("normal");
   const [showAnnotations, setShowAnnotations] = useState(false);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
@@ -325,6 +350,88 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
   useEffect(() => {
     focusModeRef.current = focusMode;
   }, [focusMode]);
+
+  // M14 fullscreen reading mode (decisions.md 2026-07-27): a *different* axis
+  // from focus mode — focus mode hides your annotations, fullscreen hides
+  // the app's chrome (top row, footer, rail), which become proximity-
+  // revealed floating panels. `wrapperRef` is "the app root" the browser
+  // Fullscreen API is requested on; degrades silently to an in-page-only
+  // fullscreen layout (this component's own fixed-position CSS) if refused.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const [fullscreenMode, setFullscreenMode] = useState(false);
+  const fullscreenModeRef = useRef(fullscreenMode);
+  useEffect(() => {
+    fullscreenModeRef.current = fullscreenMode;
+  }, [fullscreenMode]);
+  // Which floating chrome panel is currently revealed — set true by the
+  // iframe-forwarded mousemove below when the pointer nears its edge/corner,
+  // and independently by the panel's own onPointerEnter/Leave once it's
+  // visible enough to hover directly (see the JSX). CSS :focus-within
+  // handles the keyboard-reveal case without any JS at all.
+  const [revealTop, setRevealTop] = useState(false);
+  const [revealBottom, setRevealBottom] = useState(false);
+  const [revealRail, setRevealRail] = useState(false);
+
+  useEffect(() => {
+    if (fullscreenMode) return;
+    setRevealTop(false);
+    setRevealBottom(false);
+    setRevealRail(false);
+  }, [fullscreenMode]);
+
+  // M14 fullscreen reveal, continued: the iframe-forwarded mousemove above
+  // only fires while the cursor is actually over the rendered page — it
+  // never fires for the parent-document dead zone above/below/beside the
+  // iframe (where the floating chrome itself lives before it's revealed,
+  // since `pointer-events: none` on an unrevealed panel means it can't be
+  // the thing that reveals itself). Found live: without this, hovering the
+  // literal top edge of the screen from a "cold" state did nothing, and a
+  // reveal triggered from inside the iframe never cleared once the cursor
+  // left the iframe entirely (no further events to update it) — see
+  // NOTES.md "M14". A plain window-level listener, active only in
+  // fullscreen, covers exactly that gap with the same viewport-relative
+  // thresholds as the iframe-forwarded path above.
+  useEffect(() => {
+    if (!fullscreenMode) return;
+    function handleWindowMouseMove(event: MouseEvent) {
+      const nearTop = event.clientY < FULLSCREEN_REVEAL_BAND_PX;
+      const nearBottom = event.clientY > window.innerHeight - FULLSCREEN_REVEAL_BAND_PX;
+      const nearRailCorner =
+        nearTop && event.clientX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
+      setRevealTop((prev) => (prev === nearTop ? prev : nearTop));
+      setRevealBottom((prev) => (prev === nearBottom ? prev : nearBottom));
+      setRevealRail((prev) => (prev === nearRailCorner ? prev : nearRailCorner));
+    }
+    window.addEventListener("mousemove", handleWindowMouseMove);
+    return () => window.removeEventListener("mousemove", handleWindowMouseMove);
+  }, [fullscreenMode]);
+
+  const toggleFullscreen = useCallback(() => {
+    setFullscreenMode((prev) => {
+      const next = !prev;
+      if (next) {
+        // Can be refused (no user-gesture chain, or unsupported) — the
+        // in-page fullscreen layout below still applies either way; only
+        // the browser's own chrome removal is lost.
+        void wrapperRef.current?.requestFullscreen?.().catch(() => {});
+      } else if (document.fullscreenElement) {
+        void document.exitFullscreen?.();
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    function handleFullscreenChange() {
+      // The browser can exit real fullscreen on its own (native Escape
+      // handling, or the user leaving via the browser's own UI) — resync so
+      // our floating-chrome layout doesn't stay engaged with no real
+      // fullscreen (or vice versa) behind it.
+      if (!document.fullscreenElement) setFullscreenMode(false);
+    }
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
 
   // M11 semicircular turn zones: which edge (if any) the pointer is
   // currently hovering, driving both the parent-document vignette and the
@@ -414,7 +521,13 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
 
   useEffect(() => {
     fetchSettings().then((settings) => {
-      if (settings) setProviderConfigured(isProviderConfigured(settings));
+      if (!settings) return;
+      setProviderConfigured(isProviderConfigured(settings));
+      setReaderMargin(settings.readerMargin);
+    });
+    return onSettingsSaved((settings) => {
+      setReaderMargin(settings.readerMargin);
+      setProviderConfigured(isProviderConfigured(settings));
     });
   }, []);
 
@@ -474,25 +587,27 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     applyTheme(rendition, themeVars);
 
     // computeReaderGap's result only fits the container's width at mount —
-    // re-derive it on real resizes (window resize, not just page turns) so
-    // a narrower window doesn't stay crushed to a mount-time gap, and a
-    // widened one doesn't stay narrower than it needs to. Two epub.js
-    // internals quirks make this more than "set gap, call resize()":
-    // (1) the manager's own `settings` is a one-time shallow *copy* of
-    // `rendition.settings` (`extend()` in epubjs/utils/core.js copies
-    // property values at construction, not a live reference) — mutating
-    // `rendition.settings.gap` later never reaches the manager, so the
-    // manager's own settings object must be mutated directly; (2) the
-    // public `Rendition.resize()` no-ops when the outer stage size hasn't
-    // changed since its last layout, which would swallow this update on
-    // anything other than a genuine window resize — calling the manager's
-    // `updateLayout()` directly re-lays-out unconditionally instead.
+    // re-derive it whenever that width actually changes, whether from a
+    // window resize or (M14) a margin-setting change repainting the
+    // marginWrapper's padding — a ResizeObserver on containerRef itself
+    // catches both for free, unlike the window "resize" event this replaced
+    // (which only ever fired for the former). Two epub.js internals quirks
+    // make this more than "set gap, call resize()": (1) the manager's own
+    // `settings` is a one-time shallow *copy* of `rendition.settings`
+    // (`extend()` in epubjs/utils/core.js copies property values at
+    // construction, not a live reference) — mutating `rendition.settings.gap`
+    // later never reaches the manager, so the manager's own settings object
+    // must be mutated directly; (2) the public `Rendition.resize()` no-ops
+    // when the outer stage size hasn't changed since its last layout, which
+    // would swallow this update on anything other than a genuine size
+    // change — calling the manager's `updateLayout()` directly re-lays-out
+    // unconditionally instead.
     let lastGapWidth = containerRef.current.getBoundingClientRect().width;
-    function handleWindowResize() {
+    function handleContainerResize() {
       const container = containerRef.current;
       if (!container) return;
       const width = container.getBoundingClientRect().width;
-      if (Math.abs(width - lastGapWidth) < 8) return;
+      if (Math.abs(width - lastGapWidth) < 1) return;
       lastGapWidth = width;
       const manager = (
         rendition as unknown as { manager?: { settings: { gap?: number }; updateLayout?: () => void } }
@@ -501,7 +616,8 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       manager.settings.gap = computeReaderGap(width, spreadMode);
       manager.updateLayout?.();
     }
-    window.addEventListener("resize", handleWindowResize);
+    const resizeObserver = new ResizeObserver(handleContainerResize);
+    resizeObserver.observe(containerRef.current);
 
     function markUnanchored(highlightId: string) {
       setUnanchoredIds((prev) => {
@@ -693,6 +809,28 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       contents.document.body.style.cursor =
         zone === "prev" ? "w-resize" : zone === "next" ? "e-resize" : "";
       setTurnZoneHover((prev) => (prev === zone ? prev : zone));
+
+      // M14 fullscreen: the same forwarded mousemove reveals the floating
+      // top row / footer / margin rail on proximity — the reveal bands are
+      // top/bottom only (never the left/right turn-zone strips above). Must
+      // use true *viewport* coordinates, not container-relative ones: the
+      // container element is taller than the iframe's own rendered content
+      // (extra vertical space for pagination), so a container-relative
+      // "near bottom" threshold is never reachable from inside the iframe —
+      // found live, see NOTES.md "M14". The window-level listener below
+      // covers the dead zone where the cursor is over the parent document
+      // (above/below/beside the iframe) instead of inside it.
+      if (fullscreenModeRef.current) {
+        const viewportY = iframeRect.top + event.clientY;
+        const viewportX = iframeRect.left + event.clientX;
+        const nearTop = viewportY < FULLSCREEN_REVEAL_BAND_PX;
+        const nearBottom = viewportY > window.innerHeight - FULLSCREEN_REVEAL_BAND_PX;
+        const nearRailCorner =
+          nearTop && viewportX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
+        setRevealTop((prev) => (prev === nearTop ? prev : nearTop));
+        setRevealBottom((prev) => (prev === nearBottom ? prev : nearBottom));
+        setRevealRail((prev) => (prev === nearRailCorner ? prev : nearRailCorner));
+      }
     }
     rendition.on("mousemove", handleContentMouseMove);
 
@@ -717,18 +855,25 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
         setPendingSelection(null);
         setExpandedThread(null);
         setProgressPopoverOpen(false);
+        if (fullscreenModeRef.current) toggleFullscreen();
       } else if (
-        (event.key === "f" || event.key === "F") &&
+        event.key.toLowerCase() === "f" &&
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey
       ) {
-        setFocusMode((prev) => {
-          const next = !prev;
-          // A clean page and an open annotations list are contradictory.
-          if (next) setShowAnnotations(false);
-          return next;
-        });
+        if (event.shiftKey) {
+          // M14: fullscreen (shift+F) is a different axis from focus mode
+          // (f) — they hide different things and compose independently.
+          toggleFullscreen();
+        } else {
+          setFocusMode((prev) => {
+            const next = !prev;
+            // A clean page and an open annotations list are contradictory.
+            if (next) setShowAnnotations(false);
+            return next;
+          });
+        }
       }
     }
     rendition.on("keydown", handleKeydown);
@@ -775,7 +920,7 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       cancelled = true;
       window.clearTimeout(saveTimerRef.current);
       window.removeEventListener("keydown", handleKeydown);
-      window.removeEventListener("resize", handleWindowResize);
+      resizeObserver.disconnect();
       renditionRef.current = null;
       bookRef.current = null;
       rendition.destroy();
@@ -958,7 +1103,8 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
 
   function handleProgressPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
     if (progressPercent === null) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    const targetEl = event.currentTarget;
+    targetEl.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     const startPercent = progressPercent;
     // Captured once, not re-read at pointerup — the popover may already
@@ -967,24 +1113,47 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     const wasOpenAtStart = progressPopoverOpen;
     let dragging = false;
     let livePercent = startPercent;
+    // M14 (decisions.md 2026-07-27): at DIAL_PX_PER_PERCENT px/%, a full
+    // 0-100% sweep needs more travel than any screen position can provide in
+    // both directions — pointer lock makes travel unbounded by reporting
+    // relative `movementX` instead of an absolute `clientX`. `dx` is the
+    // single running total driven by whichever source is currently active;
+    // `lockEngaged` gates *which* source, and skips folding in movementX on
+    // the very first locked frame so the switchover has no visible jump.
+    let dx = 0;
+    let lockEngaged = false;
 
     function onMove(moveEvent: PointerEvent) {
-      const dx = moveEvent.clientX - startX;
-      if (!dragging && Math.abs(dx) > SCRUB_DRAG_THRESHOLD_PX) {
+      if (!dragging) {
+        if (Math.abs(moveEvent.clientX - startX) <= SCRUB_DRAG_THRESHOLD_PX) return;
         dragging = true;
         // A real drag always supersedes the click-popover, whether or not
         // it happened to be open already.
         setProgressPopoverOpen(false);
+        dx = moveEvent.clientX - startX;
+        // Can be refused (some browsers gate it behind a user gesture
+        // chain) — the absolute clientX math below stays correct either
+        // way, since it's what already ran before lock ever engages.
+        targetEl.requestPointerLock?.();
+      } else if (document.pointerLockElement === targetEl) {
+        if (lockEngaged) dx += moveEvent.movementX;
+        lockEngaged = true;
+      } else {
+        dx = moveEvent.clientX - startX;
       }
-      if (!dragging) return;
       livePercent = clampPercent(startPercent + dx / DIAL_PX_PER_PERCENT);
       setScrubPreviewPercent(livePercent);
+    }
+
+    function releasePointerLock() {
+      if (document.pointerLockElement === targetEl) document.exitPointerLock?.();
     }
 
     function cleanup() {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("keydown", onKeyDuringDrag, true);
+      releasePointerLock();
     }
 
     function onUp() {
@@ -1194,6 +1363,12 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     );
   }
 
+  function handlePanelOffsetChange(highlightId: string, panelDx: number, panelDy: number) {
+    setHighlights((prev) =>
+      prev.map((h) => (h.id === highlightId ? { ...h, panelDx, panelDy } : h)),
+    );
+  }
+
   /** The iframe's own mousemove never fires once the pointer leaves it
    * entirely (into the parent document, or out of the window) — this
    * catches that case so the vignette/cursor don't get stuck lit. */
@@ -1210,34 +1385,90 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
 
   return (
     <div
-      className={styles.wrapper}
+      ref={wrapperRef}
+      className={`${styles.wrapper} ${fullscreenMode ? styles.wrapperFullscreen : ""}`}
       // M12: the single-page reading column is deliberately capped at 800px
       // (M11's comfortable-measure work) — widened here only when the user
       // has opted into spread mode, so there's actually room for epub.js to
       // put two leaves side by side once the window is wide enough (below
       // SPREAD_MIN_WIDTH it still shows one page, just inside a wider box —
       // computeReaderGap's own width check keeps that single page's measure
-      // just as comfortable as it would be at the narrower cap).
-      style={{ "--reader-max-width": spreadMode === "auto" ? "1400px" : "800px" } as CSSProperties}
+      // just as comfortable as it would be at the narrower cap). M14
+      // fullscreen relaxes the cap further still ("the page grows into the
+      // freed space") — this only widens the *stage*, not the actual text
+      // measure, since computeReaderGap independently caps the rendered
+      // column at READER_TARGET_COLUMN_WIDTH regardless of how wide the
+      // stage around it is; a wider stage just means more comfortable
+      // whitespace, not wider lines.
+      style={
+        {
+          "--reader-max-width": fullscreenMode ? "1600px" : spreadMode === "auto" ? "1400px" : "800px",
+        } as CSSProperties
+      }
     >
-      <div className={styles.topRow}>
-        {focusMode ? (
-          <span className={styles.focusIndicator}>Notes hidden — press F to show</span>
-        ) : (
+      <div
+        className={
+          fullscreenMode
+            ? `${styles.topRow} ${styles.fullscreenFloating} ${styles.topRowFloating} ${
+                revealTop ? styles.revealed : ""
+              }`
+            : styles.topRow
+        }
+        onPointerEnter={fullscreenMode ? () => setRevealTop(true) : undefined}
+        onPointerLeave={fullscreenMode ? () => setRevealTop(false) : undefined}
+      >
+        <div className={styles.topRowLeft}>
+          {focusMode ? (
+            <span className={styles.focusIndicator}>Notes hidden — press F to show</span>
+          ) : (
+            <button
+              type="button"
+              className={styles.annotationsButton}
+              onClick={() => setShowAnnotations((prev) => !prev)}
+            >
+              Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
+              {unanchoredIds.size > 0 && (
+                <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
+                  {unanchoredIds.size}
+                </span>
+              )}
+            </button>
+          )}
+        </div>
+        <div className={styles.progressWrap}>
           <button
             type="button"
-            className={styles.annotationsButton}
-            onClick={() => setShowAnnotations((prev) => !prev)}
+            className={styles.progress}
+            disabled={progressPercent === null}
+            aria-haspopup="true"
+            aria-expanded={progressPopoverOpen}
+            onPointerDown={handleProgressPointerDown}
+            onKeyDown={handleProgressKeyDown}
           >
-            Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
-            {unanchoredIds.size > 0 && (
-              <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
-                {unanchoredIds.size}
-              </span>
-            )}
+            {progressPercent !== null ? `${progressPercent}%` : ""}
           </button>
-        )}
-        <div className={styles.rightControls}>
+          <AnimatePresence>
+            {scrubPreviewPercent !== null ? (
+              <ScrubDial
+                key="scrub-dial"
+                previewPercent={scrubPreviewPercent}
+                chapterLabel={chapterAtPercent(chapterStopsList, scrubPreviewPercent)?.label ?? null}
+                chapterStops={chapterStopsList}
+              />
+            ) : (
+              progressPopoverOpen && (
+                <ProgressPopover
+                  key="progress-popover"
+                  percent={progressPercent}
+                  page={displayedPage?.page ?? null}
+                  totalPages={displayedPage?.total ?? null}
+                  chapterLabel={activeChapter?.label ?? null}
+                />
+              )
+            )}
+          </AnimatePresence>
+        </div>
+        <div className={styles.topRowRight}>
           {!focusMode && (
             <ChapterNav
               toc={toc}
@@ -1250,49 +1481,21 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
               hasNext={hasNextChapter}
             />
           )}
-          <div className={styles.progressWrap}>
-            <button
-              type="button"
-              className={styles.progress}
-              disabled={progressPercent === null}
-              aria-haspopup="true"
-              aria-expanded={progressPopoverOpen}
-              onPointerDown={handleProgressPointerDown}
-              onKeyDown={handleProgressKeyDown}
-            >
-              {progressPercent !== null ? `${progressPercent}%` : ""}
-            </button>
-            <AnimatePresence>
-              {scrubPreviewPercent !== null ? (
-                <ScrubDial
-                  key="scrub-dial"
-                  previewPercent={scrubPreviewPercent}
-                  chapterLabel={chapterAtPercent(chapterStopsList, scrubPreviewPercent)?.label ?? null}
-                  chapterStops={chapterStopsList}
-                />
-              ) : (
-                progressPopoverOpen && (
-                  <ProgressPopover
-                    key="progress-popover"
-                    percent={progressPercent}
-                    page={displayedPage?.page ?? null}
-                    totalPages={displayedPage?.total ?? null}
-                    chapterLabel={activeChapter?.label ?? null}
-                  />
-                )
-              )}
-            </AnimatePresence>
-          </div>
         </div>
       </div>
 
       <div className={styles.readerRow}>
-        <div className={styles.stage} onPointerLeave={handleStagePointerLeave}>
-          <motion.div
-            ref={containerRef}
-            className={styles.epubContainer}
-            animate={stageControls}
-          />
+        <div className={styles.stage} ref={stageRef} onPointerLeave={handleStagePointerLeave}>
+          <div
+            className={styles.marginWrapper}
+            style={{ "--reader-margin": `${READER_MARGIN_PX[readerMargin]}px` } as CSSProperties}
+          >
+            <motion.div
+              ref={containerRef}
+              className={styles.epubContainer}
+              animate={stageControls}
+            />
+          </div>
           {curl && (
             <PageCurl src={curl.src} direction={curl.direction} progress={curlProgress} />
           )}
@@ -1355,13 +1558,17 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
                 highlightKind={expandedHighlight.kind}
                 highlightImportance={expandedHighlight.importance}
                 highlightNote={expandedHighlight.note}
+                panelDx={expandedHighlight.panelDx}
+                panelDy={expandedHighlight.panelDy}
                 thread={expandedHighlight.thread}
                 top={expandedThread.top}
                 providerConfigured={providerConfigured}
+                stageRef={stageRef}
                 onClose={() => setExpandedThread(null)}
                 onThreadChange={handleThreadChange}
                 onImportanceChange={handleImportanceChange}
                 onNoteChange={handleNoteChange}
+                onPanelOffsetChange={handlePanelOffsetChange}
               />
             )}
           </AnimatePresence>
@@ -1379,18 +1586,40 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
           </AnimatePresence>
         </div>
         {!focusMode && (
-          <MarginRail
-            highlights={highlights}
-            currentSpineIndex={currentSpineIndex}
-            unanchoredIds={unanchoredIds}
-            onNavigate={handleNavigateToHighlight}
-            onDelete={handleDeleteHighlight}
-            onOpenThread={handleOpenThread}
-          />
+          <div
+            className={
+              fullscreenMode
+                ? `${styles.fullscreenFloating} ${styles.marginRailFloating} ${
+                    revealRail ? styles.revealed : ""
+                  }`
+                : undefined
+            }
+            onPointerEnter={fullscreenMode ? () => setRevealRail(true) : undefined}
+            onPointerLeave={fullscreenMode ? () => setRevealRail(false) : undefined}
+          >
+            <MarginRail
+              highlights={highlights}
+              currentSpineIndex={currentSpineIndex}
+              unanchoredIds={unanchoredIds}
+              onNavigate={handleNavigateToHighlight}
+              onDelete={handleDeleteHighlight}
+              onOpenThread={handleOpenThread}
+            />
+          </div>
         )}
       </div>
 
-      <div className={styles.footer}>
+      <div
+        className={
+          fullscreenMode
+            ? `${styles.footer} ${styles.fullscreenFloating} ${styles.footerFloating} ${
+                revealBottom ? styles.revealed : ""
+              }`
+            : styles.footer
+        }
+        onPointerEnter={fullscreenMode ? () => setRevealBottom(true) : undefined}
+        onPointerLeave={fullscreenMode ? () => setRevealBottom(false) : undefined}
+      >
         <button
           type="button"
           className={styles.navButton}

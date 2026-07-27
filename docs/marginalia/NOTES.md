@@ -1196,3 +1196,120 @@ ever reads highlights via `h.thread !== null && h.thread.hasAnswer`, so a
 note-only highlight was already filtered out before extraction. Added a
 regression test asserting exactly that (`compiler.test.ts`) rather than
 leaving it as an unverified code-reading claim.
+
+## M14 — reading surface revisions
+
+Found this milestone already implemented, uncommitted, in the working tree at the
+start of this session (an earlier session's interrupted pass — all five tasks'
+production code, migrations, and unit tests were present and green, but none of
+TASKS.md's boxes were checked and nothing was committed). Treated it as "resume
+verifying M14": code-reviewed the diff against SPEC/decisions.md, then live-verified
+every acceptance bullet against the real Metamorphosis fixture via `pnpm dev` +
+an ad hoc Playwright install in the scratchpad (same method as M8-M13), rather than
+re-implementing anything that already matched the spec.
+
+**Customisable margins, the dial, and killing the crease bars** all matched their
+acceptance text on first live pass — no changes needed. One methodology note: testing
+the spread-mode spine-gutter independence requires an actual page **reload** after
+changing `spreadMode`, not just a live settings save — `spreadMode` is read once by
+`ReaderPage` before `ReaderView` mounts (M12), so flipping it via the Settings modal
+alone (which stays mounted underneath per M11) never applies the new value. The first
+pass at this check flipped the setting without reloading and appeared to show the
+spine gutter changing with the margin setting (a false alarm — it was still measuring
+single-page gap math the whole time, since spread mode had never actually engaged).
+Reloading after the `spreadMode` change and re-measuring showed the real, correct
+behavior: a constant 64px `column-gap` regardless of margin.
+
+**Sticky-note panels** verified cleanly: drag by the header, offset persists via
+`PUT /api/highlights/:id/panel-offset`, survives a reload pixel-for-pixel.
+
+**Fullscreen mode had two real, live-reproduced bugs**, both in the reveal-band
+geometry (not present in the other four tasks, and not inherited from any earlier
+milestone — this is new M14 code):
+
+1. **The reveal bands' math was self-defeating.** The iframe-forwarded `mousemove`
+   handler (the same `rendition.on("mousemove")` mechanism M11's turn-zone cursor
+   uses) computed "near top/bottom" against `containerRect.height` — but the
+   container element (`epubContainer`) is taller than the iframe's own rendered
+   content by roughly 145px in this layout (extra vertical space epub.js reserves
+   for pagination), so `visibleY` (built from iframe-local `event.clientY`) could
+   *never* reach a `containerRect.height - 72` threshold from anywhere inside the
+   iframe — the footer literally could not be revealed by hovering the page.
+   Separately, the parent-document dead zone above/below/beside the iframe (exactly
+   where the floating chrome panels themselves sit before they're revealed, and
+   where a `pointer-events: none` element can't catch its own reveal-triggering
+   hover) had no listener watching it at all — so a cold hover at the literal top
+   edge of the screen did nothing, and once a reveal *did* trigger from genuine
+   iframe hover, it never cleared again after the cursor left the iframe (no more
+   events arrive from outside it to update the state — a "stuck open" bug).
+   Diagnosed via a raw injected `pointermove` logger plus direct
+   `getBoundingClientRect()` reads on the iframe vs. its container before writing
+   any fix, not guessed at. Fixed two ways together: (a) switched the
+   iframe-forwarded computation to true viewport coordinates
+   (`iframeRect.top + event.clientY` compared against `window.innerHeight`, not
+   `containerRect.height`), and (b) added a second, plain `window`-level
+   `mousemove` listener — active only while `fullscreenMode` is true — using the
+   identical viewport thresholds, which covers the dead zone the iframe-forwarded
+   path structurally cannot reach. Confirmed live, before and after: top, bottom,
+   and the rail's top-right corner all now reveal on approach and un-reveal on
+   leaving, from a cold start, in both the "hovering the page" and "hovering the
+   dead zone" cases.
+2. **"The reading pane grows into the freed space" didn't happen.** `--reader-max-width`
+   stayed pinned at 800px (or 1400px in spread mode) regardless of `fullscreenMode` —
+   chrome hid, but the page itself never grew, contradicting the decisions.md text
+   directly. Fixed by widening the cap to 1600px specifically under `fullscreenMode`.
+   This only widens the *stage*; `computeReaderGap`'s own column-width cap
+   (`READER_TARGET_COLUMN_WIDTH`) keeps the actual rendered text measure unchanged
+   regardless of stage width, so the practical effect is more comfortable
+   surrounding whitespace, not wider — and therefore less readable — lines.
+   Confirmed via screenshot comparison before/after.
+
+**A verification-method limitation worth recording**, not a product bug: attempting to
+prove the pointer-lock dial can sweep past what absolute on-screen travel would allow
+by driving real relative motion via Playwright's synthetic mouse input under Pointer
+Lock produced inconsistent, sometimes self-canceling `movementX` values (confirmed via
+a raw event logger) — a known limitation of automating this specific browser API with
+CDP-driven input, not a sign the implementation is wrong. The code path itself (switch
+from absolute `clientX - startX` math to accumulating `movementX` only once lock is
+confirmed engaged, explicitly skipping the fold-in on the very first locked frame to
+avoid a jump) was code-reviewed and matches the acceptance text; what couldn't be
+independently re-confirmed live is specifically the "reaches 0%/100% from any starting
+position" claim, since that depends on real hardware-sourced relative motion. Everything
+else about the dial (pointer lock actually engaging and cleanly releasing on both
+mouseup and a mid-drag Escape, the centered layout, the keyboard path) was confirmed
+live.
+
+Also hit, again, a milder version of M10's known sandboxed-iframe automation crash: a
+raw *drag*-based text selection (mouse down outside/at the edge of the iframe, then
+move across it) reliably crashed the headless tab with "Blocked script execution in
+'about:srcdoc' because the document's frame is sandboxed" — reproduced identically with
+fullscreen mode completely uninvolved, so it isn't an M14 regression, just this
+environment's Playwright/Chromium combination disliking synthetic drag gestures that
+touch the sandboxed iframe. A double-click word-selection (no drag) doesn't trigger it
+and was used instead to confirm the Ask pill still appears correctly in fullscreen mode.
+
+### Verification method
+
+Real `pnpm dev`, driven by an ad hoc Playwright install in the scratchpad (not a
+project dependency, same as M8-M13), headless Chromium, against the real Metamorphosis
+fixture:
+- Margins: measured the actual rendered gap in pixels at each of the four settings,
+  confirmed it survives a reload, and confirmed the spread-mode spine gutter stays
+  fixed at 64px independent of the margin setting (after correcting the reload
+  methodology mistake described above).
+- Dial: confirmed pointer lock is genuinely requested and granted
+  (`document.pointerLockElement`), confirmed clean release on both mouseup and Escape,
+  confirmed a mid-drag Escape leaves the committed value provably unchanged, and
+  confirmed the keyboard path (arrows open without committing, Enter commits).
+- Crease bars: confirmed zero `.creases` elements render while `.grain` and the folded
+  corner still do, via a live screenshot.
+- Sticky-note panels: dragged a real panel, confirmed the server-persisted offset by
+  id, confirmed a full reload reopens at the identical pixel position.
+- Fullscreen: confirmed entry/exit (including via the real Fullscreen API), the two
+  bugs above (found via direct `getBoundingClientRect()`/viewport measurement, not
+  guessed at), `f`/`shift+F` composing together, text selection + Ask pill still
+  working (via double-click, per the automation limitation above), and keyboard-only
+  reveal via `:focus-within`.
+- Cleaned up afterward: `readerMargin` back to "normal", `spreadMode` back to
+  "single", and the dragged highlight's `panelDx`/`panelDy` back to `{0, 0}` on the
+  shared dev database.

@@ -151,4 +151,16 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE highlights ADD COLUMN note TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    // M14: thread panels become draggable sticky notes (docs/decisions.md
+    // 2026-07-27). Stored as an offset from the panel's anchor, not an
+    // absolute stage coordinate — the anchor itself moves on every page
+    // turn, resize, or margin-setting change, so an absolute coordinate
+    // would rot the same way M8's shelf positions would have.
+    version: 6,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN panel_dx REAL NOT NULL DEFAULT 0;
+      ALTER TABLE highlights ADD COLUMN panel_dy REAL NOT NULL DEFAULT 0;
+    `,
+  },
 ];

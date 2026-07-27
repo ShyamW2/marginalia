@@ -64,3 +64,21 @@ export async function updateHighlightNote(highlightId: string, note: string): Pr
     // debounce tick (or the next open) tries again
   }
 }
+
+/** M14: the thread panel's dragged position, as an offset from its anchor. */
+export async function updateHighlightPanelOffset(
+  highlightId: string,
+  panelDx: number,
+  panelDy: number,
+): Promise<void> {
+  try {
+    await fetch(`/api/highlights/${highlightId}/panel-offset`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ panelDx, panelDy }),
+    });
+  } catch {
+    // best-effort — a failed persist just means the drag doesn't survive a
+    // reload this one time; the next drag or the next debounce tries again
+  }
+}

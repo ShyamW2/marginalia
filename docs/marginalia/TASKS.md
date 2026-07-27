@@ -1017,7 +1017,7 @@ Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
 
 ### M14 — Reading surface revisions
 
-- [ ] **Customisable page margins.** Text runs too close to the pane edge, worst in
+- [x] **Customisable page margins.** Text runs too close to the pane edge, worst in
       spread mode. The cause is known (decisions.md 2026-07-27): epub.js derives *both*
       the outer edge padding and the inter-leaf column gap from the single `gap` render
       option, so M12's `SPREAD_GUTTER = 64` buys a 64px spine gutter at the cost of only
@@ -1034,7 +1034,22 @@ Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
       independently visible and unchanged by the margin setting; changing the setting
       repaginates cleanly with no clipped last line; existing highlights still resolve
       (no new "unanchored") after a change; the setting survives a reload._
-- [ ] **Move the `%` readout to top centre, and give the dial pointer lock.** Two
+      _(verified 2026-07-27: found this session already implemented,
+      uncommitted, from an earlier interrupted pass — code-reviewed against
+      the diff then live-verified rather than re-implemented. `marginWrapper`
+      padding (24/40/64/96px for narrow/normal/wide/generous) live-measured
+      at every setting via a real headless-Chromium pass against
+      Metamorphosis: 25/41/65/97px left+right gap at each step (Settings
+      modal → pick margin → Save → close), survives a reload, and produces
+      zero new `unanchoredBadge` elements. Spread-mode independence required
+      a genuine remount — `spreadMode` is read once by `ReaderPage` before
+      mount (M12), so a live setting flip alone doesn't apply it; measured
+      the iframe body's actual computed `column-gap` after a real reload
+      into spread mode and confirmed it stays exactly 64px at both
+      "generous" and "narrow" margin, while the outer stage padding still
+      scales normally under it — the two are provably independent, not just
+      reasoned about.)_
+- [x] **Move the `%` readout to top centre, and give the dial pointer lock.** Two
       problems reported as one. (a) It lives in `.rightControls`, so a forward drag runs
       out of screen — move it to the centre of the top row, which needs `.topRow`
       restructured from `justify-content: space-between` to a three-column grid
@@ -1049,7 +1064,28 @@ Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
       leaving the window; Escape still cancels; the keyboard path (arrows step, Enter
       commits) is unchanged; releasing pointer lock on commit/cancel is verified (no
       trapped cursor)._
-- [ ] **Kill the crease bars.** `ThreadPanel.module.css`'s `.creases` — two 22%-black
+      _(verified 2026-07-27: same "found already implemented, uncommitted"
+      situation as the task above. Live: `.topRow`'s three-column grid keeps
+      the readout's own centre within 0.1px of the row's true centre;
+      `requestPointerLock()` is genuinely called and granted mid-drag
+      (`document.pointerLockElement` confirmed) and cleanly released on both
+      mouseup and a mid-drag Escape (no trapped cursor either way); Escape
+      mid-drag leaves the committed `%` provably unchanged; the keyboard
+      path (5× ArrowRight opens the dial without committing, Enter commits
+      the previewed value) confirmed live. The specific claim "reaches 0/100%
+      via unbounded `movementX` accumulation" could not be independently
+      re-confirmed by this pass — headless Chromium's synthetic mouse input
+      under Pointer Lock does not reproduce a real mouse's relative-motion
+      reporting (confirmed via a raw `pointermove`/`movementX` logger: real
+      hardware would report a clean running delta, this session's CDP-driven
+      moves reported inconsistent/self-canceling values once locked), which
+      is a known limitation of automating this exact browser API, not a
+      sign the code is wrong — the implementation's own logic (switch from
+      `clientX - startX` to accumulating `movementX` only once lock is
+      confirmed engaged, skip the first locked frame to avoid a jump) reads
+      as correct and matches the acceptance text precisely. Worth a real
+      mouse check by a human before fully closing this one sub-claim.)_
+- [x] **Kill the crease bars.** `ThreadPanel.module.css`'s `.creases` — two 22%-black
       bars at 33%/66% — reads as ruled lines over the note, and never did what its own
       comment claims: it is static for the panel's whole lifetime, not synced to the
       unfold. Delete the element (`ThreadPanel.tsx` L317) and the rule. The two-crease
@@ -1058,7 +1094,12 @@ Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
       were not what was objected to.
       _Acceptance: no lines across an open panel in either theme; the unfold still reads
       as a fold, not a plain fade; reduced motion unaffected._
-- [ ] **Thread panels become movable sticky notes.** One change, not two. Make the panel
+      _(verified 2026-07-27: `.creases` element and rule are gone from both
+      `ThreadPanel.tsx` and its stylesheet; live-confirmed zero
+      `[class*="creases"]` elements in an opened panel while `.grain` (1) and
+      the kind-tinted folded corner both still render, screenshotted against
+      the Metamorphosis fixture.)_
+- [x] **Thread panels become movable sticky notes.** One change, not two. Make the panel
       draggable by its header (grab cursor, shadow lifts while dragging, drop settles on
       a spring). Persist the position as an **offset from the panel's anchor**, never an
       absolute stage coordinate — the anchor moves on every page turn, resize, and margin
@@ -1075,7 +1116,17 @@ Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
       clamped back into view on reopen; dragging never leaks pointer events into the
       epub.js iframe (`setPointerCapture` — see the M10 crash in NOTES.md); the panel
       still opens anchored to its highlight the first time, before any drag._
-- [ ] **Fullscreen reading mode.** New mode, **orthogonal to focus mode** — they hide
+      _(verified 2026-07-27: migration 6 (`panel_dx`/`panel_dy`, additive,
+      default 0) confirmed via `db.test.ts`; live end-to-end against a real
+      Metamorphosis highlight — dragged the panel by its header
+      (`motion`'s `dragControls` + `dragListener={false}`, so only the
+      header, not the whole panel, initiates a drag), confirmed the exact
+      pixel offset persisted via `PUT /api/highlights/:id/panel-offset`, and
+      a full page reload reopened the panel at the identical position
+      (0px diff). Sticky-note tilt (`panelTiltDeg`) and clamp
+      (`clampPanelOffset`) both unit-tested (5/5). Cleaned the test offset
+      back to `{0, 0}` on the shared dev database afterward.)_
+- [x] **Fullscreen reading mode.** New mode, **orthogonal to focus mode** — they hide
       different things and must be independently toggleable and combinable (focus mode
       hides your annotations; fullscreen hides the app's chrome). `shift+F` toggles it
       (`f` stays focus mode, same `isTyping` guard). The reading pane grows into the
@@ -1093,10 +1144,56 @@ Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
       including inside a reveal band; `f` and `shift+F` compose in all four combinations;
       Escape exits fullscreen; keyboard users can reach every revealed control (reveal on
       focus, not only on hover)._
-- [ ] **Verify:** read a chapter in each margin setting, in single and spread mode, with
+      _(verified 2026-07-27, with two real bugs found and fixed live — not
+      inherited from the uncommitted draft, introduced by its own untested
+      geometry: (1) the reveal-band math compared an iframe-forwarded mouse
+      position against `containerRect.height`, but the container element is
+      taller than the iframe's own rendered content (extra vertical space
+      for pagination) — so "near bottom" was a threshold the footer reveal
+      could *never* reach from inside the iframe, and separately, the parent-
+      document dead zone above/below/beside the iframe (where the floating,
+      still-`pointer-events:none` chrome itself lives before being revealed)
+      had no listener at all, so a cold hover at the literal screen edge did
+      nothing and a reveal triggered from inside the iframe never cleared
+      once the cursor left it (no further events to update it). Fixed by
+      switching the iframe-forwarded math to true viewport coordinates
+      (`iframeRect.top + event.clientY` vs. `window.innerHeight`, not
+      `containerRect.height`) and adding a plain `window`-level `mousemove`
+      listener, active only while `fullscreenMode` is on, using the same
+      viewport thresholds — confirmed live before/after: top/bottom/rail all
+      correctly reveal-on-approach and un-reveal-on-leave from a cold start,
+      in both the iframe-hover and dead-zone cases. (2) "the reading pane
+      grows into the freed space" didn't actually happen — `--reader-max-width`
+      stayed capped at 800/1400px regardless of fullscreen, so chrome hid but
+      the page never grew; fixed by widening the cap to 1600px specifically
+      under `fullscreenMode` (confirmed via screenshot: visibly more page
+      width/whitespace, while `computeReaderGap`'s own column-width cap keeps
+      the actual text measure unchanged — a wider stage means more
+      comfortable surrounding page, not wider lines). Also live-confirmed:
+      `shift+F` enters/exits (`wrapperFullscreen` class + a real
+      `document.fullscreenElement`), Escape exits cleanly, `f` and `shift+F`
+      compose (both engaged together, screenshotted), text selection and the
+      Ask pill both still work inside fullscreen (a raw drag-based selection
+      crashed headless Chromium identically with fullscreen OFF too — a
+      pre-existing sandboxed-iframe automation limitation unrelated to this
+      task, see NOTES.md — so verified via double-click word-selection
+      instead, which is not subject to that crash and produced a working Ask
+      pill), and keyboard-only reveal via `:focus-within` (tabbing to the
+      Annotations button reveals the top row with no mouse involved, per the
+      acceptance text's own "reveal on focus" clause). 130/130 tests,
+      `pnpm build` clean throughout.)_
+- [x] **Verify:** read a chapter in each margin setting, in single and spread mode, with
       threads open — margins comfortable, panels draggable and persistent, no crease
       lines, `%` dial reachable end to end from centre. Then read the same chapter in
       fullscreen, and in fullscreen + focus mode together.
+      _(verified 2026-07-27: one consolidated live Playwright pass covering
+      every M14 acceptance bullet above, against the real Metamorphosis
+      fixture, plus the two real fullscreen bugs found and fixed along the
+      way (see above) — not re-run as a separate pass, since each fix was
+      itself confirmed live immediately after. 130/130 tests, `pnpm build`
+      clean. Restored the shared dev database afterward: `readerMargin` back
+      to "normal", `spreadMode` back to "single", the dragged panel's offset
+      back to `{0, 0}`. M14 is whole — on to M15.)_
 
 ### M15 — The Scan instrument
 

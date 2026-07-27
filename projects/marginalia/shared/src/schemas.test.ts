@@ -6,6 +6,7 @@ import {
   SettingsSchema,
   ThreadStreamEventSchema,
   UpdateHighlightNoteBodySchema,
+  UpdateHighlightPanelOffsetBodySchema,
 } from "./schemas.js";
 
 describe("schemas smoke test", () => {
@@ -63,6 +64,7 @@ describe("schemas smoke test", () => {
       cursorStyle: "custom",
       cursorTrailEnabled: true,
       spreadMode: "single",
+      readerMargin: "normal",
     });
     expect(result.success).toBe(true);
   });
@@ -78,6 +80,8 @@ describe("schemas smoke test", () => {
       spineIndex: 0,
       kind: "rose" as const,
       importance: 0 as const,
+      panelDx: 0,
+      panelDy: 0,
       createdAt: new Date().toISOString(),
     };
     expect(HighlightSchema.safeParse({ ...base, note: "" }).success).toBe(true);
@@ -86,5 +90,29 @@ describe("schemas smoke test", () => {
 
   it("accepts an UpdateHighlightNoteBody", () => {
     expect(UpdateHighlightNoteBodySchema.safeParse({ note: "a thought" }).success).toBe(true);
+  });
+
+  it("rejects a highlight missing the M14 panel offset fields", () => {
+    const base = {
+      id: "h1",
+      resourceId: "abc123",
+      exact: "a passage",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose" as const,
+      importance: 0 as const,
+      note: "",
+      createdAt: new Date().toISOString(),
+    };
+    expect(HighlightSchema.safeParse(base).success).toBe(false);
+    expect(HighlightSchema.safeParse({ ...base, panelDx: 3, panelDy: -2 }).success).toBe(true);
+  });
+
+  it("accepts an UpdateHighlightPanelOffsetBody", () => {
+    expect(
+      UpdateHighlightPanelOffsetBodySchema.safeParse({ panelDx: 10.5, panelDy: -4 }).success,
+    ).toBe(true);
   });
 });

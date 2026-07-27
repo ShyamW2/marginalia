@@ -123,6 +123,12 @@ export const HighlightSchema = AnchorSchema.extend({
   // never sent to a provider, never distilled into the vault (settled
   // decision 7). Empty string, not null, matching the column's default.
   note: z.string(),
+  // M14 "movable sticky notes" (decisions.md 2026-07-27): the thread panel's
+  // dragged position, stored as an offset from its *anchor* — never an
+  // absolute stage coordinate, since the anchor moves on every page turn,
+  // resize, or margin change (the same reasoning M8 applied to shelf state).
+  panelDx: z.number(),
+  panelDy: z.number(),
   createdAt: z.string(),
 });
 export type Highlight = z.infer<typeof HighlightSchema>;
@@ -138,6 +144,14 @@ export const UpdateHighlightNoteBodySchema = z.object({
   note: z.string(),
 });
 export type UpdateHighlightNoteBody = z.infer<typeof UpdateHighlightNoteBodySchema>;
+
+export const UpdateHighlightPanelOffsetBodySchema = z.object({
+  panelDx: z.number(),
+  panelDy: z.number(),
+});
+export type UpdateHighlightPanelOffsetBody = z.infer<
+  typeof UpdateHighlightPanelOffsetBodySchema
+>;
 
 const TagSchema = z.string().trim().min(1).max(40);
 
@@ -279,6 +293,11 @@ export type CursorStyleChoice = z.infer<typeof CursorStyleSchema>;
 export const SpreadModeSchema = z.enum(["single", "auto"]);
 export type SpreadMode = z.infer<typeof SpreadModeSchema>;
 
+/** M14 "customisable page margins" (decisions.md 2026-07-27): the outer
+ * padding around the rendered page, independent of the spread gutter. */
+export const ReaderMarginSchema = z.enum(["narrow", "normal", "wide", "generous"]);
+export type ReaderMargin = z.infer<typeof ReaderMarginSchema>;
+
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset. */
 export const SettingsSchema = z.object({
   provider: LLMProviderIdSchema,
@@ -293,6 +312,7 @@ export const SettingsSchema = z.object({
   cursorStyle: CursorStyleSchema,
   cursorTrailEnabled: z.boolean(),
   spreadMode: SpreadModeSchema,
+  readerMargin: ReaderMarginSchema,
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

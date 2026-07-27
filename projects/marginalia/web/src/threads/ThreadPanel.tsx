@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { motion, useReducedMotion } from "motion/react";
+import { motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import type {
   HighlightImportance,
   HighlightKind,
@@ -14,8 +14,10 @@ import {
   fetchHighlightTags,
   updateHighlightImportance,
   updateHighlightNote,
+  updateHighlightPanelOffset,
   updateHighlightTags,
 } from "../highlights/highlightMeta.js";
+import { clampPanelOffset, panelTiltDeg } from "./panelGeometry.js";
 import { renderMarkdown } from "./markdown.js";
 import { streamThread } from "./streamThread.js";
 import styles from "./ThreadPanel.module.css";
@@ -39,13 +41,22 @@ interface ThreadPanelProps {
   highlightKind: HighlightKind;
   highlightImportance: HighlightImportance;
   highlightNote: string;
+  // M14 "movable sticky notes": the panel's dragged position, as an offset
+  // from its anchor (never an absolute stage coordinate — see
+  // panelGeometry.ts and decisions.md 2026-07-27).
+  panelDx: number;
+  panelDy: number;
   thread: ThreadSummary | null;
   top: number;
   providerConfigured: boolean;
+  /** The reader's stage element — drag is constrained to it, and it's the
+   * bounding box a stale offset gets clamped back into on reopen. */
+  stageRef: RefObject<HTMLDivElement>;
   onClose: () => void;
   onThreadChange: (highlightId: string, thread: ThreadSummary) => void;
   onImportanceChange: (highlightId: string, importance: HighlightImportance) => void;
   onNoteChange: (highlightId: string, note: string) => void;
+  onPanelOffsetChange: (highlightId: string, panelDx: number, panelDy: number) => void;
 }
 
 export function ThreadPanel({
@@ -54,16 +65,72 @@ export function ThreadPanel({
   highlightKind,
   highlightImportance,
   highlightNote,
+  panelDx,
+  panelDy,
   thread,
   top,
   providerConfigured,
+  stageRef,
   onClose,
   onThreadChange,
   onImportanceChange,
   onNoteChange,
+  onPanelOffsetChange,
 }: ThreadPanelProps) {
   const location = useLocation();
   const [tags, setTags] = useState<string[]>([]);
+
+  // M14 "movable sticky notes" (decisions.md 2026-07-27): draggable by the
+  // header only (dragListener={false} + dragControls.start from the header's
+  // own pointerdown), a hard dragConstraints clamp (dragElastic 0) so the
+  // panel can never overflow the stage mid-drag, and a persisted offset —
+  // *from the anchor*, not an absolute coordinate, since the anchor moves on
+  // every page turn/resize/margin change (the same reasoning M8 applied to
+  // shelf state).
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragControls = useDragControls();
+  const dragX = useMotionValue(panelDx);
+  const dragY = useMotionValue(panelDy);
+  const [isDragging, setIsDragging] = useState(false);
+  const tiltDeg = panelTiltDeg(highlightId);
+
+  useEffect(() => {
+    // Mount-only (this component remounts per-highlight via ReaderView's
+    // `key` prop): a dx/dy saved against an earlier stage size — a
+    // different margin setting, a narrower window — can overflow the
+    // *current* stage, so clamp back into view once, on open.
+    const panelEl = panelRef.current;
+    const stageEl = stageRef.current;
+    if (!panelEl || !stageEl) return;
+    const clamped = clampPanelOffset(
+      panelEl.getBoundingClientRect(),
+      stageEl.getBoundingClientRect(),
+      dragX.get(),
+      dragY.get(),
+    );
+    if (clamped.dx !== dragX.get() || clamped.dy !== dragY.get()) {
+      dragX.set(clamped.dx);
+      dragY.set(clamped.dy);
+      onPanelOffsetChange(highlightId, clamped.dx, clamped.dy);
+      void updateHighlightPanelOffset(highlightId, clamped.dx, clamped.dy);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handleHeaderPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    // The close button lives in the same header strip — a pointerdown there
+    // is a click, not a drag start.
+    if ((event.target as HTMLElement).closest("button")) return;
+    dragControls.start(event);
+  }
+
+  function handleDragEnd() {
+    setIsDragging(false);
+    const dx = dragX.get();
+    const dy = dragY.get();
+    onPanelOffsetChange(highlightId, dx, dy);
+    void updateHighlightPanelOffset(highlightId, dx, dy);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -281,10 +348,19 @@ export function ThreadPanel({
 
   return (
     <motion.div
+      ref={panelRef}
       className={`${styles.panel} ${styles[highlightKind]}`}
-      style={{ top, transformPerspective: 900 }}
+      style={{ top, x: dragX, y: dragY, rotate: tiltDeg, transformPerspective: 900 }}
       role="dialog"
       aria-label="Ask about this passage"
+      drag
+      dragControls={dragControls}
+      dragListener={false}
+      dragConstraints={stageRef}
+      dragElastic={0}
+      dragMomentum={false}
+      onDragStart={() => setIsDragging(true)}
+      onDragEnd={handleDragEnd}
       initial={
         reducedMotion
           ? { opacity: 0 }
@@ -314,8 +390,10 @@ export function ThreadPanel({
       }
     >
       {!reducedMotion && <div className={styles.grain} aria-hidden="true" />}
-      {!reducedMotion && <div className={styles.creases} aria-hidden="true" />}
-      <div className={styles.header}>
+      <div
+        className={`${styles.header} ${isDragging ? styles.headerDragging : ""}`}
+        onPointerDown={handleHeaderPointerDown}
+      >
         <span className={styles.quote}>&ldquo;{highlightExact}&rdquo;</span>
         <button type="button" className={styles.closeButton} aria-label="Collapse thread" onClick={onClose}>
           ×

@@ -18,6 +18,8 @@ interface HighlightRow {
   kind: string;
   importance: number;
   note: string;
+  panel_dx: number;
+  panel_dy: number;
   created_at: string;
 }
 
@@ -33,6 +35,8 @@ function rowToHighlight(row: HighlightRow): Highlight {
     kind: row.kind as HighlightKind,
     importance: row.importance as HighlightImportance,
     note: row.note,
+    panelDx: row.panel_dx,
+    panelDy: row.panel_dy,
     createdAt: row.created_at,
   };
 }
@@ -60,6 +64,8 @@ export function createHighlight(
     kind: input.kind,
     importance: 0, // matches the highlights.importance column's DEFAULT 0
     note: "", // matches the highlights.note column's DEFAULT ''
+    panelDx: 0, // matches the highlights.panel_dx column's DEFAULT 0
+    panelDy: 0, // matches the highlights.panel_dy column's DEFAULT 0
     createdAt: new Date().toISOString(),
   };
 
@@ -124,6 +130,20 @@ export function setHighlightImportance(
 /** M13: the reader's own note — plain text, autosaved, never sent to an LLM. */
 export function setHighlightNote(db: Database.Database, id: string, note: string): void {
   db.prepare("UPDATE highlights SET note = ? WHERE id = ?").run(note, id);
+}
+
+/** M14: the thread panel's dragged position, stored as an offset from its anchor. */
+export function setHighlightPanelOffset(
+  db: Database.Database,
+  id: string,
+  panelDx: number,
+  panelDy: number,
+): void {
+  db.prepare("UPDATE highlights SET panel_dx = ?, panel_dy = ? WHERE id = ?").run(
+    panelDx,
+    panelDy,
+    id,
+  );
 }
 
 export function getHighlightById(

@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import type {
   CursorStyleChoice,
   LLMProviderId,
+  ReaderMargin,
   Settings,
   SettingsUpdate,
   SpreadMode,
 } from "@marginalia/shared";
+import { emitSettingsSaved } from "./settingsBus.js";
 import styles from "./SettingsPage.module.css";
 
 const BASE_URL_PRESETS = [
@@ -77,6 +79,7 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
         const saved = (await res.json()) as Settings;
         setForm(saved);
         setSaveMessage("Saved.");
+        emitSettingsSaved(saved);
       } else {
         setSaveMessage("Couldn't save settings.");
       }
@@ -277,6 +280,33 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
       )}
 
       <h2 className={styles.sectionTitle}>Reader</h2>
+      <div className={styles.field}>
+        <label className={styles.label}>Page margins</label>
+        <div className={styles.providerToggle} role="group" aria-label="Page margins">
+          {(
+            [
+              { value: "narrow", label: "Narrow" },
+              { value: "normal", label: "Normal" },
+              { value: "wide", label: "Wide" },
+              { value: "generous", label: "Generous" },
+            ] satisfies { value: ReaderMargin; label: string }[]
+          ).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={
+                form.readerMargin === option.value
+                  ? `${styles.providerButton} ${styles.providerButtonActive}`
+                  : styles.providerButton
+              }
+              aria-pressed={form.readerMargin === option.value}
+              onClick={() => update("readerMargin", option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className={styles.field}>
         <label className={styles.label}>Page layout</label>
         <div className={styles.providerToggle} role="group" aria-label="Page layout">
