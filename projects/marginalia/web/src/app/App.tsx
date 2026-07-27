@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { AnimatePresence } from "motion/react";
+import { NavLink, Route, Routes, useLocation, useNavigate, type Location } from "react-router-dom";
 import { useTheme, type ThemeChoice } from "./useTheme.js";
 import { AirlockOverlay } from "./AirlockOverlay.js";
 import styles from "./App.module.css";
@@ -16,9 +17,17 @@ const ReaderPage = lazy(() =>
 const ScanPage = lazy(() =>
   import("../scan/ScanPage.js").then((m) => ({ default: m.ScanPage })),
 );
-const SettingsPage = lazy(() =>
-  import("../settings/SettingsPage.js").then((m) => ({ default: m.SettingsPage })),
+const SettingsModal = lazy(() =>
+  import("../settings/SettingsModal.js").then((m) => ({ default: m.SettingsModal })),
 );
+
+interface NavigationState {
+  /** Set when navigating to /settings from within another room (M11: settings
+   * is a modal, not a route) — the room to keep mounted and visible behind
+   * the overlay. Absent on a direct/deep link to /settings, which falls back
+   * to rendering the Desk underneath, per TASKS.md. */
+  background?: Location;
+}
 
 const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
   { value: "paper", label: "Paper" },
@@ -28,6 +37,21 @@ const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
 
 export function App() {
   const { choice, setChoice } = useTheme();
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // "Background location" pattern (M11: settings is an overlay, not a
+  // route): when settings is opened from within another room, that room's
+  // location travels along as nav state so <Routes> below keeps rendering
+  // it — the URL genuinely becomes /settings (a real, bookmarkable,
+  // back-button-able entry) while the room underneath never unmounts.
+  const background = (location.state as NavigationState | null)?.background;
+  const settingsOpen = location.pathname === "/settings";
+
+  function closeSettings() {
+    if (background) navigate(-1);
+    else navigate("/");
+  }
 
   return (
     <div className={styles.shell}>
@@ -47,6 +71,7 @@ export function App() {
           </NavLink>
           <NavLink
             to="/settings"
+            state={{ background: location } satisfies NavigationState}
             className={({ isActive }) =>
               isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
             }
@@ -74,13 +99,24 @@ export function App() {
       </header>
       <main className={styles.main}>
         <Suspense fallback={<div className={styles.routeFallback} />}>
-          <Routes>
+          <Routes location={background ?? location}>
             <Route path="/" element={<DeskPage />} />
             <Route path="/read/:id" element={<ReaderPage />} />
             <Route path="/scan/:id" element={<ScanPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            {/* Deep link / hard refresh straight at /settings has no
+                background room to fall back on — the Desk stands in, per
+                TASKS.md ("/settings ... renders the desk with the modal
+                open"). */}
+            <Route path="/settings" element={<DeskPage />} />
           </Routes>
         </Suspense>
+        <AnimatePresence>
+          {settingsOpen && (
+            <Suspense fallback={null}>
+              <SettingsModal key="settings-modal" onClose={closeSettings} />
+            </Suspense>
+          )}
+        </AnimatePresence>
       </main>
       <AirlockOverlay />
     </div>

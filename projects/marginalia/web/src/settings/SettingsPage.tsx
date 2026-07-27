@@ -21,7 +21,13 @@ async function fetchSettings(): Promise<Settings | null> {
   }
 }
 
-export function SettingsPage() {
+interface SettingsPageProps {
+  /** Set when rendered inside SettingsModal so aria-labelledby can point at
+   * the heading; undefined (no id) when there's no dialog wrapper needing one. */
+  titleId?: string;
+}
+
+export function SettingsPage({ titleId }: SettingsPageProps = {}) {
   const [form, setForm] = useState<FormState | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
@@ -36,7 +42,7 @@ export function SettingsPage() {
   if (!form) {
     return (
       <div className={styles.page}>
-        <h1 className={styles.title}>Settings</h1>
+        <h1 id={titleId} className={styles.title}>Settings</h1>
       </div>
     );
   }
@@ -99,7 +105,7 @@ export function SettingsPage() {
 
   return (
     <div className={styles.page}>
-      <h1 className={styles.title}>Settings</h1>
+      <h1 id={titleId} className={styles.title}>Settings</h1>
       <p className={styles.hint}>
         Configure an LLM provider to enable asking questions about your books.
         Marginalia works as a reader with no provider configured — the Ask

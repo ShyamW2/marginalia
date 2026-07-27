@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type {
   HighlightImportance,
@@ -53,6 +53,7 @@ export function ThreadPanel({
   onThreadChange,
   onImportanceChange,
 }: ThreadPanelProps) {
+  const location = useLocation();
   const [tags, setTags] = useState<string[]>([]);
 
   useEffect(() => {
@@ -314,7 +315,7 @@ export function ThreadPanel({
             {error === "provider_unconfigured" ? (
               <>
                 No LLM provider configured.{" "}
-                <Link to="/settings" onClick={onClose}>
+                <Link to="/settings" state={{ background: location }} onClick={onClose}>
                   Configure one in Settings
                 </Link>
                 .
@@ -361,7 +362,7 @@ export function ThreadPanel({
       ) : (
         <div className={styles.nudge}>
           Configure an LLM provider to ask questions.{" "}
-          <Link to="/settings" onClick={onClose}>
+          <Link to="/settings" state={{ background: location }} onClick={onClose}>
             Go to Settings
           </Link>
         </div>

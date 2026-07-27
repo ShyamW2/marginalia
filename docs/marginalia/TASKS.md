@@ -729,7 +729,7 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       started inside the zone still raised the Ask pill; toggling focus mode
       removed both vignette elements from the DOM. 109/109 tests, `pnpm
       build` clean.)_
-- [ ] **Settings becomes a modal.** Convert `SettingsPage` from a route-level page to
+- [x] **Settings becomes a modal.** Convert `SettingsPage` from a route-level page to
       an overlay rendered above the current room (dialog semantics: focus trap,
       Escape closes, backdrop click closes, `aria-modal`). `/settings` stays a valid
       deep link — it renders the desk with the modal open, so existing links and the
@@ -737,6 +737,31 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       _Acceptance: opening settings from the reader leaves the page visible and
       scrolled where it was behind the modal; Escape returns focus to the control
       that opened it; the connection test still works from inside the modal._
+      _(verified 2026-07-20: used react-router's "background location"
+      pattern — the Settings nav link (and both of ThreadPanel's
+      "configure a provider" nudge links) now navigate to `/settings` with
+      `state: { background: location }`; `<Routes location={background ??
+      location}>` keeps rendering whatever room that background points at,
+      so the URL genuinely becomes `/settings` (real, bookmarkable,
+      back-button-able) while Desk/Reader/Scan never unmounts underneath.
+      A deep link with no background state (typed URL, hard refresh) falls
+      back to a `/settings → <DeskPage />` route, matching the task's "renders
+      the desk" wording. `SettingsModal.tsx` owns the dialog shell only —
+      backdrop (click-to-close, `stopPropagation` on the panel), a
+      hand-rolled Tab-cycle focus trap, a capture-phase Escape listener (has
+      to win over ReaderView's own window-level Escape handler), and
+      focus-restore to `document.activeElement` as captured at mount, which
+      works for both the click and the Escape path since whatever triggered
+      the open is exactly what focus. `SettingsPage` itself is unchanged
+      except for an added `titleId` prop for `aria-labelledby`. Live
+      Playwright: opened from the reader mid-book (progress 9%) — iframe
+      stayed mounted, progress readout unchanged behind the modal, "Test
+      connection" reachable and clickable; Escape closed it and returned
+      focus to the Settings link; a backdrop click also closed it; 40
+      sequential Tabs never escaped the panel; the `/settings` deep link
+      rendered the Desk (`"The Desk"` heading) behind the dialog; opened
+      and closed cleanly from the Scan room too. 109/109 tests (`App.test.tsx`'s
+      existing `/settings` route test unaffected), `pnpm build` clean.)_
 - [ ] **Verify:** drag books around the desk and hover them (no jumps); read a chapter
       (comfortable margins, arrow nav, edge cursors); open settings from all three
       rooms.
