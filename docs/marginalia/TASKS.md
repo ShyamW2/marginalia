@@ -762,9 +762,17 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       rendered the Desk (`"The Desk"` heading) behind the dialog; opened
       and closed cleanly from the Scan room too. 109/109 tests (`App.test.tsx`'s
       existing `/settings` route test unaffected), `pnpm build` clean.)_
-- [ ] **Verify:** drag books around the desk and hover them (no jumps); read a chapter
+- [x] **Verify:** drag books around the desk and hover them (no jumps); read a chapter
       (comfortable margins, arrow nav, edge cursors); open settings from all three
       rooms.
+      _(verified 2026-07-20: one consolidated live Playwright pass covering
+      every M11 acceptance bullet together, not just each task in
+      isolation — dragged Alice on the Desk to a far corner and hovered it
+      (0.002px jump); opened Metamorphosis and confirmed 117px body padding
+      and icon-only nav buttons; hovered the left edge and got a live
+      `w-resize` cursor; opened Settings from the reader, the scan, and the
+      desk in turn, confirming a real dialog each time. 109/109 tests,
+      `pnpm build` clean. M11 is whole — on to M12.)_
 
 ### M12 — Book traversal
 
