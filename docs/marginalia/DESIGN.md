@@ -75,6 +75,19 @@ The design work here is restraint plus two signature elements.
   a clean page; a subtle indicator shows notes are hidden. State persists per session.
   This also becomes the guard rail: any future effect must be *inside* focus mode's
   jurisdiction (i.e., hideable).
+- **Fullscreen mode** (M14) is a *different* axis from focus mode and composes with it:
+  focus mode hides **your annotations**, fullscreen hides **the app's chrome**. In
+  fullscreen the page grows into the freed space and the chrome becomes
+  proximity-revealed floating panels at the edge each control normally occupies —
+  revealed from the top and bottom bands only, so they never fight the turn-zone
+  vignettes on the left and right. Nothing revealed may span the iframe as an
+  interactive overlay; that kills text selection.
+- **Margins are the reader's to set** (M14). Page margin width is a persisted setting,
+  not a constant — and the outer margin is a separate concern from the spread's spine
+  gutter, however epub.js chooses to conflate them (decisions.md 2026-07-27).
+- **Threads are sticky notes you can move.** A panel is draggable by its header and
+  remembers where you put it, stored as an offset from its anchor — where you put a
+  thing is data about that thing, the same rule the Desk follows for books.
 - **Page turns.** Today: instant column shift. Target: a page that *moves* — see the
   3D honesty note under Technical foundations. Interim (M7): a fast 150–200ms slide +
   opacity pass so turning feels physical without faking paper. Full 3D turn with notes
@@ -111,6 +124,30 @@ dark panel, neon strokes, scanline grain, data readouts in a mono face).
   lengths as a sparkline, "last visited" timestamps. Instrument panels love numbers.
 - Respect the CRT look but keep it legible: glow is an accent on a dark neutral, not
   text-on-noise. Contrast still passes; grain and scanlines sit under 5% opacity.
+
+## Listening (a mode of the Book, not a fourth room)
+
+Audio (M17–M18; full spec in AUDIO.md) is the Book room with the lights the same and
+the page reading itself to you. It is deliberately **not** a player room:
+
+- **The book stays on screen.** The spoken sentence takes a quiet moving tint — quieter
+  than all four highlight kinds, because it moves every few seconds and must not compete
+  with the reader's own marks — pages turn themselves, and position saves through the
+  same path your eyes use. One position per book.
+- **The reader stays interactive.** Select, highlight, ask, mid-listen. Doing so pauses
+  playback: you cannot read an answer while being talked at.
+- **Transport is chrome, not furniture.** Play/pause, skip, speed, and the voice-mode
+  toggle live as reader chrome and join the proximity-revealed set in fullscreen.
+- **The tool on the desk** is where listening *turns on* — a tactile object (deck,
+  gramophone) that lights when engaged, after which opening any book opens it listening.
+  It is the charm, not the gate: the list view's plain "Listen" action remains the
+  canonical keyboard path.
+- **Page turns while listening use the slide, not the curl** — capture cost on every
+  turn is a stutter risk, and audio never stutters.
+- Honesty note, the audio equivalent of the epub.js constraint below: **sync is
+  sentence-level by construction**. One audio segment per sentence means "what is
+  playing" maps to "what is on screen" exactly, with no dependence on per-word timings
+  the engine may not expose. Word-level is a stretch goal, never a prerequisite.
 
 ## Motion language (shared physics of the building)
 
@@ -207,5 +244,11 @@ collapses all of the above to crossfades (M7 already requires this).
 - No effect that costs reading comfort — the reader stays still, fast, and paper-like.
 - No aesthetic without a job: glow encodes heat, folds encode state, trails encode
   motion — decoration that encodes nothing gets cut.
-- No three.js/WebGL until a named effect needs it (candidate: the M10 page curl).
-- No sound in v1.5. Revisit only after the rooms exist.
+- No three.js/WebGL until a named effect needs it (candidate: the M10 page curl —
+  discharged in canvas 2D, so the rule still holds; see decisions.md 2026-07-20).
+- No sound in v1.5. Revisit only after the rooms exist. *(Audio arrives in M17–M18 as
+  speech — the book read aloud. Sound **design** — clicks, page rustle, ambience — is
+  still parked and is a separate question.)*
+- **No fourth room.** Three rooms, one building. Listening is a mode of the Book; the
+  evidence board, if it happens, hangs on the wall above the Desk (decisions.md
+  2026-07-27).

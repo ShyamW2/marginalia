@@ -633,14 +633,19 @@ until the M7 verify passes — v1 must be whole first.
 
 ---
 
-## v1.6 — operator feedback pass (M11–M15)
+## v1.6 — operator feedback pass (M11–M13, and M15–M16 below)
 
 Source: operator feedback after living with v1.5, translated into design decisions in
 `docs/decisions.md` (2026-07-20 entry) — **read that entry before starting M11**. It
 resolves every "make it feel like X" note into a buildable rule; do not re-derive them.
 
 Ordering is deliberate: cheap, low-risk fixes ship first (M11), the hardest single
-effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
+effect (the paper fold) ships last, so a stall there blocks nothing else.
+
+> **Renumbered 2026-07-27.** A second feedback pass (v1.7, below) took the M14 slot,
+> so this pass's remaining two milestones shifted down: **the Scan instrument is now
+> M15** (was M14) and **the paper fold is now M16** (was M15). Their contents are
+> unchanged and they are still governed by the 2026-07-20 decisions entry.
 
 ### M11 — Reading surface fixes (quick wins)
 
@@ -997,7 +1002,106 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       pre-existing fixture data afterward, leaving the shared dev database
       as found. 121/121 tests, `pnpm build` clean.)_
 
-### M14 — The Scan instrument
+---
+
+## v1.7 — revisions & audio (M14–M18)
+
+Source: operator feedback after living with v1.6, translated into design decisions in
+`docs/decisions.md` (**2026-07-27 entry — read it before starting M14**). Same contract
+as v1.6: the entry resolves every note into a buildable rule, and the four settled
+audio decisions there (engine, sentence-level sync, two-pass casting, audio-drives-the-
+reader) are not open for re-derivation.
+
+M15 and M16 are the v1.6 pass's own remaining milestones, carried over unchanged.
+Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
+
+### M14 — Reading surface revisions
+
+- [ ] **Customisable page margins.** Text runs too close to the pane edge, worst in
+      spread mode. The cause is known (decisions.md 2026-07-27): epub.js derives *both*
+      the outer edge padding and the inter-leaf column gap from the single `gap` render
+      option, so M12's `SPREAD_GUTTER = 64` buys a 64px spine gutter at the cost of only
+      32px of outer margin. Stop making `gap` do both jobs: put the outer margin on a
+      **wrapper around** the element epub.js renders into — `containerRef`'s own div must
+      stay padding-free, since epub.js sizes the stage from it — and leave `gap` meaning
+      only "gutter between leaves". Add a persisted `readerMargin` setting
+      (narrow | normal | wide | generous) in the Settings modal's reading section,
+      applied on **both** axes, taking effect live without a reload. `computeReaderGap`'s
+      measure cap and its 240px column floor still apply underneath, against the reduced
+      width.
+      _Acceptance: at the "wide" setting no glyph sits within ~4rem of the pane edge at
+      any window size, in single **and** spread mode; the spine gutter in spread mode is
+      independently visible and unchanged by the margin setting; changing the setting
+      repaginates cleanly with no clipped last line; existing highlights still resolve
+      (no new "unanchored") after a change; the setting survives a reload._
+- [ ] **Move the `%` readout to top centre, and give the dial pointer lock.** Two
+      problems reported as one. (a) It lives in `.rightControls`, so a forward drag runs
+      out of screen — move it to the centre of the top row, which needs `.topRow`
+      restructured from `justify-content: space-between` to a three-column grid
+      (`1fr auto 1fr`) so the centre stays optically centred regardless of how wide the
+      annotations button and `ChapterNav` get. (b) At `DIAL_PX_PER_PERCENT = 6` a full
+      0→100% sweep needs 600px of travel, which no position provides in both directions:
+      on drag start request **pointer lock** and accumulate `movementX` instead of
+      reading `clientX - startX` (`ReaderView.tsx` ~L959). Pointer lock can be refused —
+      fall back to today's absolute math, don't fail the gesture.
+      _Acceptance: the readout is centred and stays centred as the side controls change
+      width; a drag can reach 0% and 100% from any starting position without the pointer
+      leaving the window; Escape still cancels; the keyboard path (arrows step, Enter
+      commits) is unchanged; releasing pointer lock on commit/cancel is verified (no
+      trapped cursor)._
+- [ ] **Kill the crease bars.** `ThreadPanel.module.css`'s `.creases` — two 22%-black
+      bars at 33%/66% — reads as ruled lines over the note, and never did what its own
+      comment claims: it is static for the panel's whole lifetime, not synced to the
+      unfold. Delete the element (`ThreadPanel.tsx` L317) and the rule. The two-crease
+      origami reading stays in the unfold keyframes. **Keep** `.grain` and the
+      kind-tinted folded corner (`.panel::before`) — they carry the paper material and
+      were not what was objected to.
+      _Acceptance: no lines across an open panel in either theme; the unfold still reads
+      as a fold, not a plain fade; reduced motion unaffected._
+- [ ] **Thread panels become movable sticky notes.** One change, not two. Make the panel
+      draggable by its header (grab cursor, shadow lifts while dragging, drop settles on
+      a spring). Persist the position as an **offset from the panel's anchor**, never an
+      absolute stage coordinate — the anchor moves on every page turn, resize, and margin
+      change, so absolute coords would rot (this is the same reasoning that made M8 store
+      shelf positions as data about the book). Additive migration adding
+      `highlights.panel_dx` / `panel_dy`, written through a route following the
+      established per-field pattern (`PUT /api/highlights/:id/panel-offset`, as
+      importance/tags/note each did); clamp back into the stage bounds on restore.
+      Sticky-note styling lands in the same task: a warmer paper tone than the panel
+      chrome, a deterministic 0.5–1.5° tilt derived from the highlight id (never random —
+      it must not jitter between renders), and the existing folded corner.
+      _Acceptance: drag a panel, reload, it reopens where you left it; turn the page and
+      come back — still correct relative to its highlight; a panel dragged to the edge is
+      clamped back into view on reopen; dragging never leaks pointer events into the
+      epub.js iframe (`setPointerCapture` — see the M10 crash in NOTES.md); the panel
+      still opens anchored to its highlight the first time, before any drag._
+- [ ] **Fullscreen reading mode.** New mode, **orthogonal to focus mode** — they hide
+      different things and must be independently toggleable and combinable (focus mode
+      hides your annotations; fullscreen hides the app's chrome). `shift+F` toggles it
+      (`f` stays focus mode, same `isTyping` guard). The reading pane grows into the
+      freed space; the top row, footer, and margin rail become **proximity-revealed**
+      floating panels at the edge each normally occupies, fading in when the pointer
+      enters a reveal band and out when it leaves. Two hard constraints: reveal bands are
+      the **top and bottom** edges only (the right rail reveals from the top-right corner
+      region) so they never fight M11's left/right turn-zone vignettes, and nothing
+      revealed may be an interactive overlay spanning the iframe — that kills text
+      selection (decisions.md 2026-07-20). Also call `requestFullscreen()` on the app
+      root, degrading silently to in-page fullscreen if refused.
+      _Acceptance: `shift+F` enlarges the page and hides all chrome; moving to the top
+      edge reveals annotations + `%` + chapter nav, bottom reveals the page arrows, and
+      each hides again on leave; text selection and the Ask pill still work everywhere,
+      including inside a reveal band; `f` and `shift+F` compose in all four combinations;
+      Escape exits fullscreen; keyboard users can reach every revealed control (reveal on
+      focus, not only on hover)._
+- [ ] **Verify:** read a chapter in each margin setting, in single and spread mode, with
+      threads open — margins comfortable, panels draggable and persistent, no crease
+      lines, `%` dial reachable end to end from centre. Then read the same chapter in
+      fullscreen, and in fullscreen + focus mode together.
+
+### M15 — The Scan instrument
+
+_(Carried over from the v1.6 pass, where it was M14 — contents unchanged, governed by
+the 2026-07-20 decisions entry.)_
 
 - [ ] **Fullscreen.** Remove the `max-width: 1100px` / `margin: 0 auto` page framing
       (`ScanPage.module.css` L24–25) so the scan fills the viewport; the strip grows
@@ -1035,7 +1139,9 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       every v1.5 interaction (hover, click-to-jump, filter, search, stars, tags) still
       works.
 
-### M15 — The paper fold (Apple Books curl)
+### M16 — The paper fold (Apple Books curl)
+
+_(Carried over from the v1.6 pass, where it was M15 — contents unchanged.)_
 
 The hardest item; isolated so it can take the time it needs. **Read the 2026-07-20
 decisions entry first** — the geometry is specified there and is not open for
@@ -1077,6 +1183,101 @@ re-derivation.
       paper, notes ride the folding sheet as they do today, and reading with the
       effect on still feels calm.
 
+### M17 — Audio I: one voice, end to end
+
+**Read `docs/marginalia/AUDIO.md` before starting — it is binding for M17 and M18**,
+the way SPEC.md is for the core. The vertical-slice rule applies: a book you can listen
+to in one voice, with the page following along, before any casting exists.
+
+- [ ] **The `TTSEngine` seam + Kokoro implementation.** `server/src/audio/engine.ts`
+      exactly per AUDIO.md's interface — nothing engine-specific escapes it — plus
+      `kokoro.ts` using `kokoro-js` (ONNX, Node; **no Python sidecar**). Model weights
+      download on first use into `data/models/` with streamed progress and a designed
+      failure state; `TTSError` codes per the spec. Settings gets an audio section
+      (engine, model path, default narrator voice) and a "Test voice" button that speaks
+      one sentence — the audio equivalent of the provider "Test connection" button.
+      _Acceptance: `voices()` returns the real voice list from the loaded model;
+      `synthesize()` returns playable audio and a duration that matches it within ~5%;
+      a missing/corrupt model surfaces `model_unavailable` as a designed state, never a
+      crash; unit tests cover the registry and error mapping (synthesis itself is
+      exercised live, not in unit tests)._
+- [ ] **Sentence segmentation.** `server/src/audio/segment.ts` per AUDIO.md: operates on
+      `resource_text` per spine index and returns char offsets **into that exact
+      string** (the same coordinate system `annotations/position.ts` already uses).
+      `Intl.Segmenter` with the book-specific fixes — abbreviations, initials, and
+      ellipses must not split; short sentences merge; over-long ones split at a clause.
+      _Acceptance: unit tests per AUDIO.md's list, including the offset round-trip
+      (`text.slice(charStart, charEnd) === segment.text`) on real fixture chapters._
+- [ ] **Render pipeline + cache.** Section renderer writing
+      `data/audio/<resourceId>/<castHash>/<spineIndex>/` plus its manifest, keyed by the
+      cast hash so nothing stale can ever be served; chapter-ahead scheduling (render the
+      current section, keep one ahead warm), cancellable, with the SSE progress endpoint.
+      Cache hits are decided by **file existence**, not a ledger row (the vault
+      compiler's 2026-07-19 bug is the precedent). Plus `audio_state` migration and the
+      audio API routes from AUDIO.md that this milestone needs.
+      _Acceptance: rendering a chapter twice does no synthesis the second time; deleting
+      `data/audio/` mid-session re-renders rather than erroring; navigating away aborts
+      in-flight synthesis (verified by watching it actually stop, not by reading the
+      code); a 10-minute chapter renders without exhausting memory._
+- [ ] **Player + follow-along in the reader.** Sequential segment playback in the
+      browser; the playing sentence tinted via the existing anchor machinery
+      (`anchorResolution.ts`) in a style quieter than all four highlight kinds; auto page
+      turn using the **slide, not M10's curl**; transport controls as reader chrome
+      (play/pause on `space` with the existing `isTyping` guard, skip sentence
+      `shift+←/→`, skip chapter reusing `[`/`]`, speed); a "Listen" action in the desk
+      hover strip and the list view. Selecting text or opening a thread pauses playback.
+      Position saves through the **existing** reading-position path — one position per
+      book, not two. `f` hides the tint like any other annotation-layer effect.
+      _Acceptance: listen to a real chapter end to end — the tint tracks the audio, pages
+      turn themselves, a chapter boundary doesn't stutter; an unresolvable sentence is
+      skipped silently with audio continuing; highlighting mid-listen pauses, and asking
+      a question works exactly as it does when reading; stopping and reopening the book
+      with your eyes lands where the audio left off._
+- [ ] **Verify:** listen to 15 minutes of a real fixture book in one voice while doing
+      normal reading things — pause, highlight, ask, turn back a page, resume. Note
+      friction in NOTES.md. Both themes, reduced motion, and focus mode.
+
+### M18 — Audio II: the cast
+
+- [ ] **Cast scan (pass 1).** User-initiated `POST /api/resources/:id/cast/scan` (SSE)
+      running AUDIO.md's `CastSchema` extract through the **existing** LLM seam and
+      context builder — no new provider code — then persisting the cast (`book_cast`
+      migration). Deterministic code-side voice assignment from `engine.voices()`:
+      narrator first, then by line-count hint and appearance order, matching gender/age,
+      never reusing a voice while an unused compatible one remains.
+      _Acceptance: a scan of a real fixture book produces a sane cast with distinct
+      voices; re-running it is stable (same input → same assignment); a provider failure
+      mid-scan leaves no half-written cast._
+- [ ] **Attribution (pass 2) + multi-voice rendering.** Per-section `AttributionSchema`
+      extract, on demand and cached with the section's audio. **The model returns the
+      quoted string; code locates it** by exact search — never offsets from the model
+      (CLAUDE.md settled decision 2). Unlocatable quote, unknown speaker, or a failed
+      call all degrade to the narrator voice, and a whole failed section degrades to
+      single-voice without blocking playback.
+      _Acceptance: dialogue in a chapter of Metamorphosis is spoken in character with
+      the narrator carrying everything else; killing the provider mid-attribution keeps
+      audio playing in one voice; unit tests cover verbatim match, repeated identical
+      quotes resolving in order, and the unlocatable case._
+- [ ] **Casting UI.** Cast list with per-character voice pickers (preview button speaks
+      a sample line), narrator voice, and the single/multi voice-mode toggle. A user
+      override sets `voice_locked` and **must survive a re-scan**; changing any
+      assignment invalidates the rendered audio by changing `castHash`, which must not
+      require deleting anything by hand.
+      _Acceptance: override a voice, hear the change on the next chapter, re-scan, and
+      confirm the override held; switching multi→single→multi doesn't re-render audio
+      that's already cached under the same hash._
+- [ ] **The desk tool.** The tactile listening-mode object per DESIGN.md and AUDIO.md: a
+      real focusable button with an accessible name and pressed state (not a div), lit
+      while engaged, so opening any book opens it in audio mode. Escape or a second click
+      disengages. The list view's "Listen" action from M17 remains the canonical keyboard
+      path — the tool is the charm, not the gate.
+      _Acceptance: engage the tool, click a book, it opens listening; the engaged state
+      is unmistakable; the whole flow is also completable from the keyboard without ever
+      touching the tool; reduced motion removes its animation, not its function._
+- [ ] **Verify:** scan the cast on a dialogue-heavy fixture, listen to a chapter in
+      multi-voice, override a voice, and listen again. Confirm every M17 behaviour
+      (tint, auto-turn, pause-on-interaction, position) is unchanged in multi-voice mode.
+
 ## Parked (post-v1.5) — recorded so they aren't relitigated
 
 - LLM note supplementation: a pass that reviews highlight notes/tags, responds
@@ -1088,3 +1289,35 @@ re-derivation.
   _(The `claudeAgent` subscription provider was parked here on 2026-07-17 but was
   un-parked and shipped on 2026-07-19 — see that decisions.md entry and
   `server/src/llm/claudeAgent.ts`. No longer parked.)_
+
+## Future arcs (v2+) — shape decided, not scheduled
+
+Recorded 2026-07-27 so the shape is settled before anyone starts and the real gate on
+each is visible. Full reasoning: decisions.md 2026-07-27, "Future arcs". **These are
+not milestones — do not start them from this list.**
+
+- **Drawing on pages.** Strokes anchor to a **spine section in that section's own flow
+  coordinates**, never to a page — pages aren't durable (font size, window width, the
+  M14 margin setting, and spread mode all repaginate), so a page-anchored stroke is
+  guaranteed to rot. Stored per section as simplified, quantized, gzipped SVG path data,
+  one row per section that has drawings, fetched on section load exactly as highlights
+  already are — so drawing on one page cannot grow the rest of the book's metadata.
+  Explicitly **rejected**: rendering pages as images to draw on, which would destroy
+  selection, highlighting, search, and reflow. Split into two independent projects:
+  pointer-drawing on the desktop is buildable today; the iPad/Pencil version starts by
+  undoing M6's deliberate loopback-only binding (LAN exposure + pairing/auth, probably a
+  native shell) and PRODUCT.md lists multi-device as out of scope — that decision has to
+  be taken on purpose, first.
+- **Notebook chat.** Must be framed as "**the notepad is the prompt**" — a chat scoped
+  to the notepad's contents (plus, optionally, the book behind it), anchored to
+  something the reader wrote. A free-floating chat box contradicts a standing discipline
+  ("the highlight is the prompt") and would need that rule overturned deliberately in
+  CLAUDE.md, not by drift.
+- **The evidence board.** Corkboard, pins, physics ropes, tabs. Two rulings: it is an
+  **extension of the Desk, not a fourth room** (it hangs on the wall above the desk,
+  keeping "three rooms, one building" intact), and it is a **view over data that already
+  exists** — nodes are concepts from the vault compiler, highlights, books, and notepad
+  fragments; edges are the concept links code already computes at distill time. A board
+  with no data behind it would encode nothing, which DESIGN.md's anti-goals rule out.
+  Rope physics is verlet integration on canvas 2D — no engine, no WebGL, following the
+  page fold's precedent.

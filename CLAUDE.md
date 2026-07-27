@@ -13,6 +13,7 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/TASKS.md` — ordered task list with per-milestone acceptance criteria; check boxes off as you go
 - `docs/marginalia/PRODUCT.md` — product requirements and vision
 - `docs/marginalia/DESIGN.md` — aesthetic & interaction blueprint (the "three rooms" system) — binding for M7+
+- `docs/marginalia/AUDIO.md` — audio/TTS subsystem spec (engine seam, casting, cache) — **binding for M17+**
 - `docs/marginalia/SONNET_PROMPT.md` — kickoff prompt + operator notes for implementation sessions
 - `docs/marginalia/NOTES.md` — running log of spec gaps, friction, blockers (create on first use)
 - `docs/decisions.md` — decision log (ADR-lite)
@@ -47,6 +48,13 @@ doc), never by drift.
 8. **Whole-resource context by default.** A question about a highlight ships the full book
    (or the largest window that fits) with provider-side caching where available; the
    passage is the focus, not the limit, of context.
+9. **TTS is local, behind its own seam.** Audio goes through one narrow `TTSEngine`
+   interface (`server/src/audio/engine.ts`, spec'd in AUDIO.md), first implemented with
+   Kokoro in-process via ONNX — no cloud TTS, no Python sidecar. A more expressive
+   GPU engine later is a second implementation, not new call sites.
+10. **The model never returns positions.** An extension of decision 2, learned at
+   casting: the LLM returns *text* (a quoted string, a concept name) and code locates
+   it. Never ask a model for char offsets, indices, or counts and then trust them.
 
 ## Discipline
 

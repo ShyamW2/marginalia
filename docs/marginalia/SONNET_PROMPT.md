@@ -16,6 +16,11 @@ session — your job is disciplined execution, not redesign.
 2. `docs/marginalia/SPEC.md` — prescriptive implementation spec (binding)
 3. `docs/marginalia/TASKS.md` — ordered task list with acceptance criteria
 4. `docs/marginalia/PRODUCT.md` — product context (background)
+5. `docs/decisions.md` — the entry your milestone names (M11–M16 → 2026-07-20;
+   M14–M18 → 2026-07-27). It resolves the "make it feel like X" notes into rules;
+   don't re-derive them.
+6. `docs/marginalia/DESIGN.md` (binding for M7+) and, for M17+ only,
+   `docs/marginalia/AUDIO.md` (binding for the audio subsystem)
 
 **How to work:**
 - Find the first unchecked task in TASKS.md and do exactly that task. Small, focused

@@ -3,6 +3,171 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-27 — v1.7: reading-surface revisions, audio mode, future arcs
+
+Operator feedback after living with v1.6 (M11–M13 shipped; M14/M15 were written but
+not started). Same contract as the 2026-07-20 entry: each subjective note becomes a
+buildable rule so the implementation milestones don't re-derive them.
+
+**Renumbering.** The revisions below become **M14** and everything already written
+shifts down: the Scan instrument is now **M15** (was M14), the paper fold is now
+**M16** (was M15). Content of both is unchanged. Audio lands as **M17–M18**. Ordering
+rationale is the same as v1.6's: cheap fixes that improve every reading session ship
+first; the hardest single effect (the fold) stays late so a stall there blocks nothing;
+audio is a whole new subsystem and goes last so it can't hold the visual work hostage.
+
+### Reading surface
+
+- **Page margins are a setting, and the outer margin is not the spine gutter.** Text
+  runs too close to the pane edge, worst in spread mode. Root cause is known and
+  specific: M11 established that epub.js discards theme-set body padding and the only
+  lever is the `gap` render option, but epub.js derives *both* the outer edge padding
+  (`gap/2` each side) and the inter-leaf column gap from that one number — so M12's
+  `SPREAD_GUTTER = 64` buys a 64px book-spine gutter at the cost of only 32px of outer
+  margin. The fix is to stop asking `gap` to do both jobs: **outer margin becomes a
+  padded wrapper around the element epub.js renders into** (the container it measures
+  must itself stay padding-free — epub.js sizes the stage from that element), leaving
+  `gap` to mean only "gutter between leaves". Margin width becomes a persisted setting
+  (`readerMargin`: narrow | normal | wide | generous) applied on both axes, live, with
+  the existing measure cap and the 240px column floor still enforced underneath.
+- **The `%` readout moves to top centre, and the dial gets pointer lock.** Two separate
+  problems were reported as one. (a) Position: the readout sits in `.rightControls`, so
+  a forward (rightward) drag runs out of screen almost immediately. It moves to the
+  centre of the top row — which needs `.topRow` restructured from `space-between` to a
+  three-column grid (`1fr auto 1fr`) so the centre stays optically centred no matter how
+  wide the annotations button and chapter nav get. (b) Range: at `DIAL_PX_PER_PERCENT =
+  6` a full 0→100% sweep needs 600px of pointer travel, which no screen position can
+  provide in both directions. The drag therefore requests **pointer lock** on start and
+  accumulates `movementX` instead of reading `clientX - startX` — travel becomes
+  unbounded in both directions, and the retro zoom-ring metaphor is exactly right for a
+  control that spins forever. Absolute-delta math stays as the fallback when pointer
+  lock is denied (it can reject, and some browsers gate it behind a user gesture chain).
+- **Thread panels are sticky notes: movable, and the offset persists.** The panel
+  becomes draggable by its header. The stored value is an **offset from its anchor**,
+  never an absolute stage coordinate — the anchor moves every time you turn a page,
+  resize, or change the margin setting, so absolute coords would rot exactly the way
+  M8's shelf positions would have if they'd been stored in screen space. Persisted
+  per-highlight (additive migration, `highlights.panel_dx` / `panel_dy`), clamped back
+  into the stage on restore. This is the same precedent M8 set for books on the desk:
+  where you put a thing is data about that thing. The sticky-note *look* (a warmer
+  paper tone than the panel chrome, a deterministic 0.5–1.5° tilt derived from the
+  highlight id so it never jitters between renders, the existing kind-tinted folded
+  corner, a lifted shadow while dragging) is part of the same task — "movable" and
+  "looks like a sticky note" are one change, not two.
+- **The crease bars go.** `ThreadPanel.module.css`'s `.creases` — two 22%-black bars at
+  33% and 66% — reads as ruled lines across the note, and it never did what its own
+  comment claims ("flash across the panel in sync with the unfold"): it is a static
+  element rendered for the panel's whole lifetime. Delete the element and the rule. The
+  "two-crease origami" DESIGN.md asks for survives in the unfold keyframes
+  (`scaleY: [0.06, 0.55, 1]` through a visible half-open step), which is where the fold
+  reading actually comes from. The paper grain and the folded corner stay — they carry
+  the sticky-note material and were not what was objected to.
+- **Fullscreen is a mode, and it is orthogonal to focus mode.** They are separately
+  toggleable and combinable, because they hide different things: focus mode (`f`) hides
+  *your annotations* (marks, rail dots, tabs); fullscreen (`shift+F`) hides *the app's
+  chrome* (top row, footer, rail) and lets the page grow into the space. Chrome in
+  fullscreen becomes proximity-revealed floating panels at the edge each control
+  normally occupies — top-left annotations, top-centre the `%` dial, top-right chapter
+  nav, bottom the page arrows, right edge the margin rail — fading in when the pointer
+  comes within a reveal band and out again when it leaves. Two constraints, both
+  already learned the hard way: the reveal band on the left and right edges must not
+  fight M11's turn-zone vignettes (chrome reveals from the **top and bottom** bands
+  only; the right rail reveals from the top-right corner region), and nothing
+  proximity-revealed may be an interactive overlay across the iframe — that kills text
+  selection (2026-07-20 entry). Also request the browser Fullscreen API on the app root,
+  degrading silently to in-page fullscreen if it's refused.
+
+### Audio mode (M17–M18)
+
+The app learns to read a book aloud with a local TTS model, optionally casting distinct
+voices for characters. Four operator decisions were taken 2026-07-27 and are settled:
+
+- **Kokoro first, behind a `TTSEngine` seam.** Kokoro-82M (Apache-2.0, ONNX) is the
+  first implementation because it is the only option that runs at usable speed on *both*
+  machines — the Mac and the Linux box — which the two-machine setup makes a hard
+  requirement, and it ships ~50 preset voices, which is exactly what a casting pass
+  needs. Prefer the Node/onnxruntime path (`kokoro-js`) over a Python sidecar: no second
+  toolchain, no per-machine Python divergence, consistent with "local-first, boring
+  core". A more expressive GPU model (Chatterbox/Orpheus-class, Linux-only) is a second
+  implementation behind the same seam later — the seam is what makes that a new file,
+  not a new call site (CLAUDE.md engineering discipline).
+- **Sync is sentence-level by construction, not timestamp-derived.** This is the audio
+  equivalent of DESIGN.md's epub.js honesty note and it shapes the whole pipeline: do
+  **not** build follow-along highlighting on per-word timings the engine may or may not
+  expose. Synthesize **one audio segment per sentence**; then the mapping from playing
+  audio to on-screen text is exact and free, because we know which sentence each segment
+  *is*. Word-level highlighting is a stretch goal, attempted only if the engine gives
+  reliable phoneme durations, and never a prerequisite.
+- **Casting is two passes, and the model never returns offsets.** Pass 1 (whole book,
+  one `extract` call through the existing context builder, user-initiated): the cast —
+  names, aliases, gender/age cues, a one-line voice suggestion each. Pass 2 (per
+  chapter, on demand, cached): attribute each quoted span to a cast member. In both
+  passes the model returns **the quoted string**, and code locates it in the chapter
+  text by exact search; a model asked to count characters will hallucinate offsets, and
+  "LLM proposes, code disposes" (settled decision 2) already forbids trusting it with
+  positions. Anything unmatched or unattributed falls back to the narrator voice — a
+  wrong voice is worse than one voice, so ambiguity always resolves to the narrator.
+  Voice assignment itself is code: the model proposes a description, code maps it onto
+  the available voice pool, the user can override in the casting UI.
+- **Audio drives the reader; it is not a fourth room.** Playback runs *in the book* —
+  the current sentence takes a moving tint, pages turn themselves, reading position
+  saves exactly as it does when reading with your eyes, and you can still select,
+  highlight, and ask mid-listen (doing so pauses playback: you cannot read an answer
+  while being talked at). A dedicated player surface would have been a fourth room and
+  DESIGN.md has three; the transport controls instead live as reader chrome, and the
+  desk gets the skeuomorphic *object* that turns listening on.
+- **The desk tool is the entry point, and it is not the only one.** A tactile object on
+  the desk (a deck/gramophone) toggles "listening mode"; while it is lit, opening a book
+  opens it in audio mode. Per DESIGN.md's accessibility rule, the desk's list view is
+  the canonical keyboard path, so a plain "Listen" action also lives in the book hover
+  strip and the list — the tool is the charm, not the gate.
+- **Rendered audio is content-addressed cache, not library data.** Segments live under
+  `data/audio/<resourceHash>/<castHash>/…` with a manifest mapping sentence → file,
+  duration, and char range. Keyed by cast+voice so re-casting invalidates cleanly, safe
+  to delete at any time, gitignored like the rest of `data/`. Render **chapter-ahead on
+  demand**, not whole-book-up-front: listening starts in seconds instead of minutes, and
+  a book you abandon after a chapter costs one chapter of compute.
+- **Page turns while listening use the slide, not the curl.** M10's snapshot curl costs
+  a capture on every turn and audio must never stutter; the fast slide fallback already
+  exists for exactly this class of reason. (Judgment call, flagged: revisit if a turn
+  every ~30s feels cheap with the effect suppressed.)
+
+### Future arcs (recorded, deliberately not scheduled)
+
+Written down so the shape is decided before anyone starts, and so the real gate on each
+is visible. None are milestones yet.
+
+- **Drawing on pages.** The anchoring model is the whole problem and it is decided here:
+  drawings anchor to a **spine section in that section's own flow coordinates**, never
+  to a page. Pages do not exist as durable objects — font size, window width, the new
+  margin setting, and spread mode all repaginate — so a page-anchored stroke is
+  guaranteed to rot. Stored per section as simplified, quantized, gzipped SVG path data
+  (one row per section that has drawings, fetched on section load exactly as highlights
+  already are), which satisfies the efficiency ask directly: drawing on one page cannot
+  grow the rest of the book's metadata. **Rejected:** rendering pages as images to draw
+  on — it would destroy selection, highlighting, search, and reflow, i.e. the entire
+  product. The overlay rides the columns the way the marks-pane already does. The real
+  gate is not drawing, it is the iPad: the server binds to 127.0.0.1 by design (M6
+  security fix) and reaching it from a tablet means LAN binding, pairing/auth, and
+  probably a native shell for Apple Pencil pressure — PRODUCT.md lists multi-device as
+  explicitly out of scope. Treat "draw with a pointer on the desktop" and "draw with a
+  Pencil on an iPad" as two different projects; the first is buildable today, the second
+  is a v3 arc that starts by undoing a deliberate security decision.
+- **Notebook chat.** Directly contradicts a standing discipline: "the highlight is the
+  prompt — no free-floating chat box". The framing that preserves it: **the notepad is
+  the prompt.** A chat scoped to the notepad's own contents (plus, optionally, the book
+  open behind it) is anchored to a thing the reader wrote, which is the same contract
+  threads have. Build it that way or overturn the rule deliberately — not by drift.
+- **The evidence board.** Corkboard, pins, physics ropes, tabs. Two rulings: (a) it is
+  **an extension of the Desk, not a fourth room** — the board hangs on the wall above
+  the desk, which keeps "three rooms, one building" intact and gives the transition an
+  obvious doorway; (b) it is **a view over data that already exists**, not a new data
+  model — nodes are concepts (from the vault compiler), highlights, books, and notepad
+  fragments; edges are the concept links code already computes at distill time. A
+  freeform board with no data behind it would be a drawing toy that encodes nothing,
+  which DESIGN.md's anti-goals rule out. Rope physics is verlet integration on canvas
+  2D — no engine, no WebGL, consistent with the fold's precedent.
+
 ## 2026-07-20 — v1.6 feedback pass: design translations
 
 Operator feedback after living with v1.5 on the Mac. Recorded here as *design
