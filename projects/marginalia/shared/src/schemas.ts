@@ -18,6 +18,11 @@ export const ResourceMetadataSchema = z
     language: z.string().optional(),
     publisher: z.string().optional(),
     coverHref: z.string().optional(),
+    // M15 "real chapter axis": spineIndex (as a string — JSON object keys
+    // are always strings) -> chapter title, from the EPUB's own NCX. Absent
+    // or missing entries just mean the scan's chapter toggle has nothing to
+    // show for that chapter and falls back to its number.
+    chapterTitles: z.record(z.string(), z.string()).optional(),
   })
   .catchall(z.unknown());
 export type ResourceMetadata = z.infer<typeof ResourceMetadataSchema>;
@@ -298,6 +303,11 @@ export type SpreadMode = z.infer<typeof SpreadModeSchema>;
 export const ReaderMarginSchema = z.enum(["narrow", "normal", "wide", "generous"]);
 export type ReaderMargin = z.infer<typeof ReaderMarginSchema>;
 
+/** M15 "CRT treatment" (decisions.md 2026-07-20): strength of the scan's
+ * barrel-warp/bloom/chromatic-fringing filter, 0 (off) to 1 (full). Reduced
+ * motion disables the effect outright regardless of this value. */
+export const ScanCrtIntensitySchema = z.number().min(0).max(1);
+
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset. */
 export const SettingsSchema = z.object({
   provider: LLMProviderIdSchema,
@@ -313,6 +323,7 @@ export const SettingsSchema = z.object({
   cursorTrailEnabled: z.boolean(),
   spreadMode: SpreadModeSchema,
   readerMargin: ReaderMarginSchema,
+  scanCrtIntensity: ScanCrtIntensitySchema,
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
@@ -330,7 +341,12 @@ export type SettingsUpdate = z.infer<typeof SettingsUpdateSchema>;
 
 export const ScanChapterSchema = z.object({
   spineIndex: z.number().int().nonnegative(),
-  label: z.string(),
+  // M15 "real chapter axis" (TASKS.md): a plain 1-based sequence number
+  // (always present) plus the EPUB's own chapter title where its NCX
+  // provides one for this spine item (often not, for front/back matter) —
+  // the scan defaults to numbers and a toggle reveals names.
+  chapterNumber: z.number().int().positive(),
+  title: z.string().nullable(),
   startPercent: z.number().min(0).max(1),
   lengthPercent: z.number().min(0).max(1),
 });

@@ -373,6 +373,22 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
         </div>
       </div>
 
+      <h2 className={styles.sectionTitle}>Scan</h2>
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="scan-crt-intensity">
+          CRT intensity — {Math.round(form.scanCrtIntensity * 100)}%
+        </label>
+        <input
+          id="scan-crt-intensity"
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={form.scanCrtIntensity}
+          onChange={(e) => update("scanCrtIntensity", Number.parseFloat(e.target.value))}
+        />
+      </div>
+
       <div className={styles.field}>
         <label className={styles.label} htmlFor="vault-path">
           Obsidian vault path

@@ -27,6 +27,8 @@ const DEFAULTS = {
   // M14: "normal" matches the pre-M14 fixed edge padding — unchanged until a
   // reader opts into something wider or narrower.
   reader_margin: "normal" as ReaderMargin,
+  // M15: a tasteful default — visible bow/glow without fighting legibility.
+  scan_crt_intensity: "0.6",
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -45,6 +47,7 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   cursor_trail_enabled: "cursorTrailEnabled",
   spread_mode: "spreadMode",
   reader_margin: "readerMargin",
+  scan_crt_intensity: "scanCrtIntensity",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -78,6 +81,7 @@ export function getRawSettings(db: Database.Database): {
   cursorTrailEnabled: boolean;
   spreadMode: SpreadMode;
   readerMargin: ReaderMargin;
+  scanCrtIntensity: number;
 } {
   const raw = readRaw(db);
   return {
@@ -94,6 +98,7 @@ export function getRawSettings(db: Database.Database): {
     cursorTrailEnabled: raw.cursor_trail_enabled === "true",
     spreadMode: raw.spread_mode as SpreadMode,
     readerMargin: raw.reader_margin as ReaderMargin,
+    scanCrtIntensity: Number.parseFloat(raw.scan_crt_intensity),
   };
 }
 

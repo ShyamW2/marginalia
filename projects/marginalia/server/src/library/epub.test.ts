@@ -51,6 +51,29 @@ describe("extractEpub", () => {
     const b = extractEpub(aliceBuffer);
     expect(a).toEqual(b);
   });
+
+  it("extracts chapter titles from the NCX, keyed by spine index, one per href", () => {
+    const result = extractEpub(metamorphosisBuffer);
+    // The real toc.ncx has 6 navPoints but only 4 distinct spine hrefs — two
+    // pairs (title/subtitle, and chapter III/the license) share an href via
+    // different #fragments, so the first navPoint's label wins each href.
+    expect(result.metadata.chapterTitles).toEqual({
+      "1": "Metamorphosis",
+      "2": "I",
+      "3": "II",
+      "4": "III",
+    });
+  });
+
+  it("Alice's real chapter titles resolve too, not just Metamorphosis's", () => {
+    const result = extractEpub(aliceBuffer);
+    expect(result.metadata.chapterTitles).toBeDefined();
+    expect(Object.keys(result.metadata.chapterTitles!).length).toBeGreaterThan(0);
+    for (const [spineIndex, title] of Object.entries(result.metadata.chapterTitles!)) {
+      expect(result.spine[Number(spineIndex)]).toBeDefined();
+      expect(title.length).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe("extractCoverImage", () => {

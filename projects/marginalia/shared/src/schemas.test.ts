@@ -65,6 +65,7 @@ describe("schemas smoke test", () => {
       cursorTrailEnabled: true,
       spreadMode: "single",
       readerMargin: "normal",
+      scanCrtIntensity: 0.6,
     });
     expect(result.success).toBe(true);
   });

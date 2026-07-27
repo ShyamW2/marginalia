@@ -20,9 +20,9 @@
   min-height: 100%;
   background: var(--color-bg);
   color: var(--color-text);
-  padding: 2rem 1.75rem 3rem;
-  max-width: 1100px;
-  margin: 0 auto;
+  /* M15 "the scan fills the glass" (decisions.md 2026-07-20): no page-like
+     max-width/centering — the strip and readouts grow to the viewport. */
+  padding: 2rem clamp(1.25rem, 4vw, 3rem) 3rem;
 }
 
 .headerRow {
@@ -73,7 +73,7 @@
 
 .readouts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 220px));
   gap: 0.75rem;
   margin-bottom: 1.25rem;
 }

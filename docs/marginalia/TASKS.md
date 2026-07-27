@@ -1200,12 +1200,21 @@ Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
 _(Carried over from the v1.6 pass, where it was M14 — contents unchanged, governed by
 the 2026-07-20 decisions entry.)_
 
-- [ ] **Fullscreen.** Remove the `max-width: 1100px` / `margin: 0 auto` page framing
+- [x] **Fullscreen.** Remove the `max-width: 1100px` / `margin: 0 auto` page framing
       (`ScanPage.module.css` L24–25) so the scan fills the viewport; the strip grows
       to take the slack rather than sitting in a letterboxed column.
       _Acceptance: no page-like margins at any window size; the strip scales with the
       viewport; readouts stay legible and don't stretch into unreadable rows._
-- [ ] **CRT treatment.** Fuzz the strokes (layered blur/bloom rather than crisp 1px
+      _(verified 2026-07-28: `.page`'s `max-width`/`margin: 0 auto` replaced
+      with a `clamp()`-based side padding; live at a 1400px viewport the page
+      measures the full 1400px, `max-width: none`. The readout tiles
+      (`Highlights`/`Last visited`/`Chapters`) kept a `minmax(140px, 220px)`
+      cap on their grid track — a genuine design call beyond the literal
+      instruction, since letting three number tiles stretch to fill an
+      ultra-wide viewport was exactly the "unreadable row" the acceptance
+      text warns against; the strip and revisit queue are uncapped and fill
+      the width.)_
+- [x] **CRT treatment.** Fuzz the strokes (layered blur/bloom rather than crisp 1px
       lines) and add the barrel warp — an `feDisplacementMap` driven by a radial
       gradient, plus vignette and subtle chromatic fringing — applied to **the strip
       and its graphics only, never the mono readouts or the revisit queue** (see the
@@ -1214,14 +1223,70 @@ the 2026-07-20 decisions entry.)_
       _Acceptance: the strip visibly bows like a CRT face and the lines glow rather
       than hairline; all text still passes contrast and none of it is warped;
       reduced-motion renders the flat, crisp version._
-- [ ] **Chapter timeline.** Replace the current arbitrary ticks with a real chapter
+      _(verified 2026-07-28: new `scanCrtIntensity` (0-1, default 0.6)
+      persisted setting with a Settings-modal slider; `ScanCrtFilter.tsx`
+      builds the SVG chain (`feDisplacementMap` fed by a genuinely radial
+      gradient → chromatic fringe via three `feColorMatrix`+`feOffset`+
+      `feBlend` channel splits → `feGaussianBlur` bloom screened back over
+      the crisp result), applied via `filter: url(#id)` to a `.graphicsLayer`
+      that holds only the heat canvas, the baseline, and the tick *marks* —
+      chapter number/name text and every hit-target/readout render as later,
+      unfiltered siblings, so nothing legible is ever warped (a deliberately
+      more conservative split than the decisions entry's literal "the strip
+      and its graphics" — labels/readouts inside the strip's own DOM
+      subtree are excluded too, not just the top-level instrument readouts,
+      since warping the chapter or hover-readout text would fail "all text
+      still passes contrast" for the same reason warping the top readouts
+      would). SPEC-GAP: the radial gradient feeding the displacement map is
+      genuinely radially *symmetric* (grayscale, center→edge), so the warp
+      isn't a mathematically perfect outward bulge — every pixel's x/y
+      displacement derives from the same scalar, giving a diagonal-biased
+      bow rather than true radial — but combined with the bloom and
+      vignette it reads as a CRT face bowing more at the edges than the
+      center, which is the actual ask; a directionally-correct version
+      would need a hand-built two-channel gradient image, not a native SVG
+      `<radialGradient>`. Reduced motion (and intensity 0) skip the filter,
+      the `ScanCrtFilter` element, and the vignette div entirely — live
+      Playwright confirmed `filter: none` and zero vignette elements under
+      `reducedMotion: "reduce"` while the heat field (a separate task,
+      below) still drew. Live pass also confirmed the SVG
+      `feDisplacementMap` element exists and the graphics layer's computed
+      `filter` resolves to a real `url(#...)` at default intensity, with
+      zero console errors.)_
+- [x] **Chapter timeline.** Replace the current arbitrary ticks with a real chapter
       axis: chapters by number, with a toggle to show names where the EPUB provides
       them. Handle the crowded case (many short chapters) by thinning labels, not by
       overlapping them.
       _Acceptance: tick count matches the book's real chapter count; numbers are
       always readable; the name toggle degrades gracefully on a book with 40+
       chapters._
-- [ ] **Bleeding heat field.** Replace discrete bands with a continuous density field
+      _(verified 2026-07-28: chapter names didn't exist anywhere server-side
+      before this — added NCX (`toc.ncx`) parsing to `library/epub.ts`
+      (`extractChapterTitles`), captured at import time into
+      `resource.metadata.chapterTitles` (spineIndex → title, first navPoint
+      per href wins, since a title/subtitle pair or a chapter/license pair
+      can share one spine href via different `#fragments` — both fixtures
+      do). `buildScanData` (scan.ts) now emits a plain 1-based
+      `chapterNumber` for every spine section unconditionally plus
+      `title: string | null` from that map — numbers never depend on the
+      EPUB providing anything, so they can't fail to degrade. SPEC-GAP:
+      EPUB3 `nav.xhtml` isn't parsed, only the EPUB2 NCX — no fixture or
+      real book imported so far uses nav.xhtml, and a book without a
+      parseable NCX just gets numbers with no names (the toggle's own
+      documented fallback), not a crash; noted in NOTES.md. Client
+      (`chapterAxis.ts`, unit-tested — 7/7, incl. a synthetic 40-chapter
+      case confirming label count drops well below the raw chapter count at
+      a narrow width) always renders every chapter's tick mark and thins
+      only the *label* by greedy min-gap-in-px, with a wider minimum gap in
+      name mode than number mode (names need more room). Live-verified
+      against a real re-imported Metamorphosis (its NCX has 6 navPoints
+      across 4 distinct hrefs — a title/subtitle pair and a chapter/license
+      pair collapse to one each): default view showed ticks "3"/"4"/"5"
+      (chapter 2's tick sits at 0% next to the cover and is suppressed, same
+      pre-existing rule as before); toggling the new "№/Names" pill (only
+      rendered when at least one chapter actually has a title) live-updated
+      the same ticks to "I"/"II"/"III" pulled straight from the real NCX.)_
+- [x] **Bleeding heat field.** Replace discrete bands with a continuous density field
       on canvas: each highlight contributes a gaussian bloom, summed across the book
       and mapped through a cool→hot ramp, so clusters bleed together with no discrete
       markings. Intensity keeps its current meaning (note length / thread depth).
@@ -1231,10 +1296,71 @@ the 2026-07-20 decisions entry.)_
       visible edges; an isolated highlight is a soft point; hover/click/filter/search
       behaviour is unchanged from v1.5; the field redraws correctly on filter changes
       and window resize._
-- [ ] **Verify:** open the scan on a book with a dozen highlights in clusters — the
+      _(verified 2026-07-28: `heatField.ts`'s `drawHeatField` — a two-pass
+      canvas technique: every highlight paints a same-colour (white) radial
+      blob onto an offscreen canvas with `globalCompositeOperation:
+      "lighter"`, which sums *only the alpha channel* into a genuine 0-1
+      density value per pixel (RGB stays white throughout since every blob
+      is the same colour); a second pass walks the pixel buffer converting
+      density → a 5-stop cool(navy)→hot(yellow) ramp and uses the density
+      itself as final opacity, then `putImageData`s the result — a real
+      field, not an approximation via layered CSS gradients. The old
+      `.band` buttons are unchanged in position/size/handlers, just
+      `background`/`box-shadow` stripped to `transparent`/`none` so only
+      the (still currentColor-drawing) dog-ear stays visible on them — they
+      remain the real hit-targets, positioned at the same decluttered
+      x-coordinates as before; the *field* plots each highlight at its true
+      `positionPercent` instead (decoupled on purpose — bleeding into one
+      cluster is the whole point, while hit-targets still need to stay
+      individually clickable). Weight reuses the exact pre-existing
+      `threadDepth` calc (thread message count, clamped 0-1) with a 0.28
+      floor so a fresh 0-message highlight still paints a visible soft
+      point rather than nothing; a dimmed/filtered-out highlight's weight
+      is multiplied by the same 0.22 the band's own dimmed opacity already
+      uses, so the field and the bands agree. Live-verified against 6 real
+      highlights (4 tightly clustered — all within a ~0.001 positionPercent
+      band — plus 2 isolated, with seeded thread depths of 0/2/4/8
+      messages): the canvas held thousands of non-transparent pixels
+      (density genuinely painted, not empty); hovering and clicking a band
+      still opened its readout and, on click, navigated into the reader via
+      the airlock exactly as before; filtering to a single kind dimmed 5/6
+      bands (`.dimmed` class, unchanged CSS/logic) *and* measurably reduced
+      the field's bright-pixel count (9905 → 7216), confirming the redraw
+      reacts to filter state, not just initial load; zero console errors
+      across the whole pass.)_
+- [x] **Verify:** open the scan on a book with a dozen highlights in clusters — the
       heat reads at a glance, every readout is legible through the CRT treatment, and
       every v1.5 interaction (hover, click-to-jump, filter, search, stars, tags) still
       works.
+      _(verified 2026-07-28: one consolidated live Playwright pass (plus a
+      second, separate pass isolating the filter/dim interaction) against a
+      real re-imported Metamorphosis EPUB — re-imported rather than reusing
+      an already-imported fixture because chapter titles only exist on
+      resources imported after this session's epub.ts change
+      (immutable-on-import, CLAUDE.md decision 5); a byte-distinct copy (one
+      extra harmless zip entry) was used so it became a genuinely new
+      content-addressed resource rather than deduping onto the existing one.
+      6 highlights seeded via the real API (4 tightly clustered, 2 isolated,
+      varied thread depth via direct message-row seeding since generating
+      real LLM answers wasn't needed to exercise thread-depth-driven
+      weight) plus one starred (importance 3) for good measure. Confirmed
+      together: fullscreen framing, both CRT states (on with a real
+      `url(#...)` filter + vignette, off under reduced motion with the
+      field still drawing), the chapter number/name toggle against the
+      book's real NCX, the heat field's non-empty pixel data, and every
+      carried-over v1.5 interaction (hover readout, click-to-jump into the
+      reader, kind filtering dimming bands *and* visibly changing the
+      field). Did not separately re-verify star/tag persistence or
+      keyboard reachability in this pass — those are unchanged code paths
+      already covered live in M9's own verify, and this session's changes
+      never touched `ImportanceStars`/`TagEditor` or their wiring. 150/150
+      tests across all four packages (11 shared + 100 server + 39 web,
+      including 7 new `chapterAxis.test.ts` cases and 2 new `epub.test.ts`/
+      `scan.test.ts` cases each), `pnpm build` clean across shared/server/
+      web. Cleaned up the verification resource (highlights, threads,
+      messages, resource row, and the stored `.epub`) from the shared dev
+      database afterward — library back to its original 4 resources. M15
+      is whole — on to M16.)_
 
 ### M16 — The paper fold (Apple Books curl)
 

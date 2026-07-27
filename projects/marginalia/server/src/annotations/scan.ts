@@ -1,4 +1,3 @@
-import path from "node:path";
 import type Database from "better-sqlite3";
 import type { ScanChapter, ScanData, ScanHighlight } from "@marginalia/shared";
 import { getReadingPosition, getResourceById, getResourceTextSections } from "../library/store.js";
@@ -6,10 +5,6 @@ import { listHighlightsWithThreadsForResource } from "./highlights.js";
 import { listMessagesForThread } from "./threads.js";
 import { listTagsByHighlightId } from "./tags.js";
 import { computeHighlightPositionPercent } from "./position.js";
-
-function chapterLabel(href: string): string {
-  return path.posix.basename(href).replace(/\.x?html?$/i, "");
-}
 
 function firstLine(text: string, maxLength = 140): string {
   const line = text.split("\n").find((l) => l.trim().length > 0) ?? "";
@@ -30,17 +25,23 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
   const sections = getResourceTextSections(db, resourceId);
   const totalLength = sections.reduce((sum, s) => sum + s.text.length, 0);
 
+  // M15 "real chapter axis": numbers are always available (a plain 1-based
+  // sequence over spine order); names come from the EPUB's own NCX where its
+  // import captured one for this spine index (library/epub.ts) — often not,
+  // for front/back matter never listed in a table of contents.
+  const chapterTitles = resource.metadata.chapterTitles ?? {};
   const chapters: ScanChapter[] = [];
   let cursor = 0;
-  for (const section of sections) {
+  sections.forEach((section, index) => {
     chapters.push({
       spineIndex: section.spineIndex,
-      label: chapterLabel(section.href),
+      chapterNumber: index + 1,
+      title: chapterTitles[String(section.spineIndex)] ?? null,
       startPercent: totalLength > 0 ? cursor / totalLength : 0,
       lengthPercent: totalLength > 0 ? section.text.length / totalLength : 0,
     });
     cursor += section.text.length;
-  }
+  });
 
   const highlightRows = listHighlightsWithThreadsForResource(db, resourceId);
   const tagsByHighlight = listTagsByHighlightId(db, resourceId);

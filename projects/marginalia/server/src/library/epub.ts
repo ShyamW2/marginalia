@@ -18,6 +18,7 @@ export interface ExtractedEpub {
 
 interface OpfManifestItem {
   href: string; // resolved to a path inside the zip
+  mediaType?: string;
 }
 
 interface OpfResult {
@@ -58,12 +59,94 @@ export function extractEpub(buffer: Buffer): ExtractedEpub {
   if (opf.publisher) metadata.publisher = opf.publisher;
   if (opf.coverHref) metadata.coverHref = opf.coverHref;
 
+  const chapterTitles = extractChapterTitles(zip, opf.manifest, spine);
+  if (Object.keys(chapterTitles).length > 0) metadata.chapterTitles = chapterTitles;
+
   return {
     title: opf.title,
     author: opf.author,
     metadata,
     spine,
   };
+}
+
+/**
+ * M15 "real chapter axis" (TASKS.md): the scan needs actual chapter names,
+ * not the raw spine filename it showed before. Titles come from the EPUB's
+ * own table of contents (NCX `navMap` — every fixture and every Gutenberg
+ * book so far uses this) mapped onto spine indices by href, first title
+ * per href wins (a navPoint list can have several entries pointing at the
+ * same file via different #fragments, e.g. a title page and its subtitle).
+ * SPEC-GAP: EPUB3 `nav.xhtml` (`properties="nav"`) isn't parsed — no fixture
+ * or real book imported so far uses it; a book without a parseable NCX
+ * simply gets numbers with no names, which is exactly the toggle's
+ * documented fallback, not a crash. See NOTES.md.
+ */
+function extractChapterTitles(
+  zip: AdmZip,
+  manifest: Map<string, OpfManifestItem>,
+  spine: ExtractedSpineItem[],
+): Record<string, string> {
+  const ncxItem = [...manifest.values()].find(
+    (item) => item.mediaType === "application/x-dtbncx+xml",
+  );
+  if (!ncxItem) return {};
+
+  let ncxXml: string;
+  try {
+    ncxXml = readZipText(zip, ncxItem.href);
+  } catch {
+    return {};
+  }
+
+  const ncxDir = path.posix.dirname(ncxItem.href);
+  const titlesByHref = new Map<string, string>();
+
+  let capturingLabel = false;
+  let pendingLabel = "";
+  let pendingHref: string | null = null;
+
+  const parser = new Parser(
+    {
+      onopentag(name, attribs) {
+        const local = localName(name).toLowerCase();
+        if (local === "navpoint") {
+          pendingHref = null;
+          pendingLabel = "";
+        } else if (local === "text") {
+          capturingLabel = true;
+        } else if (local === "content" && attribs.src && !pendingHref) {
+          pendingHref = resolveZipPath(ncxDir, attribs.src);
+        }
+      },
+      ontext(text) {
+        if (capturingLabel) pendingLabel += text;
+      },
+      onclosetag(name) {
+        const local = localName(name).toLowerCase();
+        if (local === "text") {
+          capturingLabel = false;
+        } else if (local === "navpoint") {
+          const title = pendingLabel.trim();
+          if (pendingHref && title && !titlesByHref.has(pendingHref)) {
+            titlesByHref.set(pendingHref, title);
+          }
+          pendingHref = null;
+          pendingLabel = "";
+        }
+      },
+    },
+    { xmlMode: true },
+  );
+  parser.write(ncxXml);
+  parser.end();
+
+  const chapterTitles: Record<string, string> = {};
+  for (const item of spine) {
+    const title = titlesByHref.get(item.href);
+    if (title) chapterTitles[String(item.spineIndex)] = title;
+  }
+  return chapterTitles;
 }
 
 function readZipText(zip: AdmZip, entryName: string): string {
@@ -173,6 +256,7 @@ function parseOpf(xml: string, opfDir: string): OpfResult {
         } else if (local === "item" && attribs.id && attribs.href) {
           manifest.set(attribs.id, {
             href: resolveZipPath(opfDir, attribs.href),
+            mediaType: attribs["media-type"],
           });
         } else if (local === "itemref" && attribs.idref) {
           spineIdRefs.push(attribs.idref);

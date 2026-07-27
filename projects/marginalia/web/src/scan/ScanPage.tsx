@@ -4,10 +4,22 @@ import { useReducedMotion } from "motion/react";
 import type { HighlightImportance, HighlightKind, ScanData, ScanHighlight } from "@marginalia/shared";
 import { playAirlock } from "../app/airlockBus.js";
 import { updateHighlightImportance, updateHighlightTags } from "../highlights/highlightMeta.js";
+import { onSettingsSaved } from "../settings/settingsBus.js";
 import { HeatStrip } from "./HeatStrip.js";
 import { RevisitQueue } from "./RevisitQueue.js";
 import { KIND_ORDER, phosphorHue } from "./scanPalette.js";
 import styles from "./ScanPage.module.css";
+
+async function fetchScanCrtIntensity(): Promise<number> {
+  try {
+    const res = await fetch("/api/settings");
+    if (!res.ok) return 0.6;
+    const settings = (await res.json()) as { scanCrtIntensity: number };
+    return settings.scanCrtIntensity;
+  } catch {
+    return 0.6;
+  }
+}
 
 interface ScanLocationState {
   viaAirlock?: boolean;
@@ -58,6 +70,12 @@ export function ScanPage() {
   const [filterKind, setFilterKind] = useState<HighlightKind | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
+  const [crtIntensity, setCrtIntensity] = useState(0.6);
+
+  useEffect(() => {
+    fetchScanCrtIntensity().then(setCrtIntensity);
+    return onSettingsSaved((settings) => setCrtIntensity(settings.scanCrtIntensity));
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -277,6 +295,8 @@ export function ScanPage() {
             chapters={data.chapters}
             highlights={data.highlights}
             litIds={litIds}
+            crtIntensity={crtIntensity}
+            reducedMotion={reducedMotion}
             onOpen={handleOpenHighlight}
             onImportanceChange={handleImportanceChange}
             onTagsChange={handleTagsChange}

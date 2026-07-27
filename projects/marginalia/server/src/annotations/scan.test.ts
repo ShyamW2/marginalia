@@ -7,11 +7,11 @@ import { buildScanData } from "./scan.js";
 
 type Db = ReturnType<typeof createDb>;
 
-function seedResource(db: Db, id: string) {
+function seedResource(db: Db, id: string, metadata: Record<string, unknown> = {}) {
   db.prepare(
     `INSERT INTO resources (id, title, author, format, file_path, metadata, imported_at)
-     VALUES (@id, 'Title', NULL, 'epub', '/tmp/x.epub', '{}', @now)`,
-  ).run({ id, now: new Date().toISOString() });
+     VALUES (@id, 'Title', NULL, 'epub', '/tmp/x.epub', @metadata, @now)`,
+  ).run({ id, metadata: JSON.stringify(metadata), now: new Date().toISOString() });
 }
 
 function seedSection(db: Db, resourceId: string, spineIndex: number, text: string) {
@@ -36,16 +36,26 @@ describe("buildScanData", () => {
     expect(buildScanData(db, "missing")).toBeUndefined();
   });
 
-  it("computes chapter tick positions from spine section lengths", () => {
+  it("computes chapter tick positions from spine section lengths, numbered 1-based", () => {
     seedResource(db, "res-1");
     seedSection(db, "res-1", 0, "a".repeat(30));
     seedSection(db, "res-1", 1, "b".repeat(70));
 
     const data = buildScanData(db, "res-1")!;
     expect(data.chapters).toEqual([
-      { spineIndex: 0, label: "chapter-0", startPercent: 0, lengthPercent: 0.3 },
-      { spineIndex: 1, label: "chapter-1", startPercent: 0.3, lengthPercent: 0.7 },
+      { spineIndex: 0, chapterNumber: 1, title: null, startPercent: 0, lengthPercent: 0.3 },
+      { spineIndex: 1, chapterNumber: 2, title: null, startPercent: 0.3, lengthPercent: 0.7 },
     ]);
+  });
+
+  it("resolves a chapter's title from the resource's NCX-derived metadata by spine index", () => {
+    seedResource(db, "res-1", { chapterTitles: { "1": "The Awakening" } });
+    seedSection(db, "res-1", 0, "a".repeat(30));
+    seedSection(db, "res-1", 1, "b".repeat(70));
+
+    const data = buildScanData(db, "res-1")!;
+    expect(data.chapters[0]!.title).toBeNull();
+    expect(data.chapters[1]!.title).toBe("The Awakening");
   });
 
   it("assembles a highlight's kind, importance, tags, position, and thread preview", () => {

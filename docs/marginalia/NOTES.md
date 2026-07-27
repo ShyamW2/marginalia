@@ -1313,3 +1313,82 @@ fixture:
 - Cleaned up afterward: `readerMargin` back to "normal", `spreadMode` back to
   "single", and the dragged highlight's `panelDx`/`panelDy` back to `{0, 0}` on the
   shared dev database.
+
+## M15 — the Scan instrument
+
+Two SPEC-GAPs from this milestone, both deliberate boring choices, not oversights:
+
+1. **Chapter titles only come from the EPUB2 NCX (`toc.ncx`), not EPUB3
+   `nav.xhtml`.** Real chapter names needed *something* server-side to parse — nothing
+   existed before this milestone, the scan deliberately never loads epub.js
+   (`buildScanData`'s whole point is instant load without touching it). Both fixtures,
+   and every real book imported into this dev environment so far, are Gutenberg-style
+   EPUB2 with an NCX. A book that only ships an EPUB3 nav document gets numbers with no
+   names — exactly the toggle's own documented fallback, not a crash — so this degrades
+   safely rather than needing to be caught before it ships. Worth adding if a real EPUB3
+   book without an NCX shows up.
+2. **The CRT barrel warp isn't a mathematically correct outward bulge.** The decisions
+   entry specifically asks for `feDisplacementMap` "driven by a radial gradient." A true
+   lens-bulge needs the x and y displacement channels driven by two *different*
+   direction-aware gradients (something that pushes right on the right half and left on
+   the left half, and separately up/down top/bottom) — that's not expressible with a
+   single native SVG `<radialGradient>`, which is grayscale and radially symmetric by
+   definition. Feeding that same symmetric value into both the R (x) and G (y) channels
+   means every pixel's displacement vector is diagonal, not radial — so the strip bows
+   more at the edges than the center (the actual visual ask) with a slight diagonal skew
+   rather than a clean lens effect. Combined with the bloom and vignette it reads as CRT
+   distortion at a glance; a mathematically correct version would need a hand-built
+   two-channel gradient image (e.g. rendered once to an offscreen canvas and supplied
+   via `feImage`), which felt like real engineering for an effect whose own spec caps it
+   at "subtle."
+
+The bleeding heat field's technique is worth recording since it's reused wherever a
+future density-style effect is needed: paint every point as a *same-colored* radial
+blob with `globalCompositeOperation: "lighter"` onto an offscreen canvas — because
+every blob is identical in color, additive blending can only grow the alpha channel
+(clamped at 1), so the offscreen canvas's alpha channel *is* a real 0-1 density field
+with no color math needed in the accumulation pass. A second pass walks the pixel
+buffer converting density → a cool→hot color via a small stop-based ramp and uses the
+density itself as final opacity, then `putImageData`s straight onto the visible canvas
+(bypassing any composite mode, so there's no double-blending against whatever was
+already drawn). This is cheap enough to redraw on every filter change or resize without
+a frame-budget concern, since it only ever runs on data change, not per animation frame.
+
+### Verification method
+
+Real `pnpm dev` (a second, unrelated dev server instance from an earlier session was
+already running on this box and kept serving `/api` throughout — this session's own
+`pnpm dev` invocation lost the port race, which is why the confirmed pass below used
+whichever instance held :5175; both were running this session's code via `tsx watch`'s
+hot reload either way), driven by an ad hoc `playwright-core` install in the scratchpad
+(not a project dependency — browsers were already cached from a prior `npx playwright
+install`), headless Chromium:
+- Re-imported the real Metamorphosis fixture with one extra harmless zip entry added
+  (a distinct sha256 → a genuinely new, separately-cleaned-up resource) specifically so
+  it would pick up this session's new NCX chapter-title extraction — the existing
+  fixture resources in the shared dev library predate that code (immutable-on-import).
+- Seeded 6 real highlights via the actual `POST /api/highlights` API (4 tightly
+  clustered, 2 isolated) and varied thread depth by inserting `messages` rows directly
+  (0/2/4/8 per highlight) — skipped a real LLM round trip since only the *count* was
+  needed to exercise the heat field's weight calculation, not real answer content.
+- Confirmed via `page.evaluate` reading real computed styles and canvas pixel data, not
+  just element presence: `.page`'s computed `max-width` is `none` at a 1400px viewport;
+  the graphics layer's computed `filter` resolves to a real `url(#...)` normally and to
+  `none` under `reducedMotion: "reduce"`; the heat canvas holds thousands of non-zero-
+  alpha pixels both with and without reduced motion; a kind filter both toggled the
+  `.dimmed` class on 5/6 bands *and* measurably lowered the canvas's bright-pixel count
+  (9905 → 7216), confirming the field genuinely redraws on filter state rather than only
+  on first paint.
+- Chapter axis: confirmed the default view's tick labels are plain numbers, and that
+  clicking the "№/Names" toggle live-swaps them for the real NCX titles ("I", "II",
+  "III") pulled from the freshly-imported resource's `chapterTitles` metadata.
+- Interaction regressions: hovered a clustered band (readout appeared, matching v1.5)
+  and clicked an isolated one (navigated into the reader via the airlock, matching
+  v1.5) — had to move the pointer away from the first hover before the second click,
+  since a hover readout's own tag-input field can sit on top of an immediately adjacent
+  clustered band at this fixture's real spacing; not a regression this session
+  introduced (the bands' hit-target geometry is unchanged from M9), just a real
+  precondition for testing two clustered bands back to back.
+- Cleaned up afterward: deleted the seeded highlights/threads/messages, the resource
+  row, and its stored `.epub` file directly from the shared dev database and
+  `data/library/` — library confirmed back to its original 4 resources.

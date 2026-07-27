@@ -16,6 +16,57 @@
   cursor: default;
 }
 
+/* M15: the only part of the strip that carries the CRT filter (barrel warp,
+   bloom, chromatic fringe) — never the chapter text or the interactive
+   hit-targets/readouts, which are the strip's direct children instead. */
+.graphicsLayer {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.heatCanvas {
+  position: absolute;
+  inset: 0;
+}
+
+.vignette {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.65) 100%);
+}
+
+.chapterModeToggle {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 30;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  padding: 0.2rem 0.6rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.65rem;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.chapterModeToggle:hover,
+.chapterModeToggle[aria-pressed="true"] {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.chapterModeToggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 .baseline {
   position: absolute;
   left: 0;
@@ -52,10 +103,15 @@
 }
 
 .band {
+  /* M15: the visible glow lives in the heat field canvas now — this is a
+     precisely-positioned but invisible hit-target (hover/focus/click), not
+     a painted bar. `color` is still set inline per-highlight so `.dogEar`
+     (which draws in currentColor) stays visible. */
   position: absolute;
   bottom: 48px;
   left: 0;
   width: 9px;
+  background: transparent;
   transform: translateX(-50%);
   border-radius: 3px 3px 1px 1px;
   cursor: pointer;
