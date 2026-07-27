@@ -188,11 +188,16 @@ async function fetchPosition(
   return (await res.json()) as ReadingPosition | null;
 }
 
-function savePosition(resourceId: string, location: string): void {
+function savePosition(
+  resourceId: string,
+  location: string,
+  spineIndex: number | null,
+  percent: number | null,
+): void {
   fetch(`/api/resources/${resourceId}/position`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ location }),
+    body: JSON.stringify({ location, spineIndex, percent }),
   }).catch(() => {
     // best-effort — losing one position write isn't worth surfacing an error
   });
@@ -776,7 +781,12 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
 
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = window.setTimeout(() => {
-        savePosition(resourceId, location.start.cfi);
+        savePosition(
+          resourceId,
+          location.start.cfi,
+          location.start.index,
+          typeof pct === "number" ? pct * 100 : null,
+        );
       }, POSITION_SAVE_DEBOUNCE_MS);
     }
     rendition.on("relocated", handleRelocated);

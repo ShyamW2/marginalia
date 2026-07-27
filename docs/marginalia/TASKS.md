@@ -1574,7 +1574,7 @@ cast scan. Build it once.
 
 #### Context plumbing (independent of the digest — do these first)
 
-- [ ] **Label sections with real chapter titles.** `llm/context.ts` renders sections as
+- [x] **Label sections with real chapter titles.** `llm/context.ts` renders sections as
       `--- [section 4] ---`, so the model cannot reason about or cite structure. Use the
       TOC titles already resolved in the reader (`reader/toc.ts` has the flattening
       logic; the server needs its own path to the same data from the OPF/NCX). Falls back
@@ -1582,18 +1582,64 @@ cast scan. Build it once.
       _Acceptance: context contains real chapter names; a question about "chapter II"
       gets an answer that cites it correctly; the context builder's determinism tests
       still pass (same input → byte-identical context, which caching depends on)._
-- [ ] **Send the reading position, and don't spoil.** The model currently gets the whole
+      _(verified 2026-07-28: SPEC-GAP avoided rather than hit — M15 already
+      populates `resource.metadata.chapterTitles` (spineIndex -> NCX title) at
+      import, so no new server-side OPF/NCX parsing was needed; `buildContext`
+      just takes it as an optional input and labels
+      `--- [section 4: Chapter Name] ---`, falling back to the bare number for
+      sections the NCX doesn't name (front/back matter, or books with no
+      NCX). Determinism is preserved by construction — chapterTitles is
+      static per-book metadata, not per-request state. 3 new unit tests
+      (labeled, unlabeled-fallback, mixed) plus the existing determinism/
+      windowing tests all pass. No live LLM was available in this sandboxed
+      session (no `claude` CLI, no API key, no dev `data/` dir) to verify a
+      real "cites Chapter II correctly" answer — that's still worth doing
+      with a live provider before fully trusting this task done.)_
+- [x] **Send the reading position, and don't spoil.** The model currently gets the whole
       book including the ending and no signal about where the reader is. Ship the current
       position with the question and instruct it not to reveal what happens after that
       point unless explicitly asked. **Highest value-per-line change in this milestone.**
       _Acceptance: ask "what happens to this character?" from 20% into a fixture book —
       the answer stays behind the reading position and says so, rather than summarising
       the ending; asking directly for spoilers still works._
-- [ ] **Surface silent windowing.** Past the context budget, `selectWindow` quietly drops
+      _(verified 2026-07-28: SPEC-GAP — deriving spineIndex/percent from a CFI
+      server-side would mean reimplementing epub.js's own idref-dependent CFI
+      parser from scratch (fragile, and this codebase already tried to avoid
+      that class of bug in M9/NOTES.md); instead the reader captures both at
+      the exact point it already knows them precisely (the `relocated`
+      handler, same values that already drive the progress readout) and
+      ships them alongside the CFI on every position save (additive
+      migration v7: `reading_state.spine_index`/`percent`, both nullable —
+      an old or not-yet-generated-locations row just means "no known
+      position", not broken). The position line rides in the *volatile* user
+      message, never the cached `instructions`/`bookContext` blocks (a
+      dedicated unit test asserts this directly — putting it in a cached
+      block would silently break cross-question caching, which is the whole
+      point of the two-block system); the "don't spoil" instruction itself
+      is static text in `instructions`, safe to cache. No live LLM available
+      in this sandboxed session to verify actual spoiler-avoidance behavior
+      against a real model — the plumbing (position captured, persisted,
+      and threaded into the right, uncached slot) is unit-tested and
+      type-checked, not behaviorally confirmed against a live answer.)_
+- [x] **Surface silent windowing.** Past the context budget, `selectWindow` quietly drops
       distant sections. When a question is answered against a window rather than the
       whole book, say so in the thread — quietly, once, not as an error.
       _Acceptance: on a book that exceeds the budget the thread shows the notice and the
       answer still lands; on a book that fits, no notice ever appears._
+      _(verified 2026-07-28: `buildContext` now returns `windowed: boolean`;
+      the threads route turns that into a `contextNote` string persisted on
+      the assistant message only (additive migration v8:
+      `messages.context_note`, nullable, never set on user messages) and
+      streamed in the SSE `done` event so the client doesn't need a second
+      fetch. `ThreadPanel` renders it as a quiet dashed-border caption under
+      the answer — visually distinct from `.errorBox`, matching "not as an
+      error". Built as a small generic mechanism (a per-answer note string)
+      deliberately reusable by the later "answer transparency" task rather
+      than a single-purpose boolean flag. Unit-tested (`windowed` true/false
+      cases) and the SSE contract's zod schema updated + its own smoke test
+      fixed. No live thread was driven against a real over-budget book in
+      this sandboxed session (no LLM available) — only the deterministic
+      plumbing is confirmed, not the on-screen result.)_
 
 #### Usage accounting (needed before running digests, not after)
 

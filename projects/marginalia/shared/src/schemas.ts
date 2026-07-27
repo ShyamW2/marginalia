@@ -71,12 +71,20 @@ export type ResourceSummary = z.infer<typeof ResourceSummarySchema>;
 export const ReadingPositionSchema = z.object({
   resourceId: z.string(),
   location: z.string(), // epub.js CFI
+  // M17: client-resolved spine index + whole-book percent at `location`,
+  // null on rows saved before M17 or when epub.js couldn't resolve them yet
+  // (e.g. locations not generated). Lets the LLM context builder warn
+  // itself off spoiling past where the reader actually is.
+  spineIndex: z.number().int().nonnegative().nullable(),
+  percent: z.number().min(0).max(100).nullable(),
   updatedAt: z.string(),
 });
 export type ReadingPosition = z.infer<typeof ReadingPositionSchema>;
 
 export const UpdateReadingPositionBodySchema = z.object({
   location: z.string().min(1),
+  spineIndex: z.number().int().nonnegative().nullable().optional(),
+  percent: z.number().min(0).max(100).nullable().optional(),
 });
 export type UpdateReadingPositionBody = z.infer<
   typeof UpdateReadingPositionBodySchema
@@ -203,6 +211,13 @@ export const MessageSchema = z.object({
   threadId: z.string(),
   role: MessageRoleSchema,
   content: z.string(),
+  // M17 "surface silent windowing": a short, human-readable note attached to
+  // an assistant answer when it was grounded in a window of the book rather
+  // than the whole text (or, later, a digest) — never set on user messages.
+  // Null on every answer that used the full book, so it never appears when
+  // it shouldn't (SPEC-GAP-adjacent transparency requirement, decisions.md
+  // 2026-07-28 later).
+  contextNote: z.string().nullable(),
   createdAt: z.string(),
 });
 export type Message = z.infer<typeof MessageSchema>;
@@ -239,7 +254,12 @@ export const ThreadStreamEventSchema = z.union([
   // none) to target follow-ups at `/api/threads/:id/messages` and to update
   // the margin rail's thread-summary state — added `threadId` here rather
   // than an extra round-trip fetch after every first message.
-  z.object({ done: z.literal(true), messageId: z.string(), threadId: z.string() }),
+  z.object({
+    done: z.literal(true),
+    messageId: z.string(),
+    threadId: z.string(),
+    contextNote: z.string().nullable(),
+  }),
   z.object({ error: z.string() }),
 ]);
 export type ThreadStreamEvent = z.infer<typeof ThreadStreamEventSchema>;

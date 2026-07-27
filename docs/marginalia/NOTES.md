@@ -1537,3 +1537,50 @@ accumulated highlights from prior sessions' live testing:
   dev database afterward (`readerMargin: "normal"`, `readerFontScale: 1`,
   `maxResponseTokens: 8192`, `spreadMode` left as found); the two test highlights
   created for the max-response-length check were deleted (cascading their threads).
+
+## M17 — the book digest & AI context
+
+- **No live LLM available in this session.** No `claude` CLI binary on this
+  machine, no API key configured, and no pre-existing `data/` directory (a
+  fresh checkout — the two-machine setup means dev data lives per-machine,
+  gitignored). Every M17 task below is unit-tested and type-checked but the
+  live-provider verification steps in TASKS.md's acceptance criteria
+  (real spoiler-avoidance behavior, real chapter-citing answers, a real
+  digest run against a live model) could not be run in this environment.
+  Treat those as outstanding until a session with a configured provider
+  drives them for real — same caveat M4 hit with the Anthropic path.
+- **Reading position: captured client-side, not parsed from CFI server-side.**
+  The obvious server-side approach — parse `spineIndex` out of the stored CFI
+  string directly (`epubcfi(/6/N!/4/2)`) — was rejected: the N-to-spineIndex
+  mapping depends on the package document's own idref ordering, which is
+  exactly what epub.js's `EpubCFI` class resolves against the book's spine at
+  runtime. Reimplementing that server-side without the manifest context risks
+  a silent off-by-one that only shows up on some books (echoes the M9 "stale
+  spineIndex" and "duplicate text disambiguation" bugs in this same class of
+  problem). Boring fix: capture `spineIndex`/`percent` once, client-side, at
+  the exact point the reader already computes them precisely (the
+  `relocated` handler — the same values already driving the progress %
+  readout) and persist them alongside the CFI. Additive migration v7,
+  both columns nullable so old rows/un-generated-locations just mean
+  "position unknown" rather than a broken read.
+- **Cache-safety of the position line was worth a dedicated test**, not just
+  code review: `context.test.ts` asserts the reading-position value never
+  appears in `bookContext` or `instructions` — only in the per-question user
+  message. Anthropic's prompt caching matches on the literal prefix bytes of
+  the `system` array, and `instructions` sits *before* the cached
+  `bookContext` block in that array — so volatile content in `instructions`
+  would have silently broken caching on every book, every question, forever,
+  and nothing except a cache-hit-rate regression over time would have shown
+  it. Easy to get wrong by "reasoning it should be fine since it's just a
+  short instruction line" instead of tracing where the cache breakpoint
+  actually sits.
+- **`context_note` built as a small generic mechanism, not a one-off boolean.**
+  The windowing-notice task needed exactly one string attached to an answer;
+  the later "answer transparency" task (context depth + chapters used) will
+  want richer per-answer metadata. Rather than ship a throwaway `windowed:
+  boolean` now and a separate mechanism later, `messages.context_note` is a
+  free-text column any future task can extend or compose into (a JSON blob
+  column is a legitimate later migration if transparency needs structure
+  beyond one string — not pre-built now since YAGNI, but flagged here so a
+  future session doesn't reinvent the "attach a note to an answer" wiring
+  from scratch).

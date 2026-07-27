@@ -2,7 +2,7 @@ import { ThreadStreamEventSchema } from "@marginalia/shared";
 
 export interface ThreadStreamHandlers {
   onText: (text: string) => void;
-  onDone: (messageId: string, threadId: string) => void;
+  onDone: (messageId: string, threadId: string, contextNote: string | null) => void;
   onError: (message: string) => void;
 }
 
@@ -88,6 +88,7 @@ function dispatchEvent(rawEvent: string, handlers: ThreadStreamHandlers): void {
   if (!event.success) return;
 
   if ("text" in event.data) handlers.onText(event.data.text);
-  else if ("done" in event.data) handlers.onDone(event.data.messageId, event.data.threadId);
-  else if ("error" in event.data) handlers.onError(event.data.error);
+  else if ("done" in event.data) {
+    handlers.onDone(event.data.messageId, event.data.threadId, event.data.contextNote);
+  } else if ("error" in event.data) handlers.onError(event.data.error);
 }

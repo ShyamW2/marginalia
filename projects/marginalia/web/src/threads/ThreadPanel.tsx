@@ -267,6 +267,7 @@ export function ThreadPanel({
         threadId: thread?.id ?? "",
         role: "user",
         content: trimmed,
+        contextNote: null,
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, optimisticUser]);
@@ -286,7 +287,7 @@ export function ThreadPanel({
           streamingTextRef.current += text;
           setStreamingText(streamingTextRef.current);
         },
-        onDone: (messageId, threadId) => {
+        onDone: (messageId, threadId, contextNote) => {
           setMessages((prev) => [
             ...prev,
             {
@@ -294,6 +295,7 @@ export function ThreadPanel({
               threadId,
               role: "assistant",
               content: streamingTextRef.current,
+              contextNote,
               createdAt: new Date().toISOString(),
             },
           ]);
@@ -431,6 +433,9 @@ export function ThreadPanel({
             {message.role === "user"
               ? displayableQuestion(message.content)
               : renderMarkdown(message.content)}
+            {message.role === "assistant" && message.contextNote && (
+              <div className={styles.contextNote}>{message.contextNote}</div>
+            )}
           </div>
         ))}
         {isStreaming && (

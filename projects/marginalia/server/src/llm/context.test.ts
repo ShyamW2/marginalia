@@ -61,6 +61,26 @@ describe("buildContext", () => {
     expect(includedSections.length).toBeGreaterThan(0);
   });
 
+  it("reports windowed:true only when the budget forced windowing", () => {
+    const fits = buildContext({
+      title: "Small Book",
+      author: null,
+      sections: makeSections(10, 100),
+      highlight,
+      contextTokens: 100_000,
+    });
+    expect(fits.windowed).toBe(false);
+
+    const tooBig = buildContext({
+      title: "Big Book",
+      author: null,
+      sections: makeSections(50, 1000),
+      highlight,
+      contextTokens: 1000,
+    });
+    expect(tooBig.windowed).toBe(true);
+  });
+
   it("centers the window on the highlight's spine section", () => {
     const sections = makeSections(50, 1000);
     const result = buildContext({
@@ -82,6 +102,52 @@ describe("buildContext", () => {
     // one extreme end of it (the window expands from the center outward).
     expect(5).toBeGreaterThanOrEqual(min);
     expect(5).toBeLessThanOrEqual(max);
+  });
+
+  it("labels sections with real chapter titles when available, falling back to the number", () => {
+    const sections = makeSections(3, 100);
+    const result = buildContext({
+      title: "Test Book",
+      author: "Test Author",
+      sections,
+      highlight,
+      contextTokens: 100_000,
+      chapterTitles: { "0": "Chapter One", "2": "Chapter Three" },
+    });
+
+    expect(result.bookContext).toContain("--- [section 0: Chapter One] ---");
+    expect(result.bookContext).toContain("--- [section 1] ---");
+    expect(result.bookContext).toContain("--- [section 2: Chapter Three] ---");
+  });
+
+  it("includes the reader's current position in the user message, not the cached blocks", () => {
+    const result = buildContext({
+      title: "Test Book",
+      author: "Test Author",
+      sections: makeSections(3, 100),
+      highlight,
+      contextTokens: 100_000,
+      chapterTitles: { "2": "Chapter Three" },
+      readingPosition: { spineIndex: 2, percent: 42.4 },
+    });
+
+    const message = result.userMessage("What happens next?");
+    expect(message).toContain("Reader's current position: 42% through the book");
+    expect(message).toContain("around section 2: Chapter Three");
+    // Volatile position data must never leak into the cacheable blocks.
+    expect(result.bookContext).not.toContain("current position");
+    expect(result.instructions).not.toContain("42");
+  });
+
+  it("omits the position line entirely when no position is known", () => {
+    const result = buildContext({
+      title: "Test Book",
+      author: "Test Author",
+      sections: makeSections(3, 100),
+      highlight,
+      contextTokens: 100_000,
+    });
+    expect(result.userMessage("Q")).not.toContain("current position");
   });
 
   it("renders the user message with the exact quote, context, and question", () => {

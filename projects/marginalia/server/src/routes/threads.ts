@@ -6,7 +6,11 @@ import {
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { getHighlightById } from "../annotations/highlights.js";
-import { getResourceById, getResourceTextSections } from "../library/store.js";
+import {
+  getReadingPosition,
+  getResourceById,
+  getResourceTextSections,
+} from "../library/store.js";
 import {
   createMessage,
   getOrCreateThread,
@@ -15,7 +19,7 @@ import {
   listMessagesForThread,
 } from "../annotations/threads.js";
 import { getProvider, LLMError, type LLMErrorCode, type LLMProvider } from "../llm/provider.js";
-import { buildContext } from "../llm/context.js";
+import { buildContext, WINDOWED_CONTEXT_NOTE } from "../llm/context.js";
 
 export const threadsRouter: Router = Router();
 
@@ -47,10 +51,11 @@ function persistExchange(
   threadId: string,
   userContent: string,
   assistantContent: string,
+  contextNote: string | null,
 ) {
   const run = db.transaction(() => {
     createMessage(db, threadId, "user", userContent);
-    return createMessage(db, threadId, "assistant", assistantContent);
+    return createMessage(db, threadId, "assistant", assistantContent, contextNote);
   });
   return run();
 }
@@ -70,6 +75,7 @@ async function streamThreadReply(
   bookContext: string,
   messages: { role: "user" | "assistant"; content: string }[],
   userContent: string,
+  contextNote: string | null,
 ): Promise<void> {
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream");
@@ -107,9 +113,15 @@ async function streamThreadReply(
       res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
     }
     if (!disconnected) {
-      const assistantMessage = persistExchange(db, threadId, userContent, fullText);
+      const assistantMessage = persistExchange(
+        db,
+        threadId,
+        userContent,
+        fullText,
+        contextNote,
+      );
       res.write(
-        `data: ${JSON.stringify({ done: true, messageId: assistantMessage.id, threadId })}\n\n`,
+        `data: ${JSON.stringify({ done: true, messageId: assistantMessage.id, threadId, contextNote })}\n\n`,
       );
     }
   } catch (err) {
@@ -155,12 +167,14 @@ threadsRouter.post("/", async (req, res) => {
   const priorMessages = listMessagesForThread(db, thread.id);
 
   const sections = getResourceTextSections(db, resource.id);
-  const { instructions, bookContext, userMessage } = buildContext({
+  const { instructions, bookContext, userMessage, windowed } = buildContext({
     title: resource.title,
     author: resource.author,
     sections,
     highlight,
     contextTokens: provider.capabilities().contextTokens,
+    chapterTitles: resource.metadata.chapterTitles,
+    readingPosition: getReadingPosition(db, resource.id) ?? null,
   });
 
   // The highlight-quote framing only belongs on the thread's first question —
@@ -181,6 +195,7 @@ threadsRouter.post("/", async (req, res) => {
     bookContext,
     providerMessages,
     userContent,
+    windowed ? WINDOWED_CONTEXT_NOTE : null,
   );
 });
 
@@ -217,12 +232,14 @@ threadsRouter.post("/:id/messages", async (req, res) => {
 
   const priorMessages = listMessagesForThread(db, thread.id);
   const sections = getResourceTextSections(db, resource.id);
-  const { instructions, bookContext } = buildContext({
+  const { instructions, bookContext, windowed } = buildContext({
     title: resource.title,
     author: resource.author,
     sections,
     highlight,
     contextTokens: provider.capabilities().contextTokens,
+    chapterTitles: resource.metadata.chapterTitles,
+    readingPosition: getReadingPosition(db, resource.id) ?? null,
   });
 
   const providerMessages = [
@@ -239,6 +256,7 @@ threadsRouter.post("/:id/messages", async (req, res) => {
     bookContext,
     providerMessages,
     question,
+    windowed ? WINDOWED_CONTEXT_NOTE : null,
   );
 });
 

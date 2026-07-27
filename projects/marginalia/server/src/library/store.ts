@@ -150,15 +150,23 @@ export function getReadingPosition(
 ): ReadingPosition | undefined {
   const row = db
     .prepare(
-      "SELECT resource_id, location, updated_at FROM reading_state WHERE resource_id = ?",
+      "SELECT resource_id, location, spine_index, percent, updated_at FROM reading_state WHERE resource_id = ?",
     )
     .get(resourceId) as
-    | { resource_id: string; location: string; updated_at: string }
+    | {
+        resource_id: string;
+        location: string;
+        spine_index: number | null;
+        percent: number | null;
+        updated_at: string;
+      }
     | undefined;
   if (!row) return undefined;
   return {
     resourceId: row.resource_id,
     location: row.location,
+    spineIndex: row.spine_index,
+    percent: row.percent,
     updatedAt: row.updated_at,
   };
 }
@@ -167,12 +175,15 @@ export function setReadingPosition(
   db: Database.Database,
   resourceId: string,
   location: string,
+  spineIndex: number | null = null,
+  percent: number | null = null,
 ): ReadingPosition {
   const updatedAt = new Date().toISOString();
   db.prepare(
-    `INSERT INTO reading_state (resource_id, location, updated_at)
-     VALUES (@resourceId, @location, @updatedAt)
-     ON CONFLICT (resource_id) DO UPDATE SET location = @location, updated_at = @updatedAt`,
-  ).run({ resourceId, location, updatedAt });
-  return { resourceId, location, updatedAt };
+    `INSERT INTO reading_state (resource_id, location, spine_index, percent, updated_at)
+     VALUES (@resourceId, @location, @spineIndex, @percent, @updatedAt)
+     ON CONFLICT (resource_id) DO UPDATE SET
+       location = @location, spine_index = @spineIndex, percent = @percent, updated_at = @updatedAt`,
+  ).run({ resourceId, location, spineIndex, percent, updatedAt });
+  return { resourceId, location, spineIndex, percent, updatedAt };
 }

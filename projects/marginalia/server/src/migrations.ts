@@ -163,4 +163,31 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE highlights ADD COLUMN panel_dy REAL NOT NULL DEFAULT 0;
     `,
   },
+  {
+    // M17 "send the reading position, and don't spoil" (docs/decisions.md
+    // 2026-07-28 later). Nullable: spineIndex/percent are resolved
+    // client-side from epub.js (the same computation the reader already
+    // does for the margin rail and TOC), not re-derived server-side from
+    // the CFI string, which would mean reimplementing epub.js's own
+    // idref-dependent CFI parser — the SPEC-GAP is capturing it once, at
+    // the point it's already known accurately, instead of guessing at it
+    // from primitives on the server. A pre-M17 row (or a client that hasn't
+    // reported these yet) simply has nulls, which context.ts treats as
+    // "no known position" — the answer is unrestricted, not broken.
+    version: 7,
+    sql: `
+      ALTER TABLE reading_state ADD COLUMN spine_index INTEGER;
+      ALTER TABLE reading_state ADD COLUMN percent REAL;
+    `,
+  },
+  {
+    // M17 "surface silent windowing": a nullable per-message note, set only
+    // on an assistant answer that was grounded in a window of the book
+    // (later, a digest) rather than the whole text — the transparency
+    // requirement decisions.md 2026-07-28 (later) calls non-negotiable.
+    version: 8,
+    sql: `
+      ALTER TABLE messages ADD COLUMN context_note TEXT;
+    `,
+  },
 ];

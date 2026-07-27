@@ -13,6 +13,7 @@ interface MessageRow {
   thread_id: string;
   role: string;
   content: string;
+  context_note: string | null;
   created_at: string;
 }
 
@@ -26,6 +27,7 @@ function rowToMessage(row: MessageRow): Message {
     threadId: row.thread_id,
     role: row.role as MessageRole,
     content: row.content,
+    contextNote: row.context_note,
     createdAt: row.created_at,
   };
 }
@@ -102,17 +104,19 @@ export function createMessage(
   threadId: string,
   role: MessageRole,
   content: string,
+  contextNote: string | null = null,
 ): Message {
   const message: Message = {
     id: crypto.randomUUID(),
     threadId,
     role,
     content,
+    contextNote,
     createdAt: new Date().toISOString(),
   };
   db.prepare(
-    `INSERT INTO messages (id, thread_id, role, content, created_at)
-     VALUES (@id, @threadId, @role, @content, @createdAt)`,
+    `INSERT INTO messages (id, thread_id, role, content, context_note, created_at)
+     VALUES (@id, @threadId, @role, @content, @contextNote, @createdAt)`,
   ).run(message);
   return message;
 }

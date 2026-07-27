@@ -43,6 +43,7 @@ describe("schemas smoke test", () => {
         done: true,
         messageId: "m1",
         threadId: "t1",
+        contextNote: null,
       }).success,
     ).toBe(true);
     expect(

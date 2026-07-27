@@ -116,6 +116,8 @@ resourcesRouter.put("/:id/position", (req, res) => {
     getDb(),
     req.params.id,
     parsed.data.location,
+    parsed.data.spineIndex ?? null,
+    parsed.data.percent ?? null,
   );
   res.json(position);
 });
