@@ -62,13 +62,17 @@ export function getProvider(db: Database.Database): LLMProvider | null {
 
   if (settings.provider === "anthropic") {
     if (!settings.anthropicApiKey) return null;
-    return new AnthropicProvider(settings.anthropicApiKey, settings.anthropicModel);
+    return new AnthropicProvider(
+      settings.anthropicApiKey,
+      settings.anthropicModel,
+      settings.maxResponseTokens,
+    );
   }
 
   if (settings.provider === "claude-agent") {
     // No key needed — the Agent SDK uses the machine's Claude Code login.
     // A missing/expired login surfaces as an LLMError("auth") at call time.
-    return new ClaudeAgentProvider(settings.claudeAgentModel);
+    return new ClaudeAgentProvider(settings.claudeAgentModel, settings.maxResponseTokens);
   }
 
   if (settings.provider === "openai-compatible") {
@@ -78,6 +82,7 @@ export function getProvider(db: Database.Database): LLMProvider | null {
       model: settings.openaiModel,
       apiKey: settings.openaiApiKey,
       contextTokens: settings.openaiContextTokens,
+      maxResponseTokens: settings.maxResponseTokens,
     });
   }
 

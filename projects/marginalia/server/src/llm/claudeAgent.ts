@@ -20,9 +20,11 @@ import {
 export class ClaudeAgentProvider implements LLMProvider {
   readonly id = "claude-agent" as const;
   private readonly model: string;
+  private readonly maxResponseTokens?: number;
 
-  constructor(model: string) {
+  constructor(model: string, maxResponseTokens?: number) {
     this.model = model;
+    this.maxResponseTokens = maxResponseTokens;
   }
 
   capabilities(): { contextTokens: number; supportsCaching: boolean } {
@@ -59,7 +61,12 @@ export class ClaudeAgentProvider implements LLMProvider {
         prompt,
         options: {
           ...this.baseOptions(req.signal),
-          systemPrompt: `${req.instructions}\n\n${req.bookContext}`,
+          // M16 "max response length": the Agent SDK exposes no `max_tokens`
+          // knob (decisions.md 2026-07-28) — the setting can only be
+          // *requested* here as a system-prompt instruction, never enforced
+          // the way the token-metered providers enforce it. The Settings UI
+          // must say so next to the field rather than implying a guarantee.
+          systemPrompt: `${req.instructions}${lengthInstruction(this.maxResponseTokens)}\n\n${req.bookContext}`,
           maxTurns: 1,
           includePartialMessages: true,
         },
@@ -149,6 +156,17 @@ export class ClaudeAgentProvider implements LLMProvider {
     }
     throw new LLMError("extract_parse_failed");
   }
+}
+
+/**
+ * A soft, prose-only stand-in for the `max_tokens` param this provider can't
+ * set. ~0.75 words/token is the rough Claude-tokenizer average for English
+ * prose — good enough for an instruction, not a real budget.
+ */
+function lengthInstruction(maxResponseTokens?: number): string {
+  if (!maxResponseTokens) return "";
+  const words = Math.round(maxResponseTokens * 0.75);
+  return `\n\nKeep your response under approximately ${maxResponseTokens} tokens (roughly ${words} words). This is a soft target you should aim for, not an enforced limit.`;
 }
 
 /**

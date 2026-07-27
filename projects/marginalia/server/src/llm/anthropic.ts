@@ -7,7 +7,15 @@ import {
   type LLMStreamRequest,
 } from "./provider.js";
 
-const THREAD_MAX_TOKENS = 8192;
+// M16 "max response length": THREAD_MAX_TOKENS became a persisted setting
+// (default unchanged, decisions.md 2026-07-28) — but only for the thread
+// *answer* path (stream()). SPEC-GAP: the task named this single constant,
+// which extract() also happened to reuse for its own, unrelated structured-
+// output ceiling (vault distillation, the M17 digest) — a low answer-length
+// setting truncating those would corrupt JSON the caller expects to parse,
+// which the acceptance criteria ("shortens answers") never asked for.
+// Keeping extract() on its own fixed budget; logged in NOTES.md.
+const EXTRACT_MAX_TOKENS = 8192;
 
 // Context window per model (see docs/marginalia/SPEC.md's LLM layer section).
 // Every current Claude model is 1M except the Haiku family, which caps at
@@ -37,10 +45,12 @@ export class AnthropicProvider implements LLMProvider {
   readonly id = "anthropic" as const;
   private readonly client: Anthropic;
   private readonly model: string;
+  private readonly maxResponseTokens: number;
 
-  constructor(apiKey: string, model: string) {
+  constructor(apiKey: string, model: string, maxResponseTokens = 8192) {
     this.client = new Anthropic({ apiKey });
     this.model = model;
+    this.maxResponseTokens = maxResponseTokens;
   }
 
   capabilities(): { contextTokens: number; supportsCaching: boolean } {
@@ -51,7 +61,7 @@ export class AnthropicProvider implements LLMProvider {
     const stream = this.client.messages.stream(
       {
         model: this.model,
-        max_tokens: THREAD_MAX_TOKENS,
+        max_tokens: this.maxResponseTokens,
         // Two-block system: stable instructions, then the large stable
         // book context with a cache breakpoint — follow-up questions on
         // the same book hit the cache (~0.1x input price). Never
@@ -96,7 +106,7 @@ export class AnthropicProvider implements LLMProvider {
     try {
       const message = await this.client.messages.parse({
         model: this.model,
-        max_tokens: THREAD_MAX_TOKENS,
+        max_tokens: EXTRACT_MAX_TOKENS,
         system: req.instructions,
         messages: [{ role: "user", content: req.input }],
         output_config: {

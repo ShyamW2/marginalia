@@ -1392,3 +1392,148 @@ install`), headless Chromium:
 - Cleaned up afterward: deleted the seeded highlights/threads/messages, the resource
   row, and its stored `.epub` file directly from the shared dev database and
   `data/library/` — library confirmed back to its original 4 resources.
+
+## M16 — reading QOL & bug fixes
+
+Two SPEC-GAPs worth recording, both real deviations from the task's literal wording,
+made deliberately rather than by oversight:
+
+1. **"Highlights pop on hover" is JS-driven, not a CSS `:hover` rule.** The task and
+   decisions.md both assumed an ordinary stylesheet rule targeting
+   `.marginalia-highlight:hover` would work since the mark's presentation attributes
+   lose to any real CSS rule. Verified live (an isolated pointer-events probe, not
+   just read the epub.js/marks-pane source) that this premise has a hole: the
+   marks-pane SVG root carries `pointer-events="none"` as a deliberate, load-bearing
+   attribute (removing it would let the overlay intercept mousedown over highlighted
+   text and kill native text selection there — exactly the regression M11's turn-zone
+   vignette rule and this task's own "hovering does not interfere with selecting text"
+   acceptance bullet both guard against). `pointer-events` is CSS-inherited, and
+   marks-pane never re-declares it on the `<g>`/`<rect>` marks, so the browser's
+   hit-testing skips them entirely — confirmed with a minimal `page.setContent()`
+   repro: `element.matches(':hover')` and `elementFromPoint` both prove real cursor
+   movement never reaches the mark at all, only a synthetic click clone via
+   marks-pane's own `proxyMouse` (which doesn't even proxy `mousemove`). Real `:hover`
+   genuinely cannot fire here without re-enabling pointer-events on the mark, which
+   reintroduces the selection-breaking regression. Fix: extended the *existing*
+   forwarded-mousemove handler (`handleContentMouseMove`, already used for M11's
+   turn-zone cursor) to geometrically hit-test the cursor against each rendered mark's
+   own `getBoundingClientRect()` and apply/clear a plain inline `fill-opacity`/
+   `mix-blend-mode` override directly — same "attribute styling only" architecture
+   `highlightKinds.ts` already documents, just triggered by JS instead of a pseudo-
+   class. A `.marginalia-highlight { transition: fill-opacity ... }` global rule
+   (`ReaderView.module.css`) makes the JS-driven change animate instead of snap;
+   `prefers-reduced-motion`'s existing blanket `*` transition-duration override in
+   `theme.css` covers it for free, no extra gating needed. Focus mode is respected for
+   free too: the hidden style sets `fill: transparent`, and the hover boost only ever
+   touches `fill-opacity`, so a transparent fill stays invisible at any opacity.
+2. **Max response length only governs the thread-answer path, not `extract()`.**
+   `THREAD_MAX_TOKENS` (named in the task) was actually two different budgets sharing
+   one constant by coincidence — the thread-answer `stream()` ceiling *and*
+   `extract()`'s structured-output ceiling (vault distillation, and pass 1 of the
+   future M17 digest). The task's own acceptance criteria only ever talks about
+   "answers" being shortened; a low answer-length setting silently truncating
+   `extract()`'s JSON output would corrupt vault publishing, which nothing asked for.
+   Split into a persisted `maxResponseTokens` setting (only wired into `stream()`) and
+   a fixed `EXTRACT_MAX_TOKENS = 8192` constant left exactly as it was, in both
+   `anthropic.ts` and `openaiCompat.ts`.
+
+### The margin-relayout bug — root cause, found live, not guessed
+
+The task explicitly forbade guessing between its two named candidates. Diagnosed with
+a real `pnpm dev` + Playwright pass against the Metamorphosis fixture, reading actual
+computed styles before/after a live Settings-driven margin change (isolated from the
+Settings modal's own scrollbar-toggling side effect by taking the "after" measurement
+*while the modal was still open*, so only the margin state change itself could be the
+cause): the CSS gap/padding recompute (`computeReaderGap` → `manager.settings.gap` →
+`manager.updateLayout()`) was already working correctly and instantly — neither
+candidate (a dead ResizeObserver, or `updateLayout()` not re-running `columns()`) was
+actually true. The real bug is a third thing, only visible once you're a few pages
+into the book (not sitting at CFI/scrollLeft 0): `updateLayout()` recomputes the
+column geometry but never repositions the iframe's own horizontal scroll offset for
+it, so the *old* pixel offset — correct under the old, narrower gap — now lands
+mid-column under the new one. Screenshotted the actual failure: the reader rendered
+two adjacent column-halves at once, text cut off on both edges, a genuinely broken
+page, even though every computed CSS value was already correct. Confirmed this is
+exactly why M11's own live-resize verification never caught it — that test happened
+from the book's first page (scrollLeft always 0, which stays valid under any column
+width), never from mid-book. Fixed with the task's own documented "known-good
+fallback": track the current CFI (`currentCfiRef`, updated from the existing
+`relocated` handler) and `rendition.display(currentCfiRef.current)` after the gap
+mutation, debounced ~120ms so a continuous window drag-resize settles once instead of
+re-displaying on every intermediate tick. Re-verified the identical live repro
+afterward — clean single-column render, correct new margin, no navigation needed.
+
+### Reading text size — coupled to the same gap machinery
+
+`readerFontScale` reuses `rendition.themes.fontSize()` (the sanctioned epub.js API,
+confirmed via source it patches already-rendered contents immediately, not just future
+ones) and, since `READER_TARGET_COLUMN_WIDTH` is only "~70ch at 16px", feeds into
+`computeReaderGap` the same way `readerMargin` does — including the exact same
+redisplay-after-relayout fix above, since a font-scale change moves the target column
+width without the container's own box size ever changing (so the ResizeObserver that
+margin changes ride for free has nothing to fire on). Factored the gap-apply +
+debounced-redisplay logic out of `handleContainerResize` into `applyGapForWidth`,
+reached from a dedicated `readerFontScale` effect via `applyGapForWidthRef` — the same
+"expose an effect-internal function via a ref" pattern `turnPageRef`/`chapterJumpRef`
+already use.
+
+### Verification method
+
+Real `pnpm dev` (server :5175, web :5176 — :5173-5175's web ports were already held by
+orphaned `vite` processes from an earlier, unrelated session; left them alone, just
+used whichever port my own instance actually bound), driven by an ad hoc
+`playwright-core` install pointed at this box's already-cached Chromium
+(`~/.cache/ms-playwright/chromium-1234`, a newer revision than the globally-installed
+`playwright-core` expected — passed `executablePath` explicitly rather than
+re-downloading), headless, against the real Metamorphosis fixture and its real
+accumulated highlights from prior sessions' live testing:
+- Arrow-key-after-drag: a real pointer drag-scrub + release, then confirmed
+  `document.activeElement` is `<body>` (not the button) and that a subsequent
+  `ArrowRight` changes the committed `%` (a real page turn, not a frozen dial preview)
+  — and, separately, that an explicit `.focus()` onto the button (the real keyboard
+  path) leaves the committed `%` *frozen* through `ArrowRight` and only changes it on
+  `Enter`, confirming both halves of the acceptance criterion, not just one.
+- Highlight hover: moved the real mouse onto a live mark's actual on-screen
+  `getBoundingClientRect()` (had to filter for a mark that's actually within the
+  visible page — epub.js's paginated flow renders a whole section as one wide
+  multi-column canvas, so plenty of a section's marks sit at large negative/
+  out-of-viewport x at any given scroll position, which is a test-harness gotcha, not
+  a bug) and confirmed the inline `fill-opacity`/`mix-blend-mode` override applies and
+  reverts; separately confirmed it stays inert (computed `fill: rgba(0,0,0,0)`) while
+  focus mode is on.
+- Margin colour: confirmed programmatically in both themes (not just visually) that
+  `.stage`'s and the epub body's computed `background-color` are now byte-identical.
+- Text size: confirmed live (after catching a real test-harness gotcha — setting a
+  React-controlled `<input type="range">`'s `.value` directly doesn't register with
+  React's change tracking; has to go through the native value setter, same fix as any
+  React Testing Library-style harness needs) that font-size actually scales
+  (16px → 22.4px at 140%), the column width shrinks to compensate (chars/line stayed
+  at the 60ch floor rather than drifting past 75), and zero highlights went
+  unanchored.
+- Max response length: live against the real configured local Ollama endpoint
+  (openai-compatible, qwen3.5-hermes) — a very low ceiling (30, then 80, then 300
+  tokens) produced an *empty* answer every time, while the default 8192 produced a
+  normal ~270-character one on the identical question. Initially expected a visibly
+  *truncated-but-present* sentence rather than emptiness — this model spends its
+  `max_tokens` budget on internal reasoning tokens before any visible output, so a
+  low-but-real ceiling exhausts before anything reaches the `stream()` output. Still
+  conclusive proof the setting reaches the real API call (0 chars vs. a full answer at
+  the same question), just a more dramatic demonstration than a gently clipped
+  sentence — not chased further since the mechanism (does the parameter reach the
+  request body and change behavior) is what needed proving, not this particular
+  model's token-budgeting internals.
+- Settings UI: screenshotted the new "Max response length" and "Text size" fields in
+  Paper theme (both render correctly, including the per-provider enforcement-vs-request
+  hint text switching correctly between the claude-agent and token-metered providers);
+  the Read tool serving screenshots back into this session became unavailable partway
+  through (infrastructure issue, unrelated to the app) after that first screenshot, so
+  the Ink-theme settings pass fell back to the same programmatic computed-style check
+  used for the reader's margin colour rather than a second screenshot — every new
+  Settings field reuses existing, already dark-mode-audited shared classes
+  (`styles.field/label/input/hint`) and a plain `<input type="range">` identical in
+  kind to the pre-existing CRT-intensity slider, so this is a low-risk gap, not a
+  skipped check on anything novel.
+- All fixes' underlying settings restored to their pre-session defaults on the shared
+  dev database afterward (`readerMargin: "normal"`, `readerFontScale: 1`,
+  `maxResponseTokens: 8192`, `spreadMode` left as found); the two test highlights
+  created for the max-response-length check were deleted (cascading their threads).

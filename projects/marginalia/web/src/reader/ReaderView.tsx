@@ -14,6 +14,7 @@ import type {
   HighlightImportance,
   HighlightKind,
   HighlightWithThread,
+  ReaderFontScale,
   ReaderMargin,
   ReadingPosition,
   Settings,
@@ -126,11 +127,20 @@ const SPREAD_MIN_WIDTH = 960;
 // margin setting").
 const SPREAD_GUTTER = 64;
 
-function computeReaderGap(containerWidth: number, spreadMode: SpreadMode): number {
+// M16 "reading text size": READER_TARGET_COLUMN_WIDTH is "~70ch at 16px" —
+// that stops being true the moment fontScale != 1, so the target column
+// width must scale with it (decisions.md 2026-07-28) or the measure drifts
+// out of the 60-75ch band as text grows/shrinks. fontScale doesn't affect
+// the spread-mode gutter (SPREAD_GUTTER stays a fixed physical spine width).
+function computeReaderGap(
+  containerWidth: number,
+  spreadMode: SpreadMode,
+  fontScale: number,
+): number {
   if (spreadMode === "auto" && containerWidth >= SPREAD_MIN_WIDTH) {
     return SPREAD_GUTTER;
   }
-  return Math.max(containerWidth - READER_TARGET_COLUMN_WIDTH, 0);
+  return Math.max(containerWidth - READER_TARGET_COLUMN_WIDTH * fontScale, 0);
 }
 
 // M14 "customisable page margins": the outer padding on both axes around the
@@ -255,6 +265,17 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
   // navigation, spine) outside the load effect's own closure.
   const bookRef = useRef<Book | null>(null);
   const saveTimerRef = useRef<number | undefined>(undefined);
+  // M16 bug fix (margin/gap changes not reaching the page live): epub.js's
+  // `manager.updateLayout()` recomputes column geometry but does not
+  // reposition the iframe's own scroll offset for it — the old pixel offset
+  // now lands mid-column under the new gap, rendering two column-halves at
+  // once (confirmed live: a real margin change corrupted the visible page
+  // into a split-column smear, even though the underlying CSS gap/padding
+  // had already updated correctly). A remount fixes it by re-`display()`ing
+  // the current CFI, which is exactly what handleContainerResize below does
+  // manually. Kept current via handleRelocated rather than reading
+  // `rendition.currentLocation()` synchronously, which can be mid-flight.
+  const currentCfiRef = useRef<string | null>(null);
   const highlightsRef = useRef<HighlightWithThread[]>([]);
   const resolvedIdsRef = useRef<Set<string>>(new Set());
   // Tracks the CFI each highlight's mark was actually attached at, which can
@@ -294,6 +315,11 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
   // depends on `toc`/`currentSpineIndex` render state, not stable across
   // the load effect's single run.
   const chapterJumpRef = useRef<(direction: "prev" | "next") => void>(() => {});
+  // Same story again, for the M16 readerFontScale effect below — fontScale
+  // changes the target column width without ever changing the container's
+  // own box size, so nothing would otherwise tell the ResizeObserver-driven
+  // gap recompute inside the book-loading effect to re-run.
+  const applyGapForWidthRef = useRef<() => void>(() => {});
   // The book-loading effect below is set up once per resourceId and
   // deliberately excludes themeVars from its deps (see the comment near its
   // end) — attachHighlightMark, defined inside that effect, reads the
@@ -338,6 +364,15 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
   // mounted underneath the settings modal (M11) — settingsBus is how a
   // save reaches this component without a reload or a remount.
   const [readerMargin, setReaderMargin] = useState<ReaderMargin>("normal");
+  // M16 "reading text size": same live-via-settingsBus story as readerMargin
+  // above, and the two are coupled (computeReaderGap derives the target
+  // column width from fontScale) — fontScaleRef mirrors it for the
+  // book-loading effect's closures, same pattern as themeVarsRef/focusModeRef.
+  const [readerFontScale, setReaderFontScale] = useState<ReaderFontScale>(1);
+  const fontScaleRef = useRef(readerFontScale);
+  useEffect(() => {
+    fontScaleRef.current = readerFontScale;
+  }, [readerFontScale]);
   const [showAnnotations, setShowAnnotations] = useState(false);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
@@ -443,6 +478,21 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
   // side (a plain onPointerLeave on the container — mousemove inside the
   // iframe never fires for that).
   const lastContentsWithCursorRef = useRef<Contents | null>(null);
+  // M16 "highlights pop on hover": the mark whose inline style is currently
+  // boosted past its normal kind wash, so it can be un-boosted the moment
+  // the cursor leaves it (or the stage entirely) without re-querying the DOM.
+  const hoveredMarkElRef = useRef<SVGElement | null>(null);
+  function clearMarkHover() {
+    const el = hoveredMarkElRef.current;
+    if (!el) return;
+    // Clears the inline override, letting the kind's normal presentation
+    // attribute (set by markStyleForKind via epub.js) show again — setting
+    // properties on an element that's since been removed from the DOM
+    // (e.g. a page turn recreated the mark) is a harmless no-op.
+    el.style.fillOpacity = "";
+    el.style.mixBlendMode = "";
+    hoveredMarkElRef.current = null;
+  }
   useEffect(() => {
     // Zones "disappear in focus mode" (TASKS.md acceptance) — clear
     // immediately rather than waiting for the next pointer move.
@@ -451,6 +501,9 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     if (lastContentsWithCursorRef.current) {
       lastContentsWithCursorRef.current.document.body.style.cursor = "";
     }
+    // A hidden mark must stay hidden on hover (TASKS.md M16 acceptance) —
+    // clear any in-progress hover boost the instant focus mode engages.
+    clearMarkHover();
   }, [focusMode]);
 
   // Attach a mark for `highlightId` at `cfi`, but only actually create an
@@ -524,9 +577,11 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       if (!settings) return;
       setProviderConfigured(isProviderConfigured(settings));
       setReaderMargin(settings.readerMargin);
+      setReaderFontScale(settings.readerFontScale);
     });
     return onSettingsSaved((settings) => {
       setReaderMargin(settings.readerMargin);
+      setReaderFontScale(settings.readerFontScale);
       setProviderConfigured(isProviderConfigured(settings));
     });
   }, []);
@@ -581,10 +636,19 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       // becomes the native CSS column-gap between the two visible leaves in
       // spread mode, which is why computeReaderGap picks a much narrower
       // number once a spread is actually showing (SPREAD_GUTTER).
-      gap: computeReaderGap(containerRef.current.getBoundingClientRect().width, spreadMode),
+      gap: computeReaderGap(
+        containerRef.current.getBoundingClientRect().width,
+        spreadMode,
+        fontScaleRef.current,
+      ),
     } as RenditionOptionsWithGap);
     renditionRef.current = rendition;
     applyTheme(rendition, themeVars);
+    // M16 "reading text size": fontScaleRef is still 1 (default) here if the
+    // settings fetch hasn't resolved yet — self-corrects moments later via
+    // the dedicated readerFontScale effect below, same "brief flash to
+    // default" timing already accepted for readerMargin's own mount race.
+    rendition.themes.fontSize(`${Math.round(fontScaleRef.current * 100)}%`);
 
     // computeReaderGap's result only fits the container's width at mount —
     // re-derive it whenever that width actually changes, whether from a
@@ -603,19 +667,46 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     // change — calling the manager's `updateLayout()` directly re-lays-out
     // unconditionally instead.
     let lastGapWidth = containerRef.current.getBoundingClientRect().width;
+    let redisplayTimer: number | undefined;
+    // Shared by real container resizes (below) and, since fontScale changes
+    // the target column width without changing the container's own box size
+    // at all, the dedicated readerFontScale effect further down — exposed
+    // via applyGapRef, same "reach into this effect from outside" pattern as
+    // turnPageRef/chapterJumpRef.
+    function applyGapForWidth(width: number) {
+      const manager = (
+        rendition as unknown as { manager?: { settings: { gap?: number }; updateLayout?: () => void } }
+      ).manager;
+      if (!manager) return;
+      manager.settings.gap = computeReaderGap(width, spreadMode, fontScaleRef.current);
+      manager.updateLayout?.();
+
+      // M16 bug fix: `updateLayout()` recomputes column geometry (confirmed
+      // live via computed styles — gap/padding update correctly, instantly)
+      // but leaves the iframe's own scroll offset untouched, so anywhere
+      // past the first page the old pixel offset now lands mid-column under
+      // the new width — the reader visibly renders two column-halves at
+      // once. Re-`display()`ing the current CFI is the documented
+      // known-good fix (it's what a remount does). Debounced briefly so a
+      // continuous window drag-resize settles once instead of re-displaying
+      // on every intermediate tick.
+      window.clearTimeout(redisplayTimer);
+      redisplayTimer = window.setTimeout(() => {
+        if (currentCfiRef.current) void rendition.display(currentCfiRef.current);
+      }, 120);
+    }
     function handleContainerResize() {
       const container = containerRef.current;
       if (!container) return;
       const width = container.getBoundingClientRect().width;
       if (Math.abs(width - lastGapWidth) < 1) return;
       lastGapWidth = width;
-      const manager = (
-        rendition as unknown as { manager?: { settings: { gap?: number }; updateLayout?: () => void } }
-      ).manager;
-      if (!manager) return;
-      manager.settings.gap = computeReaderGap(width, spreadMode);
-      manager.updateLayout?.();
+      applyGapForWidth(width);
     }
+    applyGapForWidthRef.current = () => {
+      const container = containerRef.current;
+      if (container) applyGapForWidth(container.getBoundingClientRect().width);
+    };
     const resizeObserver = new ResizeObserver(handleContainerResize);
     resizeObserver.observe(containerRef.current);
 
@@ -670,6 +761,7 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     }
 
     function handleRelocated(location: Location) {
+      currentCfiRef.current = location.start.cfi;
       setAtStart(Boolean(location.atStart));
       setAtEnd(Boolean(location.atEnd));
       setCurrentSpineIndex(location.start.index);
@@ -800,7 +892,9 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
 
       const iframeRect = iframeEl.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
-      const visibleX = iframeRect.left + event.clientX - containerRect.left;
+      const viewportX = iframeRect.left + event.clientX;
+      const viewportY = iframeRect.top + event.clientY;
+      const visibleX = viewportX - containerRect.left;
       const zone = focusModeRef.current
         ? null
         : turnZoneForVisibleX(visibleX, containerRect.width);
@@ -809,6 +903,37 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       contents.document.body.style.cursor =
         zone === "prev" ? "w-resize" : zone === "next" ? "e-resize" : "";
       setTurnZoneHover((prev) => (prev === zone ? prev : zone));
+
+      // M16 "highlights pop on hover": marks-pane's SVG overlay is
+      // pointer-events:none (deliberately — an interactive overlay over the
+      // iframe would kill text selection, decisions.md 2026-07-20), so real
+      // CSS :hover can never reach it; native hit-testing skips straight
+      // through to the iframe underneath. Detected here instead, via the
+      // same forwarded-mousemove coordinates already used for the turn-zone
+      // cursor above, geometrically matched against each rendered mark's own
+      // (parent-document, real viewport) bounding box — a plain inline-style
+      // boost on the matched element, cleared on the next non-matching move.
+      if (!focusModeRef.current) {
+        let hit: SVGElement | null = null;
+        const rects = container.querySelectorAll<SVGRectElement>(
+          `.${HIGHLIGHT_MARK_CLASS} rect`,
+        );
+        for (const rect of rects) {
+          const r = rect.getBoundingClientRect();
+          if (viewportX >= r.left && viewportX <= r.right && viewportY >= r.top && viewportY <= r.bottom) {
+            hit = rect.closest<SVGElement>(`.${HIGHLIGHT_MARK_CLASS}`);
+            break;
+          }
+        }
+        if (hit !== hoveredMarkElRef.current) {
+          clearMarkHover();
+          if (hit) {
+            hit.style.fillOpacity = "0.85";
+            hit.style.mixBlendMode = "normal";
+            hoveredMarkElRef.current = hit;
+          }
+        }
+      }
 
       // M14 fullscreen: the same forwarded mousemove reveals the floating
       // top row / footer / margin rail on proximity — the reveal bands are
@@ -821,8 +946,6 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       // covers the dead zone where the cursor is over the parent document
       // (above/below/beside the iframe) instead of inside it.
       if (fullscreenModeRef.current) {
-        const viewportY = iframeRect.top + event.clientY;
-        const viewportX = iframeRect.left + event.clientX;
         const nearTop = viewportY < FULLSCREEN_REVEAL_BAND_PX;
         const nearBottom = viewportY > window.innerHeight - FULLSCREEN_REVEAL_BAND_PX;
         const nearRailCorner =
@@ -919,6 +1042,7 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     return () => {
       cancelled = true;
       window.clearTimeout(saveTimerRef.current);
+      window.clearTimeout(redisplayTimer);
       window.removeEventListener("keydown", handleKeydown);
       resizeObserver.disconnect();
       renditionRef.current = null;
@@ -956,6 +1080,21 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       );
     }
   }, [themeVars, focusMode]);
+
+  // M16 "reading text size": applied through the epub theme
+  // (`themes.fontSize`, which patches already-rendered content immediately —
+  // see the epub.js Themes#override source), plus the same gap-recompute +
+  // debounced re-display the margin-change bug fix above uses, since
+  // fontScale moves the target column width without the container's own box
+  // size ever changing (so the ResizeObserver in the book-loading effect has
+  // nothing to fire on). Skipped on the very first mount before a rendition
+  // exists — the mount-time gap/fontSize calls already used whatever
+  // fontScaleRef held at that point.
+  useEffect(() => {
+    if (!renditionRef.current) return;
+    renditionRef.current.themes.fontSize(`${Math.round(readerFontScale * 100)}%`);
+    applyGapForWidthRef.current();
+  }, [readerFontScale]);
 
   // M7's dip-and-recover slide — kept as the fallback under reduced motion,
   // when a curl's snapshot capture fails, and (via lowFpsRef below) once the
@@ -1154,6 +1293,13 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("keydown", onKeyDuringDrag, true);
       releasePointerLock();
+      // M16 bug fix: a gesture that *began* with a pointer (this handler is
+      // only ever bound to onPointerDown) must release DOM focus on both
+      // commit and cancel, or the button keeps focus and its onKeyDown below
+      // keeps stealing ←/→ for dial-stepping instead of page turns. A
+      // control focused by an actual Tab keypress never runs this pointer
+      // handler at all, so its arrow-stepping path is untouched.
+      targetEl.blur();
     }
 
     function onUp() {
@@ -1377,6 +1523,7 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     if (lastContentsWithCursorRef.current) {
       lastContentsWithCursorRef.current.document.body.style.cursor = "";
     }
+    clearMarkHover();
   }
 
   const expandedHighlight = expandedThread

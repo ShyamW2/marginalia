@@ -279,6 +279,27 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
         </>
       )}
 
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="max-response-tokens">
+          Max response length — {form.maxResponseTokens} tokens
+        </label>
+        <input
+          id="max-response-tokens"
+          className={styles.input}
+          type="number"
+          min={1}
+          value={form.maxResponseTokens}
+          onChange={(e) =>
+            update("maxResponseTokens", Number.parseInt(e.target.value, 10) || 0)
+          }
+        />
+        <p className={styles.hint}>
+          {isClaudeAgent
+            ? "The Claude subscription provider has no hard token limit to set — this is only a request made in the system prompt, not an enforced ceiling."
+            : "Enforced directly by the provider — a low limit will visibly truncate or shorten answers."}
+        </p>
+      </div>
+
       <h2 className={styles.sectionTitle}>Reader</h2>
       <div className={styles.field}>
         <label className={styles.label}>Page margins</label>
@@ -331,6 +352,20 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
             </button>
           ))}
         </div>
+      </div>
+      <div className={styles.field}>
+        <label className={styles.label} htmlFor="reader-font-scale">
+          Text size — {Math.round(form.readerFontScale * 100)}%
+        </label>
+        <input
+          id="reader-font-scale"
+          type="range"
+          min={0.8}
+          max={1.6}
+          step={0.05}
+          value={form.readerFontScale}
+          onChange={(e) => update("readerFontScale", Number.parseFloat(e.target.value))}
+        />
       </div>
 
       <h2 className={styles.sectionTitle}>Desk</h2>

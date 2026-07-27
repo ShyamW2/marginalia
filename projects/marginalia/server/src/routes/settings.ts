@@ -46,9 +46,13 @@ settingsRouter.post("/test", async (req, res) => {
       res.json({ ok: false, error: "No Anthropic API key set." });
       return;
     }
-    provider = new AnthropicProvider(candidate.anthropicApiKey, candidate.anthropicModel);
+    provider = new AnthropicProvider(
+      candidate.anthropicApiKey,
+      candidate.anthropicModel,
+      candidate.maxResponseTokens,
+    );
   } else if (candidate.provider === "claude-agent") {
-    provider = new ClaudeAgentProvider(candidate.claudeAgentModel);
+    provider = new ClaudeAgentProvider(candidate.claudeAgentModel, candidate.maxResponseTokens);
   } else if (candidate.provider === "openai-compatible") {
     if (!candidate.openaiBaseUrl || !candidate.openaiModel) {
       res.json({ ok: false, error: "Base URL and model are required." });
@@ -59,6 +63,7 @@ settingsRouter.post("/test", async (req, res) => {
       model: candidate.openaiModel,
       apiKey: candidate.openaiApiKey,
       contextTokens: candidate.openaiContextTokens,
+      maxResponseTokens: candidate.maxResponseTokens,
     });
   }
 

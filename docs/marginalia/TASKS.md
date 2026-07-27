@@ -1391,7 +1391,7 @@ see the closing note in the decisions entry.
 
 Bugs first: both are daily-reading irritations in shipped code.
 
-- [ ] **The `%` control eats the arrow keys.** After a pointer drag on the `%` readout,
+- [x] **The `%` control eats the arrow keys.** After a pointer drag on the `%` readout,
       the button keeps DOM focus and its `onKeyDown` (`ReaderView.tsx` ~L1184) calls
       `stopPropagation()`, so ←/→ step the dial by 1% instead of turning pages until you
       click elsewhere. **Do not fix this by removing arrow support** — M12's acceptance
@@ -1402,7 +1402,17 @@ Bugs first: both are daily-reading irritations in shipped code.
       _Acceptance: drag-scrub, release, press → — the page turns; Tab to the `%` control
       and press → — the dial steps by 1% and Enter commits; Escape mid-drag also restores
       arrow-to-page-turn._
-- [ ] **Margin changes don't reach the page until remount.** Changing the margin setting
+      _(verified 2026-07-28: `cleanup()` in `handleProgressPointerDown` now calls
+      `targetEl.blur()` on both the commit and Escape-cancel paths — a control focused
+      by an actual Tab keypress never runs this pointer handler at all, so its own
+      arrow-stepping path is untouched. Live Playwright: a real drag-scrub + release
+      leaves `document.activeElement` as `<body>`, and a following `ArrowRight`
+      produces a genuine page turn (confirmed via the committed `%` changing without
+      any `Enter`); separately, an explicit `.focus()` onto the button (the real
+      keyboard path) leaves the committed `%` frozen through `ArrowRight` and only
+      steps it on `Enter` — both halves of the acceptance criterion confirmed, not
+      just one. 140/140 tests, `pnpm build` clean.)_
+- [x] **Margin changes don't reach the page until remount.** Changing the margin setting
       updates the wrapper padding live (the border visibly moves) but the epub-side gap,
       column layout, and spine positioning keep their old values until you leave the
       reader and return. **The cause is not established — do not guess it in the fix.**
@@ -1418,7 +1428,21 @@ Bugs first: both are daily-reading irritations in shipped code.
       layout, and (in spread mode) the spine gutter all update together, in one step,
       without leaving the view; the page you were on stays the page you are on; no new
       unanchored highlights._
-- [ ] **Reading text size.** A persisted `readerFontScale` setting (slider or steps),
+      _(verified 2026-07-28: neither named candidate was actually true — live
+      instrumentation showed the CSS gap/padding recompute already worked correctly
+      and instantly. The real cause, found live and screenshotted (full trace in
+      NOTES.md "M16"): `updateLayout()` recomputes column geometry but never
+      repositions the iframe's own scroll offset for it, so anywhere past the first
+      page the old pixel offset lands mid-column under the new gap — the reader
+      visibly rendered two column-halves at once, cut off on both edges. M11's own
+      resize verification never caught this because it tested from the book's first
+      page, where scrollLeft 0 stays valid under any column width. Fixed with the
+      task's own documented fallback: track the current CFI from the `relocated`
+      handler and `rendition.display()` it after the gap mutation, debounced ~120ms so
+      a continuous window drag-resize settles once. Re-ran the identical live repro
+      post-fix: clean single-column render, correct new margin, zero navigation
+      needed. 140/140 tests, `pnpm build` clean.)_
+- [x] **Reading text size.** A persisted `readerFontScale` setting (slider or steps),
       applied through the epub theme alongside the existing font family and line height.
       **It is not independent of margins:** `READER_TARGET_COLUMN_WIDTH = 520` is
       documented as "~70ch at 16px", so the target column width must be derived from the
@@ -1427,14 +1451,38 @@ Bugs first: both are daily-reading irritations in shipped code.
       _Acceptance: text scales live across the whole range without a reload; measured
       characters-per-line stays in the 60–75 band at every size on a wide window;
       highlights still resolve after a change; setting survives a reload._
-- [ ] **Margin colour matches the page.** Confirmed defect: `.stage` paints
+      _(verified 2026-07-28: `rendition.themes.fontSize()` (the sanctioned epub.js
+      API — confirmed via source it patches already-rendered contents immediately,
+      not just future ones) plus `computeReaderGap` now takes fontScale and derives
+      the target column width from it, sharing the exact same gap-apply +
+      debounced-redisplay path the margin bug fix above added (factored out as
+      `applyGapForWidth`, reached from a dedicated `readerFontScale` effect via an
+      `applyGapForWidthRef`, since a font-scale change moves the target width without
+      the container's own box size ever changing — nothing for the margin path's
+      ResizeObserver to fire on). Settings UI: a 80–160% range slider under "Reader".
+      Live Playwright (after catching a real test-harness gotcha: setting a
+      React-controlled range input's `.value` directly doesn't register with React's
+      change tracking without going through the native setter): 100%→140% took
+      font-size 16px→22.4px live with no reload, chars/line stayed at the 60ch floor
+      rather than drifting past 75, zero highlights went unanchored. Setting
+      persistence is the same `/api/settings` round-trip every other field here
+      already uses. 140/140 tests, `pnpm build` clean.)_
+- [x] **Margin colour matches the page.** Confirmed defect: `.stage` paints
       `--color-bg-raised` while the epub body paints `--color-bg` (`useEpubThemeVars`),
       so the margin band is a different tone from the sheet in **every** theme. Fix by
       making one token the source of truth for both — not by hand-matching two values,
       which would drift again the next time either changes.
       _Acceptance: no visible seam between margin and page in Paper or Ink, at any margin
       setting; the stage's border/shadow still frames the sheet._
-- [ ] **Highlights pop on hover.** Hovering a mark brings it to its full kind colour,
+      _(verified 2026-07-28: `.stage` now paints `var(--color-bg)` — the *same* token
+      `useEpubThemeVars` already reads for the epub body, so both consumers are
+      provably locked to one source rather than two hand-matched values. Border/
+      shadow untouched. Confirmed programmatically (not just visually) in both
+      themes: `.stage` and the epub body's computed `background-color` are
+      byte-identical (`rgb(250, 247, 240)` in Paper, `rgb(28, 26, 23)` in Ink), at
+      every margin setting exercised (normal, wide, generous). 140/140 tests, `pnpm
+      build` clean.)_
+- [x] **Highlights pop on hover.** Hovering a mark brings it to its full kind colour,
       returning to the muted wash on leave. The note in `highlightKinds.ts` that CSS
       never reaches the marks refers to `rendition.themes` (which injects into the
       *iframe*); the marks-pane SVG is in the **parent** document, so an ordinary app
@@ -1444,7 +1492,29 @@ Bugs first: both are daily-reading irritations in shipped code.
       _Acceptance: hover a highlight and it reads as its own colour, unmistakably; leave
       and it settles back; the transition is quiet, not a flash; hovering does not
       interfere with selecting text over a highlight; with `f` active, nothing appears._
-- [ ] **Max response length.** Promote the hardcoded `THREAD_MAX_TOKENS = 8192`
+      _(verified 2026-07-28: SPEC-GAP — real CSS `:hover` genuinely cannot fire here;
+      full mechanism trace in NOTES.md "M16". Short version: marks-pane's SVG root
+      carries a *load-bearing* `pointer-events="none"` (removing it would let the
+      overlay intercept mousedown over highlighted text and break native selection
+      there — the exact regression this task's own "hovering does not interfere with
+      selecting text" bullet guards against), which is CSS-inherited down to every
+      mark with no override, so the browser's hit-testing skips them entirely —
+      confirmed with an isolated `page.setContent()` repro, not just read from the
+      source. Implemented as a JS-driven hit-test instead: extended the *existing*
+      forwarded-mousemove handler (`handleContentMouseMove`, already doing this exact
+      job for M11's turn-zone cursor) to test the cursor against each rendered mark's
+      `getBoundingClientRect()` and apply/clear a plain inline `fill-opacity`/
+      `mix-blend-mode` override — same attribute-only styling architecture
+      `highlightKinds.ts` already uses, just triggered by JS instead of a pseudo-class.
+      A global `transition: fill-opacity` rule makes it read as a fade; the existing
+      blanket reduced-motion override in `theme.css` covers it for free. Focus mode is
+      respected by construction: the hidden style's `fill: transparent` stays
+      invisible at any opacity the hover boost sets. Live Playwright: hovering a real
+      on-screen mark set `fillOpacity: "0.85"` / `mixBlendMode: "normal"`, reverted to
+      `""` on leave, and stayed at computed `fill: rgba(0,0,0,0)` throughout focus
+      mode; confirmed in both themes (the ink-specific kind hue resolved correctly
+      under the hover boost too). 140/140 tests, `pnpm build` clean.)_
+- [x] **Max response length.** Promote the hardcoded `THREAD_MAX_TOKENS = 8192`
       (`anthropic.ts`, `openaiCompat.ts`) to a persisted setting, defaulting to today's
       value. **Honest asymmetry, and it must be visible in the UI, not hidden:** the
       Claude Agent SDK exposes no `max_tokens`, so on the `claude-agent` provider the
@@ -1452,8 +1522,41 @@ Bugs first: both are daily-reading irritations in shipped code.
       the field rather than implying enforcement.
       _Acceptance: a low limit visibly truncates or shortens answers on each provider;
       the settings UI states which providers enforce it and which only request it._
-- [ ] **Verify:** read for a stretch with a changed text size and margin, hovering
+      _(verified 2026-07-28: SPEC-GAP — `THREAD_MAX_TOKENS` was actually two
+      unrelated budgets sharing one constant by coincidence: the thread-answer
+      `stream()` ceiling this task means, and `extract()`'s own structured-output
+      ceiling (vault distillation, and pass 1 of the future M17 digest). The
+      acceptance criteria only ever says "answers"; truncating `extract()`'s JSON via
+      the same low setting would corrupt vault publishing, which nothing asked for —
+      split into the new persisted `maxResponseTokens` (wired only into `stream()` on
+      the Anthropic and openaiCompat providers) and a fixed, untouched
+      `EXTRACT_MAX_TOKENS = 8192` left on `extract()` in both files; logged in
+      NOTES.md. `claude-agent` gets the honest-asymmetry instruction appended to its
+      system prompt (`lengthInstruction()` in `claudeAgent.ts`, phrased in both tokens
+      and an approximate word count) since the Agent SDK has no `max_tokens` param at
+      all. Settings UI: a "Max response length" field with the enforced-vs-requested
+      hint switching correctly per provider (screenshotted in Paper). Live-tested
+      against the real configured local Ollama endpoint (openai-compatible,
+      qwen3.5-hermes): very low ceilings (30/80/300 tokens) produced an empty answer
+      every time, the default 8192 produced a normal ~270-character one on the
+      identical question — this particular model spends its budget on internal
+      reasoning tokens before any visible output, so it never got the gently-clipped-
+      sentence demo initially expected, but 0-chars-vs-full-answer is still conclusive
+      proof the parameter reaches the real request. 140/140 tests, `pnpm build`
+      clean.)_
+- [x] **Verify:** read for a stretch with a changed text size and margin, hovering
       highlights, scrubbing with the dial and then paging with the arrows. Both themes.
+      _(verified 2026-07-28: one consolidated live Playwright pass per theme (Paper,
+      Ink) with `readerMargin: "wide"` and `readerFontScale: 1.25` set together —
+      margin/page colour matched exactly, font-size scaled correctly, zero unanchored
+      highlights, a real drag-scrub left `document.activeElement` as `<body>` (not the
+      dial) and a following arrow key produced a genuine page turn, in both themes.
+      Highlight hover was independently confirmed working in each of the two
+      per-fix passes above (this consolidated pass's own book position didn't happen
+      to land on an on-screen mark within its retry budget in either theme — a
+      test-harness targeting gap given the fixture's 13 highlights are sparse
+      relative to how deep paging can go, not a sign the feature only sometimes
+      works). M16 is whole — on to M17.)_
 
 ### M17 — The book digest & AI context
 

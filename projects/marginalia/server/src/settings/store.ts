@@ -27,8 +27,12 @@ const DEFAULTS = {
   // M14: "normal" matches the pre-M14 fixed edge padding — unchanged until a
   // reader opts into something wider or narrower.
   reader_margin: "normal" as ReaderMargin,
+  // M16: 1 = today's unscaled size, unchanged until a reader opts in.
+  reader_font_scale: "1",
   // M15: a tasteful default — visible bow/glow without fighting legibility.
   scan_crt_intensity: "0.6",
+  // M16: today's hardcoded THREAD_MAX_TOKENS, promoted to a setting.
+  max_response_tokens: "8192",
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -47,7 +51,9 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   cursor_trail_enabled: "cursorTrailEnabled",
   spread_mode: "spreadMode",
   reader_margin: "readerMargin",
+  reader_font_scale: "readerFontScale",
   scan_crt_intensity: "scanCrtIntensity",
+  max_response_tokens: "maxResponseTokens",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -81,7 +87,9 @@ export function getRawSettings(db: Database.Database): {
   cursorTrailEnabled: boolean;
   spreadMode: SpreadMode;
   readerMargin: ReaderMargin;
+  readerFontScale: number;
   scanCrtIntensity: number;
+  maxResponseTokens: number;
 } {
   const raw = readRaw(db);
   return {
@@ -98,7 +106,9 @@ export function getRawSettings(db: Database.Database): {
     cursorTrailEnabled: raw.cursor_trail_enabled === "true",
     spreadMode: raw.spread_mode as SpreadMode,
     readerMargin: raw.reader_margin as ReaderMargin,
+    readerFontScale: Number.parseFloat(raw.reader_font_scale),
     scanCrtIntensity: Number.parseFloat(raw.scan_crt_intensity),
+    maxResponseTokens: Number.parseInt(raw.max_response_tokens, 10),
   };
 }
 

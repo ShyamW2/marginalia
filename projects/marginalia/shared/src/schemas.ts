@@ -303,6 +303,13 @@ export type SpreadMode = z.infer<typeof SpreadModeSchema>;
 export const ReaderMarginSchema = z.enum(["narrow", "normal", "wide", "generous"]);
 export type ReaderMargin = z.infer<typeof ReaderMarginSchema>;
 
+/** M16 "reading text size": a multiplier on the epub body's base font-size,
+ * applied through the epub theme (`rendition.themes.fontSize()`) — it is not
+ * independent of margins, since `READER_TARGET_COLUMN_WIDTH` is "~70ch at
+ * 16px" and must scale with it to keep the measure in range. */
+export const ReaderFontScaleSchema = z.number().min(0.8).max(1.6);
+export type ReaderFontScale = z.infer<typeof ReaderFontScaleSchema>;
+
 /** M15 "CRT treatment" (decisions.md 2026-07-20): strength of the scan's
  * barrel-warp/bloom/chromatic-fringing filter, 0 (off) to 1 (full). Reduced
  * motion disables the effect outright regardless of this value. */
@@ -323,7 +330,9 @@ export const SettingsSchema = z.object({
   cursorTrailEnabled: z.boolean(),
   spreadMode: SpreadModeSchema,
   readerMargin: ReaderMarginSchema,
+  readerFontScale: ReaderFontScaleSchema,
   scanCrtIntensity: ScanCrtIntensitySchema,
+  maxResponseTokens: z.number().int().positive(),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 

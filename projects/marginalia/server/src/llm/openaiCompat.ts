@@ -5,7 +5,10 @@ import {
   type LLMStreamRequest,
 } from "./provider.js";
 
-const THREAD_MAX_TOKENS = 8192;
+// M16: see the matching comment in anthropic.ts — the answer-length setting
+// only governs stream(), not extract()'s own, unrelated structured-output
+// budget (vault distillation / the M17 digest).
+const EXTRACT_MAX_TOKENS = 8192;
 
 /** Splits an async stream of text chunks into lines (SSE is line-delimited). */
 export async function* sseLines(
@@ -76,6 +79,8 @@ interface OpenAICompatConfig {
   model: string;
   apiKey: string;
   contextTokens: number;
+  /** M16 "max response length" — defaults to today's hardcoded value. */
+  maxResponseTokens?: number;
 }
 
 export class OpenAICompatProvider implements LLMProvider {
@@ -114,7 +119,7 @@ export class OpenAICompatProvider implements LLMProvider {
         body: JSON.stringify({
           model: this.config.model,
           stream: true,
-          max_tokens: THREAD_MAX_TOKENS,
+          max_tokens: this.config.maxResponseTokens ?? 8192,
           messages: [
             { role: "system", content: systemMessage },
             ...req.messages,
@@ -151,7 +156,7 @@ export class OpenAICompatProvider implements LLMProvider {
         body: JSON.stringify({
           model: this.config.model,
           response_format: { type: "json_object" },
-          max_tokens: THREAD_MAX_TOKENS,
+          max_tokens: EXTRACT_MAX_TOKENS,
           messages: [
             { role: "system", content: req.instructions },
             { role: "user", content: req.input },

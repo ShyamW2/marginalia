@@ -65,7 +65,9 @@ describe("schemas smoke test", () => {
       cursorTrailEnabled: true,
       spreadMode: "single",
       readerMargin: "normal",
+      readerFontScale: 1,
       scanCrtIntensity: 0.6,
+      maxResponseTokens: 8192,
     });
     expect(result.success).toBe(true);
   });

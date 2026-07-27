@@ -7,6 +7,21 @@
   gap: 0.5rem;
 }
 
+/* M16 "highlights pop on hover": the marks-pane SVG lives in the *parent*
+   document (a sibling of the epub iframe, not inside it — NOTES.md M2/M3),
+   so an ordinary global rule reaches it — but marks-pane's own
+   `pointer-events: none` (deliberate: an interactive overlay here would kill
+   text selection over highlighted text) means real CSS :hover can never fire
+   on it. The actual hover-boost toggle is JS-driven, geometrically
+   hit-tested from the forwarded iframe mousemove (see
+   handleContentMouseMove/clearMarkHover in ReaderView.tsx) and applied as an
+   inline fill-opacity/mix-blend-mode override; this rule only makes that
+   change land as a quiet fade rather than a flash. mix-blend-mode itself
+   doesn't animate — only the opacity step reads as a transition. */
+:global(.marginalia-highlight) {
+  transition: fill-opacity var(--duration-standard) var(--ease-standard);
+}
+
 /* M14 (decisions.md 2026-07-27): the % readout moves to top-centre, which
    needs a real three-column grid rather than space-between — a two-item flex
    row's "gap" is only ever the space *between* the two items, not a
@@ -123,7 +138,12 @@
   position: relative;
   flex: 1;
   min-height: 0;
-  background: var(--color-bg-raised);
+  /* M16 bug fix: the margin band (this element's own background, showing
+     through .marginWrapper's padding) must be the same token as the epub
+     body's background (useEpubThemeVars reads --color-bg) so they can never
+     drift apart again — was --color-bg-raised, a visibly different tone in
+     every theme. The border/shadow below still frame the sheet. */
+  background: var(--color-bg);
   border: 1px solid var(--color-border);
   border-radius: 6px;
   box-shadow: var(--shadow-panel);
