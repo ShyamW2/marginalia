@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
-import type { Resource } from "@marginalia/shared";
+import type { Resource, Settings, SpreadMode } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
 import { playAirlock } from "../app/airlockBus.js";
 import { BookCover } from "../library/BookCover.js";
@@ -20,6 +20,14 @@ export function ReaderPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [resource, setResource] = useState<Resource | null>(null);
+  // Fetched alongside the resource, not inside ReaderView, so the reader's
+  // own book-loading effect can pass `spread` to epub.js's `renderTo()` at
+  // creation time instead of racing a settings fetch against it (renderTo's
+  // spread option only applies at creation — see the M12 note in NOTES.md
+  // for why that ordering matters). Read once per mount; toggling it in the
+  // M11 settings modal while a book is already open takes effect on the
+  // next open/reload, not live — a deliberate scope boundary, not a bug.
+  const [spreadMode, setSpreadMode] = useState<SpreadMode | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
@@ -38,6 +46,7 @@ export function ReaderPage() {
   useEffect(() => {
     if (!id) return;
     setResource(null);
+    setSpreadMode(null);
     setNotFound(false);
     fetch(`/api/resources/${id}`)
       .then(async (res) => {
@@ -48,6 +57,10 @@ export function ReaderPage() {
         setResource((await res.json()) as Resource);
       })
       .catch(() => setNotFound(true));
+    fetch("/api/settings")
+      .then((res) => (res.ok ? (res.json() as Promise<Settings>) : null))
+      .then((settings) => setSpreadMode(settings?.spreadMode ?? "single"))
+      .catch(() => setSpreadMode("single"));
   }, [id]);
 
   // Arrived via the scan's airlock (a heat band click) — play the "in" half
@@ -80,7 +93,7 @@ export function ReaderPage() {
     );
   }
 
-  if (!resource) {
+  if (!resource || !spreadMode) {
     return <div className={styles.page} />;
   }
 
@@ -124,7 +137,11 @@ export function ReaderPage() {
           {publishing ? "Publishing…" : "Publish"}
         </button>
       </div>
-      <ReaderView resourceId={resource.id} initialHighlightId={initialLocationState?.jumpToHighlightId} />
+      <ReaderView
+        resourceId={resource.id}
+        initialHighlightId={initialLocationState?.jumpToHighlightId}
+        spreadMode={spreadMode}
+      />
       {toast && (
         <Toast
           message={toast.message}

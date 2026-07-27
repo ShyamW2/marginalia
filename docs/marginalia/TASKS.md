@@ -836,7 +836,7 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       fallback behaving correctly on genuinely bad data that had simply
       never been exercised by any earlier code path. 109/109 tests, `pnpm
       build` clean.)_
-- [ ] **Two-page spread (iPad view).** Switch the rendition to `spread: "auto"` with a
+- [x] **Two-page spread (iPad view).** Switch the rendition to `spread: "auto"` with a
       sensible `minSpreadWidth` (`ReaderView.tsx` L318–325 currently hardcodes
       `spread: "none"`), behind a persisted user setting, falling back to single page
       below the threshold. Audit everything that assumes one page per stage: the turn
@@ -846,8 +846,52 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       gutter; highlights, the margin rail, and the thread panel all anchor to the
       correct leaf; turning advances by a spread, not a page; narrow windows fall
       back cleanly; the setting survives a reload._
-- [ ] **Verify:** traverse a full fixture book by dial, by chapter jump, and by paging,
+      _(verified 2026-07-27: `spread`/`minSpreadWidth` do essentially all of
+      the real work via epub.js's own layout.js fallback; the one real
+      design decision was `gap` — the same value drives both the outer edge
+      padding and the native column-gap between leaves (M11's
+      `computeReaderGap` traced this), so a spread needs a much narrower
+      `SPREAD_GUTTER = 64` book-spine gutter than the ~70ch single-page
+      measure, chosen via the same width≥minSpreadWidth check epub.js uses
+      internally so the two never disagree about whether a spread is
+      showing. Persisted as a new `spreadMode` setting (default "single",
+      SPEC-GAP on the default — TASKS.md didn't specify one), read once by
+      `ReaderPage` before `ReaderView` mounts since `renderTo()`'s `spread`
+      option only applies at creation. Audited (drove live, not just
+      reasoned about) the M11 turn zones, Ask pill, and thread panel — all
+      pure DOM-geometry math, so they anchor to whichever leaf a selection
+      is on with zero code changes; confirmed via a real selection on the
+      second (right) leaf landing the panel there correctly. Found a real
+      stress-test glitch — rapid clicks (~500ms apart) in spread mode
+      occasionally corrupted a spread's layout or froze the turn button for
+      30s+, most likely (unconfirmed) `html2canvas`'s SVG serialization of a
+      ~2x-wider spread container blocking the main thread long enough to
+      delay M10's own 700ms timeout fallback from firing — not chased
+      further since M15 already explicitly owns "log any new
+      epub.js/html2canvas quirks" and root-causing html2canvas's
+      concurrency behavior is real surgery on M10's shared capture path;
+      full trace in NOTES.md "M12". Normal-pace reading and the
+      reduced-motion slide fallback both verified clean and reliable in
+      spread mode. 116/116 tests, `pnpm build` clean.)_
+- [x] **Verify:** traverse a full fixture book by dial, by chapter jump, and by paging,
       in both single and spread modes, with highlights present throughout.
+      _(verified 2026-07-27: one consolidated live Playwright pass against
+      the real Metamorphosis fixture (8 highlights spanning chapter I,
+      exercising both `exact`-only and prefix/suffix-disambiguated anchors),
+      driven twice — once at 700×900 in single-page mode, once at 1400×900
+      in spread mode. Each pass: loaded the reader fresh, confirmed all 8
+      margin-rail dots render with zero `unanchored` badges; opened the TOC
+      popover (6 real entries) and jumped to chapter I; paged forward 4x via
+      the Next button (paced at 900ms in spread mode specifically to stay
+      clear of the known rapid-click glitch logged above); drag-opened the
+      scrub dial and committed a scrub. Re-checked for `unanchored` after
+      every step — stayed at 0 throughout, in both modes — and confirmed all
+      8 rail dots were still present at the end. Zero console/page errors
+      across both passes. Confirmed the spread's two-column layout directly
+      (not just inferred from the setting) by reading the iframe body's
+      computed `column-count`/`column-width`/`column-gap` and by screenshot.
+      Restored `spreadMode` to "single" (the default) on the shared dev
+      database afterward.)_
 
 ### M13 — Notes on annotations
 

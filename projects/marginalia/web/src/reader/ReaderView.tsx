@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import ePub from "epubjs";
 import type { Book, Contents, Location, Rendition } from "epubjs";
 import {
@@ -16,6 +16,7 @@ import type {
   HighlightWithThread,
   ReadingPosition,
   Settings,
+  SpreadMode,
   ThreadSummary,
 } from "@marginalia/shared";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
@@ -87,6 +88,7 @@ interface RenditionOptionsWithGap {
   flow: string;
   manager: string;
   spread: string;
+  minSpreadWidth: number;
   allowScriptedContent: boolean;
   gap: number;
 }
@@ -101,7 +103,22 @@ const READER_MIN_EDGE_PADDING = 40; // 2.5rem at the default 16px root
 const READER_TARGET_COLUMN_WIDTH = 520; // ~70ch at 16px body text (Bringhurst range)
 const READER_MIN_COLUMN_WIDTH = 240; // floor below which we accept less edge margin instead
 
-function computeReaderGap(containerWidth: number): number {
+// M12 two-page spread: epub.js's own layout.js falls back from "auto" to a
+// single column below this stage width — mirrored here (not read back from
+// epub.js) so the *gap* strategy (a wide comfortable-measure margin for one
+// page vs. a narrow book-spine gutter for two) can be chosen consistently
+// with whatever epub.js is about to do at the same width.
+const SPREAD_MIN_WIDTH = 960;
+// The same `gap` value becomes both the outer edge margin *and* the native
+// CSS column-gap between the two visible leaves (epub.js's contents.js
+// sets both from one `gap` — see NOTES.md "M12"), so it has to be small
+// enough to read as a spine gutter, not the wide single-page margin.
+const SPREAD_GUTTER = 64;
+
+function computeReaderGap(containerWidth: number, spreadMode: SpreadMode): number {
+  if (spreadMode === "auto" && containerWidth >= SPREAD_MIN_WIDTH) {
+    return SPREAD_GUTTER;
+  }
   const columnWidth = Math.min(
     READER_TARGET_COLUMN_WIDTH,
     Math.max(containerWidth - READER_MIN_EDGE_PADDING * 2, READER_MIN_COLUMN_WIDTH),
@@ -204,9 +221,13 @@ interface ReaderViewProps {
    * highlight's position and open its thread, instead of the saved reading
    * position. */
   initialHighlightId?: string;
+  /** M12 two-page spread: resolved by ReaderPage before this ever mounts
+   * (see the comment there) so it can be handed straight to epub.js's
+   * `renderTo()` at creation time — not re-fetched in here. */
+  spreadMode: SpreadMode;
 }
 
-export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) {
+export function ReaderView({ resourceId, initialHighlightId, spreadMode }: ReaderViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   // M12 scrub dial / chapter nav need direct book access (locations,
@@ -428,7 +449,11 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       height: "100%",
       flow: "paginated",
       manager: "default",
-      spread: "none",
+      // M12: "auto" lets epub.js show two facing pages once the stage is at
+      // least minSpreadWidth wide, falling back to one page below it — its
+      // own built-in behavior, not something this code re-implements.
+      spread: spreadMode,
+      minSpreadWidth: SPREAD_MIN_WIDTH,
       allowScriptedContent: false,
       // SPEC-GAP: M11 "page spacing" asked for margin via the theme's body
       // padding, but epub.js's own column layout (contents.columns() in
@@ -439,8 +464,11 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       // lays out a section. Passing `gap` here is what actually reaches the
       // page edge: with it set, epub.js skips its own auto-gap formula
       // (floor(width/12), see layout.js) and uses this value instead, split
-      // evenly left/right — see computeReaderGap above.
-      gap: computeReaderGap(containerRef.current.getBoundingClientRect().width),
+      // evenly left/right — see computeReaderGap above. The same value also
+      // becomes the native CSS column-gap between the two visible leaves in
+      // spread mode, which is why computeReaderGap picks a much narrower
+      // number once a spread is actually showing (SPREAD_GUTTER).
+      gap: computeReaderGap(containerRef.current.getBoundingClientRect().width, spreadMode),
     } as RenditionOptionsWithGap);
     renditionRef.current = rendition;
     applyTheme(rendition, themeVars);
@@ -470,7 +498,7 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
         rendition as unknown as { manager?: { settings: { gap?: number }; updateLayout?: () => void } }
       ).manager;
       if (!manager) return;
-      manager.settings.gap = computeReaderGap(width);
+      manager.settings.gap = computeReaderGap(width, spreadMode);
       manager.updateLayout?.();
     }
     window.addEventListener("resize", handleWindowResize);
@@ -1175,7 +1203,17 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
     : undefined;
 
   return (
-    <div className={styles.wrapper}>
+    <div
+      className={styles.wrapper}
+      // M12: the single-page reading column is deliberately capped at 800px
+      // (M11's comfortable-measure work) — widened here only when the user
+      // has opted into spread mode, so there's actually room for epub.js to
+      // put two leaves side by side once the window is wide enough (below
+      // SPREAD_MIN_WIDTH it still shows one page, just inside a wider box —
+      // computeReaderGap's own width check keeps that single page's measure
+      // just as comfortable as it would be at the narrower cap).
+      style={{ "--reader-max-width": spreadMode === "auto" ? "1400px" : "800px" } as CSSProperties}
+    >
       <div className={styles.topRow}>
         {focusMode ? (
           <span className={styles.focusIndicator}>Notes hidden — press F to show</span>

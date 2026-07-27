@@ -60,6 +60,7 @@ describe("schemas smoke test", () => {
       vaultPath: "",
       cursorStyle: "custom",
       cursorTrailEnabled: true,
+      spreadMode: "single",
     });
     expect(result.success).toBe(true);
   });

@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import type { CursorStyleChoice, LLMProviderId, Settings, SettingsUpdate } from "@marginalia/shared";
+import type {
+  CursorStyleChoice,
+  LLMProviderId,
+  Settings,
+  SettingsUpdate,
+  SpreadMode,
+} from "@marginalia/shared";
 import styles from "./SettingsPage.module.css";
 
 const BASE_URL_PRESETS = [
@@ -269,6 +275,33 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
           </div>
         </>
       )}
+
+      <h2 className={styles.sectionTitle}>Reader</h2>
+      <div className={styles.field}>
+        <label className={styles.label}>Page layout</label>
+        <div className={styles.providerToggle} role="group" aria-label="Page layout">
+          {(
+            [
+              { value: "single", label: "Single page" },
+              { value: "auto", label: "Two-page spread (wide windows)" },
+            ] satisfies { value: SpreadMode; label: string }[]
+          ).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={
+                form.spreadMode === option.value
+                  ? `${styles.providerButton} ${styles.providerButtonActive}`
+                  : styles.providerButton
+              }
+              aria-pressed={form.spreadMode === option.value}
+              onClick={() => update("spreadMode", option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <h2 className={styles.sectionTitle}>Desk</h2>
       <div className={styles.field}>

@@ -1085,3 +1085,50 @@ felt like the wrong call for a display quirk in old data. `[`/`]` and the
 TOC popover both correctly show every *other* highlight resolving cleanly
 on arrival at every chapter; this is a known, load-bearing, pre-existing
 data artifact, not a regression from M12.
+
+**Two-page spread landed on `spread: "auto"` + a width-aware `gap` — the
+part worth flagging is a rare rapid-turn glitch found while stress-testing
+it, in M10's (unmodified) snapshot/curl code, not anything M12 wrote.**
+`book.renderTo()`'s `spread`/`minSpreadWidth` options do essentially all of
+the real work — epub.js's own layout.js already falls back to one column
+below `minSpreadWidth`. The one real design decision was `gap`:
+`contents.js` uses the *same* `gap` value for both the outer edge padding
+and the native CSS `column-gap` between the two visible leaves (M11's
+NOTES.md entry traces how `gap` reaches the page at all), so a spread
+needs a much narrower `gap` (`SPREAD_GUTTER = 64`, a book-spine gutter)
+than a single wide page does (M11's `computeReaderGap`, tuned for a ~70ch
+measure) — `computeReaderGap` now picks between the two using the same
+width≥minSpreadWidth check epub.js itself uses internally, so they never
+disagree about whether a spread is actually showing. Audited (drove it
+live, not just reasoned about) the M11 turn-zone vignettes, the Ask pill,
+and the thread panel: all three are pure DOM-geometry math (a selection's
+real `getBoundingClientRect()`), so they anchor to whichever leaf a
+selection is on with zero code changes — confirmed via a real selection on
+the second (right) leaf landing the panel there correctly.
+
+**The glitch:** automated clicks ~500ms apart (faster than a relaxed
+reading pace) occasionally produced a visibly corrupted spread — three
+partial columns and dead space at the bottom — and once out of three
+attempts, a full freeze where the page-turn button stopped responding for
+30s+. The same rapid-click pattern in single-page mode, and a *paced*
+(1.2s apart) rapid-click pattern in spread mode, both stayed clean across
+repeated runs — so it's "rapid clicks" × "spread's wider capture target,"
+not either alone. `turnLockRef` (M10) is synchronously airtight against
+two logical turns overlapping — traced it line by line, it isn't the
+cause. More likely, unconfirmed: `pageSnapshot.ts`'s
+`html2canvas(..., { foreignObjectRendering: true })` serializes the live
+DOM subtree into SVG XML synchronously; a spread's container is ~2x the
+content width of a single page, and if that serialization is expensive
+enough to measurably block the main thread, it could delay the
+`Promise.race`'s own 700ms `setTimeout` fallback from firing on schedule —
+a blocked main thread can't run a pending timer either, which would
+explain a freeze surviving a mechanism specifically built to bound it.
+Didn't chase further: root-causing html2canvas's concurrency behavior is
+real surgery on M10's shared capture path, and M15 already explicitly owns
+"Perf & fallbacks" for this exact system, instructed to "log any new
+epub.js/html2canvas quirks" here — flagging it for that milestone is the
+right scope boundary, not fixing it under pressure inside M12. A human
+reading at a normal pace, and the reduced-motion slide fallback, both
+verified clean and reliable in spread mode — this is a stress-test edge
+case in an already-known-fragile shared mechanism, not a break in normal
+use.

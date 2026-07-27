@@ -4,6 +4,7 @@ import type {
   LLMProviderId,
   Settings,
   SettingsUpdate,
+  SpreadMode,
 } from "@marginalia/shared";
 
 const DEFAULTS = {
@@ -18,6 +19,10 @@ const DEFAULTS = {
   vault_path: "",
   cursor_style: "custom" as CursorStyleChoice,
   cursor_trail_enabled: "true",
+  // SPEC-GAP: TASKS.md doesn't say what the default should be — "single"
+  // (today's behavior, unchanged until a reader opts in) is the boring
+  // choice.
+  spread_mode: "single" as SpreadMode,
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -34,6 +39,7 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   vault_path: "vaultPath",
   cursor_style: "cursorStyle",
   cursor_trail_enabled: "cursorTrailEnabled",
+  spread_mode: "spreadMode",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -65,6 +71,7 @@ export function getRawSettings(db: Database.Database): {
   vaultPath: string;
   cursorStyle: CursorStyleChoice;
   cursorTrailEnabled: boolean;
+  spreadMode: SpreadMode;
 } {
   const raw = readRaw(db);
   return {
@@ -79,6 +86,7 @@ export function getRawSettings(db: Database.Database): {
     vaultPath: raw.vault_path,
     cursorStyle: raw.cursor_style as CursorStyleChoice,
     cursorTrailEnabled: raw.cursor_trail_enabled === "true",
+    spreadMode: raw.spread_mode as SpreadMode,
   };
 }
 

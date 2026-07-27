@@ -264,6 +264,12 @@ export type LLMProviderId = z.infer<typeof LLMProviderIdSchema>;
 export const CursorStyleSchema = z.enum(["system", "custom"]);
 export type CursorStyleChoice = z.infer<typeof CursorStyleSchema>;
 
+/** M12 "two-page spread": "auto" lets epub.js show facing pages on a wide
+ * enough window (falls back to one page below its own minSpreadWidth);
+ * "single" pins it to one page always — today's behavior. */
+export const SpreadModeSchema = z.enum(["single", "auto"]);
+export type SpreadMode = z.infer<typeof SpreadModeSchema>;
+
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset. */
 export const SettingsSchema = z.object({
   provider: LLMProviderIdSchema,
@@ -277,6 +283,7 @@ export const SettingsSchema = z.object({
   vaultPath: z.string(),
   cursorStyle: CursorStyleSchema,
   cursorTrailEnabled: z.boolean(),
+  spreadMode: SpreadModeSchema,
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
