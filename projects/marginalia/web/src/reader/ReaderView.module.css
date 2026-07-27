@@ -98,6 +98,39 @@
   border: none;
 }
 
+/* M11 semicircular turn zones (DESIGN.md 2026-07-20 entry): a soft vignette
+   announcing the existing click-turn zones, purely decorative —
+   pointer-events: none so it can never intercept a selection or click that
+   belongs to the iframe beneath it. clip-path bows it into a semicircular
+   bulge hugging the page edge rather than a hard rectangle. */
+.turnZoneVignette {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20%;
+  max-width: 220px;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 4;
+  transition: opacity var(--duration-standard) var(--ease-standard);
+}
+
+.turnZoneVignette.turnZoneVignetteVisible {
+  opacity: 0.1;
+}
+
+.turnZoneVignetteLeft {
+  left: 0;
+  clip-path: ellipse(75% 60% at 0% 50%);
+  background: radial-gradient(ellipse at 0% 50%, var(--color-accent) 0%, transparent 70%);
+}
+
+.turnZoneVignetteRight {
+  right: 0;
+  clip-path: ellipse(75% 60% at 100% 50%);
+  background: radial-gradient(ellipse at 100% 50%, var(--color-accent) 0%, transparent 70%);
+}
+
 /* Stretch: drag-to-peel grab affordance (M10, DESIGN.md). Deliberately
    narrow — the existing 30% click-turn zones live inside the epub iframe's
    own content and stay untouched; this is just a literal "grab the page

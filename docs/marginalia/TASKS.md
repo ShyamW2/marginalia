@@ -699,7 +699,7 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       page"/"Next page" })` resolves each to one 40×40px element; disabled
       state and click-to-turn both still work. 109/109 tests, `pnpm build`
       clean.)_
-- [ ] **Semicircular turn zones with a directional cursor.** Keep the existing
+- [x] **Semicircular turn zones with a directional cursor.** Keep the existing
       hit-testing (`ReaderView.tsx` ~L481–486 computes `visibleX` against the
       container). Add: a `clip-path: ellipse()` semicircular zone on each far edge; a
       directional cursor set by writing `contents.document.body.style.cursor` from
@@ -712,6 +712,23 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       _Acceptance: moving toward either edge shows the arrow cursor and vignette;
       clicking there turns the page; selecting text that starts inside a zone still
       works and still opens the Ask pill; zones disappear in focus mode._
+      _(verified 2026-07-20: added a `rendition.on("mousemove", ...)` handler
+      (epub.js forwards arbitrary `DOM_EVENTS` from the iframe's content
+      document the same way it does `"click"`) that sets
+      `contents.document.body.style.cursor` to `w-resize`/`e-resize` (the
+      task's own sanctioned fallback — skipped the data-URI SVG option to
+      keep this scoped) and drives a `turnZoneHover` state; two
+      `pointer-events:none` `clip-path: ellipse()` vignette divs live as
+      parent-document siblings of the iframe, gated out of the DOM entirely
+      (not just hidden) under focus mode. Extracted the 30%/70%
+      `turnZoneForVisibleX` helper so the click handler and the new hover
+      handler share one definition instead of duplicating the thresholds.
+      Live Playwright: hovering the left zone lights its vignette to the
+      intended opacity and sets `w-resize`; the middle zone clears both;
+      clicking the right edge turns the page (progress 7%→9%); a selection
+      started inside the zone still raised the Ask pill; toggling focus mode
+      removed both vignette elements from the DOM. 109/109 tests, `pnpm
+      build` clean.)_
 - [ ] **Settings becomes a modal.** Convert `SettingsPage` from a route-level page to
       an overlay rendered above the current room (dialog semantics: focus trap,
       Escape closes, backdrop click closes, `aria-modal`). `/settings` stays a valid

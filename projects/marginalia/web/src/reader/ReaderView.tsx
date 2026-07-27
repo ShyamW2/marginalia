@@ -42,6 +42,20 @@ const POSITION_SAVE_DEBOUNCE_MS = 600;
 const LOCATIONS_CHAR_STEP = 1600;
 const SELECTION_CONTEXT_MAX_LEN = 64;
 const HIGHLIGHT_MARK_CLASS = "marginalia-highlight";
+// Shared by click-to-turn and the M11 semicircular turn-zone hover/cursor —
+// the outer 30% of the visible page on either side.
+const TURN_ZONE_FRACTION = 0.3;
+
+/** Which edge zone (if any) a point translated into container-space falls
+ * in — shared by the click handler and the hover/cursor handler below. */
+function turnZoneForVisibleX(
+  visibleX: number,
+  containerWidth: number,
+): "prev" | "next" | null {
+  if (visibleX < containerWidth * TURN_ZONE_FRACTION) return "prev";
+  if (visibleX > containerWidth * (1 - TURN_ZONE_FRACTION)) return "next";
+  return null;
+}
 
 // epub.js's View typings don't expose the `contents` it renders, though it
 // exists at runtime (see managers/views/iframe.js) — narrow just that.
@@ -265,6 +279,26 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
   const focusModeRef = useRef(focusMode);
   useEffect(() => {
     focusModeRef.current = focusMode;
+  }, [focusMode]);
+
+  // M11 semicircular turn zones: which edge (if any) the pointer is
+  // currently hovering, driving both the parent-document vignette and the
+  // directional cursor written onto the iframe body — see
+  // handleContentMouseMove in the book-loading effect below.
+  const [turnZoneHover, setTurnZoneHover] = useState<"prev" | "next" | null>(null);
+  // The content document the cursor was last set on, so it can be cleared
+  // when the pointer leaves the stage entirely from the *parent* document's
+  // side (a plain onPointerLeave on the container — mousemove inside the
+  // iframe never fires for that).
+  const lastContentsWithCursorRef = useRef<Contents | null>(null);
+  useEffect(() => {
+    // Zones "disappear in focus mode" (TASKS.md acceptance) — clear
+    // immediately rather than waiting for the next pointer move.
+    if (!focusMode) return;
+    setTurnZoneHover(null);
+    if (lastContentsWithCursorRef.current) {
+      lastContentsWithCursorRef.current.document.body.style.cursor = "";
+    }
   }, [focusMode]);
 
   // Attach a mark for `highlightId` at `cfi`, but only actually create an
@@ -565,14 +599,41 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       const iframeRect = iframeEl.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
       const visibleX = iframeRect.left + event.clientX - containerRect.left;
+      const zone = turnZoneForVisibleX(visibleX, containerRect.width);
 
-      if (visibleX < containerRect.width * 0.3) {
-        turnPageRef.current("prev");
-      } else if (visibleX > containerRect.width * 0.7) {
-        turnPageRef.current("next");
-      }
+      if (zone === "prev") turnPageRef.current("prev");
+      else if (zone === "next") turnPageRef.current("next");
     }
     rendition.on("click", handleContentClick);
+
+    // M11 semicircular turn zones (DESIGN.md 2026-07-20 entry): a directional
+    // cursor and a soft vignette announce the click-turn zones above without
+    // adding an interactive overlay over the iframe — that would kill text
+    // selection. The cursor is written straight onto the iframe's own body
+    // (the one thing we're allowed to touch from in here); the vignette is a
+    // pointer-events:none sibling in the parent document, driven by this
+    // same hover state.
+    function handleContentMouseMove(event: MouseEvent, contents: Contents) {
+      const iframeEl = contents.document.defaultView?.frameElement as
+        | HTMLElement
+        | null
+        | undefined;
+      const container = containerRef.current;
+      if (!iframeEl || !container) return;
+
+      const iframeRect = iframeEl.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const visibleX = iframeRect.left + event.clientX - containerRect.left;
+      const zone = focusModeRef.current
+        ? null
+        : turnZoneForVisibleX(visibleX, containerRect.width);
+
+      lastContentsWithCursorRef.current = contents;
+      contents.document.body.style.cursor =
+        zone === "prev" ? "w-resize" : zone === "next" ? "e-resize" : "";
+      setTurnZoneHover((prev) => (prev === zone ? prev : zone));
+    }
+    rendition.on("mousemove", handleContentMouseMove);
 
     function handleKeydown(event: KeyboardEvent) {
       // This same handler is also bound to window (below) to catch keydowns
@@ -944,6 +1005,16 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
     );
   }
 
+  /** The iframe's own mousemove never fires once the pointer leaves it
+   * entirely (into the parent document, or out of the window) — this
+   * catches that case so the vignette/cursor don't get stuck lit. */
+  function handleStagePointerLeave() {
+    setTurnZoneHover(null);
+    if (lastContentsWithCursorRef.current) {
+      lastContentsWithCursorRef.current.document.body.style.cursor = "";
+    }
+  }
+
   const expandedHighlight = expandedThread
     ? highlights.find((h) => h.id === expandedThread.highlightId)
     : undefined;
@@ -973,7 +1044,7 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       </div>
 
       <div className={styles.readerRow}>
-        <div className={styles.stage}>
+        <div className={styles.stage} onPointerLeave={handleStagePointerLeave}>
           <motion.div
             ref={containerRef}
             className={styles.epubContainer}
@@ -981,6 +1052,22 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
           />
           {curl && (
             <PageCurl src={curl.src} direction={curl.direction} progress={curlProgress} />
+          )}
+          {!focusMode && (
+            <>
+              <div
+                aria-hidden="true"
+                className={`${styles.turnZoneVignette} ${styles.turnZoneVignetteLeft} ${
+                  turnZoneHover === "prev" ? styles.turnZoneVignetteVisible : ""
+                }`}
+              />
+              <div
+                aria-hidden="true"
+                className={`${styles.turnZoneVignette} ${styles.turnZoneVignetteRight} ${
+                  turnZoneHover === "next" ? styles.turnZoneVignetteVisible : ""
+                }`}
+              />
+            </>
           )}
           {status === "ready" && !stageReducedMotion && (
             <>
