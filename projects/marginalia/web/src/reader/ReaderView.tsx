@@ -19,6 +19,7 @@ import type {
   ThreadSummary,
 } from "@marginalia/shared";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
+import { ChevronIcon } from "./ChevronIcon.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
 import { markStyleForKind } from "./highlightKinds.js";
@@ -28,6 +29,10 @@ import { AskPill } from "./AskPill.js";
 import { MarginRail } from "./MarginRail.js";
 import { ThreadPanel } from "../threads/ThreadPanel.js";
 import { AnnotationsOverview } from "./AnnotationsOverview.js";
+import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, currentChapter as deriveCurrentChapter, type TocEntry } from "./toc.js";
+import { ChapterNav } from "./ChapterNav.js";
+import { ProgressPopover } from "./ProgressPopover.js";
+import { ScrubDial, DIAL_PX_PER_PERCENT } from "./ScrubDial.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -55,6 +60,16 @@ function turnZoneForVisibleX(
   if (visibleX < containerWidth * TURN_ZONE_FRACTION) return "prev";
   if (visibleX > containerWidth * (1 - TURN_ZONE_FRACTION)) return "next";
   return null;
+}
+
+// M12 scrub dial: a pointer move past this many px (not just any move at
+// all) commits to "this is a drag" rather than "this was a click" — same
+// click-vs-drag pattern as the Desk's BookObject.
+const SCRUB_DRAG_THRESHOLD_PX = 4;
+const SCRUB_KEYBOARD_STEP_PERCENT = 1;
+
+function clampPercent(value: number): number {
+  return Math.min(100, Math.max(0, value));
 }
 
 // epub.js's View typings don't expose the `contents` it renders, though it
@@ -118,15 +133,6 @@ function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
     },
   });
   rendition.themes.select("app");
-}
-
-function ChevronIcon({ direction }: { direction: "left" | "right" }) {
-  const d = direction === "left" ? "M14 5l-6 7 6 7" : "M10 5l6 7-6 7";
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d={d} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
 }
 
 async function fetchPosition(
@@ -203,6 +209,9 @@ interface ReaderViewProps {
 export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
+  // M12 scrub dial / chapter nav need direct book access (locations,
+  // navigation, spine) outside the load effect's own closure.
+  const bookRef = useRef<Book | null>(null);
   const saveTimerRef = useRef<number | undefined>(undefined);
   const highlightsRef = useRef<HighlightWithThread[]>([]);
   const resolvedIdsRef = useRef<Set<string>>(new Set());
@@ -239,6 +248,10 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
   // close over `rendition` directly and don't re-run per-render, so they
   // reach the current turnPage through this ref rather than a stale closure.
   const turnPageRef = useRef<(direction: "prev" | "next") => void>(() => {});
+  // Same story, for M12's `[`/`]` chapter-jump shortcuts — jumpToChapter
+  // depends on `toc`/`currentSpineIndex` render state, not stable across
+  // the load effect's single run.
+  const chapterJumpRef = useRef<(direction: "prev" | "next") => void>(() => {});
   // The book-loading effect below is set up once per resourceId and
   // deliberately excludes themeVars from its deps (see the comment near its
   // end) — attachHighlightMark, defined inside that effect, reads the
@@ -252,11 +265,22 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
     "loading",
   );
   const [progressPercent, setProgressPercent] = useState<number | null>(null);
+  const [displayedPage, setDisplayedPage] = useState<{ page: number; total: number } | null>(
+    null,
+  );
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
   const [currentSpineIndex, setCurrentSpineIndex] = useState<number | null>(
     null,
   );
+  // M12: table of contents (flattened, spine+percent resolved once
+  // book.locations has generated) and the scrub-dial/popover UI state for
+  // the progress readout.
+  const [toc, setToc] = useState<TocEntry[]>([]);
+  const [progressPopoverOpen, setProgressPopoverOpen] = useState(false);
+  // Non-null while either a pointer drag or the keyboard-step interaction is
+  // live — the previewed (not yet committed) whole-book percent.
+  const [scrubPreviewPercent, setScrubPreviewPercent] = useState<number | null>(null);
   const [highlights, setHighlights] = useState<HighlightWithThread[]>([]);
   const [unanchoredIds, setUnanchoredIds] = useState<Set<string>>(new Set());
   const [pendingSelection, setPendingSelection] =
@@ -379,6 +403,10 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
 
     setStatus("loading");
     setProgressPercent(null);
+    setDisplayedPage(null);
+    setToc([]);
+    setProgressPopoverOpen(false);
+    setScrubPreviewPercent(null);
     setHighlights([]);
     setUnanchoredIds(new Set());
     setPendingSelection(null);
@@ -394,6 +422,7 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
     const book: Book = ePub(`/api/resources/${resourceId}/file`, {
       openAs: "epub",
     });
+    bookRef.current = book;
     const rendition = book.renderTo(containerRef.current, {
       width: "100%",
       height: "100%",
@@ -503,6 +532,10 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       const pct = location.start.percentage;
       if (typeof pct === "number") {
         setProgressPercent(Math.round(pct * 100));
+      }
+      const displayed = location.start.displayed;
+      if (displayed && typeof displayed.page === "number" && typeof displayed.total === "number") {
+        setDisplayedPage({ page: displayed.page, total: displayed.total });
       }
 
       window.clearTimeout(saveTimerRef.current);
@@ -650,9 +683,12 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
 
       if (event.key === "ArrowLeft") turnPageRef.current("prev");
       else if (event.key === "ArrowRight") turnPageRef.current("next");
+      else if (event.key === "[") chapterJumpRef.current("prev");
+      else if (event.key === "]") chapterJumpRef.current("next");
       else if (event.key === "Escape") {
         setPendingSelection(null);
         setExpandedThread(null);
+        setProgressPopoverOpen(false);
       } else if (
         (event.key === "f" || event.key === "F") &&
         !event.metaKey &&
@@ -694,9 +730,13 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
 
         // Locations let epub.js compute a whole-book percentage from a CFI;
         // generating them is async, so the initial relocated event may fire
-        // before percentages are available — recompute once ready.
+        // before percentages are available — recompute once ready. M12's
+        // table of contents also needs locations (chapter-start percents
+        // are derived from them, see toc.ts), so build it here too.
         book.locations.generate(LOCATIONS_CHAR_STEP).then(() => {
-          if (!cancelled) rendition.reportLocation();
+          if (cancelled) return;
+          rendition.reportLocation();
+          setToc(buildToc(book));
         });
       })
       .catch(() => {
@@ -709,6 +749,7 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       window.removeEventListener("keydown", handleKeydown);
       window.removeEventListener("resize", handleWindowResize);
       renditionRef.current = null;
+      bookRef.current = null;
       rendition.destroy();
       book.destroy();
     };
@@ -846,6 +887,120 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
       void turnPage(direction);
     };
   }, [turnPage]);
+
+  // M12: chapter stepping sequence (one per spine index, deduped) and which
+  // of them governs the current position — the single source both the
+  // ChapterNav cluster and the `[`/`]` shortcuts step through.
+  const chapterStopsList = deriveChapterStops(toc);
+  const activeChapter = deriveCurrentChapter(chapterStopsList, currentSpineIndex);
+  const activeChapterStopIndex = activeChapter
+    ? chapterStopsList.findIndex((s) => s.href === activeChapter.href)
+    : -1;
+  const hasPrevChapter = activeChapterStopIndex > 0;
+  const hasNextChapter =
+    activeChapterStopIndex >= 0 && activeChapterStopIndex < chapterStopsList.length - 1;
+
+  function jumpToChapter(direction: "prev" | "next") {
+    const targetIndex = activeChapterStopIndex + (direction === "next" ? 1 : -1);
+    const target = chapterStopsList[targetIndex];
+    if (target) void renditionRef.current?.display(target.href);
+  }
+
+  useEffect(() => {
+    chapterJumpRef.current = jumpToChapter;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChapterStopIndex, chapterStopsList.length]);
+
+  function handleTocSelect(entry: TocEntry) {
+    void renditionRef.current?.display(entry.href);
+  }
+
+  /** Resolve a previewed percent to a CFI and actually move the book —
+   * shared commit path for pointer-drag release, keyboard Enter, and (were
+   * it ever wired up) any future entry point. Only ever called on commit,
+   * never per-frame while dragging (SPEC acceptance). */
+  function commitScrub(percent: number) {
+    const book = bookRef.current;
+    const rendition = renditionRef.current;
+    setScrubPreviewPercent(null);
+    if (!book || !rendition) return;
+    const cfi = book.locations.cfiFromPercentage(percent / 100);
+    void rendition.display(cfi);
+  }
+
+  function handleProgressPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
+    if (progressPercent === null) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startPercent = progressPercent;
+    // Captured once, not re-read at pointerup — the popover may already
+    // have closed itself (e.g. Escape) mid-gesture, and toggling off a
+    // *stale* "was open" read would just flip it back open.
+    const wasOpenAtStart = progressPopoverOpen;
+    let dragging = false;
+    let livePercent = startPercent;
+
+    function onMove(moveEvent: PointerEvent) {
+      const dx = moveEvent.clientX - startX;
+      if (!dragging && Math.abs(dx) > SCRUB_DRAG_THRESHOLD_PX) {
+        dragging = true;
+        // A real drag always supersedes the click-popover, whether or not
+        // it happened to be open already.
+        setProgressPopoverOpen(false);
+      }
+      if (!dragging) return;
+      livePercent = clampPercent(startPercent + dx / DIAL_PX_PER_PERCENT);
+      setScrubPreviewPercent(livePercent);
+    }
+
+    function cleanup() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("keydown", onKeyDuringDrag, true);
+    }
+
+    function onUp() {
+      cleanup();
+      if (dragging) commitScrub(livePercent);
+      // A plain click toggles the popover from whatever it was when this
+      // gesture started.
+      else setProgressPopoverOpen(!wasOpenAtStart);
+    }
+
+    function onKeyDuringDrag(keyEvent: KeyboardEvent) {
+      if (keyEvent.key !== "Escape") return;
+      keyEvent.stopPropagation();
+      dragging = false;
+      setScrubPreviewPercent(null);
+      cleanup();
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    // Capture phase: must win over the reader's window-level Escape handler
+    // (clears selection/thread) — cancelling the drag is what Escape means
+    // here, not that.
+    window.addEventListener("keydown", onKeyDuringDrag, true);
+  }
+
+  function handleProgressKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      event.stopPropagation();
+      const base = scrubPreviewPercent ?? progressPercent ?? 0;
+      const step = event.key === "ArrowRight" ? SCRUB_KEYBOARD_STEP_PERCENT : -SCRUB_KEYBOARD_STEP_PERCENT;
+      setProgressPopoverOpen(false);
+      setScrubPreviewPercent(clampPercent(base + step));
+    } else if (event.key === "Enter" && scrubPreviewPercent !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      commitScrub(scrubPreviewPercent);
+    } else if (event.key === "Escape" && scrubPreviewPercent !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      setScrubPreviewPercent(null);
+    }
+  }
 
   // Stretch: drag-to-peel. Grabbing the page's edge (a thin strip, not the
   // wider 30% click-turn zones inside the iframe content) tracks the
@@ -1038,8 +1193,52 @@ export function ReaderView({ resourceId, initialHighlightId }: ReaderViewProps) 
             )}
           </button>
         )}
-        <div className={styles.progress}>
-          {progressPercent !== null ? `${progressPercent}%` : ""}
+        <div className={styles.rightControls}>
+          {!focusMode && (
+            <ChapterNav
+              toc={toc}
+              chapterStops={chapterStopsList}
+              currentChapter={activeChapter}
+              onSelect={handleTocSelect}
+              onPrev={() => jumpToChapter("prev")}
+              onNext={() => jumpToChapter("next")}
+              hasPrev={hasPrevChapter}
+              hasNext={hasNextChapter}
+            />
+          )}
+          <div className={styles.progressWrap}>
+            <button
+              type="button"
+              className={styles.progress}
+              disabled={progressPercent === null}
+              aria-haspopup="true"
+              aria-expanded={progressPopoverOpen}
+              onPointerDown={handleProgressPointerDown}
+              onKeyDown={handleProgressKeyDown}
+            >
+              {progressPercent !== null ? `${progressPercent}%` : ""}
+            </button>
+            <AnimatePresence>
+              {scrubPreviewPercent !== null ? (
+                <ScrubDial
+                  key="scrub-dial"
+                  previewPercent={scrubPreviewPercent}
+                  chapterLabel={chapterAtPercent(chapterStopsList, scrubPreviewPercent)?.label ?? null}
+                  chapterStops={chapterStopsList}
+                />
+              ) : (
+                progressPopoverOpen && (
+                  <ProgressPopover
+                    key="progress-popover"
+                    percent={progressPercent}
+                    page={displayedPage?.page ?? null}
+                    totalPages={displayedPage?.total ?? null}
+                    chapterLabel={activeChapter?.label ?? null}
+                  />
+                )
+              )}
+            </AnimatePresence>
+          </div>
         </div>
       </div>
 

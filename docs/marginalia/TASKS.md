@@ -776,7 +776,7 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
 
 ### M12 — Book traversal
 
-- [ ] **Scrub dial on the `%` readout.** `ReaderView.tsx` L883 is the anchor.
+- [x] **Scrub dial on the `%` readout.** `ReaderView.tsx` L883 is the anchor.
       Click (no drag) keeps today's popover (% / pages / chapters). Click-and-drag
       opens a horizontal dial — retro-camera zoom-ring feel: tick marks, chapter
       boundaries as taller ticks, current position centred — that scrubs as the
@@ -789,13 +789,53 @@ effect (the paper fold, M15) ships last, so a stall there blocks nothing else.
       re-render per frame; release lands on the previewed position; Escape mid-drag
       cancels and returns to the original position; the dial is also operable by
       keyboard (arrows step, Enter commits) or has a documented keyboard equivalent._
-- [ ] **Jump up and down the book.** Add chapter-level navigation: previous/next
+      _(verified 2026-07-20: SPEC-GAP — "today's popover" didn't exist yet,
+      built it (`ProgressPopover.tsx`) as part of this task; see NOTES.md
+      "M12". `ScrubDial.tsx` renders the zoom-ring (ticks every 2%, taller
+      ticks at chapter boundaries derived from `book.locations` itself —
+      not a spineIndex approximation, see NOTES.md) with a fixed center
+      needle; ReaderView owns all position state, only calling
+      `book.locations.cfiFromPercentage()` + `rendition.display()` on
+      commit. Found and fixed a real toggle bug along the way: the pointer
+      handler unconditionally closed the popover on every pointerdown and
+      then toggled again on pointerup, so a second click to *close* an
+      already-open popover silently reopened it instead — fixed by reading
+      `wasOpenAtStart` once instead of re-deriving it from state that the
+      same gesture had just mutated. Live Playwright: a slow real drag
+      opens the dial with a live readout while the committed `%` button
+      stays frozen at its pre-drag value (no re-render), release commits to
+      the previewed position; a mid-drag Escape cancels and the committed
+      value is provably unchanged; 5× ArrowRight opens the dial without
+      committing, Enter commits exactly the previewed value. 109/109 tests,
+      `pnpm build` clean.)_
+- [x] **Jump up and down the book.** Add chapter-level navigation: previous/next
       chapter controls plus a table-of-contents popover (epub.js `book.navigation.toc`)
       that jumps on select, with keyboard shortcuts (`[` / `]` for chapter, and the
       TOC reachable without a pointer).
       _Acceptance: chapter jumps land at chapter starts and save position; TOC lists
       real chapter titles from the fixture EPUBs; jumping does not break highlight
       anchoring on arrival._
+      _(verified 2026-07-20: `toc.ts` flattens `book.navigation.toc` (nested
+      subitems included, indented in the popover) and resolves each entry
+      to a spine index via `book.spine.get(href)`; `ChapterNav.tsx` is the
+      prev/next-arrows-plus-label-plus-popover cluster, a plain Tab-reachable
+      button so the TOC needs no separate pointer-free affordance. Chapter
+      jumps reuse the exact same `rendition.display(href)` + existing
+      position-save debounce as every other navigation in the reader — no
+      special-casing needed for "save position". Live Playwright against
+      the real Metamorphosis fixture (5 real chapter entries + license):
+      TOC popover lists real titles ("Metamorphosis", "I", "II", "III", "THE
+      FULL PROJECT GUTENBERG™ LICENSE"), selecting one navigates and updates
+      the chapter label; prev/next arrows step through them; `]` (window-level
+      shortcut, same `isTyping` guard as the existing arrow-key/f shortcuts)
+      confirmed live. Highlight anchoring on arrival: walking every chapter
+      forward from a fresh load resolves every highlight cleanly — but
+      jumping to the very first chapter surfaced 3 pre-existing corrupted
+      highlights (real bug in old data, not caused by this task; full trace
+      in NOTES.md "M12") as "unanchored", which is the SPEC's designed
+      fallback behaving correctly on genuinely bad data that had simply
+      never been exercised by any earlier code path. 109/109 tests, `pnpm
+      build` clean.)_
 - [ ] **Two-page spread (iPad view).** Switch the rendition to `spread: "auto"` with a
       sensible `minSpreadWidth` (`ReaderView.tsx` L318–325 currently hardcodes
       `spread: "none"`), behind a persisted user setting, falling back to single page

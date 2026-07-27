@@ -1037,3 +1037,51 @@ cast in `ReaderView.tsx`), but very much real at runtime. Left the theme's
 CSS padding in place too (harmless, covers the brief pre-layout paint) but
 the real fix is the `gap` render option. `READER_PAGE_GAP = 96` → 48px
 (3rem) each side.
+
+## M12 — book traversal
+
+**SPEC-GAP: "today's popover" didn't exist.** The M12 scrub-dial task
+(TASKS.md) said "click keeps today's popover (% / pages / chapters)" as if
+a click popover on the `%` readout already existed from an earlier
+milestone. It didn't — grepped the whole `web/src` tree for "popover" and
+found nothing before this session, and `decisions.md`'s own 2026-07-20
+entry is the only other place that phrase appears. Built it as part of this
+task (`ProgressPopover.tsx`) rather than re-deciding the feature: percent,
+displayed page (epub.js's `location.start.displayed.page/total`, not
+previously read anywhere in `ReaderView.tsx`), and current chapter.
+
+**Chapter-start percentages, not a spineIndex ratio.** Tick marks on the
+scrub dial need "where does chapter N start" as a whole-book percent. epub.js
+exposes no direct API for that, but `book.locations` (already generated for
+the plain `%` readout) implicitly encodes it: each generated location's CFI
+carries its spine position (`new EpubCFI(cfi).spinePos`), so walking every
+generated location and keeping the earliest percent per spine index
+(`toc.ts`'s `chapterStartPercentsBySpineIndex`) derives an exact answer from
+primitives epub.js already exposes, on the *same* scale the position needle
+uses — a `spineIndex / spineCount` approximation was the first instinct but
+would have visibly disagreed with the needle for any book whose chapters
+aren't equal-length (i.e. every real book).
+
+**Found via the new chapter-jump code, not caused by it: 3 highlights on
+the shared dev Metamorphosis fixture have a corrupted CFI.** Jumping to the
+first TOC entry ("Metamorphosis", spine index 1 — the title/translator
+page) surfaced 3 highlights as "unanchored". Traced it: all 3 share the
+identical CFI `epubcfi(/6/2!/4/2/1:0)` (spine index 1), but their `exact`
+text is unmistakably from Chapter I ("...he found himself transformed in
+his bed into a horrible vermin", the book's opening sentence) — spine index
+2, not 1. This is the M9-era "stale spineIndex" bug (NOTES.md, M9 section)
+manifesting in already-created records: the code path that creates a
+highlight's CFI was fixed back then, but the 3 records created *before*
+that fix still carry the wrong spine reference baked into the CFI itself.
+No code before this session ever actually rendered spine index 1 — every
+prior verification pass opened the book at a saved mid-book position and
+only ever paged *forward* — so this is the first time anything asked epub.js
+to resolve highlights against that section, and the SPEC's designed
+fallback did exactly its job (surfaced as "unanchored", not dropped, not a
+crash). Left the 3 records untouched — each has a real, answered thread
+attached (genuine conversation history from earlier sessions, not
+throwaway test data), so silently deleting or rewriting them as "cleanup"
+felt like the wrong call for a display quirk in old data. `[`/`]` and the
+TOC popover both correctly show every *other* highlight resolving cleanly
+on arrival at every chapter; this is a known, load-bearing, pre-existing
+data artifact, not a regression from M12.
