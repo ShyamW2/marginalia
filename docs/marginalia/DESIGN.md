@@ -124,10 +124,22 @@ dark panel, neon strokes, scanline grain, data readouts in a mono face).
   lengths as a sparkline, "last visited" timestamps. Instrument panels love numbers.
 - Respect the CRT look but keep it legible: glow is an accent on a dark neutral, not
   text-on-noise. Contrast still passes; grain and scanlines sit under 5% opacity.
+- **The face is one surface** (M18, decisions.md 2026-07-28). Everything *on* the base
+  screen — strip, heat field, chapter axis, readouts, revisit queue — carries the barrel
+  warp and the VHS treatment **together**, as one bowed piece of glass; a face that bows
+  in some places and not others reads as broken. Things that float *above* the glass —
+  hover readouts, popovers, tooltips, modals — stay flat, because they are in front of
+  the screen, not on it. This supersedes the earlier "graphics layer only" rule:
+  legibility is now a bounded constraint (gentle displacement, contrast still passes,
+  intensity reaches zero) rather than a veto on warping text at all.
+- **Colour encodes category, brightness encodes density.** The heat field carries two
+  channels: hue says *what kind* of annotation (or which theme, in semantic mode),
+  luminance says *how much*. A field that only encodes density looks impressive and
+  answers the wrong question. VHS is **visual only** — no sound (see anti-goals).
 
 ## Listening (a mode of the Book, not a fourth room)
 
-Audio (M17–M18; full spec in AUDIO.md) is the Book room with the lights the same and
+Audio (M21–M22; full spec in AUDIO.md) is the Book room with the lights the same and
 the page reading itself to you. It is deliberately **not** a player room:
 
 - **The book stays on screen.** The spoken sentence takes a quiet moving tint — quieter
@@ -246,7 +258,7 @@ collapses all of the above to crossfades (M7 already requires this).
   motion — decoration that encodes nothing gets cut.
 - No three.js/WebGL until a named effect needs it (candidate: the M10 page curl —
   discharged in canvas 2D, so the rule still holds; see decisions.md 2026-07-20).
-- No sound in v1.5. Revisit only after the rooms exist. *(Audio arrives in M17–M18 as
+- No sound in v1.5. Revisit only after the rooms exist. *(Audio arrives in M21–M22 as
   speech — the book read aloud. Sound **design** — clicks, page rustle, ambience — is
   still parked and is a separate question.)*
 - **No fourth room.** Three rooms, one building. Listening is a mode of the Book; the

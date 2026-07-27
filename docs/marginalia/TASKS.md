@@ -633,7 +633,7 @@ until the M7 verify passes — v1 must be whole first.
 
 ---
 
-## v1.6 — operator feedback pass (M11–M13, and M15–M16 below)
+## v1.6 — operator feedback pass (M11–M13; its Scan and fold milestones are now M15 and M20)
 
 Source: operator feedback after living with v1.5, translated into design decisions in
 `docs/decisions.md` (2026-07-20 entry) — **read that entry before starting M11**. It
@@ -642,10 +642,10 @@ resolves every "make it feel like X" note into a buildable rule; do not re-deriv
 Ordering is deliberate: cheap, low-risk fixes ship first (M11), the hardest single
 effect (the paper fold) ships last, so a stall there blocks nothing else.
 
-> **Renumbered 2026-07-27.** A second feedback pass (v1.7, below) took the M14 slot,
-> so this pass's remaining two milestones shifted down: **the Scan instrument is now
-> M15** (was M14) and **the paper fold is now M16** (was M15). Their contents are
-> unchanged and they are still governed by the 2026-07-20 decisions entry.
+> **Renumbered twice since.** This pass's last two milestones moved: **the Scan
+> instrument is now M15** (was M14; shipped 2026-07-28) and **the paper fold is now
+> M20** (was M15, then M16). Contents unchanged; both are still governed by the
+> 2026-07-20 decisions entry. See the milestone map in the v1.8 section below.
 
 ### M11 — Reading surface fixes (quick wins)
 
@@ -1004,7 +1004,7 @@ effect (the paper fold) ships last, so a stall there blocks nothing else.
 
 ---
 
-## v1.7 — revisions & audio (M14–M18)
+## v1.7 — revisions & audio (M14–M16, plus audio at M21–M22)
 
 Source: operator feedback after living with v1.6, translated into design decisions in
 `docs/decisions.md` (**2026-07-27 entry — read it before starting M14**). Same contract
@@ -1012,8 +1012,9 @@ as v1.6: the entry resolves every note into a buildable rule, and the four settl
 audio decisions there (engine, sentence-level sync, two-pass casting, audio-drives-the-
 reader) are not open for re-derivation.
 
-M15 and M16 are the v1.6 pass's own remaining milestones, carried over unchanged.
-Audio (M17–M18) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
+The Scan instrument (M15) and the paper fold (M20) are the v1.6 pass's own milestones,
+carried over unchanged.
+Audio (now M21–M22) has its own binding spec: **`docs/marginalia/AUDIO.md`**.
 
 ### M14 — Reading surface revisions
 
@@ -1362,9 +1363,225 @@ the 2026-07-20 decisions entry.)_
       database afterward — library back to its original 4 resources. M15
       is whole — on to M16.)_
 
-### M16 — The paper fold (Apple Books curl)
+---
 
-_(Carried over from the v1.6 pass, where it was M15 — contents unchanged.)_
+## v1.8 — instrument v2, the digest, QOL (M16–M19)
+
+Source: operator feedback after using the shipped M14/M15, translated into design
+decisions in `docs/decisions.md` (**2026-07-28 entry — read it before starting M16**).
+
+**Milestone map after this pass** (numbers shifted once more; contents of the moved
+milestones are unchanged):
+
+| Now | Was | Milestone |
+|---|---|---|
+| M16 | — | Reading QOL & bug fixes (new) |
+| M17 | — | The book digest & AI context (new) |
+| M18 | — | Scan v2: the instrument face (new) |
+| M19 | — | Settings as a binder (new) |
+| M20 | M16 | The paper fold |
+| M21 | M17 | Audio I |
+| M22 | M18 | Audio II |
+
+M17 must precede M18 and M22: the digest supplies the semantic scan's themes *and* is
+pass 1 of the audio cast scan. That dependency is why this renumber was worth doing —
+see the closing note in the decisions entry.
+
+### M16 — Reading QOL & bug fixes
+
+Bugs first: both are daily-reading irritations in shipped code.
+
+- [ ] **The `%` control eats the arrow keys.** After a pointer drag on the `%` readout,
+      the button keeps DOM focus and its `onKeyDown` (`ReaderView.tsx` ~L1184) calls
+      `stopPropagation()`, so ←/→ step the dial by 1% instead of turning pages until you
+      click elsewhere. **Do not fix this by removing arrow support** — M12's acceptance
+      criteria require a keyboard path to the dial, and deleting it trades a defect for a
+      regression. Fix: a gesture that began with a *pointer* releases focus on commit and
+      on cancel, so arrows return to page turns; arrow-stepping stays available when the
+      control is focused by keyboard.
+      _Acceptance: drag-scrub, release, press → — the page turns; Tab to the `%` control
+      and press → — the dial steps by 1% and Enter commits; Escape mid-drag also restores
+      arrow-to-page-turn._
+- [ ] **Margin changes don't reach the page until remount.** Changing the margin setting
+      updates the wrapper padding live (the border visibly moves) but the epub-side gap,
+      column layout, and spine positioning keep their old values until you leave the
+      reader and return. **The cause is not established — do not guess it in the fix.**
+      Two candidates: (a) the `ResizeObserver` on `containerRef` (~L619) not firing for a
+      padding-driven width change, (b) `manager.updateLayout()` not re-running
+      `Contents.columns()` for an already-rendered section. Diagnose by instrumenting
+      `handleContainerResize` and reading the iframe body's computed `column-gap` and
+      `padding` before and after a change. Known-good fallback if the layout path
+      resists: re-`display()` the current CFI after updating the gap — that is what a
+      remount does. Record the actual cause in NOTES.md; it is a third epub.js quirk in
+      the same area as M11's and M12's.
+      _Acceptance: change the margin setting with the reader open — padding, column
+      layout, and (in spread mode) the spine gutter all update together, in one step,
+      without leaving the view; the page you were on stays the page you are on; no new
+      unanchored highlights._
+- [ ] **Reading text size.** A persisted `readerFontScale` setting (slider or steps),
+      applied through the epub theme alongside the existing font family and line height.
+      **It is not independent of margins:** `READER_TARGET_COLUMN_WIDTH = 520` is
+      documented as "~70ch at 16px", so the target column width must be derived from the
+      current font size or the measure silently drifts out of the 60–75ch range as text
+      scales.
+      _Acceptance: text scales live across the whole range without a reload; measured
+      characters-per-line stays in the 60–75 band at every size on a wide window;
+      highlights still resolve after a change; setting survives a reload._
+- [ ] **Margin colour matches the page.** Confirmed defect: `.stage` paints
+      `--color-bg-raised` while the epub body paints `--color-bg` (`useEpubThemeVars`),
+      so the margin band is a different tone from the sheet in **every** theme. Fix by
+      making one token the source of truth for both — not by hand-matching two values,
+      which would drift again the next time either changes.
+      _Acceptance: no visible seam between margin and page in Paper or Ink, at any margin
+      setting; the stage's border/shadow still frames the sheet._
+- [ ] **Highlights pop on hover.** Hovering a mark brings it to its full kind colour,
+      returning to the muted wash on leave. The note in `highlightKinds.ts` that CSS
+      never reaches the marks refers to `rendition.themes` (which injects into the
+      *iframe*); the marks-pane SVG is in the **parent** document, so an ordinary app
+      stylesheet can target `.HIGHLIGHT_MARK_CLASS:hover`, and a CSS rule beats the
+      inline presentation attributes epub.js writes. Must respect focus mode — a hidden
+      mark stays hidden on hover.
+      _Acceptance: hover a highlight and it reads as its own colour, unmistakably; leave
+      and it settles back; the transition is quiet, not a flash; hovering does not
+      interfere with selecting text over a highlight; with `f` active, nothing appears._
+- [ ] **Max response length.** Promote the hardcoded `THREAD_MAX_TOKENS = 8192`
+      (`anthropic.ts`, `openaiCompat.ts`) to a persisted setting, defaulting to today's
+      value. **Honest asymmetry, and it must be visible in the UI, not hidden:** the
+      Claude Agent SDK exposes no `max_tokens`, so on the `claude-agent` provider the
+      limit can only be expressed as an instruction in the system prompt. Say so next to
+      the field rather than implying enforcement.
+      _Acceptance: a low limit visibly truncates or shortens answers on each provider;
+      the settings UI states which providers enforce it and which only request it._
+- [ ] **Verify:** read for a stretch with a changed text size and margin, hovering
+      highlights, scrubbing with the dial and then paging with the arrows. Both themes.
+
+### M17 — The book digest & AI context
+
+The premise correction that produced this milestone is in the decisions entry: the LLM
+already receives the **whole book** (or the largest fitting window) — it has since M4.
+What is missing is structure, position-awareness, and a compact summary for books too
+long to send whole. Build shared infrastructure here: the digest is also the semantic
+scan's theme source (M18) and pass 1 of the audio cast scan (M22).
+
+- [ ] **Label sections with real chapter titles.** `llm/context.ts` renders sections as
+      `--- [section 4] ---`, so the model cannot reason about or cite structure. Use the
+      TOC titles already resolved in the reader (`reader/toc.ts` has the flattening
+      logic; the server needs its own path to the same data from the OPF/NCX). Falls back
+      to the current label when a section has no TOC entry.
+      _Acceptance: context contains real chapter names; a question about "chapter II"
+      gets an answer that cites it correctly; the context builder's determinism tests
+      still pass (same input → byte-identical context, which caching depends on)._
+- [ ] **Send the reading position, and don't spoil.** The model currently gets the whole
+      book including the ending and no signal about where the reader is. Ship the current
+      position with the question and instruct it not to reveal what happens after that
+      point unless explicitly asked. **Highest value-per-line change in this milestone.**
+      _Acceptance: ask "what happens to this character?" from 20% into a fixture book —
+      the answer stays behind the reading position and says so, rather than summarising
+      the ending; asking directly for spoilers still works._
+- [ ] **Surface silent windowing.** Past the context budget, `selectWindow` quietly drops
+      distant sections. When a question is answered against a window rather than the
+      whole book, say so in the thread — quietly, once, not as an error.
+      _Acceptance: on a book that exceeds the budget the thread shows the notice and the
+      answer still lands; on a book that fits, no notice ever appears._
+- [ ] **The digest itself.** User-triggered scan (a button in the reader and on the desk
+      hover strip) producing a per-book digest — synopsis, cast, themes, per-chapter
+      summaries — via the existing `extract` seam with a zod schema, stored in **SQLite**
+      (additive migration). Prepended to the book context on every question thereafter.
+      Re-scannable; a failed scan leaves no half-written digest. **The vault stays
+      one-way** — the digest is not read from or written to it in this milestone.
+      _Acceptance: scanning a fixture book produces a digest whose chapter summaries
+      match the book; answers measurably improve on a long book that doesn't fit the
+      window (compare the same question before and after, and record both in NOTES.md);
+      a book with no digest still answers exactly as it does today._
+- [ ] **Verify:** ask the same three questions on a short book and a long one, before and
+      after scanning; confirm chapter citations are real, no spoilers leak, and the
+      digest survives a reload.
+
+### M18 — Scan v2: the instrument face
+
+**Read the 2026-07-28 decisions entry first** — the warp tiering, the hit-test hazard,
+and the two-channel colour model are specified there.
+
+- [ ] **VHS treatment (visual only).** Drifting tracking lines, chroma noise, occasional
+      signal wobble across the scan. **No audio** — DESIGN.md's "no sound in v1.5" holds.
+      Intensity rides the existing CRT setting; reduced motion disables movement.
+      _Acceptance: reads as a worn tape at rest, not as a strobe; every readout stays
+      legible; reduced motion renders a still, clean panel._
+- [ ] **Whole-face barrel warp, tiered by z-hierarchy.** Everything on the base scan
+      screen — strip, heat field, chapter axis, readouts, revisit queue — warps
+      **together as one surface**, via a **single SVG filter on a single wrapper**
+      (filtering pieces separately makes each bow around its own centre and stop lining
+      up; coherency is the point). Floating layers — hover ghost readouts, popovers,
+      tooltips, modals — do **not** warp and must be **portalled out** of the wrapper: a
+      CSS filter on an ancestor creates a containing block and breaks `position: fixed`
+      descendants. Legibility is a bounded constraint: gentle enough displacement that
+      mono readouts stay readable at their smallest size, contrast still passes,
+      intensity reaches zero, reduced motion disables warp and fringing.
+      _Acceptance: the panel bows as one continuous face — no piece bows independently;
+      a popover opens flat and correctly positioned; every readout passes contrast at
+      full intensity; intensity 0 renders flat and crisp._
+- [ ] ⚠️ **Fix hit-testing under the warp.** A filtered element still hit-tests at its
+      *unwarped* geometry, so near the corners a heat band is clicked where it was, not
+      where it looks. This will read as "the scan is broken" rather than as a warp
+      problem. The strip's targets are 1-D positions along x: position the invisible
+      hit-target bands through the **same barrel function** that displaces the graphics.
+      _Acceptance: click bands at both far edges and both corners of the strip — the one
+      under the cursor is the one that responds, at every intensity including maximum;
+      hover readouts appear over the band the pointer is actually on._
+- [ ] **Two-channel heat colour.** Restore the "what's what" reading M15 lost: **hue
+      carries the category, luminance/alpha carries density**. Accumulate one density
+      layer per category, then per pixel take summed density for brightness and the
+      dominant category for hue. Keep M15's cool→hot density ramp as a selectable third
+      mode — it is better for "where did I annotate most", just not for "what's what".
+      _Acceptance: a cluster of honey highlights reads as honey, not as generic hot; a
+      mixed cluster shows its dominant kind; density is still legible as intensity;
+      switching to density-only mode reproduces today's appearance._
+- [ ] **Two scan modes: by kind, by theme.** A mode toggle re-colours the same field and
+      the same hit targets — a palette swap, not a second component. Themes come from
+      M17's digest, tagged onto each highlight (quote + note + thread) by an `extract`
+      pass, persisted in SQLite. This un-parks the 2026-07-19 "LLM note supplementation"
+      item, which is what this ask really is; concepts from the vault are **not** the
+      source (M9's reasoning still holds — they exist only for published threads).
+      _Acceptance: theme mode colours every highlight that has a theme and visibly greys
+      those that don't; the legend names the themes; filters, search, stars, tags, and
+      the airlock jump behave identically in both modes; a book with no digest falls back
+      to kind mode with an explanation, not an empty strip._
+- [ ] **Tighter bleed + zoom/pan.** Reduce the blob radii (M15's `26 + weight*44`px lets
+      neighbours merge into an unreadable smear) **and** add zoom + pan over the same
+      0–100% domain so dense regions can be opened up and clicked precisely. Zoom is a
+      viewport transform: hit targets, filters, and the airlock keep working, and it must
+      compose correctly with the barrel mapping above.
+      _Acceptance: at 1× a cluster still reads as one hot region with visible internal
+      structure; zoomed in, individual highlights separate and are individually
+      clickable; zoom + warp together still hit-test correctly; keyboard users can zoom
+      and pan._
+- [ ] **Verify:** open the scan on a book with a dozen clustered highlights — read the
+      heat by colour, switch to theme mode, zoom into a cluster and click a specific
+      highlight near a corner at full CRT intensity, then jump into the reader from it.
+
+### M19 — Settings as a binder
+
+- [ ] **Binder shell.** Rebuild `SettingsPage`'s flat field list as a book/binder: tabbed
+      dividers down the side — **Reading, LLM, Scan, Audio, Desk** — with a page-turn
+      animation between sections, inside M11's existing modal shell (dialog semantics,
+      focus trap, Escape, backdrop click, and the `/settings` deep link all stay).
+      Existing fields move; none are redesigned here.
+      _Acceptance: every setting that exists today is still reachable and still saves;
+      the deep link still opens over the current room; Escape still restores focus._
+- [ ] **A11y and motion.** The dividers are a real tablist/tabpanel (arrow-key
+      navigation between tabs, correct roles and `aria-selected`) — never divs with click
+      handlers. The page turn collapses to an instant swap under reduced motion.
+      _Acceptance: the whole binder is operable keyboard-only including switching
+      sections; a screen reader announces the selected divider; reduced motion shows no
+      animation at all._
+- [ ] **Verify:** open settings from all three rooms, visit every divider, change one
+      setting on each and confirm it persists. The stated goal is that settings is
+      **pleasant to open** — judge that honestly and fix what feels clumsy before
+      checking this off.
+
+### M20 — The paper fold (Apple Books curl)
+
+_(Carried over unchanged — was M15 in the v1.6 pass, then M16 in v1.7.)_
 
 The hardest item; isolated so it can take the time it needs. **Read the 2026-07-20
 decisions entry first** — the geometry is specified there and is not open for
@@ -1406,9 +1623,9 @@ re-derivation.
       paper, notes ride the folding sheet as they do today, and reading with the
       effect on still feels calm.
 
-### M17 — Audio I: one voice, end to end
+### M21 — Audio I: one voice, end to end
 
-**Read `docs/marginalia/AUDIO.md` before starting — it is binding for M17 and M18**,
+**Read `docs/marginalia/AUDIO.md` before starting — it is binding for M21 and M22**,
 the way SPEC.md is for the core. The vertical-slice rule applies: a book you can listen
 to in one voice, with the page following along, before any casting exists.
 
@@ -1460,7 +1677,7 @@ to in one voice, with the page following along, before any casting exists.
       normal reading things — pause, highlight, ask, turn back a page, resume. Note
       friction in NOTES.md. Both themes, reduced motion, and focus mode.
 
-### M18 — Audio II: the cast
+### M22 — Audio II: the cast
 
 - [ ] **Cast scan (pass 1).** User-initiated `POST /api/resources/:id/cast/scan` (SSE)
       running AUDIO.md's `CastSchema` extract through the **existing** LLM seam and

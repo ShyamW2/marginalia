@@ -3,6 +3,165 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-28 — v1.8: scan instrument v2, the book digest, QOL & bug fixes
+
+Operator feedback after using the shipped M14/M15. Same contract as the last two
+passes: notes become buildable rules here so the milestones don't re-derive them.
+
+**Renumbering (again — the last time; see the note at the end).** The new work lands as
+**M16–M19**, and the two milestones already written shift down: the paper fold is now
+**M20** (was M16), audio is **M21/M22** (was M17/M18). Contents unchanged. The fold
+stays late on the standing rule from the v1.6 pass — the hardest single effect ships
+last so a stall there blocks nothing — and it is now behind four smaller milestones
+rather than one. That is a judgment call, not a discovery: moving it earlier is a
+one-block edit if daily reading wants it sooner.
+
+### The scan's instrument face
+
+- **VHS is visual only.** Tracking lines that drift, chroma noise, and occasional
+  signal wobble — the *look* of a worn tape. **No audio.** DESIGN.md's "no sound in
+  v1.5" holds and sound design stays parked; "a slight buzz" is a visual buzz.
+- **The warp is tiered by z-hierarchy, not by content type.** This amends — does not
+  delete — the 2026-07-20 rule ("CRT distortion applies to the graphics layer only,
+  never the mono readouts or the revisit queue"). The new rule: **everything sitting on
+  the base scan screen warps together as one surface** — strip, heat field, chapter
+  axis, readouts, revisit queue — because a face that bows in some places and not
+  others reads as broken, not as glass. Coherency is the whole point. **Things that
+  float above the glass — hover ghost readouts, popovers, tooltips, modals — do not
+  warp**; they are in front of the screen, not on it. Legibility survives as a *bounded*
+  constraint rather than a veto: the base layer's displacement is gentle enough that
+  mono readouts stay readable at their smallest size, contrast still passes, intensity
+  is a setting that reaches zero, and reduced motion disables warp and fringing outright.
+- **One filter on one container.** The warp must be a single SVG filter on a single
+  wrapper containing the whole base layer. Filtering each piece separately makes each
+  piece bow around its own centre and the parts stop lining up — that is precisely the
+  incoherence this rule exists to prevent.
+- **Floating layers must be portalled out of the warped container.** Not optional: a
+  CSS `filter` on an ancestor creates a containing block, which breaks `position: fixed`
+  descendants — so popovers rendered *inside* the warped wrapper would both inherit the
+  warp and mis-position. Render them as siblings of the wrapper.
+- ⚠️ **Warp displaces pixels, not hit targets.** An element under `filter:
+  url(#barrel)` still hit-tests at its *unwarped* geometry: near the corners, where
+  displacement is strongest, a heat band is clicked where it *was*, not where it looks.
+  This is the single most likely bug in the milestone and it will read as "the scan
+  feels broken" rather than as a warp problem. The strip's hit targets are 1-D positions
+  along x, so the fix is cheap and exact: **position the invisible hit-target bands
+  through the same barrel function** that displaces the graphics, instead of at their
+  raw x. Verify by clicking a band near a corner, not near the centre.
+- **Heat is coloured by meaning again.** M15's field mapped *density* through a fixed
+  cool→hot ramp, which lost the thing M9's discrete bands had: you could see at a glance
+  what kind of annotation a hot spot was. Restore it with two channels — **hue carries
+  the category** (highlight kind, or theme in semantic mode), **luminance/alpha carries
+  density**. Implementation: accumulate one density layer per category, then per pixel
+  take the summed density for brightness and the dominant category for hue. Keep the
+  cool→hot ramp available as a third "density only" mode; it is genuinely better for
+  answering "where did I annotate most", just not for "what's what".
+- **Two scan modes, one strip.** **By kind** (today's four highlight colours) and **by
+  theme** (semantic). Themes come from the book digest below, not from vault concepts —
+  the reason M9 rejected concept filtering still stands: concepts only exist for
+  *published* threads, so a concept-driven view would be mostly empty. Switching modes
+  re-colours the same field and the same hit targets; it is a palette swap, not a
+  second component.
+- **Tighter bleed and a zoom.** Both, not either: reduce the blob radii (M15's `26 +
+  weight*44` px is wide enough that neighbours merge into an unreadable smear) *and* add
+  zoom + pan to the strip so dense regions can be opened up and clicked accurately.
+  Zoom is a viewport transform over the same 0–100% domain — hit targets, filters, and
+  the airlock jump all keep working unchanged, and the barrel mapping above composes
+  with it.
+
+### AI answer quality — and a correction
+
+- **The premise was wrong, and it matters.** The LLM is *not* sent only the highlighted
+  quote. Since M4 it receives the **whole book** — or the largest window of spine
+  sections that fits the provider's context budget, centred on the highlight
+  (`llm/context.ts`, settled decision 8). Any fix aimed at "give it the book" would have
+  been building something that already exists. What is actually missing is narrower and
+  more interesting:
+  - **Sections are unlabelled.** Context renders them as `--- [section 4] ---`, so the
+    model cannot say "in Chapter II" or reason about structure. Label sections with real
+    TOC titles — cheap, and it improves every answer.
+  - **The model doesn't know where you are.** It gets the whole book including the
+    ending, and no signal about your reading position — so it can and does spoil. Ship
+    the reading position with the question and instruct: *do not reveal what happens
+    after the reader's current position unless they ask.* This is the highest-value
+    change in this milestone and it costs almost nothing.
+  - **Long books silently degrade.** Past the budget, `selectWindow` quietly drops
+    distant sections; nothing tells the reader their question is being answered against
+    a slice. Surface it, and use the digest to compensate.
+- **The book digest is the answer to "a book scanner".** A user-triggered scan produces
+  a compact per-book digest — synopsis, cast, themes, per-chapter summaries — stored in
+  **SQLite** and prepended to the book context on every question. It solves three things
+  at once and must therefore be built once, as shared infrastructure: it grounds answers
+  (especially for books too long to send whole), it supplies the **themes** the semantic
+  scan colours by, and it *is* pass 1 of the audio cast scan (M22). Do not build a
+  second scanner for casting.
+- **The vault stays one-way.** The digest lives in SQLite, not the vault, and the LLM
+  still never reads the vault, other books, or the filesystem (PRODUCT.md). The
+  operator considered cross-book memory and did not take it — it would make the same
+  question give different answers as the vault drifts. Publishing the digest *into* the
+  vault as part of `_Book.md` remains available later; that direction is already legal.
+- **Max response length is a setting** — with an honest asymmetry to document: the
+  Anthropic and openaiCompat paths take `max_tokens` directly (today's hardcoded
+  `THREAD_MAX_TOKENS = 8192` becomes the setting's default), but the Claude Agent SDK
+  exposes no such knob, so on the `claude-agent` provider the limit can only be
+  expressed as an instruction in the system prompt. Do not pretend it is enforced there.
+
+### Reading QOL
+
+- **Text size is a setting, and it feeds the measure calculation.** A font-size scale
+  applied through the epub theme. It is not independent of margins: `computeReaderGap`'s
+  `READER_TARGET_COLUMN_WIDTH = 520` is "~70ch **at 16px**" — that comment stops being
+  true the moment text scales, so the target column width must be derived from the
+  current font size, or the measure silently drifts out of the 60–75ch range.
+- **The margin must be the same colour as the page** — a confirmed, exact defect, not a
+  preference: `.stage` paints `--color-bg-raised` while the epub body paints
+  `--color-bg` (`useEpubThemeVars`), so the margin band is a different tone from the
+  sheet in *every* theme. Fix by making one token the source of truth for both, so they
+  cannot drift apart again — not by hand-matching two values.
+- **Highlights respond to the cursor.** Hovering a mark pops it to its full kind colour.
+  Technically cheap and worth recording because the codebase says otherwise: the note in
+  `highlightKinds.ts` that "CSS never reaches the marks" is about `rendition.themes`
+  (which injects into the *iframe*). The marks-pane SVG lives in the **parent**
+  document, so an ordinary app stylesheet can target it — and a CSS rule beats the
+  inline presentation attributes epub.js writes. Must respect focus mode (a hidden mark
+  stays hidden on hover).
+
+### Settings as a binder
+
+Settings becomes a **book/binder**: tabbed dividers down the side — Reading, LLM, Scan,
+Audio, Desk — with a page-turn animation between them, inside the existing modal shell
+from M11 (dialog semantics, focus trap, Escape, deep link all stay). Two constraints:
+the divider list is the a11y path (real tablist/tabpanel semantics, arrow-key
+navigation, never divs), and the page-turn animation collapses to an instant swap under
+reduced motion. The goal is stated plainly so it can be judged: **settings should be
+pleasant to open**, not merely correct.
+
+### Bugs
+
+- **The `%` control eats the arrow keys.** After a pointer drag the button keeps DOM
+  focus, and its `onKeyDown` handler calls `stopPropagation()`, so ←/→ step the dial by
+  1% instead of turning pages until you click elsewhere. Do **not** fix this by removing
+  arrow support — M12's acceptance criteria require a keyboard path to the dial, and
+  deleting it would trade one defect for a regression. Fix: a gesture that began with a
+  *pointer* releases focus on commit/cancel (blur), so arrows return to page turns;
+  arrow-stepping stays available when the control is focused by keyboard.
+- **Margin changes don't reach the page until you leave and come back.** The wrapper
+  padding updates live (you see the border move) but the epub-side gap, column layout,
+  and spine positioning keep their old values until `ReaderView` remounts. Cause is
+  *not* yet established, and must not be guessed at in the fix: the two candidates are
+  (a) the `ResizeObserver` on `containerRef` not firing for a padding-driven width
+  change, and (b) `manager.updateLayout()` not re-running `Contents.columns()` for an
+  already-rendered section. Diagnose by instrumenting `handleContainerResize` and
+  reading the iframe body's computed `column-gap`/`padding` before and after. Known-good
+  fallback if the layout path resists: re-`display()` the current CFI after the gap
+  change — that is what a remount does, and it demonstrably works.
+
+**A note on renumbering.** Three passes have now shifted milestone numbers. That is the
+cost of a strictly-ordered list, and it is paid in confusion every time. From here,
+prefer appending new milestones and reordering only when the dependency is real (the
+digest genuinely must precede the semantic scan and audio casting; that is why this one
+was worth it).
+
 ## 2026-07-27 — v1.7: reading-surface revisions, audio mode, future arcs
 
 Operator feedback after living with v1.6 (M11–M13 shipped; M14/M15 were written but
@@ -77,7 +236,7 @@ audio is a whole new subsystem and goes last so it can't hold the visual work ho
   selection (2026-07-20 entry). Also request the browser Fullscreen API on the app root,
   degrading silently to in-page fullscreen if it's refused.
 
-### Audio mode (M17–M18)
+### Audio mode (M17–M18 — renumbered to M21–M22 on 2026-07-28)
 
 The app learns to read a book aloud with a local TTS model, optionally casting distinct
 voices for characters. Four operator decisions were taken 2026-07-27 and are settled:

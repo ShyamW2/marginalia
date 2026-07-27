@@ -1,6 +1,7 @@
 # Marginalia — Audio Mode Spec
 
-*Prescriptive implementation spec for the audio subsystem (M17–M18). **Binding**, the
+*Prescriptive implementation spec for the audio subsystem (M21–M22, renumbered from
+M17–M18 on 2026-07-28). **Binding**, the
 same way SPEC.md is binding for the core: don't re-decide what's settled here; if it's
 wrong or silent, make the most boring choice that satisfies it, mark it `// SPEC-GAP`,
 and log a line in NOTES.md.*
@@ -36,7 +37,7 @@ gitignored, per-machine like the rest of `data/`), fetched on first use with vis
 progress and a designed failure state — never bundled in git, never silently blocking.
 
 **A second, more expressive GPU engine (Chatterbox/Orpheus-class, Linux-only) is a
-later implementation behind the same seam.** Do not build it in M17/M18. The seam is
+later implementation behind the same seam.** Do not build it in M21/M22. The seam is
 what makes it a new file rather than new call sites.
 
 ⚠️ **Native-binding hazard (this project has already been bitten once).**

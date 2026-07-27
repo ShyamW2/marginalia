@@ -13,10 +13,13 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/TASKS.md` — ordered task list with per-milestone acceptance criteria; check boxes off as you go
 - `docs/marginalia/PRODUCT.md` — product requirements and vision
 - `docs/marginalia/DESIGN.md` — aesthetic & interaction blueprint (the "three rooms" system) — binding for M7+
-- `docs/marginalia/AUDIO.md` — audio/TTS subsystem spec (engine seam, casting, cache) — **binding for M17+**
+- `docs/marginalia/AUDIO.md` — audio/TTS subsystem spec (engine seam, casting, cache) — **binding for M21+**
 - `docs/marginalia/SONNET_PROMPT.md` — kickoff prompt + operator notes for implementation sessions
 - `docs/marginalia/NOTES.md` — running log of spec gaps, friction, blockers (create on first use)
 - `docs/decisions.md` — decision log (ADR-lite)
+- `docs/OPUS.md` — how to run a **design/review** session: interrogating feedback,
+  verifying premises before building on them, and writing docs an implementation
+  session can execute. Read it before any session that decides rather than executes.
 
 **Division of labor:** design/architecture decisions are made in high-capability
 sessions (Fable/Opus) and recorded in the docs above; implementation sessions
