@@ -7,6 +7,7 @@ import { phosphorHue } from "./scanPalette.js";
 import { drawHeatField, type HeatColorMode, type HeatPoint } from "./heatField.js";
 import { chapterLabelText, thinLabels } from "./chapterAxis.js";
 import { warpPoint, type WarpGeometry } from "./warp.js";
+import { fractionToView, panByViewFraction, zoomIn, zoomOut, type ZoomState } from "./zoom.js";
 import styles from "./HeatStrip.module.css";
 
 const MIN_BAND_HEIGHT = 16;
@@ -92,6 +93,11 @@ export function HeatStrip({
   // for "where did I annotate most". A palette swap over the same field and
   // the same hit targets, not a second component — see heatField.ts.
   const [colorMode, setColorMode] = useState<HeatColorMode>("kind");
+  // M18 "tighter bleed and a zoom" (decisions.md 2026-07-28): a viewport
+  // transform over the same 0-100% domain, composed with the warp below
+  // (zoom/pan first, then the barrel mapping — the filter operates on
+  // final rendered pixels, after any CSS transform already ran).
+  const [zoomState, setZoomState] = useState<ZoomState>({ zoom: 1, pan: 0 });
   const stripRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stripSize, setStripSize] = useState({ width: 0, height: 0 });
@@ -167,38 +173,47 @@ export function HeatStrip({
 
   const hoveredHighlight = hoveredId ? positioned.find((h) => h.id === hoveredId) ?? null : null;
 
+  const viewWidthFraction = 1 / zoomState.zoom;
+
   return (
     <div className={styles.strip} ref={stripRef}>
-      <div className={styles.graphicsLayer}>
-        <canvas
-          ref={canvasRef}
-          className={styles.heatCanvas}
-          style={{ width: stripSize.width, height: stripSize.height }}
-        />
-        <div className={styles.baseline} />
+      <div
+        className={styles.zoomContent}
+        style={{
+          transform: `scaleX(${zoomState.zoom}) translateX(${-zoomState.pan * stripSize.width}px)`,
+        }}
+      >
+        <div className={styles.graphicsLayer}>
+          <canvas
+            ref={canvasRef}
+            className={styles.heatCanvas}
+            style={{ width: stripSize.width, height: stripSize.height }}
+          />
+          <div className={styles.baseline} />
+          {chapters.map((chapter) =>
+            chapter.startPercent > 0 ? (
+              <div
+                key={chapter.spineIndex}
+                className={styles.tick}
+                style={{ left: `${chapter.startPercent * 100}%` }}
+              />
+            ) : null,
+          )}
+        </div>
+
         {chapters.map((chapter) =>
-          chapter.startPercent > 0 ? (
+          chapter.startPercent > 0 && shownLabelSpineIndices.has(chapter.spineIndex) ? (
             <div
               key={chapter.spineIndex}
-              className={styles.tick}
+              className={styles.tickLabel}
               style={{ left: `${chapter.startPercent * 100}%` }}
-            />
+              title={chapter.title ? `${chapter.title} · ${Math.round(chapter.startPercent * 100)}%` : undefined}
+            >
+              {chapterLabelText(chapter, showChapterNames)}
+            </div>
           ) : null,
         )}
       </div>
-
-      {chapters.map((chapter) =>
-        chapter.startPercent > 0 && shownLabelSpineIndices.has(chapter.spineIndex) ? (
-          <div
-            key={chapter.spineIndex}
-            className={styles.tickLabel}
-            style={{ left: `${chapter.startPercent * 100}%` }}
-            title={chapter.title ? `${chapter.title} · ${Math.round(chapter.startPercent * 100)}%` : undefined}
-          >
-            {chapterLabelText(chapter, showChapterNames)}
-          </div>
-        ) : null,
-      )}
 
       <div className={styles.stripToggles}>
         <button
@@ -220,6 +235,43 @@ export function HeatStrip({
             {showChapterNames ? "Names" : "№"}
           </button>
         )}
+        <div className={styles.zoomControls} role="group" aria-label="Zoom the strip">
+          <button
+            type="button"
+            className={styles.chapterModeToggle}
+            aria-label="Pan left"
+            disabled={zoomState.pan <= 0}
+            onClick={() => setZoomState((z) => panByViewFraction(z, -0.5))}
+          >
+            ◀
+          </button>
+          <button
+            type="button"
+            className={styles.chapterModeToggle}
+            aria-label="Zoom out"
+            disabled={zoomState.zoom <= 1}
+            onClick={() => setZoomState((z) => zoomOut(z))}
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className={styles.chapterModeToggle}
+            aria-label="Zoom in"
+            onClick={() => setZoomState((z) => zoomIn(z))}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className={styles.chapterModeToggle}
+            aria-label="Pan right"
+            disabled={zoomState.pan >= 1 - viewWidthFraction - 1e-9}
+            onClick={() => setZoomState((z) => panByViewFraction(z, 0.5))}
+          >
+            ▶
+          </button>
+        </div>
       </div>
 
       {positioned.map((highlight) => {
@@ -228,10 +280,15 @@ export function HeatStrip({
         const height = bandHeight(highlight);
         // M18 "position the invisible hit-target bands through the same
         // barrel function that displaces the graphics" (decisions.md
-        // 2026-07-28): declutter() above works in raw strip-fraction space;
-        // warpLocal() is the one remaining step that makes the click land
-        // where the glowing blob visually is, at every CRT intensity.
-        const rawX = (layoutPercent.get(highlight.id) ?? highlight.positionPercent) * stripSize.width;
+        // 2026-07-28): declutter() above works in raw strip-fraction
+        // space; fractionToView() composes the zoom/pan viewport transform
+        // (zoom.ts); warpLocal() is the final step, making the click land
+        // where the glowing blob visually is at every CRT intensity. Bands
+        // scrolled outside the current view land outside the strip's own
+        // box, where `.strip`'s `overflow: hidden` clips them from both
+        // paint and hit-testing — no separate visibility check needed.
+        const rawFraction = layoutPercent.get(highlight.id) ?? highlight.positionPercent;
+        const rawX = fractionToView(rawFraction, zoomState) * stripSize.width;
         const rawY = stripSize.height - BASELINE_OFFSET - height / 2;
         const warped = stripSize.width > 0 ? warpLocal(rawX, rawY) : { x: rawX, y: rawY };
         return (

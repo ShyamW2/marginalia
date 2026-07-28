@@ -2167,9 +2167,9 @@ and the two-channel colour model are specified there.
       for both: the wrapper's own measuring `useEffect` never armed (mounts
       before `data` loads, so `[]` deps meant it observed nothing, ever),
       and the displacement bitmap only covering the wrapper's own box was
-      silently eating a couple of true-edge glyphs ("HIGHLIGHTS" render ing
+      silently eating a couple of true-edge glyphs ("HIGHLIGHTS" rendering
       as "IGHLIGHTS") because `feImage` is transparent-black (not
-      zero-displacement) past its own bounds. 165/165 tests, `pnpm build`
+      zero-displacement) past its own bounds. 176/176 tests, `pnpm build`
       clean.)_
 - [x] ⚠️ **Fix hit-testing under the warp.** A filtered element still hit-tests at its
       *unwarped* geometry, so near the corners a heat band is clicked where it was, not
@@ -2208,7 +2208,7 @@ and the two-channel colour model are specified there.
       slate cluster): "by kind" mode showed each cluster in its own hue;
       clicking the toggle to "Density" reproduced the M15 cool→hot look on
       the identical data.)_
-- [ ] **Tighter bleed + zoom/pan.** Reduce the blob radii (M15's `26 + weight*44`px lets
+- [x] **Tighter bleed + zoom/pan.** Reduce the blob radii (M15's `26 + weight*44`px lets
       neighbours merge into an unreadable smear) **and** add zoom + pan over the same
       0–100% domain so dense regions can be opened up and clicked precisely. Zoom is a
       viewport transform: hit targets, filters, and the airlock keep working, and it must
@@ -2217,6 +2217,28 @@ and the two-channel colour model are specified there.
       structure; zoomed in, individual highlights separate and are individually
       clickable; zoom + warp together still hit-test correctly; keyboard users can zoom
       and pan._
+      _(verified 2026-07-29: blob radii `14 + weight*22` (was `26 + weight*44`).
+      `zoom.ts` (center-preserving zoom steps, view-fraction-relative pan,
+      fully unit-tested — 12 cases, no DOM) drives a `scaleX`/`translateX`
+      CSS transform on a new `.zoomContent` wrapper around the canvas/ticks/
+      labels; the invisible hit-target bands stay outside that transform and
+      instead run the *same* `fractionToView()` math in JS before the
+      existing `warpPoint()` step — zoom/pan composes with the barrel warp
+      by construction (it's applied first, then warp acts on the already-
+      zoomed/panned position, matching that the filter operates on final
+      rendered pixels). `.strip` switched from `overflow: visible` (no
+      longer needed — the old hover readout that required it is portalled
+      now) to `overflow: hidden`, which clips content scrolled outside the
+      view from both paint and hit-testing for free. Four buttons (◀ − + ▶),
+      all real `<button>`s. Live Playwright pass on the Metamorphosis
+      fixture: zoomed + panned onto its densest cluster (two blobs that
+      visibly touched at 1×) — they separated into two individually
+      hoverable/clickable bands, each producing the correctly-matched
+      readout, confirmed via `elementFromPoint` (not just bounding-box math,
+      which ignores clipping and initially gave a false positive — see
+      NOTES.md "M18"); a keyboard-only zoom-in (focus + two Enters) enabled
+      "Zoom out" exactly like a click would. 188/188 tests, `pnpm build`
+      clean.)_
 - [ ] **The digest instrument: bigger timeline, and the torch.** Enlarge the digest
       coverage timeline, and replace the range handles with the **torch** (decisions.md
       2026-07-29): a cartoon flashlight beam aimed by click-drag along the timeline, beam

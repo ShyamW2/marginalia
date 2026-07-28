@@ -98,7 +98,11 @@ export function drawHeatField(
     if (!layer) continue;
     const cx = point.xFraction * w;
     const cy = baselineY * dpr - (18 + point.weight * 46) * dpr * 0.55;
-    const radius = (26 + point.weight * 44) * dpr;
+    // M18 "tighter bleed" (decisions.md 2026-07-28): M15's `26 + weight*44`
+    // let neighbours merge into an unreadable smear; the zoom (HeatStrip.tsx)
+    // is the other half of the fix — opening up a cluster once bleed alone
+    // isn't enough to separate it.
+    const radius = (14 + point.weight * 22) * dpr;
     const baseAlpha = Math.min(1, 0.35 + point.weight * 0.55);
 
     const minX = Math.max(0, Math.floor(cx - radius));

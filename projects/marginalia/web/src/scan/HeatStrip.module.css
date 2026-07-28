@@ -12,8 +12,28 @@
     ),
     linear-gradient(180deg, var(--color-bg-raised) 0%, var(--color-bg) 100%);
   border: 1px solid var(--color-border);
-  overflow: visible;
+  /* M18: was `visible` for the old CSS-positioned hover readout, which is
+     now portalled to document.body (HeatStrip.tsx) and no longer needs
+     room to spill out of the strip. `hidden` is what the zoom/pan viewport
+     (`.zoomContent`) and off-view hit-targets both need — clipping content
+     scrolled outside the current view from paint *and* hit-testing, with
+     no separate visibility check. */
+  overflow: hidden;
   cursor: default;
+}
+
+/* M18 "tighter bleed and a zoom" (decisions.md 2026-07-28): the viewport
+   transform (HeatStrip.tsx sets `scaleX`/`translateX` from zoom.ts's
+   state) — everything positional about the book (canvas, ticks, chapter
+   labels) lives inside it and pans/zooms together. The invisible
+   hit-target bands deliberately do *not* live in here: they're positioned
+   by JS through the identical zoom math (`fractionToView`) composed with
+   the barrel warp, not through this CSS transform, so their focus/hover/
+   click behaviour never has to fight a transformed ancestor. */
+.zoomContent {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 0;
 }
 
 /* Groups the canvas/baseline/ticks so they clip to the strip's rounded
@@ -39,7 +59,13 @@
   right: 10px;
   z-index: 30;
   display: flex;
+  align-items: center;
   gap: 0.35rem;
+}
+
+.zoomControls {
+  display: flex;
+  gap: 0.2rem;
 }
 
 .chapterModeToggle {
@@ -63,6 +89,11 @@
 .chapterModeToggle:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+.chapterModeToggle:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .baseline {
