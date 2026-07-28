@@ -286,4 +286,15 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE messages ADD COLUMN context_chapters TEXT NOT NULL DEFAULT '[]';
     `,
   },
+  {
+    // M18 "chapter labels on the coverage tiles": the digest's map step
+    // (build.ts) now also emits a short descriptive title per chapter —
+    // no new pipeline, a field on the existing call. Nullable so existing
+    // digested chapters (generated before this column existed) just show
+    // the positional fallback until re-digested; there is no backfill.
+    version: 13,
+    sql: `
+      ALTER TABLE chapter_digests ADD COLUMN title TEXT;
+    `,
+  },
 ];

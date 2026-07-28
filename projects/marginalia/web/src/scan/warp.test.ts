@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeWarpGeometry, displacementAt, warpPoint } from "./warp.js";
+import { computeWarpGeometry, displacementAt, unwarpPoint, warpPoint } from "./warp.js";
 
 describe("computeWarpGeometry", () => {
   it("has zero maxPull at intensity 0 (no warp at all)", () => {
@@ -92,5 +92,28 @@ describe("warpPoint", () => {
     const { x, y } = warpPoint(0, 0, geom);
     expect(Math.abs(x)).toBeLessThan(geom.width);
     expect(Math.abs(y)).toBeLessThan(geom.height);
+  });
+});
+
+describe("unwarpPoint", () => {
+  it("is the identity at intensity 0", () => {
+    const geom = computeWarpGeometry(800, 260, 0);
+    expect(unwarpPoint(123, 45, geom)).toEqual({ x: 123, y: 45 });
+  });
+
+  it("undoes warpPoint — the round trip returns the original point (M18's torch: turning a click back into a raw position)", () => {
+    const geom = computeWarpGeometry(800, 260, 1);
+    const points = [
+      { x: 40, y: 30 },
+      { x: 760, y: 230 },
+      { x: geom.cx, y: geom.cy },
+      { x: 700, y: 20 },
+    ];
+    for (const source of points) {
+      const warped = warpPoint(source.x, source.y, geom);
+      const roundTripped = unwarpPoint(warped.x, warped.y, geom);
+      expect(roundTripped.x).toBeCloseTo(source.x, 1);
+      expect(roundTripped.y).toBeCloseTo(source.y, 1);
+    }
   });
 });

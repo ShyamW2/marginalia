@@ -42,25 +42,62 @@
   color: var(--color-text);
 }
 
-.coverageLine {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  margin-bottom: 0.3rem;
+/* M18 "the digest instrument: bigger timeline, and the torch" (decisions.md
+   2026-07-29 later): replaces the old fixed-size dot row. Extra top padding
+   is where the torch's cone visually narrows to a point — see .torchBeam. */
+.timeline {
+  position: relative;
+  height: 64px;
+  padding-top: 22px;
+  margin-bottom: 0.4rem;
+  cursor: crosshair;
+  touch-action: none;
 }
 
-.coverageDotDone,
-.coverageDotPending {
-  width: 8px;
-  height: 8px;
+.tileDone,
+.tilePending {
+  position: absolute;
+  bottom: 0;
+  height: 42px;
+  min-width: 2px;
   border-radius: 2px;
-  display: inline-block;
+  border-right: 1px solid var(--color-bg);
 }
-.coverageDotDone {
+.tileDone {
   background: var(--color-accent);
 }
-.coverageDotPending {
+.tilePending {
   background: var(--color-border);
+}
+
+.tileNumber {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  color: var(--color-bg);
+  opacity: 0.75;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.torchBeam {
+  position: absolute;
+  bottom: 0;
+  top: 0;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(255, 214, 100, 0.32), rgba(255, 214, 100, 0.08));
+  clip-path: polygon(50% 0%, 0% 100%, 100% 100%);
+}
+
+.torchHandle {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.1rem;
+  line-height: 1;
 }
 
 .coverageLabel {

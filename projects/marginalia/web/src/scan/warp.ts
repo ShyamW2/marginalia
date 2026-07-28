@@ -97,3 +97,18 @@ export function warpPoint(x0: number, y0: number, geom: WarpGeometry): { x: numb
   }
   return { x, y };
 }
+
+/**
+ * The other direction: given a point the reader actually clicked (screen/
+ * wrapper coordinates, i.e. *after* the warp already visually displaced
+ * everything), what raw point does it correspond to? Unlike `warpPoint`,
+ * this is direct — no iteration — because it's exactly the same
+ * pull-sampling relationship `warpPoint` had to invert: `source = output +
+ * pull(output)`. Needed anywhere a pointer position must be turned back
+ * into a domain position (M18's torch).
+ */
+export function unwarpPoint(x: number, y: number, geom: WarpGeometry): { x: number; y: number } {
+  if (geom.maxPull === 0) return { x, y };
+  const { dx, dy } = displacementAt(x, y, geom);
+  return { x: x + dx, y: y + dy };
+}

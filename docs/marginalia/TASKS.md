@@ -2239,7 +2239,7 @@ and the two-channel colour model are specified there.
       NOTES.md "M18"); a keyboard-only zoom-in (focus + two Enters) enabled
       "Zoom out" exactly like a click would. 188/188 tests, `pnpm build`
       clean.)_
-- [ ] **The digest instrument: bigger timeline, and the torch.** Enlarge the digest
+- [x] **The digest instrument: bigger timeline, and the torch.** Enlarge the digest
       coverage timeline, and replace the range handles with the **torch** (decisions.md
       2026-07-29): a cartoon flashlight beam aimed by click-drag along the timeline, beam
       width set by dragging up/down, drawn for the VHS/CRT aesthetic. **The FROM/TO boxes
@@ -2254,7 +2254,24 @@ and the two-channel colour model are specified there.
       maximum, and at both far edges of the timeline; FROM/TO stay in sync with the torch
       in both directions; the whole range can be set keyboard-only without touching the
       torch; the digest that results covers exactly the chapters shown._
-- [ ] **Chapter labels on the coverage tiles.** Unlabelled squares plus EPUB TOC titles
+      _(verified 2026-07-29: `digestTimeline.ts` (12 unit tests, pure math —
+      `chapterIndexAtFraction`, `beamHalfWidthFromDrag`, `beamRange`,
+      `beamFromChapterRange`) plus `warp.ts`'s new `unwarpPoint` (the direct
+      inverse of `warpPoint` — turning a screen click back into a raw
+      position needs no iteration, unlike the forward direction) drive
+      `DigestSpotlight.tsx`'s torch: click-drag aims it, drag up/down widens/
+      narrows it, release snaps to chapter boundaries and sets FROM/TO;
+      changing FROM/TO moves the torch back. Live Playwright pass on the
+      Metamorphosis fixture (5 chapters) confirmed both directions — a drag
+      aimed at ~85% and narrowed committed to exactly chapter 5 (From=To=
+      "Ch. 5"), and selecting Ch. 2→Ch. 3 in the selects visibly moved the
+      beam to match; the POST body for a selects-driven range
+      (`{"spineStart":1,"spineEnd":2}`) exactly matched what was shown,
+      confirming "digests exactly the chapters shown". First attempt at
+      this check zoomed/narrowed toward the domain's geometric middle and
+      found nothing there (Metamorphosis's highlights cluster near the
+      start) — not a bug, just the wrong test target; see NOTES.md "M18".)_
+- [x] **Chapter labels on the coverage tiles.** Unlabelled squares plus EPUB TOC titles
       that are frequently useless ("I", "II", or absent) make the strip hard to read. Fix
       at the data level: the digest's map step already summarises each chapter, so have it
       also emit a **short descriptive title** (no new pipeline — a field on the existing
@@ -2268,10 +2285,49 @@ and the two-channel colour model are specified there.
       _Acceptance: every tile is identifiable without hovering, and hovering gives the
       title and range; a book whose TOC has no usable titles still reads clearly; titles
       past the bookmark are gated; no page numbers anywhere._
-- [ ] **Verify:** open the scan on a book with a dozen clustered highlights — read the
+      _(verified 2026-07-29: `chapter_digests` gained a nullable `title`
+      column (migration 13); `digest/build.ts`'s map/merge prompts now also
+      ask for one; `routes/digest.ts` gates it by `getReadingPosition`'s
+      saved spine index — no bookmark at all gates everything, the
+      conservative default. Tiles are real width (proportional to
+      `lengthPercent`, not a uniform dot) with an always-visible chapter
+      number when wide enough to fit one (narrow tiles — e.g. a front-matter
+      section a fraction of a percent long — just don't show one, the same
+      tick-vs-label split the strip's own chapter axis already uses) plus a
+      hover tooltip with the title (or the positional fallback) and percent
+      range. Verified the actual spoiler gate live, not just read the code:
+      wrote two real titles directly into the dev database (no `sqlite3`
+      CLI in this environment, used a one-off `better-sqlite3` node script),
+      confirmed one at/before the bookmark came back intact and the other
+      past it came back `null`, moved the bookmark forward and watched the
+      second one reveal — then restored both the bookmark and the test
+      titles afterward. 202/202 tests, `pnpm build` clean.)_
+- [x] **Verify:** open the scan on a book with a dozen clustered highlights — read the
       heat by colour, zoom into a cluster and click a specific highlight near a corner at
       full CRT intensity, then jump into the reader from it. Then set a digest range with
       the torch and confirm it digests exactly the chapters the beam covered.
+      _(Semantic theme mode moved to M19.5 on 2026-07-29 — it needs thematic data that
+      does not exist yet. See the decisions entry.)_
+      _(verified 2026-07-29 against the real Metamorphosis fixture (14
+      highlights, the dev library's largest) via `pnpm dev` + a headless
+      Chromium driven through playwright-core (no project devDependency —
+      launched with an explicit `executablePath` against the cached
+      browser at `~/.cache/ms-playwright`, since this environment has no
+      `npx playwright install` internet access): heat read correctly by
+      colour (rose/slate clusters each in their own hue, kind vs. density
+      mode toggle both confirmed); zoomed onto the fixture's densest cluster
+      (two blobs touching at 1×) and separated them, clicked one near the
+      cluster's edge, confirmed via `elementFromPoint` (not just bounding-
+      box math, which ignores clipping) that the correct highlight — not a
+      neighbour — responded, and landed in the reader on it; opened the
+      Digest spotlight and dragged the torch to narrow onto a single
+      chapter, confirmed FROM/TO followed and a subsequent selects-driven
+      change moved the torch back. Two real bugs found and fixed along the
+      way, both live, not in code review — a wrapper `ResizeObserver` that
+      never armed because it was registered before the wrapper existed, and
+      a displacement bitmap that silently ate a few px of every true-edge
+      glyph — full detail in NOTES.md "M18". 202/202 tests (11 shared + 125
+      server + 66 web), `pnpm build` clean throughout. M18 is whole.)_
       _(Semantic theme mode moved to M19.5 on 2026-07-29 — it needs thematic data that
       does not exist yet. See the decisions entry.)_
 

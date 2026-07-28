@@ -56,6 +56,7 @@ describe("renderDigestMarkdown", () => {
       summary: "Alice arrives.",
       themes: ["arrival"],
       characters: ["Alice"],
+      title: "Arrival",
       sourceHash: "h1",
     });
     putBookDigest(db, {
@@ -83,6 +84,7 @@ describe("renderDigestMarkdown", () => {
       summary: "Alice arrives.",
       themes: [],
       characters: [],
+      title: "Arrival",
       sourceHash: "h1",
     });
 

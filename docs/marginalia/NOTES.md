@@ -2067,5 +2067,75 @@ not mocked)
 - Kind mode shows the rose/slate clusters in their own hues; Density mode
   (via the strip's new toggle button) reproduces the M15 cool→hot look on
   the same data.
-- Not yet exercised live: the tighter-bleed/zoom-pan, torch, and chapter-
-  label tasks below — still open at the time of this note.
+### Zoom/pan
+
+`zoom.ts` (12 unit tests) plus a `scaleX`/`translateX` viewport transform on
+a new `.zoomContent` wrapper around the canvas/ticks/labels; the invisible
+hit-target bands stay *outside* that transform and run the same
+`fractionToView()` math in JS instead, composing with the barrel warp by
+being applied first (zoom/pan, then warp — the filter always acts on final
+rendered pixels). `.strip` switched `overflow: visible` → `hidden`, which
+turned out to double as "clip content scrolled outside the current view
+from both paint and hit-testing" for free — no separate visibility check
+needed for off-view bands. Verified live on the Metamorphosis fixture: a
+cluster of two blobs that visibly touched at 1× separated into two
+individually-hoverable/clickable bands once zoomed onto the cluster
+specifically (a naive "zoom centered on the whole domain's middle" first
+attempt zoomed into an *empty* stretch of the book, since the domain's
+midpoint and the highlight cluster's location are unrelated — not a bug,
+just the wrong test setup the first time; see the two zoom-check scripts
+in this session's scratch dir for the corrected method, which used
+`elementFromPoint` rather than `boundingBox()` to check actual
+hit-testability, since `boundingBox()` ignores ancestor clipping entirely
+and gave a false "still clickable" reading for bands that overflow.js had
+correctly clipped away).
+
+### Chapter labels + the torch
+
+`digest/build.ts`'s map/merge calls now also emit a short `title` per
+chapter (schema + prompt only — no new pipeline, exactly as scoped).
+`chapter_digests` gained a nullable `title` column (migration 13, no
+backfill). `routes/digest.ts` gates it by the reader's saved reading
+position (`getReadingPosition`, the same signal M17's answer-time spoiler
+guard uses) — no bookmark at all is treated as "nothing revealed yet"
+rather than showing every title. Verified live by hand-writing two test
+titles directly into the dev database (no `sqlite3` CLI in this
+environment — used a one-off `better-sqlite3` node script instead) and
+watching the API: a title at/before the bookmark came back intact, the
+*identical* title past the bookmark came back `null`, and moving the
+bookmark forward past it revealed it — then restored both the bookmark and
+the two test titles to their original state afterward, same courtesy as
+M9's "cleared the test star/tag left on the shared dev database".
+
+The torch (`digestTimeline.ts`, 12 unit tests, pure math) is a click-drag
+flashlight cone over the enlarged coverage timeline: horizontal position
+aims it, vertical drag widens/narrows it (`beamHalfWidthFromDrag`), release
+snaps to the nearest chapter boundaries and updates FROM/TO; moving FROM/TO
+directly moves the torch back (`beamFromChapterRange`) — verified live in
+both directions, including confirming the POST body's `spineStart`/
+`spineEnd` exactly matched what the selects showed. Turning a *visual*
+pointer position back into a raw domain fraction needed the mirror image of
+HeatStrip's hit-test fix: `warp.ts` gained `unwarpPoint` (direct — no
+iteration needed, since "screen point → raw point" is exactly the
+pull-sampling formula itself, whereas the other direction needed
+`warpPoint`'s fixed-point iteration to invert it). SPEC-GAP logged inline
+and in "Spec gaps" above: the torch assumes the digest-status chapter list
+and the scan-endpoint chapter list (which drives the FROM/TO options) line
+up positionally — both are built from the same resource's spine sections in
+spine order, and DigestSpotlight already relied on that same assumption
+before this milestone touched it.
+
+Tiles are now real width (proportional to `lengthPercent`) with an
+always-visible chapter number once the tile is wide enough to fit one —
+added after re-reading the task's own acceptance line ("every tile is
+identifiable without hovering"), which a hover-only tooltip on an
+unlabelled coloured rectangle doesn't actually satisfy. Confirmed live: on
+the Metamorphosis fixture (5 chapters, the first two only a fraction of a
+percent long) chapters 3-5 show a visible number and the two short ones
+don't — the same tick-exists/label-if-it-fits split the strip's own chapter
+axis already uses, not a new pattern.
+
+M18 is now whole — all seven tasks plus its own Verify step are done. Full
+method for the Verify step (heat-by-colour, zoom onto a real cluster,
+click a corner highlight, torch a chapter range) is in this session's
+TASKS.md entry for that step; not duplicated here.

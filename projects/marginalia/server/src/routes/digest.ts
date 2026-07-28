@@ -6,7 +6,7 @@ import {
   type DigestStatus,
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
-import { getResourceById, getResourceTextSections } from "../library/store.js";
+import { getReadingPosition, getResourceById, getResourceTextSections } from "../library/store.js";
 import { getProvider, LLMError, type LLMErrorCode } from "../llm/provider.js";
 import { sectionLabel } from "../llm/context.js";
 import { getRawSettings } from "../settings/store.js";
@@ -46,21 +46,39 @@ function buildDigestStatus(db: ReturnType<typeof getDb>, resourceId: string): Di
   const byIndex = new Map(chapterDigests.map((c) => [c.spineIndex, c]));
   const book = getBookDigest(db, resourceId);
   const run = getDigestRun(db, resourceId);
+  const totalLength = sections.reduce((sum, s) => sum + s.text.length, 0);
+  // M18 "chapter labels are spoilers too" (decisions.md 2026-07-29 later):
+  // gate by the reader's furthest saved position, same signal M17's
+  // answer-time spoiler guard uses. No bookmark at all (never opened this
+  // book) is treated as "nothing revealed yet" — the conservative default —
+  // rather than showing every title up front.
+  const bookmarkSpineIndex = getReadingPosition(db, resourceId)?.spineIndex ?? -1;
+
+  let cursor = 0;
+  const chapters = sections.map((s, index) => {
+    const digest = byIndex.get(s.spineIndex);
+    const startPercent = totalLength > 0 ? cursor / totalLength : 0;
+    const lengthPercent = totalLength > 0 ? s.text.length / totalLength : 0;
+    cursor += s.text.length;
+    const pastBookmark = s.spineIndex > bookmarkSpineIndex;
+    return {
+      spineIndex: s.spineIndex,
+      label: sectionLabel(s.spineIndex, resource.metadata.chapterTitles),
+      chapterNumber: index + 1,
+      startPercent,
+      lengthPercent,
+      digested: Boolean(digest),
+      summary: digest?.summary ?? null,
+      themes: digest?.themes ?? [],
+      characters: digest?.characters ?? [],
+      generatedAt: digest?.generatedAt ?? null,
+      title: pastBookmark ? null : digest?.title ?? null,
+    };
+  });
 
   return {
     totalChapters: sections.length,
-    chapters: sections.map((s) => {
-      const digest = byIndex.get(s.spineIndex);
-      return {
-        spineIndex: s.spineIndex,
-        label: sectionLabel(s.spineIndex, resource.metadata.chapterTitles),
-        digested: Boolean(digest),
-        summary: digest?.summary ?? null,
-        themes: digest?.themes ?? [],
-        characters: digest?.characters ?? [],
-        generatedAt: digest?.generatedAt ?? null,
-      };
-    }),
+    chapters,
     book: book
       ? {
           synopsis: book.synopsis,

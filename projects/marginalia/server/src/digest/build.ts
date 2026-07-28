@@ -30,6 +30,11 @@ const ChapterPartSchema = z.object({
   summary: z.string(),
   themes: z.array(z.string()).max(8),
   characters: z.array(z.string()).max(20),
+  // M18 "chapter labels on the coverage tiles": a few words, not a
+  // sentence — the scan's coverage tile needs to fit it in a small hover
+  // readout. Spoiler-gating happens in routes/digest.ts, not here; this
+  // schema doesn't know about the reader's bookmark.
+  title: z.string(),
 });
 type ChapterPart = z.infer<typeof ChapterPartSchema>;
 
@@ -47,7 +52,8 @@ Respond with a single JSON object with exactly these keys:
 {
   "summary": "a few sentences summarizing what happens in this chapter/part",
   "themes": ["short theme or motif names, at most 8"],
-  "characters": ["character names who appear, at most 20"]
+  "characters": ["character names who appear, at most 20"],
+  "title": "a short, specific, descriptive title for this chapter/part (a few words, not a full sentence)"
 }
 
 Return only the JSON object, no other text.`;
@@ -60,7 +66,8 @@ Respond with a single JSON object with exactly these keys:
 {
   "summary": "a few sentences summarizing the whole chapter, combining the parts",
   "themes": ["short theme or motif names, at most 8, deduplicated"],
-  "characters": ["character names who appear, at most 20, deduplicated"]
+  "characters": ["character names who appear, at most 20, deduplicated"],
+  "title": "a short, specific, descriptive title for the whole chapter (a few words, not a full sentence)"
 }
 
 Return only the JSON object, no other text.`;
@@ -139,7 +146,7 @@ async function mergeChapterParts(
   const input = parts
     .map(
       (p, i) =>
-        `Part ${i + 1} summary: ${p.summary}\nThemes: ${p.themes.join(", ")}\nCharacters: ${p.characters.join(", ")}`,
+        `Part ${i + 1} title: ${p.title}\nPart ${i + 1} summary: ${p.summary}\nThemes: ${p.themes.join(", ")}\nCharacters: ${p.characters.join(", ")}`,
     )
     .join("\n\n");
   return provider.extract({
@@ -351,6 +358,7 @@ export async function runDigest(
         summary: part.summary,
         themes: part.themes,
         characters: part.characters,
+        title: part.title,
         sourceHash: hashText(section.text),
       });
       failedSpineIndices.delete(section.spineIndex);

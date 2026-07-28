@@ -452,12 +452,30 @@ export type ScanData = z.infer<typeof ScanDataSchema>;
 
 export const DigestChapterStatusSchema = z.object({
   spineIndex: z.number().int().nonnegative(),
+  /** Section label for LLM context purposes (`llm/context.ts` sectionLabel) —
+   * not what the coverage tiles show; see `chapterNumber`/`startPercent`/
+   * `lengthPercent` below for that. */
   label: z.string(),
+  // M18 "chapter labels on the coverage tiles" (decisions.md 2026-07-29
+  // later): "percent and chapter, never pages" — reflowable EPUBs have no
+  // stable pages, and M16's text-size setting moves epub.js's page-ish
+  // counts anyway. Same shape as ScanChapter (annotations/scan.ts) so the
+  // frontend renders both with one formatting helper.
+  chapterNumber: z.number().int().positive(),
+  startPercent: z.number().min(0).max(1),
+  lengthPercent: z.number().min(0).max(1),
   digested: z.boolean(),
   summary: z.string().nullable(),
   themes: z.array(z.string()),
   characters: z.array(z.string()),
   generatedAt: z.string().nullable(),
+  // A short descriptive title from the digest's own map step — null when
+  // never digested, or when digested but past the reader's bookmark (a
+  // descriptive title is a spoiler too; the route redacts it the same way
+  // it would redact the summary it came from). The positional fallback
+  // ("Chapter 7 · 34-39%") is always derivable from the fields above, never
+  // gated.
+  title: z.string().nullable(),
 });
 export type DigestChapterStatus = z.infer<typeof DigestChapterStatusSchema>;
 

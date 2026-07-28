@@ -282,6 +282,8 @@ export function ScanPage() {
             resourceId={id}
             chapters={data.chapters}
             onClose={() => setSpotlightOpen(false)}
+            warpGeometry={warpGeometry}
+            warpWrapperRef={warpWrapperRef}
           />
         )}
 

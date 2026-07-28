@@ -6,6 +6,10 @@ export interface ChapterDigest {
   summary: string;
   themes: string[];
   characters: string[];
+  /** M18: a short descriptive title from the digest's map step. Null for
+   * chapters digested before this column existed — there is no backfill,
+   * they just show the positional fallback until re-digested. */
+  title: string | null;
   sourceHash: string;
   generatedAt: string;
 }
@@ -38,6 +42,7 @@ interface ChapterDigestRow {
   summary: string;
   themes: string;
   characters: string;
+  title: string | null;
   source_hash: string;
   generated_at: string;
 }
@@ -49,6 +54,7 @@ function rowToChapterDigest(row: ChapterDigestRow): ChapterDigest {
     summary: row.summary,
     themes: JSON.parse(row.themes),
     characters: JSON.parse(row.characters),
+    title: row.title,
     sourceHash: row.source_hash,
     generatedAt: row.generated_at,
   };
@@ -88,10 +94,10 @@ export function putChapterDigest(
   const generatedAt = new Date().toISOString();
   db.prepare(
     `INSERT INTO chapter_digests
-       (resource_id, spine_index, summary, themes, characters, source_hash, generated_at)
-     VALUES (@resourceId, @spineIndex, @summary, @themes, @characters, @sourceHash, @generatedAt)
+       (resource_id, spine_index, summary, themes, characters, title, source_hash, generated_at)
+     VALUES (@resourceId, @spineIndex, @summary, @themes, @characters, @title, @sourceHash, @generatedAt)
      ON CONFLICT(resource_id, spine_index) DO UPDATE SET
-       summary = @summary, themes = @themes, characters = @characters,
+       summary = @summary, themes = @themes, characters = @characters, title = @title,
        source_hash = @sourceHash, generated_at = @generatedAt`,
   ).run({
     resourceId: digest.resourceId,
@@ -99,6 +105,7 @@ export function putChapterDigest(
     summary: digest.summary,
     themes: JSON.stringify(digest.themes),
     characters: JSON.stringify(digest.characters),
+    title: digest.title,
     sourceHash: digest.sourceHash,
     generatedAt,
   });
