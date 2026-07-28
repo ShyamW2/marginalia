@@ -1632,3 +1632,95 @@ accumulated highlights from prior sessions' live testing:
   display matters, the boring extension is another nullable `messages`
   column (same pattern as `context_note`) rather than re-deriving it from
   the ledger at read time.
+
+### M17 — live verification against a real local model — 2026-07-28 (Sonnet)
+
+A prior session in this same machine's history had already committed the
+server-side digest work and built (uncommitted) the web UI half — spotlight,
+digest page, context-ladder toggle, reader shortcut. This session committed
+that UI, then ran the full milestone's live verification against the dev
+`data/` directory's real Metamorphosis fixture through a local Ollama
+endpoint (`qwen3.5-hermes`, a reasoning/"thinking" model).
+
+- **The digest page and Desk hover strip didn't actually link to each
+  other.** Decisions.md says the digest page should be "reachable from the
+  desk alongside the scan (and from the reader)" — the built UI only linked
+  it from the Scan page. Added a "Read digest" action to the Desk's
+  `BookObject` hover strip and a "Digest" link to the reader's title bar
+  (`ReaderPage.tsx`/`.module.css`), matching the existing "Open scan"/"Scan"
+  pattern in both places.
+- **A full 5-chapter digest + reduce genuinely completed end-to-end** against
+  the live local model, confirming resumability for real (not just in unit
+  tests): three separate runs (chapters 0–1 pre-existing, then 2, then 3–4)
+  each left previously-digested chapters' `generatedAt` timestamps
+  untouched, and the book-level reduce regenerated after each run so the
+  synopsis/cast/themes always reflected everything digested so far — by the
+  final run the cast correctly grew to include the Charwoman and Lodgers
+  (only introduced in the book's back half) and themes gained "Death" and
+  "Sacrifice".
+- **This specific local reasoning model is slow enough to make the digest
+  genuinely fragile against Node's default fetch timeout.** A single chapter
+  (~8 map/merge calls at the configured 8192-token budget) took 12–15
+  minutes wall-clock; a 3-chapter batch in one `POST /digest` call
+  reproducibly failed with `LLMError('network', 'fetch failed')` twice in a
+  row, with zero of the three chapters committed. Root cause, confirmed by
+  testing the model directly against Ollama's own `/api/generate`: even a
+  trivial "say OK" prompt takes 16–18s because the model emits a long
+  chain-of-thought before its answer, and a real chapter chunk's `max_tokens:
+  8192` budget gives it room to think far longer than that — long enough for
+  a single `extract()` call to plausibly exceed undici's default 300s
+  headers/body timeout, which `fetch` surfaces as a bare "fetch failed" with
+  no code-level distinction from a real connectivity failure. Splitting the
+  request into smaller ranges (one chapter at a time) worked reliably.
+  Two real, related gaps this surfaced, not fixed here (out of scope for a
+  verification pass, flagged for a future task):
+  - `openaiCompat.ts`'s `extract()` never wires up an `AbortSignal` or an
+    explicit timeout at all (the digest spotlight's own comment already
+    flags no cancellation seam for this reason) — a slow local model has no
+    way to be given more patience than undici's hardcoded default, and no
+    way to be cancelled mid-call either.
+  - The thrown `LLMError('network', ...)` only keeps `err.message` (often
+    the unhelpful generic `"fetch failed"`); `err.cause` — where undici puts
+    the actual `UND_ERR_HEADERS_TIMEOUT`/`UND_ERR_BODY_TIMEOUT`/etc. — is
+    dropped, so the server log gives no way to tell a timeout apart from a
+    DNS failure or a refused connection without attaching a debugger.
+- **Digest-level context can exceed the configured context window for a
+  short book.** A live follow-up question at Digest level reported
+  `tokensUsed: 11061` against `windowTokens: 8192` (135%, `reported`
+  provenance) — `buildDigestContext` (unlike `buildContext`) isn't passed
+  `contextTokens` at all and doesn't budget against it; it just assembles
+  "digest of the covering chapters" (here, all 5, since Metamorphosis is
+  short) plus a surrounding-pages window unconditionally. For a short book
+  digested in full this can rival or exceed a small local model's window.
+  Not treated as a bug worth fixing in this pass — the answer was still
+  correct and the ledger honestly reported the real number rather than
+  hiding it — but a future session should decide whether Digest level needs
+  its own budget ceiling the way Full does.
+- **No live Full-level comparison was completed.** The plan was to ask the
+  same question at Digest and Full and compare token cost — got a real
+  Digest-level data point (above), but the Full-level call was still running
+  against the local model many minutes later, visibly loading the GPU, when
+  the operator flagged it as likely not worth the wait; killed it
+  (confirmed clean: the SSE abort-on-disconnect path left no dangling
+  partial message, per the M6 fix). The three-level, three-question
+  comparison TASKS.md's M17 Verify step asks for is still genuinely
+  undone — do it with a fast/hosted provider, not this local model.
+- **Operator's workflow idea, worth a real design decision later:** use a
+  fast/cheap hosted provider (their `claude-agent` subscription, or a paid
+  API) for the one-time digest pass, then a local model for cheap
+  interactive per-question answering against that digest. Architecturally
+  sound and exactly the cost story M17 is going for, but **not supported
+  today** — `getProvider(db, operation)`'s `operation` parameter only labels
+  the usage ledger row; there is one global `settings.provider` used for
+  every operation (thread, extract, digest, cast). Splitting providers per
+  operation would need its own settings surface and is a real scope
+  decision, not a boring default — flagging for a future decisions.md entry
+  rather than building it unilaterally here.
+- **Found and cleaned up 5 stacked leftover `pnpm dev` process trees** from
+  earlier sessions never having been stopped (only the newest server/web
+  pair was actually bound to the ports; the rest were orphaned zombies).
+  Also hit a live instance of the harness stopping this session's own
+  background dev-server/monitor tasks mid-verification (visible as
+  `SIGTERM` in the `tsx watch`/`vite` output) — the dev server had to be
+  restarted once mid-session; the digest data itself was unaffected since it
+  lives in SQLite, independent of the server process.

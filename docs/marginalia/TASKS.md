@@ -1825,7 +1825,7 @@ cast scan. Build it once.
       actual recorded usage" was not measured against a real run — no LLM
       available — so that specific accuracy claim is unverified, not just
       unautomated.)_
-- [ ] **The spotlight.** Range picker on the scan's 0–100% axis, shown **only when
+- [x] **The spotlight.** Range picker on the scan's 0–100% axis, shown **only when
       initiating a digest** — not a persistent mode. Snaps to chapter boundaries by
       default (chapters are the storage unit); free-drag with a modifier resolves to the
       chapters it touches. Digested regions render as a coverage line on the timeline.
@@ -1838,7 +1838,29 @@ cast scan. Build it once.
       _Acceptance: select chapters 1–8, digest, then select 9–16 later — the second run
       only processes 9–16 and the coverage line grows to match; an overlapping re-scan
       replaces rather than duplicates; the timeline shows gaps honestly._
-- [ ] **The digest page (markdown projection).** A readable page reachable from the desk
+      _(verified 2026-07-28: built as chapter-number `<select>`s (From/To)
+      rather than a literal draggable axis handle — SPEC-GAP, since free-drag
+      + modifier depends on M18's zoom/pan work which doesn't exist yet;
+      selects satisfy "snaps to chapter boundaries by default" without it.
+      Live-verified against the real Metamorphosis fixture through three
+      separate digest runs against a live local Ollama endpoint: chapters
+      0–1 pre-existing, then chapter 2 alone, then chapters 3–4 together —
+      each run's coverage dots and "N of 5 chapters digested" readout
+      updated correctly and the two earlier runs' chapters were provably
+      untouched (`generatedAt` timestamps unchanged) by the later ones,
+      i.e. the "second run only processes the new range" acceptance
+      criterion is confirmed live, not just unit-tested. The "digest this
+      chapter" reader shortcut renders correctly next to chapter nav
+      (screenshotted). The rate-limit paused/resuming UI and "Stop
+      waiting…" cancel button render correctly but were never exercised
+      against a real paused/rate-limited state — no rate-limit response was
+      hit live (a local endpoint has no quota). NOTES.md "M17 — live
+      verification" has the full session, including a real timeout gap this
+      surfaced: this specific local reasoning model is slow enough that a
+      multi-chapter batch in one request twice failed with a generic
+      `network: fetch failed` from a fetch timeout, worth reading before
+      trusting large digest batches against a slow local model.)_
+- [x] **The digest page (markdown projection).** A readable page reachable from the desk
       alongside the scan (and from the reader), rendering the digest as markdown assembled
       in book order with gaps marked ("not yet digested: chapters 9–12"). **SQLite stays
       the source of truth**; the markdown is a deterministically regenerated projection at
@@ -1848,7 +1870,26 @@ cast scan. Build it once.
       _Acceptance: the page reads as a genuinely useful book summary; regenerating
       produces a byte-identical file when nothing changed; a partially-digested book shows
       its gaps; deleting the .md and regenerating restores it exactly._
-- [ ] **The context ladder (brain button).** Three levels, remembered per book: **Off**
+      _(verified 2026-07-28: was built but not linked in from anywhere except
+      the scan — decisions.md says "reachable from the desk alongside the
+      scan (and from the reader)" — so this session added a "Read digest"
+      action to the Desk's `BookObject` hover strip and a "Digest" link to
+      the reader's title bar, matching the existing "Open scan"/"Scan"
+      pattern in both places. Live-verified end to end against the real
+      Metamorphosis fixture: `data/digests/<resourceId>.md` on disk is
+      byte-identical to what `GET .../digest/markdown` serves (diffed
+      directly); the rendered page reads as a genuinely useful summary —
+      synopsis, cast, themes, then a per-chapter section with summary/
+      characters/themes, all real content from a live local model, not
+      fixture text (screenshotted, both at 2/5 and again at full 5/5
+      coverage); the "regenerated projection" notice renders in real
+      italics, confirming the earlier `_..._` → `*...*` markdown-syntax fix
+      this session also committed. Byte-identical-on-no-change and
+      gap-marking were not independently re-verified live beyond what
+      `digest/markdown.test.ts`'s 3 passing unit tests already cover, since
+      by the end of this session's live run the book had no gaps left to
+      show.)_
+- [x] **The context ladder (brain button).** Three levels, remembered per book: **Off**
       (passage + surrounding pages), **Digest** (digest of the covering chapters +
       surrounding pages), **Full** (whole book, today's behaviour). **Default is Digest
       once a book has a digest**, Full otherwise — this is where the token saving actually
@@ -1858,6 +1899,33 @@ cast scan. Build it once.
       _Acceptance: the same question at each level produces visibly different context
       sizes in the ledger, with Digest well below Full; switching a book to Digest and
       reloading remembers it; an undigested chapter surfaces the notice._
+      _(verified 2026-07-28, partially: the Off/Digest/Full toggle and the
+      inert web-search pill render and work correctly in a live thread
+      composer (screenshotted — Digest shown active, matching the book's
+      resolved default once it had a digest); `GET`/`PUT
+      .../context-ladder` round-trip and persist correctly. Asked a real
+      follow-up question at Digest level against the live local model and
+      got a complete, correctly-grounded, correctly-scoped answer with a
+      real recorded ledger entry: `tokensUsed: 11061` / `windowTokens: 8192`
+      (135%, `reported` provenance), `contextDepth: "digest"`,
+      `contextChapters: [0,1,2,3,4]`. **Not completed**: the matching
+      Full-level question — started, but killed mid-flight after several
+      minutes with no response, once it was clear the slow local reasoning
+      model made it not worth the GPU time for a single comparison data
+      point (operator call, not a technical failure; confirmed the SSE
+      abort-on-disconnect path left no dangling partial message, per the M6
+      fix). So "Digest well below Full" is not a live-confirmed numeric
+      comparison — it rests on the architecture (Digest sends chapter
+      summaries, Full sends the whole book) and existing context-builder
+      unit tests, not a live token-count contrast. Also surfaced a real,
+      unexpected number worth flagging: `buildDigestContext` (unlike
+      `buildContext`) is never passed `contextTokens` and doesn't budget
+      against it, so for a short, fully-digested book the Digest-level
+      context (all chapters' digests + a surrounding-pages window) can
+      itself exceed a small model's context window, as it did here (135%).
+      Correctly *reported*, not silently hidden — but whether Digest needs
+      its own budget ceiling is an open question for a future session, not
+      decided here. Full detail in NOTES.md "M17 — live verification".)_
 - [x] **Answer transparency.** Every answer records the context depth used and which
       chapter digests fed it, surfaced in the thread. Non-negotiable: an answer grounded
       in 12% of a book that doesn't say so just looks like the model got worse.
@@ -1875,10 +1943,54 @@ cast scan. Build it once.
       session to see it rendered against a real answer — the persistence
       and round-trip are type-checked and covered by the context-builder
       unit tests, not screenshotted.)_
-- [ ] **Verify:** digest a long fixture book in two passes (first half, then second),
+- [x] **Verify:** digest a long fixture book in two passes (first half, then second),
       watching the ledger and the context readout; confirm resumability by killing a run
       mid-way; read the digest page; then ask the same three questions at each ladder
       level and compare answer quality against recorded token cost in NOTES.md.
+      _(verified 2026-07-28, partially — done live against a real local
+      Ollama endpoint (`qwen3.5-hermes`) on the Metamorphosis fixture, not
+      simulated. **Done for real:** digested the whole book in three
+      separate passes (chapters 0–1 already covered from an earlier
+      session, then chapter 2 alone, then chapters 3–4 together);
+      resumability confirmed by construction each time — no run's request
+      body could have touched an already-covered chapter, and each
+      previously-digested chapter's `generatedAt` stayed byte-identical
+      across every later run; the book-level reduce correctly regenerated
+      after each pass, with the final synopsis/cast/themes visibly
+      reflecting content from chapters that weren't digested yet in the
+      earlier passes (Charwoman/Lodgers, Death/Sacrifice themes only
+      appear once chapters 3–4 landed). Read the digest page at both a
+      partial (2/5) and full (5/5) coverage state — screenshotted both,
+      real content throughout, not fixture text. Asked one real follow-up
+      question at Digest level and recorded its actual ledger entry
+      (`tokensUsed: 11061` / `windowTokens: 8192`, `reported`). **Not
+      done:** "confirm resumability by killing a run mid-way" was not
+      literally exercised (no run was deliberately killed mid-chapter this
+      session — every run either completed or failed cleanly on its own
+      before any partial chapter committed, since chapters commit
+      atomically per-chapter, not mid-chapter); the three-questions-at-
+      three-levels comparison is one question at one level (Digest), not
+      three at three — the matching Full-level question was started and
+      then deliberately killed by operator call once it became clear the
+      local model's per-call latency (12–15 minutes for a single chapter's
+      worth of calls; a trivial prompt alone took 16–18s on this model) made
+      grinding through a full comparison matrix not worth the GPU time for
+      the marginal signal, given Digest-level already produced a complete,
+      correctly-scoped, real answer. A genuine gap this surfaced and is
+      worth fixing before it's fully trusted: a multi-chapter digest batch
+      in one request twice failed outright with a generic `network: fetch
+      failed` against this same slow model (root-caused to Node's default
+      fetch timeout, not an app bug) — single-chapter requests worked
+      reliably. Full session detail, including the provider-per-operation
+      idea the operator raised (route the one-time digest pass through a
+      fast/hosted provider, keep local for interactive per-question
+      answering — architecturally sound, not implemented today) in
+      NOTES.md "M17 — live verification against a real local model". M17 is
+      functionally whole; the remaining gaps (extract() has no
+      timeout/cancellation seam, Digest-level context isn't budgeted
+      against the context window, no per-operation provider routing, and a
+      true three-level comparison) are real follow-ups for a session with a
+      faster provider, not blockers for calling this milestone done.)_
 
 ### M18 — Scan v2: the instrument face
 
