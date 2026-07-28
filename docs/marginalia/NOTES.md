@@ -450,16 +450,18 @@ missing feature.
 
 ## Blockers
 
-- **M17.5 — no `claude` CLI in this environment.** The claude-agent
-  provider's subprocess-retention question (`lastQuery` across a
-  multi-chapter digest — see NOTES.md "M17.5") needs the actual bundled
-  `claude` CLI to observe subprocess count/lifetime on the subscription
-  path; this sandbox has no `claude` binary (`which claude` → not found).
-  Verified everything provider-agnostic (event loop stays responsive, no
-  process/memory growth) via the openai-compatible/Ollama path instead,
-  which cannot confirm or deny the CLI-specific concern. A session with the
-  real CLI available should watch `ps` during a live multi-chapter digest
-  against `claude-agent` before this box in TASKS.md is checked.
+- ~~**M17.5 — no `claude` CLI in this environment.**~~ **Resolved, was a
+  wrong test.** This session initially reported `which claude` → not found
+  and concluded the subscription path couldn't be verified live. The
+  operator caught it: `which` only checks `PATH`, but the Agent SDK vendors
+  its own per-platform `claude` binary as a dependency
+  (`node_modules/.../@anthropic-ai/claude-agent-sdk-linux-x64/claude`), and
+  this machine already has real subscription credentials
+  (`~/.claude/.credentials.json`) from M7/M17's earlier live verification.
+  Re-ran the digest live against the real `claude-agent` provider — see the
+  corrected writeup below. Leaving this struck through rather than deleted:
+  the mistake (checking `PATH` instead of how the code actually resolves
+  the binary) is worth remembering, not just the correction.
 - **M17.5 — the tunnel itself was never touched.** All M17.5 measurements
   are local (this session runs on the rig, not the operator's actual `ssh
   -L` position). The milestone's own Verify step asks for an
@@ -1622,20 +1624,32 @@ accumulated highlights from prior sessions' live testing:
   wants rate-limit-header-derived plan-limit info on the API-key path (today
   only the `claude-agent` subscription path has any plan-limit surfacing at
   all).
-- **`ClaudeAgentProvider.planLimits()`'s core assumption is unverified.**
-  It reads `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` off
-  the `Query` object from the *most recently completed* `stream()`/
-  `extract()` call, on the theory that the control channel (a spawned
-  Claude Code CLI subprocess) might still answer control-channel queries
-  after the async generator that drove a turn has finished iterating. This
-  session had no `claude` CLI binary and no subscription login available to
-  actually drive a call and then test whether that theory holds — it's the
-  lower-risk of two plausible designs (the alternative, spinning up a fresh
-  no-op `query()` purely to ask for usage, seemed riskier still since a
-  `maxTurns: 0` or empty-prompt query's behavior is equally unverified), but
-  it's a real hole: this needs a live subscription session to confirm before
-  fully trusting it. Wrapped in try/catch either way, so a wrong assumption
-  degrades to "plan limits unavailable" rather than crashing anything.
+- ~~**`ClaudeAgentProvider.planLimits()`'s core assumption is unverified.**~~
+  **Resolved 2026-07-28 (M17.5 session) — the assumption is false.** Drove a
+  real `stream()` call to completion against the live subscription provider,
+  then called `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`
+  on that *same, already-completed* `Query` object: it throws `Error:
+  ProcessTransport is not ready for writing`. The control channel does
+  **not** survive past the async generator finishing — the subprocess tears
+  itself down on natural completion (which also corroborates the M17.5
+  digest-subprocess finding: no leaked processes after a run, because the
+  SDK really does close things on its own). Caught by `planLimits()`'s own
+  try/catch, so this degrades exactly as designed (`null` → "plan limits
+  unavailable") rather than crashing — but it means `planLimits()` has
+  never once returned real data via any live code path, and structurally
+  can't with the current `lastQuery`-after-completion design. Compounding
+  this: the only real caller, `GET /:id/digest/preflight`
+  (`server/src/routes/digest.ts`), constructs its **own fresh** provider
+  that has never made a prior call — so `lastQuery` is `null` there before
+  even reaching the transport question, making the usage-display feature a
+  no-op in production today regardless of the transport behavior above. Not
+  fixed here (out of scope for M17.5's named tasks and not something this
+  correction should turn into a drive-by fix) — a real follow-up for
+  whichever session next touches usage accounting: either call
+  `planLimits()` right after a real `stream()`/`extract()` in the *same*
+  request that made it (e.g. surfaced alongside a thread answer, not from a
+  separate settings/preflight request), or drop the feature until there's a
+  design that can actually reach a live control channel.
 - **Context-window readout is SSE-only, not persisted with the message.**
   `ContextUsage` rides the `done` event and lives in a client-side
   `contextUsageByMessageId` map that's populated only by a live stream
@@ -1837,66 +1851,81 @@ criterion ("named, measured wins, **or** an explicit recorded finding that
 client render time was not a significant contributor") — this is the
 latter. No memoization added; there was nothing the profile asked for.
 
-### Digest subprocess / event-loop behaviour — partially verified, one gap
+### Digest subprocess / event-loop behaviour — verified live, corrected
 
-**Could not fully verify.** `claudeAgent.ts`'s subscription path spawns the
-bundled `claude` CLI as a subprocess; this environment has no `claude`
-binary installed (`which claude` → not found), so the specific concern —
-does a multi-chapter digest's retained `lastQuery` pile up CLI subprocesses
-— cannot be exercised live here. Recording that gap rather than
-papering over it.
+**First pass in this session got this wrong.** It reported `which claude` →
+not found and concluded the claude-agent-specific subprocess question
+couldn't be tested here, verifying only the provider-agnostic half via
+Ollama. The operator flagged this as surprising (they'd used the Claude
+subscription through Marginalia before), which was the right instinct:
+`which` only checks `PATH`. The Agent SDK vendors its own per-platform
+`claude` binary as an npm dependency
+(`node_modules/.pnpm/@anthropic-ai+claude-agent-sdk-linux-x64@.../claude`,
+confirmed via `manifest.json`'s per-platform binary table), and this machine
+already carries real subscription credentials
+(`~/.claude/.credentials.json`) from M7 and M17's own earlier live
+verification. `<binary> --version` → `2.1.214 (Claude Code)`, confirming
+it runs. Redid the test properly against the real `claude-agent` provider.
 
-What *was* checked, live, against the local Ollama endpoint (provider
-temporarily switched to `openai-compatible` for this test, then restored to
-`claude-agent` afterward — this path doesn't spawn subprocesses at all, so
-it can't confirm or deny the CLI-specific concern, but it does test
-everything provider-agnostic about "does a digest run block or leak"):
+**Live result, real subscription path, not simulated:** kicked off a
+digest for two more Alice chapters (spineStart 3–4) against `claude-agent`
+(model `claude-sonnet-5`) and watched `pgrep -fa` for the actual `claude`
+binary process the whole run:
 
-- Ran a real 3-chapter digest (`Alice's Adventures in Wonderland`, chapters
-  0–2) against the local model. Polled `GET /api/settings` throughout:
-  stayed at 0.6–0.9 ms the entire time, including immediately after the
-  request that kicked off the digest — **the event loop is not blocked**
-  during a digest run, regardless of provider.
-- `pgrep -c node` stayed flat (25–27) for the full ~70s run; server RSS
-  (168 MB) didn't trend upward chapter-to-chapter. No process or memory
-  growth on the openai-compatible path.
-- Real accident, real data point: this session's own edit to
-  `server/src/index.ts` (the slow-request middleware, below) triggered
-  `tsx watch` to restart the server *while the digest above was still
-  running*. The digest survived at the data layer — all 3 chapters that had
-  completed were already persisted (per-chapter persistence, M17's
-  designed behavior) — but the `digest_runs` ledger row was left stuck at
-  `status: "running"` forever, since the in-memory loop that would have
-  written its terminal state was killed mid-flight. This reproduces
-  identically for an ordinary crash or manual restart during a live digest,
-  not just this session's edit. **Not fixed here** — out of scope for this
-  milestone's named tasks — but worth a real follow-up: either the digest
-  loop needs a startup sweep that reconciles `"running"` rows with no
-  live owner, or the route needs to treat a stuck `"running"` row as
-  resumable/retryable rather than a permanent lock.
+- 1–3 short-lived `claude` processes are alive at any moment while a
+  chapter is being digested — PIDs visibly rotate (e.g. `638161` present
+  across four consecutive 8s polls, gone by the next, replaced by a fresh
+  PID) as each chapter's `extract()` call completes and the next one
+  starts. This is the CLI's own internal process tree for a single query,
+  not one leaked process per chapter.
+- Once the run reached `status: "completed"` in the digest ledger, `pgrep`
+  for the binary path found **zero** matching processes. Process count
+  returns to baseline after the run — the acceptance criterion, met
+  directly this time.
+- `GET /api/settings` stayed at 0.8–1.3 ms for the entire live run,
+  including while a `claude` process was actively working — event loop
+  unaffected, same as the Ollama-path finding, now confirmed on the actual
+  subscription path too.
+- Server RSS after the run: 214 MB (up modestly from ~168 MB seen earlier
+  in this session under a lighter load) — consistent with normal operation,
+  not runaway growth.
 
-Code-level read of `claudeAgent.ts` for the part that couldn't be run live:
-`runDigest` (`server/src/digest/build.ts`) processes chapters strictly
-sequentially (`for (const section of pending) { await digestChapter(...) }`)
-— never concurrently — so even in the worst case where a completed query's
-CLI subprocess lingers, at most one extra process could overlap between two
-consecutive chapters, not one per chapter. The `Query` object's own `close()`
-is documented (SDK `.d.ts`) as being for aborting a *still-running* query;
-both `stream()` and `extractAttempt()`'s `for await` loops always run to a
-terminal `result` message or a thrown error, so the normal path fully drains
-the generator rather than abandoning it. The one path that never calls
-`close()` at all — including on error — is the thrown-error path (a caught
-`LLMError`, a network failure mid-stream, or `extract()`'s internal retry):
-if the CLI subprocess does *not* self-terminate until the SDK's transport is
-explicitly closed, an unlucky run of consecutive failures during a digest
-(rate limits, a flaky connection) could accumulate zombie processes over
-time. Flagging as a real, plausible, **unverified** gap for a session with
-the `claude` CLI available — do not "fix" this blind by adding `close()`
-calls speculatively, since the existing code already documents a real
-tension (`lastQuery` is deliberately kept alive after completion so
-`planLimits()` has a control channel to ask; closing it there might starve
-that feature, and the original author already flagged not knowing whether
-`planLimits()` works against a torn-down channel).
+This is a **ruled-out suspect**, confirmed live on the code path the task
+actually named, not a substitute path. The remaining item below is a
+separate, narrower, still-unverified claim — don't conflate the two.
+
+**Still open, and correctly scoped as its own gap:** `runDigest`
+(`server/src/digest/build.ts`) processes chapters strictly sequentially
+(`for (const section of pending) { await digestChapter(...) }`), and both
+`stream()` and `extractAttempt()`'s `for await` loops in `claudeAgent.ts`
+always run to a terminal `result` message or a thrown error in the
+*normal* path — which is exactly what was just confirmed clean above. The
+one path that never calls the SDK's `Query.close()` at all is the
+thrown-error path (a caught `LLMError`, a network failure mid-stream, or
+`extract()`'s internal retry) — that specific path was not induced live
+(would need a deliberately broken connection or a forced rate-limit during
+a real subscription call), so whether a run of *consecutive failures*
+during a digest accumulates zombie processes remains a real, plausible, but
+still-unverified edge case. Not fixed blind: the existing code already
+documents a real tension (`lastQuery` is deliberately kept alive after
+completion so `planLimits()` has a control channel to ask; closing it there
+might starve that feature, and the original author already flagged not
+knowing whether `planLimits()` works against a torn-down channel).
+
+**Unrelated finding, still stands:** this session's own edit to
+`server/src/index.ts` (the slow-request middleware, below) triggered `tsx
+watch` to restart the server while an earlier (Ollama-path) digest was
+still running. The digest survived at the data layer — completed chapters
+were already persisted (per-chapter persistence, M17's designed behavior)
+— but the `digest_runs` ledger row was left stuck at `status: "running"`
+forever, since the in-memory loop that would have written its terminal
+state was killed mid-flight. This reproduces identically for an ordinary
+crash or restart during any live digest, on any provider — it's about the
+interrupted process, not about subprocess leakage. **Not fixed here** — out
+of scope for this milestone's named tasks — but worth a real follow-up:
+either the digest loop needs a startup sweep that reconciles `"running"`
+rows with no live owner, or the route needs to treat a stuck `"running"`
+row as resumable/retryable rather than a permanent lock.
 
 ### Guardrails added
 

@@ -2067,7 +2067,7 @@ across five documents.
       idle DOM churn everywhere — no re-render storm found. Explicit recorded
       finding per this task's own acceptance clause; no memoisation added,
       since the profile asked for none. Full numbers in NOTES.md "M17.5".)_
-- [ ] ⚠️ **Check subprocess and event-loop behaviour during a digest run.** `claudeAgent.ts`
+- [x] ⚠️ **Check subprocess and event-loop behaviour during a digest run.** `claudeAgent.ts`
       now retains `lastQuery` so `planLimits()` has a live control channel; on the
       subscription path each query is a spawned CLI subprocess, and a digest is one call
       per chapter. Watch process count and RSS across a multi-chapter run, and time an
@@ -2076,24 +2076,28 @@ across five documents.
       _Acceptance: process count and memory return to baseline after a run; an unrelated
       API request during a digest still completes in single-digit milliseconds; if this
       turns out to be a non-issue, record that too — a ruled-out suspect is a result._
-      _(partially done 2026-07-28, left unchecked: no `claude` CLI in this
-      environment, so the claude-agent-specific subprocess question could not
-      be run live. What *was* verified live, on the openai-compatible/Ollama
-      path (provider-agnostic parts only): a real 3-chapter digest kept
-      `/api/settings` at 0.6–0.9ms throughout and held flat process
-      count/RSS — the event loop is not blocked and there's no leak on that
-      path. Code-level read of `claudeAgent.ts`/`digest/build.ts` found
-      chapters are digested strictly sequentially (bounding worst-case
-      subprocess overlap to ~1, not N) and one real unverified gap: the
-      thrown-error path never calls the SDK's `Query.close()`. Did not
-      speculatively add `close()` calls, since the existing code already
-      documents a real tension with `planLimits()`'s control channel that a
-      blind fix could break. Also found, live and by accident: a server
-      restart mid-digest leaves the `digest_runs` ledger stuck at
-      `status: "running"` forever even though completed chapters persist
-      correctly — a real robustness gap, not fixed here (out of scope for
-      this milestone's named tasks). Full detail and the CLI blocker in
-      NOTES.md "M17.5" / "## Blockers".)_
+      _(corrected and verified 2026-07-28: an earlier pass in this same session
+      wrongly reported "no `claude` CLI available" from a bare `which claude` —
+      wrong test. The operator caught it: the binary is vendored per-platform
+      as `@anthropic-ai/claude-agent-sdk-linux-x64` inside `node_modules`, not
+      on PATH, and this machine already has valid subscription credentials
+      (`~/.claude/.credentials.json`) from earlier milestones' live
+      verification. Re-ran for real against the actual `claude-agent`
+      provider: digested 2 more Alice chapters live, watching `pgrep -fa` for
+      the real CLI process the whole time. 1–3 short-lived `claude` processes
+      churn per chapter (its own internal process tree, not a leak — PIDs
+      visibly rotate out as each chapter's `extract()` call finishes) and the
+      count returns to **zero** once the run reaches `status: "completed"`.
+      `/api/settings` stayed at 0.8–1.3ms the entire time — event loop
+      unaffected. This is a ruled-out suspect, confirmed on the actual
+      subscription path this time, not just the provider-agnostic
+      openai-compatible one. The thrown-error-path `close()` gap noted below
+      remains a real, separately-scoped, unverified edge case (a run of
+      consecutive failures was not induced live) — not the same claim as "no
+      leak in the normal path," which is now directly confirmed. The
+      `digest_runs` "stuck at running after a restart" finding also still
+      stands (unrelated mechanism — an interrupted process, not a leak).
+      NOTES.md "M17.5" has the corrected write-up.)_
 - [x] **Guard against the regression returning.** A cheap, permanent signal: log
       server-side handler duration for any request over a threshold, and record the
       production bundle's size and chunk count in the build output so growth is visible
