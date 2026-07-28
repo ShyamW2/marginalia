@@ -20,6 +20,8 @@ import {
 } from "../annotations/threads.js";
 import { getProvider, LLMError, type LLMErrorCode, type LLMProvider } from "../llm/provider.js";
 import { buildContext, WINDOWED_CONTEXT_NOTE } from "../llm/context.js";
+import { computeContextUsage, type UsageLedgerRow } from "../llm/usage.js";
+import type { ContextUsage } from "@marginalia/shared";
 
 export const threadsRouter: Router = Router();
 
@@ -76,6 +78,11 @@ async function streamThreadReply(
   messages: { role: "user" | "assistant"; content: string }[],
   userContent: string,
   contextNote: string | null,
+  /** M17 "context-window readout": populated by the usage-ledger wrapper's
+   * onLogged callback once the call completes — read here rather than
+   * re-querying the ledger, which would race concurrent requests. */
+  usageRowRef: { current: Omit<UsageLedgerRow, "id" | "createdAt"> | null },
+  contextWindowTokens: number,
 ): Promise<void> {
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream");
@@ -120,8 +127,17 @@ async function streamThreadReply(
         fullText,
         contextNote,
       );
+      const contextUsage: ContextUsage | null = usageRowRef.current
+        ? computeContextUsage(usageRowRef.current, contextWindowTokens)
+        : null;
       res.write(
-        `data: ${JSON.stringify({ done: true, messageId: assistantMessage.id, threadId, contextNote })}\n\n`,
+        `data: ${JSON.stringify({
+          done: true,
+          messageId: assistantMessage.id,
+          threadId,
+          contextNote,
+          contextUsage,
+        })}\n\n`,
       );
     }
   } catch (err) {
@@ -157,7 +173,12 @@ threadsRouter.post("/", async (req, res) => {
     return;
   }
 
-  const provider = getProvider(db);
+  const usageRowRef: { current: Omit<UsageLedgerRow, "id" | "createdAt"> | null } = {
+    current: null,
+  };
+  const provider = getProvider(db, "thread", (row) => {
+    usageRowRef.current = row;
+  });
   if (!provider) {
     res.status(400).json({ error: "provider_unconfigured" });
     return;
@@ -196,6 +217,8 @@ threadsRouter.post("/", async (req, res) => {
     providerMessages,
     userContent,
     windowed ? WINDOWED_CONTEXT_NOTE : null,
+    usageRowRef,
+    provider.capabilities().contextTokens,
   );
 });
 
@@ -224,7 +247,12 @@ threadsRouter.post("/:id/messages", async (req, res) => {
     return;
   }
 
-  const provider = getProvider(db);
+  const usageRowRef: { current: Omit<UsageLedgerRow, "id" | "createdAt"> | null } = {
+    current: null,
+  };
+  const provider = getProvider(db, "thread", (row) => {
+    usageRowRef.current = row;
+  });
   if (!provider) {
     res.status(400).json({ error: "provider_unconfigured" });
     return;
@@ -257,6 +285,8 @@ threadsRouter.post("/:id/messages", async (req, res) => {
     providerMessages,
     question,
     windowed ? WINDOWED_CONTEXT_NOTE : null,
+    usageRowRef,
+    provider.capabilities().contextTokens,
   );
 });
 

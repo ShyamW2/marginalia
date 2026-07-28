@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import type {
+  ContextUsage,
   HighlightImportance,
   HighlightKind,
   Message,
   ThreadSummary,
   ThreadWithMessages,
 } from "@marginalia/shared";
+import { formatContextUsage } from "./contextUsage.js";
 import { ImportanceStars } from "../highlights/ImportanceStars.js";
 import { TagEditor } from "../highlights/TagEditor.js";
 import {
@@ -180,6 +182,12 @@ export function ThreadPanel({
   }
 
   const [messages, setMessages] = useState<Message[]>([]);
+  // M17 "context-window readout": live/session-only, keyed by message id —
+  // never fetched on reload (the llm_usage ledger, not this, is the durable
+  // record; see contextUsage.ts's ContextUsage doc comment).
+  const [contextUsageByMessageId, setContextUsageByMessageId] = useState<
+    Record<string, ContextUsage>
+  >({});
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [draft, setDraft] = useState("");
   const [streamingText, setStreamingText] = useState<string | null>(null);
@@ -287,7 +295,7 @@ export function ThreadPanel({
           streamingTextRef.current += text;
           setStreamingText(streamingTextRef.current);
         },
-        onDone: (messageId, threadId, contextNote) => {
+        onDone: (messageId, threadId, contextNote, contextUsage) => {
           setMessages((prev) => [
             ...prev,
             {
@@ -299,6 +307,9 @@ export function ThreadPanel({
               createdAt: new Date().toISOString(),
             },
           ]);
+          if (contextUsage) {
+            setContextUsageByMessageId((prev) => ({ ...prev, [messageId]: contextUsage }));
+          }
           setStreamingText(null);
           abortRef.current = null;
           onThreadChange(highlightId, { id: threadId, hasAnswer: true });
@@ -435,6 +446,11 @@ export function ThreadPanel({
               : renderMarkdown(message.content)}
             {message.role === "assistant" && message.contextNote && (
               <div className={styles.contextNote}>{message.contextNote}</div>
+            )}
+            {message.role === "assistant" && contextUsageByMessageId[message.id] && (
+              <div className={styles.contextUsage}>
+                {formatContextUsage(contextUsageByMessageId[message.id])}
+              </div>
             )}
           </div>
         ))}

@@ -44,6 +44,7 @@ describe("schemas smoke test", () => {
         messageId: "m1",
         threadId: "t1",
         contextNote: null,
+        contextUsage: null,
       }).success,
     ).toBe(true);
     expect(

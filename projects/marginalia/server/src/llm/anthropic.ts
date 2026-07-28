@@ -5,6 +5,7 @@ import {
   type LLMExtractRequest,
   type LLMProvider,
   type LLMStreamRequest,
+  type ReportedUsage,
 } from "./provider.js";
 
 // M16 "max response length": THREAD_MAX_TOKENS became a persisted setting
@@ -46,6 +47,11 @@ export class AnthropicProvider implements LLMProvider {
   private readonly client: Anthropic;
   private readonly model: string;
   private readonly maxResponseTokens: number;
+  // M17 usage accounting: set at the end of the most recent stream()/
+  // extract() call on this instance. A fresh provider instance is
+  // constructed per request (see llm/provider.ts's getProvider()), so
+  // there's no cross-request contamination to guard against here.
+  private lastUsage: ReportedUsage | null = null;
 
   constructor(apiKey: string, model: string, maxResponseTokens = 8192) {
     this.client = new Anthropic({ apiKey });
@@ -55,6 +61,10 @@ export class AnthropicProvider implements LLMProvider {
 
   capabilities(): { contextTokens: number; supportsCaching: boolean } {
     return { contextTokens: contextTokensForModel(this.model), supportsCaching: true };
+  }
+
+  reportedUsage(): ReportedUsage | null {
+    return this.lastUsage;
   }
 
   async *stream(req: LLMStreamRequest): AsyncIterable<{ text: string }> {
@@ -94,6 +104,11 @@ export class AnthropicProvider implements LLMProvider {
       console.debug(
         `[anthropic] cache_read_input_tokens=${finalMessage.usage.cache_read_input_tokens ?? 0} cache_creation_input_tokens=${finalMessage.usage.cache_creation_input_tokens ?? 0}`,
       );
+      this.lastUsage = {
+        inputTokens: finalMessage.usage.input_tokens,
+        outputTokens: finalMessage.usage.output_tokens,
+        cacheReadTokens: finalMessage.usage.cache_read_input_tokens ?? undefined,
+      };
       if (finalMessage.stop_reason === "refusal") {
         throw new LLMError("refused", "The model declined to answer.");
       }
@@ -114,6 +129,11 @@ export class AnthropicProvider implements LLMProvider {
         },
       });
 
+      this.lastUsage = {
+        inputTokens: message.usage.input_tokens,
+        outputTokens: message.usage.output_tokens,
+        cacheReadTokens: message.usage.cache_read_input_tokens ?? undefined,
+      };
       if (message.stop_reason === "refusal") {
         throw new LLMError("refused", "The model declined to answer.");
       }

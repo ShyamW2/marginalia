@@ -31,7 +31,7 @@ publishRouter.post("/:id/publish", async (req, res) => {
     return;
   }
 
-  const provider = getProvider(db);
+  const provider = getProvider(db, "extract");
   if (!provider) {
     res.status(400).json({ error: "provider_unconfigured" });
     return;

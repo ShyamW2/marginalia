@@ -1,10 +1,12 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
 import {
   LLMError,
   type LLMExtractRequest,
   type LLMProvider,
   type LLMStreamRequest,
+  type PlanLimits,
+  type ReportedUsage,
 } from "./provider.js";
 
 /**
@@ -21,6 +23,13 @@ export class ClaudeAgentProvider implements LLMProvider {
   readonly id = "claude-agent" as const;
   private readonly model: string;
   private readonly maxResponseTokens?: number;
+  // M17 usage accounting: set at the end of the most recent stream()/
+  // extract() call. `lastQuery` is kept around only so planLimits() has a
+  // live control channel to ask — a fresh provider instance is constructed
+  // per request (llm/provider.ts's getProvider()), so neither field crosses
+  // requests.
+  private lastUsage: ReportedUsage | null = null;
+  private lastQuery: Query | null = null;
 
   constructor(model: string, maxResponseTokens?: number) {
     this.model = model;
@@ -33,6 +42,58 @@ export class ClaudeAgentProvider implements LLMProvider {
     // caching internally, so caching is "free" from our side.
     const contextTokens = this.model.includes("[1m]") ? 1_000_000 : 200_000;
     return { contextTokens, supportsCaching: true };
+  }
+
+  reportedUsage(): ReportedUsage | null {
+    return this.lastUsage;
+  }
+
+  /**
+   * Opportunistic (decisions.md 2026-07-28 later): the Agent SDK's
+   * `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` exposes
+   * real plan-limit windows with reset times, but its own name is the
+   * contract — unstable, removable without notice. Feature-detected (the
+   * method may not exist on an older SDK build), wrapped in try/catch, and
+   * asked of the most recent call's `Query` object rather than spinning up a
+   * fresh one — this method's actual behavior on a torn-down control channel
+   * couldn't be verified live in this environment (no `claude` CLI
+   * available), so failing closed to "unavailable" is the safe default.
+   */
+  async planLimits(): Promise<PlanLimits | null> {
+    const q = this.lastQuery;
+    if (!q) return null;
+    const usageFn = (q as unknown as Record<string, unknown>)
+      .usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET;
+    if (typeof usageFn !== "function") return null;
+
+    try {
+      const usage = (await (usageFn as () => Promise<unknown>).call(q)) as {
+        rate_limits_available: boolean;
+        rate_limits: Record<
+          string,
+          { utilization: number | null; resets_at: string | null } | null | undefined
+        > | null;
+      };
+      if (!usage.rate_limits_available || !usage.rate_limits) return null;
+
+      const labels: Record<string, string> = {
+        five_hour: "5-hour",
+        seven_day: "7-day",
+        seven_day_opus: "7-day (Opus)",
+        seven_day_sonnet: "7-day (Sonnet)",
+      };
+      const windows = Object.entries(labels)
+        .map(([key, label]) => {
+          const window = usage.rate_limits?.[key];
+          if (!window) return null;
+          return { label, utilization: window.utilization, resetsAt: window.resets_at };
+        })
+        .filter((w): w is NonNullable<typeof w> => w !== null);
+
+      return { windows };
+    } catch {
+      return null;
+    }
   }
 
   private baseOptions(signal?: AbortSignal) {
@@ -71,6 +132,7 @@ export class ClaudeAgentProvider implements LLMProvider {
           includePartialMessages: true,
         },
       });
+      this.lastQuery = q;
 
       for await (const message of q) {
         if (
@@ -80,6 +142,12 @@ export class ClaudeAgentProvider implements LLMProvider {
         ) {
           yield { text: message.event.delta.text };
         } else if (message.type === "result") {
+          this.lastUsage = {
+            inputTokens: message.usage.input_tokens,
+            outputTokens: message.usage.output_tokens,
+            cacheReadTokens: message.usage.cache_read_input_tokens ?? undefined,
+            costUsd: message.total_cost_usd,
+          };
           if (message.subtype !== "success" || message.is_error) {
             const errors = message.subtype === "success" ? [] : message.errors;
             throw mapAgentError(errors.join("; ") || message.subtype);
@@ -114,9 +182,16 @@ export class ClaudeAgentProvider implements LLMProvider {
           },
         },
       });
+      this.lastQuery = q;
 
       for await (const message of q) {
         if (message.type === "result") {
+          this.lastUsage = {
+            inputTokens: message.usage.input_tokens,
+            outputTokens: message.usage.output_tokens,
+            cacheReadTokens: message.usage.cache_read_input_tokens ?? undefined,
+            costUsd: message.total_cost_usd,
+          };
           if (message.subtype === "error_max_structured_output_retries") {
             throw new LLMError("extract_parse_failed");
           }

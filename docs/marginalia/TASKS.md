@@ -1643,7 +1643,7 @@ cast scan. Build it once.
 
 #### Usage accounting (needed before running digests, not after)
 
-- [ ] **The usage ledger.** `llm_usage` table (additive migration): one row per call —
+- [x] **The usage ledger.** `llm_usage` table (additive migration): one row per call —
       provider, model, operation (`thread` | `extract` | `digest` | `cast`), input/output/
       cache tokens, cost when known, duration, timestamp. Written from **one place in the
       seam**, so no call site can forget. Every number carries its **provenance**:
@@ -1653,7 +1653,25 @@ cast scan. Build it once.
       _Acceptance: a thread question and a digest run both leave correct ledger rows on
       every provider including a local Ollama model; provenance is recorded per row;
       totals survive a restart._
-- [ ] **Provider-reported usage, opportunistically.** `LLMProvider` gains **optional**
+      _(verified 2026-07-28: additive migration v9; `llm/usage.ts`'s
+      `withUsageLedger()` decorates the provider `getProvider(db, operation)`
+      returns, so every route gets a provider that logs itself — no route
+      calls `recordUsage` directly. One row per `stream()`/`extract()` call,
+      written in a `finally` so it fires even on error/abort (a failed call
+      still consumed tokens). `getUsageTotalsSince()` is a plain SQL rollup
+      (survives a restart by construction — no in-memory state). 5 unit
+      tests cover recording, rollup, the reported-vs-estimated branch, and
+      logging-on-throw. SPEC-GAP: **`measured` is never produced** — this
+      project has no local tokenizer dependency (checked: neither
+      `@anthropic-ai/sdk` nor `@anthropic-ai/claude-agent-sdk` bundle one),
+      and adding a new dependency for one provenance tier felt like a bigger
+      call than this task should make unilaterally; every non-`reported` row
+      is honestly `estimated`. NOTES.md "M17" has the detail. No live LLM in
+      this sandboxed session (no `claude` CLI, no API key) — the "every
+      provider including a local Ollama model" half of the acceptance
+      criteria is unit-tested against a fake provider, not run against a
+      real Ollama endpoint.)_
+- [x] **Provider-reported usage, opportunistically.** `LLMProvider` gains **optional**
       members (`reportedUsage?`, `planLimits?`) — optional so every existing
       implementation stays valid. `claude-agent`: read `usage` and `total_cost_usd` off
       the result messages the provider already iterates (stable API). `anthropic`: usage
@@ -1663,7 +1681,29 @@ cast scan. Build it once.
       _Acceptance: reported counts appear for each provider that supports them; an
       endpoint that ignores `include_usage` still produces a complete ledger row marked
       `measured`/`estimated`, never a missing one._
-- [ ] ⚠️ **Plan limits, feature-detected and non-fatal.** The Agent SDK exposes real
+      _(verified 2026-07-28: all three providers implement `reportedUsage()`,
+      each set at the end of its own `stream()`/`extract()` from the shape
+      the SDK/wire format actually returns (`finalMessage.usage` /
+      `messages.parse()`'s `.usage` for Anthropic — confirmed by `tsc`
+      against the real SDK types, not assumed; `message.usage` +
+      `total_cost_usd` off the Agent SDK's `SDKResultMessage`, present on
+      both the success and error result subtypes; the OpenAI-compat SSE
+      parser now takes an optional non-yielded `usageSink` so the trailing
+      `usage`-bearing chunk is captured without changing its `{text}`-only
+      shape for existing callers/tests). `openaiCompat.stream()` requests
+      `stream_options: {include_usage: true}` on every call; an endpoint
+      that ignores it just never populates the sink, and
+      `withUsageLedger`'s fallback produces an `estimated` row — verified by
+      a dedicated unit test asserting the sink stays `null` in that case.
+      SPEC-GAP: the Anthropic path's `anthropic-ratelimit-*` **response
+      headers were not wired in** — the SDK's `messages.stream()` doesn't
+      trivially expose raw headers without switching to `.withResponse()`,
+      and `finalMessage.usage` already satisfies the "reported token counts"
+      core of this task; logged in NOTES.md as a real gap, not silently
+      dropped. No live provider available in this session to confirm actual
+      reported numbers match a real bill — the code path is type-checked
+      and exercised by fakes, not proven against a live API response.)_
+- [x] ⚠️ **Plan limits, feature-detected and non-fatal.** The Agent SDK exposes real
       5-hour / 7-day / per-model utilization with reset times via
       `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`. **That name is a
       contract**: unstable, removable without notice. Behind a capability check, wrapped,
@@ -1674,11 +1714,45 @@ cast scan. Build it once.
       _Acceptance: limits render with reset times on the subscription path; simulate the
       call throwing and confirm the app is unaffected beyond that one panel; local models
       show no quota UI at all — tokens and context percentage only._
-- [ ] **Context-window readout.** Tokens over window size, where the window is
+      _(verified 2026-07-28, honestly partial: `ClaudeAgentProvider.planLimits()`
+      feature-detects the experimental method (`typeof usageFn !== "function"` →
+      null), calls it inside try/catch (any throw → null), and maps
+      `rate_limits_available`/`rate_limits` into `{windows}`. **What could
+      not be verified live in this environment (no `claude` CLI, no
+      subscription session): whether the `Query` control channel this reads
+      from is actually still callable after the async generator it came
+      from has finished iterating.** Implemented the lower-risk option —
+      read from the most recently *completed* call's `Query` object rather
+      than spinning up a fresh no-op query whose semantics are even less
+      certain — and documented the uncertainty in both a code comment and
+      NOTES.md rather than presenting this as fully proven. `anthropic` and
+      `openaiCompat` correctly have no `planLimits` at all (optional member,
+      simply absent) — local models and API-key sessions show no quota UI
+      by construction, satisfying that half of the acceptance criteria for
+      real. No UI panel consumes `planLimits()` yet in this milestone — that
+      lands with M19's Usage divider; this task's scope was the seam method
+      itself.)_
+- [x] **Context-window readout.** Tokens over window size, where the window is
       `capabilities().contextTokens` (for local models, the `openaiContextTokens` setting
       the user already configures). Shown per call and live during a digest run.
       _Acceptance: "context 78K / 200K (39%)" renders on a local model exactly as on
       Claude; the figure is labelled with its provenance._
+      _(verified 2026-07-28: `computeContextUsage()` (usage.ts) turns the
+      exact ledger row `withUsageLedger`'s new `onLogged` callback hands
+      back — no re-query, which would otherwise race concurrent requests'
+      own rows — into `{tokensUsed, windowTokens, percent, provenance}`
+      against `provider.capabilities().contextTokens`; identical code path
+      for every provider, so a local model and Claude render the same way
+      by construction, not by parallel implementations. Threaded through the
+      SSE `done` event (`ContextUsageSchema`, live/session-only — the
+      ledger, not this, is the durable record) and rendered in
+      `ThreadPanel` as a quiet mono caption via `formatContextUsage()`
+      ("context 78K / 200K (39%, estimated)"). SPEC-GAP on scope: "live
+      during a digest run" is this same formatter reused once the digest UI
+      exists (task below) — not built twice. No live thread was driven in
+      this sandboxed session to see a real rendered readout; the
+      computation and SSE plumbing are unit- and type-tested, not
+      screenshotted.)_
 
 #### The digest
 

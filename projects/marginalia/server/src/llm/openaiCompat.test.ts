@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenAICompatSSE, sseLines } from "./openaiCompat.js";
+import { parseOpenAICompatSSE, sseLines, type OpenAIUsage } from "./openaiCompat.js";
 
 async function* fromChunks(chunks: string[]): AsyncGenerator<string> {
   for (const chunk of chunks) yield chunk;
@@ -74,5 +74,27 @@ describe("parseOpenAICompatSSE", () => {
     ];
     const events = await collect(parseOpenAICompatSSE(fromChunks(chunks)));
     expect(events).toEqual([{ text: "ok" }]);
+  });
+
+  it("M17: captures the trailing usage chunk into the optional sink without yielding it", async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7}}\n',
+      "data: [DONE]\n",
+    ];
+    const usageSink: { current: OpenAIUsage | null } = { current: null };
+    const events = await collect(parseOpenAICompatSSE(fromChunks(chunks), usageSink));
+    expect(events).toEqual([{ text: "hi" }]);
+    expect(usageSink.current).toEqual({ prompt_tokens: 42, completion_tokens: 7 });
+  });
+
+  it("M17: leaves the usage sink untouched when the endpoint never sends usage", async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n',
+      "data: [DONE]\n",
+    ];
+    const usageSink: { current: OpenAIUsage | null } = { current: null };
+    await collect(parseOpenAICompatSSE(fromChunks(chunks), usageSink));
+    expect(usageSink.current).toBeNull();
   });
 });

@@ -247,6 +247,19 @@ export type ThreadWithMessages = z.infer<typeof ThreadWithMessagesSchema>;
 // SSE event contract for thread streaming (POST /api/threads, .../messages)
 // ---------------------------------------------------------------------------
 
+/** M17 "context-window readout": tokens spent on a single call over the
+ * provider's context window, labeled with provenance so an estimate is
+ * never shown as a measurement. Live/SSE-only — not persisted with the
+ * message; the llm_usage ledger (server-side) is the durable source of
+ * truth for historical totals. */
+export const ContextUsageSchema = z.object({
+  tokensUsed: z.number().int().nonnegative(),
+  windowTokens: z.number().int().positive(),
+  percent: z.number().nonnegative(),
+  provenance: z.enum(["reported", "measured", "estimated"]),
+});
+export type ContextUsage = z.infer<typeof ContextUsageSchema>;
+
 export const ThreadStreamEventSchema = z.union([
   z.object({ text: z.string() }),
   // SPEC-GAP: SPEC's done event is `{done: true, messageId}` only. The
@@ -259,6 +272,7 @@ export const ThreadStreamEventSchema = z.union([
     messageId: z.string(),
     threadId: z.string(),
     contextNote: z.string().nullable(),
+    contextUsage: ContextUsageSchema.nullable(),
   }),
   z.object({ error: z.string() }),
 ]);

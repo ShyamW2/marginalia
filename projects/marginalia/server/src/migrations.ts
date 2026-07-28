@@ -190,4 +190,29 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE messages ADD COLUMN context_note TEXT;
     `,
   },
+  {
+    // M17 usage ledger (docs/decisions.md 2026-07-28 later): one row per
+    // LLM call, written from the single `withUsageLedger` seam wrapper
+    // (llm/usage.ts) so no route or future call site can forget. Provenance
+    // is always 'reported' or 'estimated' in practice today — see the
+    // SPEC-GAP note on UsageProvenance in usage.ts.
+    version: 9,
+    sql: `
+      CREATE TABLE llm_usage (
+        id                TEXT PRIMARY KEY,
+        provider          TEXT NOT NULL,
+        model             TEXT NOT NULL,
+        operation         TEXT NOT NULL,
+        input_tokens      INTEGER NOT NULL,
+        output_tokens     INTEGER NOT NULL,
+        cache_read_tokens INTEGER,
+        cost_usd          REAL,
+        provenance        TEXT NOT NULL,
+        duration_ms       INTEGER NOT NULL,
+        created_at        TEXT NOT NULL
+      );
+
+      CREATE INDEX idx_llm_usage_created ON llm_usage(created_at);
+    `,
+  },
 ];

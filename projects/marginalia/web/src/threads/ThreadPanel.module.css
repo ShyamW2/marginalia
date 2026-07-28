@@ -235,6 +235,16 @@
   line-height: 1.4;
 }
 
+/* M17 "context-window readout": a quiet mono caption, never mistaken for
+   the answer itself or an error. */
+.contextUsage {
+  margin-top: 0.3rem;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  font-family: ui-monospace, "SF Mono", monospace;
+  opacity: 0.75;
+}
+
 .assistantMessage p {
   margin: 0 0 0.6rem;
 }

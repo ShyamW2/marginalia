@@ -3,7 +3,23 @@ import {
   type LLMExtractRequest,
   type LLMProvider,
   type LLMStreamRequest,
+  type ReportedUsage,
 } from "./provider.js";
+
+/** Raw `usage` object shape shared by OpenAI-compatible chat-completions
+ * responses (streaming, when `stream_options.include_usage` is honoured, and
+ * non-streaming) — snake_case, matching the wire format directly. */
+export interface OpenAIUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+}
+
+function toReportedUsage(usage: OpenAIUsage | undefined): ReportedUsage | null {
+  if (!usage || typeof usage.prompt_tokens !== "number" || typeof usage.completion_tokens !== "number") {
+    return null;
+  }
+  return { inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens };
+}
 
 // M16: see the matching comment in anthropic.ts — the answer-length setting
 // only governs stream(), not extract()'s own, unrelated structured-output
@@ -31,9 +47,16 @@ export async function* sseLines(
  * lines, terminated by `data: [DONE]`) into text chunks from
  * `choices[0].delta.content`. Exported standalone so it's testable against a
  * mocked async-iterable stream without a real HTTP server.
+ *
+ * `usageSink`, when given, is written to (never yielded — the generator's
+ * shape stays `{text}`-only for existing callers/tests) whenever a chunk
+ * carries a `usage` field — the last one wins, which is the final chunk when
+ * the request set `stream_options: {include_usage: true}`. Endpoints that
+ * ignore that option simply never populate it, and the sink stays untouched.
  */
 export async function* parseOpenAICompatSSE(
   chunks: AsyncIterable<string>,
+  usageSink?: { current: OpenAIUsage | null },
 ): AsyncGenerator<{ text: string }> {
   for await (const line of sseLines(chunks)) {
     if (!line.startsWith("data:")) continue;
@@ -48,9 +71,12 @@ export async function* parseOpenAICompatSSE(
       continue; // skip malformed/partial lines
     }
 
-    const text = (parsed as Record<string, unknown> | null)?.choices as
-      | { delta?: { content?: unknown } }[]
-      | undefined;
+    const body = parsed as Record<string, unknown> | null;
+    if (usageSink && body?.usage) {
+      usageSink.current = body.usage as OpenAIUsage;
+    }
+
+    const text = body?.choices as { delta?: { content?: unknown } }[] | undefined;
     const content = text?.[0]?.delta?.content;
     if (typeof content === "string" && content.length > 0) {
       yield { text: content };
@@ -86,6 +112,10 @@ interface OpenAICompatConfig {
 export class OpenAICompatProvider implements LLMProvider {
   readonly id = "openai-compatible" as const;
   private readonly config: OpenAICompatConfig;
+  // M17 usage accounting: set at the end of the most recent stream()/
+  // extract() call. No standard cost field exists across arbitrary
+  // OpenAI-compatible servers, so `costUsd` is never populated here.
+  private lastUsage: ReportedUsage | null = null;
 
   constructor(config: OpenAICompatConfig) {
     this.config = config;
@@ -93,6 +123,10 @@ export class OpenAICompatProvider implements LLMProvider {
 
   capabilities(): { contextTokens: number; supportsCaching: boolean } {
     return { contextTokens: this.config.contextTokens, supportsCaching: false };
+  }
+
+  reportedUsage(): ReportedUsage | null {
+    return this.lastUsage;
   }
 
   private headers(): Record<string, string> {
@@ -119,6 +153,11 @@ export class OpenAICompatProvider implements LLMProvider {
         body: JSON.stringify({
           model: this.config.model,
           stream: true,
+          // M17: requested on every call — endpoints that don't recognize
+          // it (many do; OpenAI, OpenRouter, recent Ollama/LM Studio) just
+          // ignore the field, and reportedUsage() falls back to the ledger
+          // wrapper's own estimate in that case.
+          stream_options: { include_usage: true },
           max_tokens: this.config.maxResponseTokens ?? 8192,
           messages: [
             { role: "system", content: systemMessage },
@@ -137,7 +176,12 @@ export class OpenAICompatProvider implements LLMProvider {
       throw new LLMError("network", "empty response body");
     }
 
-    yield* parseOpenAICompatSSE(webStreamToStrings(response.body));
+    const usageSink: { current: OpenAIUsage | null } = { current: null };
+    try {
+      yield* parseOpenAICompatSSE(webStreamToStrings(response.body), usageSink);
+    } finally {
+      this.lastUsage = toReportedUsage(usageSink.current ?? undefined);
+    }
   }
 
   async extract<T>(req: LLMExtractRequest<T>): Promise<T> {
@@ -173,7 +217,9 @@ export class OpenAICompatProvider implements LLMProvider {
 
     const body = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
+      usage?: OpenAIUsage;
     };
+    this.lastUsage = toReportedUsage(body.usage);
     const content = body.choices?.[0]?.message?.content;
 
     let candidate: unknown;

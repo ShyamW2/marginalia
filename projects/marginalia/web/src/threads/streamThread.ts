@@ -1,8 +1,13 @@
-import { ThreadStreamEventSchema } from "@marginalia/shared";
+import { ThreadStreamEventSchema, type ContextUsage } from "@marginalia/shared";
 
 export interface ThreadStreamHandlers {
   onText: (text: string) => void;
-  onDone: (messageId: string, threadId: string, contextNote: string | null) => void;
+  onDone: (
+    messageId: string,
+    threadId: string,
+    contextNote: string | null,
+    contextUsage: ContextUsage | null,
+  ) => void;
   onError: (message: string) => void;
 }
 
@@ -89,6 +94,11 @@ function dispatchEvent(rawEvent: string, handlers: ThreadStreamHandlers): void {
 
   if ("text" in event.data) handlers.onText(event.data.text);
   else if ("done" in event.data) {
-    handlers.onDone(event.data.messageId, event.data.threadId, event.data.contextNote);
+    handlers.onDone(
+      event.data.messageId,
+      event.data.threadId,
+      event.data.contextNote,
+      event.data.contextUsage,
+    );
   } else if ("error" in event.data) handlers.onError(event.data.error);
 }

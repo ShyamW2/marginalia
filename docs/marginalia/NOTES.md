@@ -1584,3 +1584,51 @@ accumulated highlights from prior sessions' live testing:
   beyond one string — not pre-built now since YAGNI, but flagged here so a
   future session doesn't reinvent the "attach a note to an answer" wiring
   from scratch).
+
+### M17 — usage accounting
+
+- **No local tokenizer dependency exists in this project.** Checked both
+  `@anthropic-ai/sdk` and `@anthropic-ai/claude-agent-sdk`'s installed
+  packages for a bundled offline tokenizer (older Anthropic SDKs shipped
+  one) — neither has one. Decisions.md's three-tier provenance
+  (`reported`/`measured`/`estimated`) therefore only ever produces
+  `reported` or `estimated` in this codebase; `measured` stays a real,
+  reachable value in the type (forward-compatible) but nothing writes it.
+  Adding a tokenizer package to close this gap is a real dependency
+  decision, not a "boring choice" this task should make unilaterally —
+  flagging it here for a design session to decide on, rather than either
+  silently mislabeling `estimated` as `measured` or quietly adding a new
+  dependency.
+- **Anthropic `anthropic-ratelimit-*` response headers not wired in.**
+  `client.messages.stream()` doesn't expose raw response headers without
+  switching to the SDK's `.withResponse()` variant, which would touch the
+  streaming call shape more than this task's scope justified given
+  `finalMessage.usage` already delivers real reported token counts (the
+  core of "reported" provenance). Revisit if a future session specifically
+  wants rate-limit-header-derived plan-limit info on the API-key path (today
+  only the `claude-agent` subscription path has any plan-limit surfacing at
+  all).
+- **`ClaudeAgentProvider.planLimits()`'s core assumption is unverified.**
+  It reads `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()` off
+  the `Query` object from the *most recently completed* `stream()`/
+  `extract()` call, on the theory that the control channel (a spawned
+  Claude Code CLI subprocess) might still answer control-channel queries
+  after the async generator that drove a turn has finished iterating. This
+  session had no `claude` CLI binary and no subscription login available to
+  actually drive a call and then test whether that theory holds — it's the
+  lower-risk of two plausible designs (the alternative, spinning up a fresh
+  no-op `query()` purely to ask for usage, seemed riskier still since a
+  `maxTurns: 0` or empty-prompt query's behavior is equally unverified), but
+  it's a real hole: this needs a live subscription session to confirm before
+  fully trusting it. Wrapped in try/catch either way, so a wrong assumption
+  degrades to "plan limits unavailable" rather than crashing anything.
+- **Context-window readout is SSE-only, not persisted with the message.**
+  `ContextUsage` rides the `done` event and lives in a client-side
+  `contextUsageByMessageId` map that's populated only by a live stream
+  completion — reloading a thread's history does *not* re-show it, by
+  design: decisions.md names the `llm_usage` ledger as the durable source of
+  truth, and duplicating that per-message would be a second, driftable copy
+  of the same fact. If a future session decides per-message historical
+  display matters, the boring extension is another nullable `messages`
+  column (same pattern as `context_note`) rather than re-deriving it from
+  the ledger at read time.
