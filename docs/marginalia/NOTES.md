@@ -450,7 +450,21 @@ missing feature.
 
 ## Blockers
 
-_(none yet)_
+- **M17.5 — no `claude` CLI in this environment.** The claude-agent
+  provider's subprocess-retention question (`lastQuery` across a
+  multi-chapter digest — see NOTES.md "M17.5") needs the actual bundled
+  `claude` CLI to observe subprocess count/lifetime on the subscription
+  path; this sandbox has no `claude` binary (`which claude` → not found).
+  Verified everything provider-agnostic (event loop stays responsive, no
+  process/memory growth) via the openai-compatible/Ollama path instead,
+  which cannot confirm or deny the CLI-specific concern. A session with the
+  real CLI available should watch `ps` during a live multi-chapter digest
+  against `claude-agent` before this box in TASKS.md is checked.
+- **M17.5 — the tunnel itself was never touched.** All M17.5 measurements
+  are local (this session runs on the rig, not the operator's actual `ssh
+  -L` position). The milestone's own Verify step asks for an
+  operator-position, over-the-tunnel comparison against the baseline table
+  — still genuinely open.
 
 ## Session handoff — 2026-07-13 (M1 in progress, nothing committed)
 
@@ -1724,3 +1738,203 @@ endpoint (`qwen3.5-hermes`, a reasoning/"thinking" model).
   `SIGTERM` in the `tsx watch`/`vite` output) — the dev server had to be
   restarted once mid-session; the digest data itself was unaffected since it
   lives in SQLite, independent of the server process.
+
+## M17.5 — performance & responsiveness
+
+⚠️ **Environment caveat, upfront:** this session runs on the rig itself, not
+over the operator's actual `ssh -L` tunnel from ~20km away. Every timing
+number below is therefore local — real for request count / transfer size
+(the mechanism the 2026-07-29 decisions entry blames), but it cannot
+reproduce the tunnel's own latency/multiplexing behavior. Treat the ms
+columns as a lower bound, not the operator's real experience; request count
+and transfer size are the numbers that actually transfer to the tunnel.
+
+### Baseline (measured, not guessed)
+
+Real headless-Chromium (Playwright) passes against the actual running dev
+server, immediately followed by the same passes against a real production
+build served single-origin. All local, no tunnel.
+
+| Flow | Dev: requests | Dev: transfer | Dev: time | Prod: requests | Prod: transfer | Prod: time |
+|---|---|---|---|---|---|---|
+| Desk (cold) | 52 | 2.92 MB | 818 ms | 16 | 0.78 MB | 619 ms |
+| Settings | 59 | 2.51 MB | 741 ms | 20 | 0.46 MB | 566 ms |
+| Reader | 107 | 7.80 MB | 1090 ms | 43 | 3.04 MB | 812 ms |
+
+Production is 2.5–5.5× fewer requests and 2.6–5.5× less transfer per flow —
+consistent with the 2026-07-29 decisions entry's back-of-envelope ratio.
+Local time-to-interactive barely moves (both are under a tunnel-free
+second), which is exactly the point: the ms column is dominated by round
+trips a fast local network doesn't charge for, but an `ssh -L` tunnel's
+per-channel flow control does. Method: `web/measure.mjs`-style script (not
+committed — throwaway), Playwright `chromium`, `page.goto(..., {waitUntil:
+"networkidle"})`, summing `response.body()` lengths.
+
+### `pnpm start` — and a bug the M17.5 measurement immediately found
+
+Added `"start": "pnpm build && NODE_ENV=production pnpm --filter
+@marginalia/server start"` to the root `package.json`. First real run of
+this path (it existed since early on but had never actually been exercised
+— that's the whole premise of this milestone) crashed immediately:
+
+```
+PathError [TypeError]: Missing parameter name at index 1: *
+```
+
+Express 5's router (`path-to-regexp` v8) dropped the bare `"*"` SPA-fallback
+wildcard; it now requires a named splat (`"/*splat"`). Fixed in
+`server/src/index.ts`. This is a good example of exactly what this
+milestone is for: a code path with zero live coverage (`NODE_ENV=production`
+was set nowhere) had been silently broken since whenever Express 5 landed,
+and the bug only surfaces the moment someone actually serves the built app.
+Re-verified after the fix: `pnpm start` on a scratch port serves `/`,
+`/read/:id` deep links, and static assets correctly (200s across the board),
+and the Playwright pass above ran clean against it.
+
+### The stray Vite — found live, not hypothetical
+
+While starting this milestone, two full `pnpm dev` trees were already
+running in this environment (ports 5173 *and* 5174 both `LISTEN`) — the
+exact symptom the 2026-07-29 decisions entry flagged as unexplained. Root
+cause, confirmed by direct reproduction (`npx vite --port 5174` against the
+already-occupied port): Vite's default `server.strictPort` is `false`, so
+when a stale process still holds 5173, a second `pnpm dev` doesn't error —
+it silently binds 5174 instead. A tunnel forwarded to 5173 then points at a
+dead or stale instance while a live one runs one port over, with nothing in
+the log to say so.
+
+Fix: `strictPort: true` in `web/vite.config.ts`. Re-verified: pointing a
+second Vite at an occupied port now fails loudly (`Error: Port 5174 is
+already in use`, non-zero exit) instead of silently drifting to the next
+one. The two live stray trees found in this environment were themselves
+leftover `pnpm dev` invocations from earlier sessions that were never
+stopped — cleaned up as part of this investigation (with the operator's
+confirmation), not a code bug on their own, but `strictPort` means the next
+occurrence is loud instead of invisible.
+
+### Client render profiling — no storm found
+
+Instrumented (Playwright `addInitScript`, not shipped code) a
+`PerformanceObserver` for `longtask` entries plus a `MutationObserver`
+sampling idle DOM churn for 3s with zero user interaction, run against the
+production build for: Desk cold load, Settings modal open, Reader open,
+Scan open, and opening a real ThreadPanel via an existing highlight's margin
+dot (all five are named or implied by this milestone's task, including the
+components M17 touched — ThreadPanel, ScanPage, ReaderView).
+
+| Surface | Long tasks | Total long-task time | Idle mutations (3s, no input) |
+|---|---|---|---|
+| Desk | 0 | 0 ms | 0 |
+| Settings modal | 0 | 0 ms | 0 |
+| Reader open | 1 | 57 ms | 4 |
+| Scan open | 1 | 80 ms | 0 |
+| Thread panel open | 0 | 0 ms | 0 |
+
+No re-render storm anywhere: at most one sub-100ms long task per surface
+(plausibly epub.js layout / canvas scanline setup, not React), and
+essentially zero DOM churn once settled. Per this task's own acceptance
+criterion ("named, measured wins, **or** an explicit recorded finding that
+client render time was not a significant contributor") — this is the
+latter. No memoization added; there was nothing the profile asked for.
+
+### Digest subprocess / event-loop behaviour — partially verified, one gap
+
+**Could not fully verify.** `claudeAgent.ts`'s subscription path spawns the
+bundled `claude` CLI as a subprocess; this environment has no `claude`
+binary installed (`which claude` → not found), so the specific concern —
+does a multi-chapter digest's retained `lastQuery` pile up CLI subprocesses
+— cannot be exercised live here. Recording that gap rather than
+papering over it.
+
+What *was* checked, live, against the local Ollama endpoint (provider
+temporarily switched to `openai-compatible` for this test, then restored to
+`claude-agent` afterward — this path doesn't spawn subprocesses at all, so
+it can't confirm or deny the CLI-specific concern, but it does test
+everything provider-agnostic about "does a digest run block or leak"):
+
+- Ran a real 3-chapter digest (`Alice's Adventures in Wonderland`, chapters
+  0–2) against the local model. Polled `GET /api/settings` throughout:
+  stayed at 0.6–0.9 ms the entire time, including immediately after the
+  request that kicked off the digest — **the event loop is not blocked**
+  during a digest run, regardless of provider.
+- `pgrep -c node` stayed flat (25–27) for the full ~70s run; server RSS
+  (168 MB) didn't trend upward chapter-to-chapter. No process or memory
+  growth on the openai-compatible path.
+- Real accident, real data point: this session's own edit to
+  `server/src/index.ts` (the slow-request middleware, below) triggered
+  `tsx watch` to restart the server *while the digest above was still
+  running*. The digest survived at the data layer — all 3 chapters that had
+  completed were already persisted (per-chapter persistence, M17's
+  designed behavior) — but the `digest_runs` ledger row was left stuck at
+  `status: "running"` forever, since the in-memory loop that would have
+  written its terminal state was killed mid-flight. This reproduces
+  identically for an ordinary crash or manual restart during a live digest,
+  not just this session's edit. **Not fixed here** — out of scope for this
+  milestone's named tasks — but worth a real follow-up: either the digest
+  loop needs a startup sweep that reconciles `"running"` rows with no
+  live owner, or the route needs to treat a stuck `"running"` row as
+  resumable/retryable rather than a permanent lock.
+
+Code-level read of `claudeAgent.ts` for the part that couldn't be run live:
+`runDigest` (`server/src/digest/build.ts`) processes chapters strictly
+sequentially (`for (const section of pending) { await digestChapter(...) }`)
+— never concurrently — so even in the worst case where a completed query's
+CLI subprocess lingers, at most one extra process could overlap between two
+consecutive chapters, not one per chapter. The `Query` object's own `close()`
+is documented (SDK `.d.ts`) as being for aborting a *still-running* query;
+both `stream()` and `extractAttempt()`'s `for await` loops always run to a
+terminal `result` message or a thrown error, so the normal path fully drains
+the generator rather than abandoning it. The one path that never calls
+`close()` at all — including on error — is the thrown-error path (a caught
+`LLMError`, a network failure mid-stream, or `extract()`'s internal retry):
+if the CLI subprocess does *not* self-terminate until the SDK's transport is
+explicitly closed, an unlucky run of consecutive failures during a digest
+(rate limits, a flaky connection) could accumulate zombie processes over
+time. Flagging as a real, plausible, **unverified** gap for a session with
+the `claude` CLI available — do not "fix" this blind by adding `close()`
+calls speculatively, since the existing code already documents a real
+tension (`lastQuery` is deliberately kept alive after completion so
+`planLimits()` has a control channel to ask; closing it there might starve
+that feature, and the original author already flagged not knowing whether
+`planLimits()` works against a torn-down channel).
+
+### Guardrails added
+
+- **Slow-handler logging** (`server/src/index.ts`): a request-timing
+  middleware logs `[slow] METHOD /path NNNms` for any request over 200ms.
+  Deliberately provider-agnostic and route-agnostic — SSE thread/digest
+  responses will legitimately log at their full streamed duration, which is
+  fine (that's real data, not noise); the point is catching a *normally
+  fast* route (settings, resources) silently regressing, the way `/api/
+  settings` reportedly did operator-side while `curl` measured 0.5ms.
+- **Bundle size at build time** (`web/vite.config.ts`): a small
+  `generateBundle` plugin hook prints one line — `[bundle] N files, X KB
+  raw, Y KB gzip` — on every `vite build`, alongside Vite's existing
+  per-file listing. Current baseline: **20 files, 1072 KB raw, 322 KB
+  gzip**. `ReaderPage`'s own chunk is 670 KB raw / 191 KB gzip (epub.js +
+  html2canvas) and is already the one Vite's own chunk-size warning flags —
+  a real code-splitting candidate for a future pass, not attempted here
+  (out of scope: this milestone measures and guards, M17.5 doesn't chase
+  the biggest chunk down).
+
+### Verification
+
+- `pnpm build` clean (with the Express 5 wildcard fix); `[bundle]` summary
+  line confirmed printing.
+- `pnpm -r test`: 165/165 passing (11 shared + 125 server + 29 web).
+- `pnpm start` on a scratch port: real Playwright pass (network + a smoke
+  pass checking for console/page errors) against desk, settings, and reader
+  routes — one pre-existing, unrelated 404 found (a resource with no cover
+  image, same gap on both dev and prod, not a regression) and otherwise
+  clean.
+- `strictPort` fix confirmed live via a real second-Vite collision.
+- Digest run verified live end-to-end (see above) with real content
+  (3 real chapter summaries for Alice, not mocked).
+- **Not done, and should not be assumed:** the actual operator-position,
+  over-the-tunnel comparison this milestone's own Verify step calls for.
+  Everything above establishes the *mechanism* (dev serves 2.5–5.5× more
+  over the wire than prod) but the tunnel itself was never touched from
+  this environment. The next session with real access to the operator's
+  position should run the same three flows over the tunnel in both dev and
+  `pnpm start` mode and confirm the numbers actually move — that is the
+  milestone's real acceptance bar, and it is still open.

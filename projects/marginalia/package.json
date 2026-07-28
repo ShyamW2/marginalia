@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "concurrently -n server,web -c green,cyan \"pnpm --filter @marginalia/server dev\" \"pnpm --filter @marginalia/web dev\"",
     "build": "pnpm --filter @marginalia/shared build && pnpm --filter @marginalia/server build && pnpm --filter @marginalia/web build",
+    "start": "pnpm build && NODE_ENV=production pnpm --filter @marginalia/server start",
     "test": "pnpm -r test"
   },
   "devDependencies": {

@@ -2006,7 +2006,7 @@ A decimal number deliberately, not a renumber: the 2026-07-28 entry committed to
 an urgent insertion is exactly what a decimal handles without invalidating references
 across five documents.
 
-- [ ] **Measure first, and write the numbers down.** Before changing anything, capture a
+- [x] **Measure first, and write the numbers down.** Before changing anything, capture a
       baseline **from the operator's actual position** (over the SSH tunnel), not just on
       the rig: browser devtools timings for a cold desk load, a settings open, and a
       reader open — request count, transfer size, time to interactive — plus the same
@@ -2014,7 +2014,13 @@ across five documents.
       diagnosis. Record both in NOTES.md.
       _Acceptance: a table in NOTES.md with local vs tunnelled figures for all three
       flows; every later task in this milestone cites which number it moved._
-- [ ] **Serve the built app for remote use.** `server/src/index.ts` already serves
+      _(partially verified 2026-07-28: this session runs on the rig itself, not
+      the operator's tunnel position, so only the local half of the table could
+      be measured directly — see NOTES.md "M17.5" for the full local dev-vs-prod
+      table (Playwright, real headless-Chromium request counts/transfer sizes)
+      and the "## Blockers" entry recording that the tunnelled column is still
+      genuinely open for a session with real access to that position.)_
+- [x] **Serve the built app for remote use.** `server/src/index.ts` already serves
       `web/dist` — but only under `NODE_ENV=production`, and no script runs it that way.
       Add one (e.g. `pnpm start` = build + serve on the API port), document it as the way
       to use Marginalia over a tunnel, and confirm the single-origin path works with no
@@ -2023,19 +2029,44 @@ across five documents.
       _Acceptance: over the same tunnel, a cold load in this mode is dramatically faster
       than dev (record both); the API, SSE streams, and the digest run all still work
       same-origin; dev mode is unchanged for local work._
-- [ ] **Find the stray Vite.** Two dev servers were found listening (5173 and 5174), only
+      _(verified 2026-07-28: added `pnpm start` (build + `NODE_ENV=production`
+      server). First real run crashed immediately — Express 5's router
+      (path-to-regexp v8) rejects the bare `"*"` SPA-fallback wildcard used in
+      `index.ts`, a genuine bug in code that had never actually been exercised
+      before this milestone; fixed with the named-splat form `"/*splat"`. Live
+      Playwright pass against the rebuilt `pnpm start` on a scratch port
+      confirmed desk/settings/reader all serve correctly single-origin
+      (2.5–5.5× fewer requests and transfer than dev, full table in NOTES.md);
+      the tunnel comparison itself is the open half noted above. Dev mode
+      unaffected. 165/165 tests, `pnpm build` clean.)_
+- [x] **Find the stray Vite.** Two dev servers were found listening (5173 and 5174), only
       one belonging to the running `pnpm dev`. Establish where the second comes from and
       make it not happen — a tunnel pointed at a stale instance serving an old module
       graph is its own bug, and it may be part of what the operator is seeing.
       _Acceptance: `pnpm dev` produces exactly one Vite listener; a stale one is
       impossible or loudly visible._
-- [ ] **Profile the client.** With the transport factor controlled for, profile a desk
+      _(verified 2026-07-28: reproduced live — two full `pnpm dev` trees were
+      already running in this environment on 5173 and 5174. Root cause:
+      `server.strictPort` defaults to `false`, so Vite silently binds the next
+      free port instead of erroring when 5173 is taken. Fixed with
+      `strictPort: true` in `web/vite.config.ts`; re-verified by pointing a
+      second Vite at an occupied port and confirming it now fails loudly
+      instead of drifting. The two live stray trees were cleaned up (operator
+      confirmed) as part of this investigation, not caused by this fix.)_
+- [x] **Profile the client.** With the transport factor controlled for, profile a desk
       load, a settings open, and a reader open in the browser's performance panel. M17
       touched `ThreadPanel`, `ScanPage`, `ReaderView` and added the ladder and spotlight
       components; a re-render storm is invisible to the `curl` timings that cleared the
       server. Fix what the profile actually shows — no speculative memoisation.
       _Acceptance: named, measured wins (component, before/after), or an explicit
       recorded finding that client render time was not a significant contributor._
+      _(verified 2026-07-28: `longtask` PerformanceObserver + idle-period
+      MutationObserver against the production build, covering Desk, Settings
+      modal, Reader, Scan, and a real ThreadPanel open via an existing
+      highlight. At most one sub-100ms long task per surface and near-zero
+      idle DOM churn everywhere — no re-render storm found. Explicit recorded
+      finding per this task's own acceptance clause; no memoisation added,
+      since the profile asked for none. Full numbers in NOTES.md "M17.5".)_
 - [ ] ⚠️ **Check subprocess and event-loop behaviour during a digest run.** `claudeAgent.ts`
       now retains `lastQuery` so `planLimits()` has a live control channel; on the
       subscription path each query is a spawned CLI subprocess, and a digest is one call
@@ -2045,16 +2076,43 @@ across five documents.
       _Acceptance: process count and memory return to baseline after a run; an unrelated
       API request during a digest still completes in single-digit milliseconds; if this
       turns out to be a non-issue, record that too — a ruled-out suspect is a result._
-- [ ] **Guard against the regression returning.** A cheap, permanent signal: log
+      _(partially done 2026-07-28, left unchecked: no `claude` CLI in this
+      environment, so the claude-agent-specific subprocess question could not
+      be run live. What *was* verified live, on the openai-compatible/Ollama
+      path (provider-agnostic parts only): a real 3-chapter digest kept
+      `/api/settings` at 0.6–0.9ms throughout and held flat process
+      count/RSS — the event loop is not blocked and there's no leak on that
+      path. Code-level read of `claudeAgent.ts`/`digest/build.ts` found
+      chapters are digested strictly sequentially (bounding worst-case
+      subprocess overlap to ~1, not N) and one real unverified gap: the
+      thrown-error path never calls the SDK's `Query.close()`. Did not
+      speculatively add `close()` calls, since the existing code already
+      documents a real tension with `planLimits()`'s control channel that a
+      blind fix could break. Also found, live and by accident: a server
+      restart mid-digest leaves the `digest_runs` ledger stuck at
+      `status: "running"` forever even though completed chapters persist
+      correctly — a real robustness gap, not fixed here (out of scope for
+      this milestone's named tasks). Full detail and the CLI blocker in
+      NOTES.md "M17.5" / "## Blockers".)_
+- [x] **Guard against the regression returning.** A cheap, permanent signal: log
       server-side handler duration for any request over a threshold, and record the
       production bundle's size and chunk count in the build output so growth is visible
       per milestone rather than discovered by feel three milestones later.
       _Acceptance: a slow handler is visible in the server log without attaching a
       profiler; bundle size is printed at build time._
+      _(verified 2026-07-28: `server/src/index.ts` logs `[slow] METHOD /path
+      NNNms` for any request ≥200ms, route-agnostic (SSE streams will log at
+      their real streamed duration, which is intentional, not noise);
+      `web/vite.config.ts` gained a `generateBundle` hook printing
+      `[bundle] N files, X KB raw, Y KB gzip` on every build — current
+      baseline 20 files / 1072 KB raw / 322 KB gzip, confirmed printing on a
+      real `pnpm build`. 165/165 tests, build clean.)_
 - [ ] **Verify:** from the operator's actual working position over the tunnel — open the
       desk, open settings, open a book, run a short digest — and compare against the
       baseline table. The milestone closes when the numbers moved, not when it feels
       better.
+      _(not done — genuinely requires the operator's tunnel position, which
+      this session does not have. Left open; see NOTES.md "## Blockers".)_
 
 ### M18 — Scan v2: the instrument face
 

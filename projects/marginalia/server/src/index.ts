@@ -20,6 +20,22 @@ getDb();
 const app = express();
 app.use(express.json());
 
+// M17.5: a cheap, permanent signal against the "settings takes 15s" class of
+// regression returning unnoticed — logs any request whose handler runs long,
+// without needing a profiler attached ahead of time.
+const SLOW_REQUEST_THRESHOLD_MS = 200;
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on("finish", () => {
+    const ms = Number(process.hrtime.bigint() - start) / 1e6;
+    if (ms >= SLOW_REQUEST_THRESHOLD_MS) {
+      // eslint-disable-next-line no-console
+      console.warn(`[slow] ${req.method} ${req.originalUrl} ${ms.toFixed(1)}ms`);
+    }
+  });
+  next();
+});
+
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
@@ -37,7 +53,9 @@ app.use("/api/notepad", notepadRouter);
 const webDist = path.join(WORKSPACE_ROOT, "web", "dist");
 if (process.env.NODE_ENV === "production" && fs.existsSync(webDist)) {
   app.use(express.static(webDist));
-  app.get("*", (_req, res) => {
+  // Express 5 / path-to-regexp v8 dropped the bare "*" wildcard — it now
+  // requires a named splat parameter.
+  app.get("/*splat", (_req, res) => {
     res.sendFile(path.join(webDist, "index.html"));
   });
 }
