@@ -1,6 +1,12 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
-import type { Message, MessageRole, Thread, ThreadWithMessages } from "@marginalia/shared";
+import type {
+  ContextLadderDepth,
+  Message,
+  MessageRole,
+  Thread,
+  ThreadWithMessages,
+} from "@marginalia/shared";
 
 interface ThreadRow {
   id: string;
@@ -14,6 +20,8 @@ interface MessageRow {
   role: string;
   content: string;
   context_note: string | null;
+  context_depth: string | null;
+  context_chapters: string;
   created_at: string;
 }
 
@@ -28,6 +36,8 @@ function rowToMessage(row: MessageRow): Message {
     role: row.role as MessageRole,
     content: row.content,
     contextNote: row.context_note,
+    contextDepth: row.context_depth as ContextLadderDepth | null,
+    contextChapters: JSON.parse(row.context_chapters),
     createdAt: row.created_at,
   };
 }
@@ -99,25 +109,36 @@ export function listMessagesForThread(db: Database.Database, threadId: string): 
   return rows.map(rowToMessage);
 }
 
+export interface CreateMessageTransparency {
+  contextNote?: string | null;
+  contextDepth?: ContextLadderDepth | null;
+  contextChapters?: number[];
+}
+
 export function createMessage(
   db: Database.Database,
   threadId: string,
   role: MessageRole,
   content: string,
-  contextNote: string | null = null,
+  transparency: CreateMessageTransparency = {},
 ): Message {
   const message: Message = {
     id: crypto.randomUUID(),
     threadId,
     role,
     content,
-    contextNote,
+    contextNote: transparency.contextNote ?? null,
+    contextDepth: transparency.contextDepth ?? null,
+    contextChapters: transparency.contextChapters ?? [],
     createdAt: new Date().toISOString(),
   };
   db.prepare(
-    `INSERT INTO messages (id, thread_id, role, content, context_note, created_at)
-     VALUES (@id, @threadId, @role, @content, @contextNote, @createdAt)`,
-  ).run(message);
+    `INSERT INTO messages (id, thread_id, role, content, context_note, context_depth, context_chapters, created_at)
+     VALUES (@id, @threadId, @role, @content, @contextNote, @contextDepth, @contextChapters, @createdAt)`,
+  ).run({
+    ...message,
+    contextChapters: JSON.stringify(message.contextChapters),
+  });
   return message;
 }
 

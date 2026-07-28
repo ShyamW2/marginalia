@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildContext } from "./context.js";
+import { buildContext, buildDigestContext, buildOffContext } from "./context.js";
 import type { ResourceTextSection } from "../library/store.js";
 
 function makeSections(count: number, charsPerSection: number): ResourceTextSection[] {
@@ -162,5 +162,75 @@ describe("buildContext", () => {
     expect(message).toContain("> quoted text");
     expect(message).toContain("before [highlighted] after");
     expect(message).toContain("Their question: What does this mean?");
+  });
+});
+
+describe("buildOffContext", () => {
+  it("sends only the highlight's section and its immediate neighbors", () => {
+    const sections = makeSections(10, 500);
+    const result = buildOffContext({
+      title: "Test Book",
+      author: null,
+      sections,
+      highlight,
+    });
+    expect(result.bookContext).toContain("--- [section 5] ---");
+    expect(result.bookContext).toContain("--- [section 4] ---");
+    expect(result.bookContext).toContain("--- [section 6] ---");
+    expect(result.bookContext).not.toContain("--- [section 0] ---");
+    expect(result.bookContext).not.toContain("--- [section 9] ---");
+    expect(result.chaptersUsed).toEqual([]);
+    expect(result.highlightChapterCovered).toBe(false);
+  });
+});
+
+describe("buildDigestContext", () => {
+  it("is far smaller than the whole book — includes chapter summaries, not full text, outside the neighborhood", () => {
+    const sections = makeSections(50, 2000);
+    const chapterDigests = sections.map((s) => ({
+      spineIndex: s.spineIndex,
+      summary: `Summary of chapter ${s.spineIndex}.`,
+      themes: ["theme"],
+      characters: ["Someone"],
+    }));
+
+    const digestResult = buildDigestContext({
+      title: "Big Book",
+      author: "Author",
+      sections,
+      highlight,
+      bookDigest: { synopsis: "A long book.", cast: [{ name: "Alice", description: "hero" }], themes: ["hope"] },
+      chapterDigests,
+    });
+    const fullResult = buildContext({
+      title: "Big Book",
+      author: "Author",
+      sections,
+      highlight,
+      contextTokens: 1_000_000, // large enough that Full sends everything
+    });
+
+    expect(digestResult.bookContext.length).toBeLessThan(fullResult.bookContext.length);
+    // A far chapter contributes its summary, never its full text.
+    expect(digestResult.bookContext).toContain("Summary of chapter 40.");
+    expect(digestResult.bookContext).not.toContain("--- [section 40 — full text] ---");
+    // Only the highlight's own neighborhood gets full text.
+    expect(digestResult.bookContext).toContain("--- [section 5 — full text] ---");
+    expect(digestResult.chaptersUsed).toHaveLength(50);
+    expect(digestResult.highlightChapterCovered).toBe(true);
+  });
+
+  it("reports the highlight's chapter as uncovered when it has no digest row", () => {
+    const sections = makeSections(3, 100);
+    const result = buildDigestContext({
+      title: "Test Book",
+      author: null,
+      sections,
+      highlight: { ...highlight, spineIndex: 1 },
+      bookDigest: null,
+      chapterDigests: [{ spineIndex: 0, summary: "s", themes: [], characters: [] }],
+    });
+    expect(result.highlightChapterCovered).toBe(false);
+    expect(result.bookContext).toContain("No book-level digest available yet.");
   });
 });

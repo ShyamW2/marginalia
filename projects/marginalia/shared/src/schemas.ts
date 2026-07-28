@@ -179,6 +179,14 @@ export const CreateHighlightBodySchema = AnchorSchema.extend({
 });
 export type CreateHighlightBody = z.infer<typeof CreateHighlightBodySchema>;
 
+/** M17 "the context ladder" (the brain button): Off = passage + surrounding
+ * pages; Digest = digest of covering chapters + surrounding pages; Full =
+ * whole book (pre-M17 behavior). Remembered per book — default becomes
+ * Digest once a book has one, Full otherwise. Declared here, ahead of
+ * Message below, since Message.contextDepth references it. */
+export const ContextLadderDepthSchema = z.enum(["off", "digest", "full"]);
+export type ContextLadderDepth = z.infer<typeof ContextLadderDepthSchema>;
+
 // ---------------------------------------------------------------------------
 // Thread + Message
 // ---------------------------------------------------------------------------
@@ -218,6 +226,12 @@ export const MessageSchema = z.object({
   // it shouldn't (SPEC-GAP-adjacent transparency requirement, decisions.md
   // 2026-07-28 later).
   contextNote: z.string().nullable(),
+  // M17 "answer transparency" (decisions.md 2026-07-28 later, non-
+  // negotiable): which context-ladder depth produced this answer, and —
+  // for "digest" — which chapters' digests fed it. Null depth means a
+  // pre-M17 message with no recorded depth.
+  contextDepth: ContextLadderDepthSchema.nullable(),
+  contextChapters: z.array(z.number().int().nonnegative()),
   createdAt: z.string(),
 });
 export type Message = z.infer<typeof MessageSchema>;
@@ -273,6 +287,8 @@ export const ThreadStreamEventSchema = z.union([
     threadId: z.string(),
     contextNote: z.string().nullable(),
     contextUsage: ContextUsageSchema.nullable(),
+    contextDepth: ContextLadderDepthSchema,
+    contextChapters: z.array(z.number().int().nonnegative()),
   }),
   z.object({ error: z.string() }),
 ]);
@@ -367,6 +383,10 @@ export const SettingsSchema = z.object({
   readerFontScale: ReaderFontScaleSchema,
   scanCrtIntensity: ScanCrtIntensitySchema,
   maxResponseTokens: z.number().int().positive(),
+  // M17 "pre-flight before committing": 0 = no ceiling (default) — a digest
+  // run whose pre-flight estimate exceeds this many input tokens is
+  // refused rather than started.
+  digestTokenBudget: z.number().int().nonnegative(),
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
@@ -425,6 +445,93 @@ export const ScanDataSchema = z.object({
   highlights: z.array(ScanHighlightSchema),
 });
 export type ScanData = z.infer<typeof ScanDataSchema>;
+
+// ---------------------------------------------------------------------------
+// The book digest (M17 — docs/decisions.md 2026-07-28 later)
+// ---------------------------------------------------------------------------
+
+export const DigestChapterStatusSchema = z.object({
+  spineIndex: z.number().int().nonnegative(),
+  label: z.string(),
+  digested: z.boolean(),
+  summary: z.string().nullable(),
+  themes: z.array(z.string()),
+  characters: z.array(z.string()),
+  generatedAt: z.string().nullable(),
+});
+export type DigestChapterStatus = z.infer<typeof DigestChapterStatusSchema>;
+
+export const BookDigestSchema = z.object({
+  synopsis: z.string(),
+  cast: z.array(z.object({ name: z.string(), description: z.string() })),
+  themes: z.array(z.string()),
+  generatedAt: z.string(),
+});
+export type BookDigestPayload = z.infer<typeof BookDigestSchema>;
+
+export const DigestRunStatusSchema = z.enum([
+  "running",
+  "paused_rate_limit",
+  "completed",
+  "failed",
+]);
+export type DigestRunStatusValue = z.infer<typeof DigestRunStatusSchema>;
+
+export const DigestRunPayloadSchema = z.object({
+  spineStart: z.number().int().nonnegative(),
+  spineEnd: z.number().int().nonnegative(),
+  status: DigestRunStatusSchema,
+  failedSpineIndices: z.array(z.number().int().nonnegative()),
+  resumesAt: z.string().nullable(),
+  lastError: z.string().nullable(),
+  updatedAt: z.string(),
+});
+export type DigestRunPayload = z.infer<typeof DigestRunPayloadSchema>;
+
+/** GET /api/resources/:id/digest response. */
+export const DigestStatusSchema = z.object({
+  totalChapters: z.number().int().nonnegative(),
+  chapters: z.array(DigestChapterStatusSchema),
+  book: BookDigestSchema.nullable(),
+  run: DigestRunPayloadSchema.nullable(),
+});
+export type DigestStatus = z.infer<typeof DigestStatusSchema>;
+
+/** POST /api/resources/:id/digest body — the spotlight's chapter range. */
+export const StartDigestBodySchema = z.object({
+  spineStart: z.number().int().nonnegative(),
+  spineEnd: z.number().int().nonnegative(),
+});
+export type StartDigestBody = z.infer<typeof StartDigestBodySchema>;
+
+/** GET /api/resources/:id/digest/preflight response. */
+export const DigestPreflightSchema = z.object({
+  chapterCount: z.number().int().nonnegative(),
+  estimatedInputTokens: z.number().int().nonnegative(),
+  estimatedCalls: z.number().int().nonnegative(),
+  tokenBudgetExceeded: z.boolean(),
+  planLimits: z
+    .object({
+      windows: z.array(
+        z.object({
+          label: z.string(),
+          utilization: z.number().nullable(),
+          resetsAt: z.string().nullable(),
+        }),
+      ),
+    })
+    .nullable(),
+});
+export type DigestPreflightPayload = z.infer<typeof DigestPreflightSchema>;
+
+// ---------------------------------------------------------------------------
+// The context ladder (M17 — "the brain button")
+// ---------------------------------------------------------------------------
+
+export const UpdateContextLadderBodySchema = z.object({
+  depth: ContextLadderDepthSchema,
+});
+export type UpdateContextLadderBody = z.infer<typeof UpdateContextLadderBodySchema>;
 
 // ---------------------------------------------------------------------------
 // Generic error envelope

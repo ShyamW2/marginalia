@@ -33,6 +33,9 @@ const DEFAULTS = {
   scan_crt_intensity: "0.6",
   // M16: today's hardcoded THREAD_MAX_TOKENS, promoted to a setting.
   max_response_tokens: "8192",
+  // M17: 0 = no ceiling — a digest run pre-flight estimate above this many
+  // input tokens is refused rather than started.
+  digest_token_budget: "0",
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -54,6 +57,7 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   reader_font_scale: "readerFontScale",
   scan_crt_intensity: "scanCrtIntensity",
   max_response_tokens: "maxResponseTokens",
+  digest_token_budget: "digestTokenBudget",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -90,6 +94,7 @@ export function getRawSettings(db: Database.Database): {
   readerFontScale: number;
   scanCrtIntensity: number;
   maxResponseTokens: number;
+  digestTokenBudget: number;
 } {
   const raw = readRaw(db);
   return {
@@ -109,6 +114,7 @@ export function getRawSettings(db: Database.Database): {
     readerFontScale: Number.parseFloat(raw.reader_font_scale),
     scanCrtIntensity: Number.parseFloat(raw.scan_crt_intensity),
     maxResponseTokens: Number.parseInt(raw.max_response_tokens, 10),
+    digestTokenBudget: Number.parseInt(raw.digest_token_budget, 10),
   };
 }
 

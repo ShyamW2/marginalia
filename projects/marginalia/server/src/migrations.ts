@@ -215,4 +215,75 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_llm_usage_created ON llm_usage(created_at);
     `,
   },
+  {
+    // M17 "the digest" (docs/decisions.md 2026-07-28 later): chapter is the
+    // storage unit, so coverage (which chapters have rows) *is* the
+    // resumability/gap-tracking mechanism — no separate cursor column.
+    // Re-digesting a chapter is a plain REPLACE, making a re-scan
+    // idempotent by construction. `digest_runs` is a single current-run row
+    // per resource (same singleton pattern as `notepad`/`shelf_state`) that
+    // exists only to drive the rate-limit pause/resume UX and pre-flight
+    // messaging — it is not consulted for coverage.
+    version: 10,
+    sql: `
+      CREATE TABLE chapter_digests (
+        resource_id   TEXT NOT NULL REFERENCES resources(id),
+        spine_index   INTEGER NOT NULL,
+        summary       TEXT NOT NULL,
+        themes        TEXT NOT NULL DEFAULT '[]',
+        characters    TEXT NOT NULL DEFAULT '[]',
+        source_hash   TEXT NOT NULL,
+        generated_at  TEXT NOT NULL,
+        PRIMARY KEY (resource_id, spine_index)
+      );
+
+      CREATE TABLE book_digests (
+        resource_id   TEXT PRIMARY KEY REFERENCES resources(id),
+        synopsis      TEXT NOT NULL,
+        cast          TEXT NOT NULL DEFAULT '[]',
+        themes        TEXT NOT NULL DEFAULT '[]',
+        generated_at  TEXT NOT NULL
+      );
+
+      CREATE TABLE digest_runs (
+        resource_id   TEXT PRIMARY KEY REFERENCES resources(id),
+        spine_start   INTEGER NOT NULL,
+        spine_end     INTEGER NOT NULL,
+        status        TEXT NOT NULL,
+        failed_spine_indices TEXT NOT NULL DEFAULT '[]',
+        resumes_at    TEXT,
+        last_error    TEXT,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    // M17 "the context ladder": depth is remembered per book. Empty string
+    // means "unset" — the route computes the actual default (Digest once
+    // the book has one, Full otherwise) rather than baking that policy into
+    // a stored value that would need a migration if the default ever
+    // changes.
+    version: 11,
+    sql: `
+      CREATE TABLE resource_ai_settings (
+        resource_id           TEXT PRIMARY KEY REFERENCES resources(id),
+        context_ladder_depth  TEXT NOT NULL DEFAULT '',
+        updated_at            TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    // M17 "answer transparency": non-negotiable per decisions.md 2026-07-28
+    // (later) — every answer records which ladder depth it used and, for
+    // Digest, which chapters fed it, and that record must survive a reload
+    // (unlike the live-only context_usage SSE field). Nullable: pre-M17
+    // messages and the "off"/"full" depths (context_chapters stays '[]')
+    // simply have nothing to show.
+    version: 12,
+    sql: `
+      ALTER TABLE messages ADD COLUMN context_depth TEXT;
+      ALTER TABLE messages ADD COLUMN context_chapters TEXT NOT NULL DEFAULT '[]';
+    `,
+  },
 ];

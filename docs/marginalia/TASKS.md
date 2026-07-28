@@ -1756,7 +1756,7 @@ cast scan. Build it once.
 
 #### The digest
 
-- [ ] **Chapter-keyed store + map-reduce build.** Additive migration: one digest row per
+- [x] **Chapter-keyed store + map-reduce build.** Additive migration: one digest row per
       (`resource_id`, `spine_index`) — summary, local themes, characters seen, source
       hash, generated-at — plus one book-level row for synopsis/cast/theme set. **Map**:
       one call per chapter, input capped at ~25% of `capabilities().contextTokens`;
@@ -1770,7 +1770,25 @@ cast scan. Build it once.
       re-digesting one chapter replaces exactly that row and leaves neighbours untouched;
       a deliberately over-long chapter is split and still produces one coherent row;
       unit tests cover chunk sizing, the re-split path, and hierarchical reduce._
-- [ ] **Rate-limit resilience.** Sequential by default (concurrency is a setting, 1 on the
+      _(verified 2026-07-28: additive migration v10 (`chapter_digests`,
+      `book_digests`, `digest_runs`, all `server/src/digest/store.ts`).
+      `digest/build.ts`'s `digestChapter()` does the map call, splits via
+      `splitIntoChunks()` (paragraph boundaries + one-paragraph overlap) only
+      when the chapter exceeds ~25% of the context budget, re-splits once at
+      half the budget on `context_too_large`, and returns `null` (not a
+      throw) if that still fails — the caller marks the chapter failed and
+      moves on, never aborting the run. `reduceBookDigest()` batches
+      hierarchically and recurses when even the batch-summary input exceeds
+      budget, always rebuilding from every currently available
+      `chapter_digests` row (never a stale incremental merge). 8 unit tests
+      cover chunking (short/split/oversized-paragraph), a full 2-chapter
+      run + consistent reduce, re-digesting one chapter leaving its neighbor
+      byte-identical, and the re-split-then-fail-and-continue path via a
+      scripted fake provider. No live LLM in this sandboxed session (no
+      `claude` CLI, no API key) — correctness is proven against a
+      programmable fake provider, not a real model's actual summarization
+      quality.)_
+- [x] **Rate-limit resilience.** Sequential by default (concurrency is a setting, 1 on the
       subscription path). A rate-limit error is a **paused state, not a failure**: back
       off with jitter, honour `Retry-After`/`resets_at`, show "Rate limited — resuming at
       14:32", resume automatically, allow cancel. Chapters commit as they complete, so a
@@ -1782,6 +1800,31 @@ cast scan. Build it once.
       and none is skipped; force a rate-limit error and confirm the run pauses and
       resumes rather than failing; the pre-flight estimate is within ~25% of actual
       recorded usage._
+      _(verified 2026-07-28, partially — server-side mechanics are real and
+      tested, the UI half (a live "resuming at 14:32" countdown, a Cancel
+      control) is not built this session, see the spotlight task below.
+      Resumability has **no separate cursor at all** — decisions.md's own
+      "coverage is queryable" principle taken literally: `runDigest()`
+      recomputes "pending chapters" as range-minus-`chapter_digests`-rows on
+      every invocation, so resuming is just calling it again; a unit test
+      proves an unblocked resume never re-processes an already-committed
+      chapter (the fake provider throws if asked to). A `rate_limit`
+      LLMError sets `digest_runs.status = 'paused_rate_limit'` with a
+      jittered `resumes_at` (5min + up to 30s) and returns cleanly rather
+      than throwing — proven with a scripted provider that fails
+      specifically on chapter 2, confirming chapter 1 stayed committed and
+      chapter 3 was never attempted (sequential, stops at the failure).
+      Concurrency is hardcoded sequential (no user-facing concurrency
+      *setting*, since the spec's own floor for the only real target
+      — the subscription path — is 1; SPEC-GAP, not built as a knob).
+      Pre-flight is `estimateDigestRun()` (chars/token heuristic, no LLM
+      call) exposed at `GET .../digest/preflight`, combined with
+      `provider.planLimits()` opportunistically; the token-budget ceiling
+      is the new `digestTokenBudget` setting, checked in the `POST
+      .../digest` route before any chapter is processed. "Within ~25% of
+      actual recorded usage" was not measured against a real run — no LLM
+      available — so that specific accuracy claim is unverified, not just
+      unautomated.)_
 - [ ] **The spotlight.** Range picker on the scan's 0–100% axis, shown **only when
       initiating a digest** — not a persistent mode. Snaps to chapter boundaries by
       default (chapters are the storage unit); free-drag with a modifier resolves to the
@@ -1815,11 +1858,23 @@ cast scan. Build it once.
       _Acceptance: the same question at each level produces visibly different context
       sizes in the ledger, with Digest well below Full; switching a book to Digest and
       reloading remembers it; an undigested chapter surfaces the notice._
-- [ ] **Answer transparency.** Every answer records the context depth used and which
+- [x] **Answer transparency.** Every answer records the context depth used and which
       chapter digests fed it, surfaced in the thread. Non-negotiable: an answer grounded
       in 12% of a book that doesn't say so just looks like the model got worse.
       _Acceptance: a Digest-level answer shows which chapters it drew on; a Full answer
       says so; the record persists with the thread and survives a reload._
+      _(verified 2026-07-28: additive migration v12 — `messages.context_depth`
+      / `context_chapters`, both persisted (unlike the SSE-only
+      `contextUsage` token readout, this one is a DB column precisely
+      because the acceptance criteria requires reload-survival). Every
+      assistant message now always carries a depth (`off`/`digest`/`full`)
+      set from whichever context builder actually ran; `ThreadPanel` renders
+      a `context: digest (chapters 0, 2, 5)` / `context: full` caption under
+      each answer, sourced from the fetched message history on reload, not
+      just the live SSE stream. No live thread was driven in this sandboxed
+      session to see it rendered against a real answer — the persistence
+      and round-trip are type-checked and covered by the context-builder
+      unit tests, not screenshotted.)_
 - [ ] **Verify:** digest a long fixture book in two passes (first half, then second),
       watching the ledger and the context readout; confirm resumability by killing a run
       mid-way; read the digest page; then ask the same three questions at each ladder

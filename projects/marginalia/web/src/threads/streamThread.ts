@@ -1,4 +1,4 @@
-import { ThreadStreamEventSchema, type ContextUsage } from "@marginalia/shared";
+import { ThreadStreamEventSchema, type ContextLadderDepth, type ContextUsage } from "@marginalia/shared";
 
 export interface ThreadStreamHandlers {
   onText: (text: string) => void;
@@ -7,6 +7,8 @@ export interface ThreadStreamHandlers {
     threadId: string,
     contextNote: string | null,
     contextUsage: ContextUsage | null,
+    contextDepth: ContextLadderDepth,
+    contextChapters: number[],
   ) => void;
   onError: (message: string) => void;
 }
@@ -99,6 +101,8 @@ function dispatchEvent(rawEvent: string, handlers: ThreadStreamHandlers): void {
       event.data.threadId,
       event.data.contextNote,
       event.data.contextUsage,
+      event.data.contextDepth,
+      event.data.contextChapters,
     );
   } else if ("error" in event.data) handlers.onError(event.data.error);
 }

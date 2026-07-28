@@ -45,6 +45,8 @@ describe("schemas smoke test", () => {
         threadId: "t1",
         contextNote: null,
         contextUsage: null,
+        contextDepth: "full",
+        contextChapters: [],
       }).success,
     ).toBe(true);
     expect(
@@ -70,6 +72,7 @@ describe("schemas smoke test", () => {
       readerFontScale: 1,
       scanCrtIntensity: 0.6,
       maxResponseTokens: 8192,
+      digestTokenBudget: 0,
     });
     expect(result.success).toBe(true);
   });

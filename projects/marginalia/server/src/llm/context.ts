@@ -72,7 +72,10 @@ export const WINDOWED_CONTEXT_NOTE =
   "this answer is grounded in the chapters around your highlight, not the " +
   "whole book.";
 
-function sectionLabel(
+/** Exported for the digest builder (digest/build.ts) — chapter labeling
+ * should read identically whether it's grounding a thread answer or a
+ * digest map call. */
+export function sectionLabel(
   spineIndex: number,
   chapterTitles: Record<string, string> | undefined,
 ): string {
@@ -137,6 +140,19 @@ function selectWindow(
   return sorted.filter((_, idx) => selectedIndices.has(idx));
 }
 
+function standardUserMessage(
+  highlight: ContextHighlight,
+  positionLine: string | null,
+  question: string,
+): string {
+  return (
+    `The reader highlighted this passage:\n\n> ${highlight.exact}\n\n` +
+    `(context around it: "...${highlight.prefix}[highlighted]${highlight.suffix}...")\n\n` +
+    (positionLine ? `${positionLine}\n\n` : "") +
+    `Their question: ${question}`
+  );
+}
+
 /** Builds the (deterministic, cacheable) book context + user message for a question. */
 export function buildContext(input: ContextBuildInput): BuiltContext {
   const sorted = [...input.sections].sort((a, b) => a.spineIndex - b.spineIndex);
@@ -162,11 +178,7 @@ export function buildContext(input: ContextBuildInput): BuiltContext {
   return {
     instructions: READING_COMPANION_INSTRUCTIONS,
     bookContext,
-    userMessage: (question: string) =>
-      `The reader highlighted this passage:\n\n> ${input.highlight.exact}\n\n` +
-      `(context around it: "...${input.highlight.prefix}[highlighted]${input.highlight.suffix}...")\n\n` +
-      (positionLine ? `${positionLine}\n\n` : "") +
-      `Their question: ${question}`,
+    userMessage: (question: string) => standardUserMessage(input.highlight, positionLine, question),
     windowed,
   };
 }
@@ -186,4 +198,134 @@ function renderPositionLine(
     parts.push(`around ${sectionLabel(position.spineIndex, chapterTitles)}`);
   }
   return `Reader's current position: ${parts.join(", ")}.`;
+}
+
+// ---------------------------------------------------------------------------
+// M17 "the context ladder" (decisions.md 2026-07-28 later): Off (passage +
+// surrounding pages), Digest (digest of covering chapters + surrounding
+// pages), Full (buildContext above, today's behavior — the default until a
+// book has a digest).
+// ---------------------------------------------------------------------------
+
+// How many spine sections on each side of the highlight's own section count
+// as "surrounding pages" for the Off/Digest rungs. Deliberately small — the
+// whole point of these rungs is to cost a fraction of Full.
+const SURROUNDING_PAGES_RADIUS = 1;
+
+function surroundingSections(
+  sections: ResourceTextSection[],
+  centerSpineIndex: number,
+): ResourceTextSection[] {
+  const sorted = [...sections].sort((a, b) => a.spineIndex - b.spineIndex);
+  const centerIdx = sorted.findIndex((s) => s.spineIndex === centerSpineIndex);
+  if (centerIdx === -1) return sorted.length > 0 ? [sorted[0]] : [];
+  const start = Math.max(0, centerIdx - SURROUNDING_PAGES_RADIUS);
+  const end = Math.min(sorted.length - 1, centerIdx + SURROUNDING_PAGES_RADIUS);
+  return sorted.slice(start, end + 1);
+}
+
+export interface LadderContextInput {
+  title: string;
+  author: string | null;
+  sections: ResourceTextSection[];
+  highlight: ContextHighlight;
+  chapterTitles?: Record<string, string>;
+  readingPosition?: ContextReadingPosition | null;
+}
+
+export interface BuiltLadderContext extends BuiltContext {
+  /** Spine indices of chapter digests actually included (Digest rung only —
+   * always [] for Off). Used for the "answer transparency" record. */
+  chaptersUsed: number[];
+  /** False when the highlight's own chapter has no digest row — decisions.md:
+   * "the UI says so rather than silently answering from less." */
+  highlightChapterCovered: boolean;
+}
+
+/** Off rung: cheapest — just the passage's own section and its immediate
+ * neighbors, no digest, no whole book. */
+export function buildOffContext(input: LadderContextInput): BuiltLadderContext {
+  const pages = surroundingSections(input.sections, input.highlight.spineIndex);
+  const bookContext = renderBookContext(input.title, input.author, pages, input.chapterTitles);
+  const positionLine = renderPositionLine(input.readingPosition, input.chapterTitles);
+  return {
+    instructions: READING_COMPANION_INSTRUCTIONS,
+    bookContext,
+    userMessage: (question) => standardUserMessage(input.highlight, positionLine, question),
+    windowed: false,
+    chaptersUsed: [],
+    highlightChapterCovered: false,
+  };
+}
+
+export interface DigestBookSummary {
+  synopsis: string;
+  cast: { name: string; description: string }[];
+  themes: string[];
+}
+
+export interface DigestChapterSummary {
+  spineIndex: number;
+  summary: string;
+  themes: string[];
+  characters: string[];
+}
+
+export interface DigestContextInput extends LadderContextInput {
+  bookDigest: DigestBookSummary | null;
+  chapterDigests: DigestChapterSummary[];
+}
+
+/** Digest rung: the book-level digest (synopsis/cast/themes) plus every
+ * chapter's compact summary — never full text for chapters outside the
+ * highlight's neighborhood — plus full text of the pages right around the
+ * highlight. This is the token saving: a summary of the whole book instead
+ * of the whole book. Only chapters that actually have a digest row
+ * contribute (decisions.md 2026-07-28 later). */
+export function buildDigestContext(input: DigestContextInput): BuiltLadderContext {
+  const header = input.author ? `${input.title} by ${input.author}` : input.title;
+
+  const bookPart = input.bookDigest
+    ? `Synopsis: ${input.bookDigest.synopsis}\n\n` +
+      `Cast: ${input.bookDigest.cast.map((c) => `${c.name} (${c.description})`).join("; ") || "none listed"}\n\n` +
+      `Book-level themes: ${input.bookDigest.themes.join(", ") || "none listed"}`
+    : "No book-level digest available yet.";
+
+  const sortedDigests = [...input.chapterDigests].sort((a, b) => a.spineIndex - b.spineIndex);
+  const chapterDigestText = sortedDigests
+    .map((c) => {
+      const meta: string[] = [];
+      if (c.themes.length > 0) meta.push(`Themes: ${c.themes.join(", ")}`);
+      if (c.characters.length > 0) meta.push(`Characters: ${c.characters.join(", ")}`);
+      return (
+        `--- [${sectionLabel(c.spineIndex, input.chapterTitles)} digest] ---\n${c.summary}` +
+        (meta.length > 0 ? `\n${meta.join(" · ")}` : "")
+      );
+    })
+    .join("\n\n");
+
+  const pages = surroundingSections(input.sections, input.highlight.spineIndex);
+  const pagesText = pages
+    .map((s) => `--- [${sectionLabel(s.spineIndex, input.chapterTitles)} — full text] ---\n${s.text}`)
+    .join("\n\n");
+
+  const bookContext =
+    `${header}\n\n` +
+    `BOOK DIGEST\n${bookPart}\n\n` +
+    `CHAPTER SUMMARIES\n${chapterDigestText || "(no chapters digested yet)"}\n\n` +
+    `FULL TEXT AROUND THE HIGHLIGHT\n${pagesText}`;
+
+  const positionLine = renderPositionLine(input.readingPosition, input.chapterTitles);
+  const highlightChapterCovered = sortedDigests.some(
+    (c) => c.spineIndex === input.highlight.spineIndex,
+  );
+
+  return {
+    instructions: READING_COMPANION_INSTRUCTIONS,
+    bookContext,
+    userMessage: (question) => standardUserMessage(input.highlight, positionLine, question),
+    windowed: false,
+    chaptersUsed: sortedDigests.map((c) => c.spineIndex),
+    highlightChapterCovered,
+  };
 }

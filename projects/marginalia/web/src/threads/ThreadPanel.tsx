@@ -276,6 +276,8 @@ export function ThreadPanel({
         role: "user",
         content: trimmed,
         contextNote: null,
+        contextDepth: null,
+        contextChapters: [],
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, optimisticUser]);
@@ -295,7 +297,7 @@ export function ThreadPanel({
           streamingTextRef.current += text;
           setStreamingText(streamingTextRef.current);
         },
-        onDone: (messageId, threadId, contextNote, contextUsage) => {
+        onDone: (messageId, threadId, contextNote, contextUsage, contextDepth, contextChapters) => {
           setMessages((prev) => [
             ...prev,
             {
@@ -304,6 +306,8 @@ export function ThreadPanel({
               role: "assistant",
               content: streamingTextRef.current,
               contextNote,
+              contextDepth,
+              contextChapters,
               createdAt: new Date().toISOString(),
             },
           ]);
@@ -450,6 +454,17 @@ export function ThreadPanel({
             {message.role === "assistant" && contextUsageByMessageId[message.id] && (
               <div className={styles.contextUsage}>
                 {formatContextUsage(contextUsageByMessageId[message.id])}
+              </div>
+            )}
+            {message.role === "assistant" && message.contextDepth && (
+              <div className={styles.contextUsage}>
+                {message.contextDepth === "digest"
+                  ? `context: digest${
+                      message.contextChapters.length > 0
+                        ? ` (chapters ${message.contextChapters.join(", ")})`
+                        : " (no chapters digested yet)"
+                    }`
+                  : `context: ${message.contextDepth}`}
               </div>
             )}
           </div>

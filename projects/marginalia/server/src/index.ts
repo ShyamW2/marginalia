@@ -10,6 +10,7 @@ import { settingsRouter } from "./routes/settings.js";
 import { threadsRouter } from "./routes/threads.js";
 import { publishRouter } from "./routes/publish.js";
 import { notepadRouter } from "./routes/notepad.js";
+import { digestRouter } from "./routes/digest.js";
 
 const PORT = Number(process.env.PORT ?? 5175);
 
@@ -25,6 +26,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/resources", resourcesRouter);
 app.use("/api/resources", publishRouter);
+app.use("/api/resources", digestRouter);
 app.use("/api/highlights", highlightsRouter);
 app.use("/api/settings", settingsRouter);
 app.use("/api/threads", threadsRouter);

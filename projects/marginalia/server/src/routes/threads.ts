@@ -4,6 +4,7 @@ import {
   CreateThreadBodySchema,
   CreateThreadMessageBodySchema,
 } from "@marginalia/shared";
+import type { ContextLadderDepth, ContextUsage, Highlight, Resource } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { getHighlightById } from "../annotations/highlights.js";
 import {
@@ -19,11 +20,106 @@ import {
   listMessagesForThread,
 } from "../annotations/threads.js";
 import { getProvider, LLMError, type LLMErrorCode, type LLMProvider } from "../llm/provider.js";
-import { buildContext, WINDOWED_CONTEXT_NOTE } from "../llm/context.js";
+import { buildContext, buildDigestContext, buildOffContext, WINDOWED_CONTEXT_NOTE } from "../llm/context.js";
 import { computeContextUsage, type UsageLedgerRow } from "../llm/usage.js";
-import type { ContextUsage } from "@marginalia/shared";
+import { getBookDigest, listChapterDigests } from "../digest/store.js";
+import { resolveContextLadderDepth } from "../digest/ladder.js";
 
 export const threadsRouter: Router = Router();
+
+const DIGEST_CHAPTER_UNCOVERED_NOTE =
+  "This passage's chapter hasn't been digested yet — this answer is grounded " +
+  "in the rest of the book's digest and the pages around your highlight, not " +
+  "a summary of this specific chapter.";
+
+interface ResolvedContext {
+  instructions: string;
+  bookContext: string;
+  userMessage: (question: string) => string;
+  contextNote: string | null;
+  contextDepth: ContextLadderDepth;
+  contextChapters: number[];
+}
+
+/**
+ * Picks the context-ladder rung for this book (decisions.md 2026-07-28
+ * later) and builds the matching context. Every rung produces the same
+ * shape so the caller (streamThreadReply / the two routes below) doesn't
+ * need to know which one ran — only the "answer transparency" record does.
+ */
+function resolveContext(
+  db: Database.Database,
+  provider: LLMProvider,
+  resource: Resource,
+  highlight: Highlight,
+): ResolvedContext {
+  const sections = getResourceTextSections(db, resource.id);
+  const chapterTitles = resource.metadata.chapterTitles;
+  const readingPosition = getReadingPosition(db, resource.id) ?? null;
+  const bookDigest = getBookDigest(db, resource.id);
+  const depth = resolveContextLadderDepth(db, resource.id, Boolean(bookDigest));
+
+  if (depth === "off") {
+    const built = buildOffContext({
+      title: resource.title,
+      author: resource.author,
+      sections,
+      highlight,
+      chapterTitles,
+      readingPosition,
+    });
+    return {
+      instructions: built.instructions,
+      bookContext: built.bookContext,
+      userMessage: built.userMessage,
+      contextNote: null,
+      contextDepth: "off",
+      contextChapters: [],
+    };
+  }
+
+  if (depth === "digest") {
+    const chapterDigests = listChapterDigests(db, resource.id);
+    const built = buildDigestContext({
+      title: resource.title,
+      author: resource.author,
+      sections,
+      highlight,
+      chapterTitles,
+      readingPosition,
+      bookDigest: bookDigest
+        ? { synopsis: bookDigest.synopsis, cast: bookDigest.cast, themes: bookDigest.themes }
+        : null,
+      chapterDigests,
+    });
+    return {
+      instructions: built.instructions,
+      bookContext: built.bookContext,
+      userMessage: built.userMessage,
+      contextNote: built.highlightChapterCovered ? null : DIGEST_CHAPTER_UNCOVERED_NOTE,
+      contextDepth: "digest",
+      contextChapters: built.chaptersUsed,
+    };
+  }
+
+  const built = buildContext({
+    title: resource.title,
+    author: resource.author,
+    sections,
+    highlight,
+    contextTokens: provider.capabilities().contextTokens,
+    chapterTitles,
+    readingPosition,
+  });
+  return {
+    instructions: built.instructions,
+    bookContext: built.bookContext,
+    userMessage: built.userMessage,
+    contextNote: built.windowed ? WINDOWED_CONTEXT_NOTE : null,
+    contextDepth: "full",
+    contextChapters: [],
+  };
+}
 
 /**
  * Human-facing SSE `{error}` message per LLMError code. Provider error
@@ -53,11 +149,11 @@ function persistExchange(
   threadId: string,
   userContent: string,
   assistantContent: string,
-  contextNote: string | null,
+  transparency: { contextNote: string | null; contextDepth: ContextLadderDepth; contextChapters: number[] },
 ) {
   const run = db.transaction(() => {
     createMessage(db, threadId, "user", userContent);
-    return createMessage(db, threadId, "assistant", assistantContent, contextNote);
+    return createMessage(db, threadId, "assistant", assistantContent, transparency);
   });
   return run();
 }
@@ -77,7 +173,7 @@ async function streamThreadReply(
   bookContext: string,
   messages: { role: "user" | "assistant"; content: string }[],
   userContent: string,
-  contextNote: string | null,
+  transparency: { contextNote: string | null; contextDepth: ContextLadderDepth; contextChapters: number[] },
   /** M17 "context-window readout": populated by the usage-ledger wrapper's
    * onLogged callback once the call completes — read here rather than
    * re-querying the ledger, which would race concurrent requests. */
@@ -120,13 +216,7 @@ async function streamThreadReply(
       res.write(`data: ${JSON.stringify({ text: chunk.text })}\n\n`);
     }
     if (!disconnected) {
-      const assistantMessage = persistExchange(
-        db,
-        threadId,
-        userContent,
-        fullText,
-        contextNote,
-      );
+      const assistantMessage = persistExchange(db, threadId, userContent, fullText, transparency);
       const contextUsage: ContextUsage | null = usageRowRef.current
         ? computeContextUsage(usageRowRef.current, contextWindowTokens)
         : null;
@@ -135,8 +225,10 @@ async function streamThreadReply(
           done: true,
           messageId: assistantMessage.id,
           threadId,
-          contextNote,
+          contextNote: transparency.contextNote,
           contextUsage,
+          contextDepth: transparency.contextDepth,
+          contextChapters: transparency.contextChapters,
         })}\n\n`,
       );
     }
@@ -187,16 +279,8 @@ threadsRouter.post("/", async (req, res) => {
   const thread = getOrCreateThread(db, highlightId);
   const priorMessages = listMessagesForThread(db, thread.id);
 
-  const sections = getResourceTextSections(db, resource.id);
-  const { instructions, bookContext, userMessage, windowed } = buildContext({
-    title: resource.title,
-    author: resource.author,
-    sections,
-    highlight,
-    contextTokens: provider.capabilities().contextTokens,
-    chapterTitles: resource.metadata.chapterTitles,
-    readingPosition: getReadingPosition(db, resource.id) ?? null,
-  });
+  const { instructions, bookContext, userMessage, contextNote, contextDepth, contextChapters } =
+    resolveContext(db, provider, resource, highlight);
 
   // The highlight-quote framing only belongs on the thread's first question —
   // repeating it on every follow-up would waste tokens and read oddly.
@@ -216,7 +300,7 @@ threadsRouter.post("/", async (req, res) => {
     bookContext,
     providerMessages,
     userContent,
-    windowed ? WINDOWED_CONTEXT_NOTE : null,
+    { contextNote, contextDepth, contextChapters },
     usageRowRef,
     provider.capabilities().contextTokens,
   );
@@ -259,16 +343,12 @@ threadsRouter.post("/:id/messages", async (req, res) => {
   }
 
   const priorMessages = listMessagesForThread(db, thread.id);
-  const sections = getResourceTextSections(db, resource.id);
-  const { instructions, bookContext, windowed } = buildContext({
-    title: resource.title,
-    author: resource.author,
-    sections,
+  const { instructions, bookContext, contextNote, contextDepth, contextChapters } = resolveContext(
+    db,
+    provider,
+    resource,
     highlight,
-    contextTokens: provider.capabilities().contextTokens,
-    chapterTitles: resource.metadata.chapterTitles,
-    readingPosition: getReadingPosition(db, resource.id) ?? null,
-  });
+  );
 
   const providerMessages = [
     ...priorMessages.map((m) => ({ role: m.role, content: m.content })),
@@ -284,7 +364,7 @@ threadsRouter.post("/:id/messages", async (req, res) => {
     bookContext,
     providerMessages,
     question,
-    windowed ? WINDOWED_CONTEXT_NOTE : null,
+    { contextNote, contextDepth, contextChapters },
     usageRowRef,
     provider.capabilities().contextTokens,
   );
