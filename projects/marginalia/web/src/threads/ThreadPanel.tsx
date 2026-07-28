@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type RefObject } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { motion, useDragControls, useMotionValue, useReducedMotion } from "motion/react";
 import type {
+  ContextLadderDepth,
   ContextUsage,
   HighlightImportance,
   HighlightKind,
@@ -10,6 +11,7 @@ import type {
   ThreadWithMessages,
 } from "@marginalia/shared";
 import { formatContextUsage } from "./contextUsage.js";
+import { ContextLadderToggle } from "./ContextLadderToggle.js";
 import { ImportanceStars } from "../highlights/ImportanceStars.js";
 import { TagEditor } from "../highlights/TagEditor.js";
 import {
@@ -38,6 +40,7 @@ function displayableQuestion(content: string): string {
 const NOTE_AUTOSAVE_DELAY_MS = 800;
 
 interface ThreadPanelProps {
+  resourceId: string;
   highlightId: string;
   highlightExact: string;
   highlightKind: HighlightKind;
@@ -62,6 +65,7 @@ interface ThreadPanelProps {
 }
 
 export function ThreadPanel({
+  resourceId,
   highlightId,
   highlightExact,
   highlightKind,
@@ -500,6 +504,7 @@ export function ThreadPanel({
 
       {providerConfigured ? (
         <div className={styles.composer}>
+          <ContextLadderToggle resourceId={resourceId} />
           <textarea
             ref={textareaRef}
             className={styles.textarea}

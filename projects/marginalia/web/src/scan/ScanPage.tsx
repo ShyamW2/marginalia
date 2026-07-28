@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useReducedMotion } from "motion/react";
 import type { HighlightImportance, HighlightKind, ScanData, ScanHighlight } from "@marginalia/shared";
 import { playAirlock } from "../app/airlockBus.js";
 import { updateHighlightImportance, updateHighlightTags } from "../highlights/highlightMeta.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
+import { DigestSpotlight } from "./DigestSpotlight.js";
 import { HeatStrip } from "./HeatStrip.js";
 import { RevisitQueue } from "./RevisitQueue.js";
 import { KIND_ORDER, phosphorHue } from "./scanPalette.js";
@@ -71,6 +72,7 @@ export function ScanPage() {
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [crtIntensity, setCrtIntensity] = useState(0.6);
+  const [spotlightOpen, setSpotlightOpen] = useState(false);
 
   useEffect(() => {
     fetchScanCrtIntensity().then(setCrtIntensity);
@@ -207,10 +209,31 @@ export function ScanPage() {
             {data.resource.author ?? "Unknown"} — instrument view
           </div>
         </div>
-        <button type="button" className={styles.backButton} onClick={handleBackToBook}>
-          ← Book
-        </button>
+        <div className={styles.headerActions}>
+          <button
+            type="button"
+            className={styles.backButton}
+            onClick={() => setSpotlightOpen((v) => !v)}
+            aria-pressed={spotlightOpen}
+          >
+            Digest…
+          </button>
+          <Link to={`/digest/${id}`} className={styles.backButton}>
+            Read digest
+          </Link>
+          <button type="button" className={styles.backButton} onClick={handleBackToBook}>
+            ← Book
+          </button>
+        </div>
       </div>
+
+      {spotlightOpen && (
+        <DigestSpotlight
+          resourceId={id}
+          chapters={data.chapters}
+          onClose={() => setSpotlightOpen(false)}
+        />
+      )}
 
       <div className={styles.readouts}>
         <div className={styles.readoutTile}>

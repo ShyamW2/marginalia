@@ -346,6 +346,11 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
   const [currentSpineIndex, setCurrentSpineIndex] = useState<number | null>(
     null,
   );
+  // M17 "digest this chapter" (decisions.md 2026-07-28 later): the
+  // spotlight's reader-side shortcut — same POST the scan's spotlight uses,
+  // scoped to just the current chapter, without visiting the scan.
+  const [digestingChapter, setDigestingChapter] = useState(false);
+  const [digestChapterResult, setDigestChapterResult] = useState<string | null>(null);
   // M12: table of contents (flattened, spine+percent resolved once
   // book.locations has generated) and the scrub-dial/popover UI state for
   // the progress readout.
@@ -1237,6 +1242,25 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
     void renditionRef.current?.display(entry.href);
   }
 
+  async function handleDigestChapter() {
+    if (currentSpineIndex === null || digestingChapter) return;
+    setDigestingChapter(true);
+    setDigestChapterResult(null);
+    try {
+      const res = await fetch(`/api/resources/${resourceId}/digest`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spineStart: currentSpineIndex, spineEnd: currentSpineIndex }),
+      });
+      setDigestChapterResult(res.ok ? "Digested ✓" : "Digest failed");
+    } catch {
+      setDigestChapterResult("Digest failed");
+    } finally {
+      setDigestingChapter(false);
+      window.setTimeout(() => setDigestChapterResult(null), 4000);
+    }
+  }
+
   /** Resolve a previewed percent to a CFI and actually move the book —
    * shared commit path for pointer-drag release, keyboard Enter, and (were
    * it ever wired up) any future entry point. Only ever called on commit,
@@ -1627,16 +1651,29 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
         </div>
         <div className={styles.topRowRight}>
           {!focusMode && (
-            <ChapterNav
-              toc={toc}
-              chapterStops={chapterStopsList}
-              currentChapter={activeChapter}
-              onSelect={handleTocSelect}
-              onPrev={() => jumpToChapter("prev")}
-              onNext={() => jumpToChapter("next")}
-              hasPrev={hasPrevChapter}
-              hasNext={hasNextChapter}
-            />
+            <>
+              <ChapterNav
+                toc={toc}
+                chapterStops={chapterStopsList}
+                currentChapter={activeChapter}
+                onSelect={handleTocSelect}
+                onPrev={() => jumpToChapter("prev")}
+                onNext={() => jumpToChapter("next")}
+                hasPrev={hasPrevChapter}
+                hasNext={hasNextChapter}
+              />
+              {currentSpineIndex !== null && (
+                <button
+                  type="button"
+                  className={styles.digestChapterButton}
+                  disabled={digestingChapter}
+                  onClick={handleDigestChapter}
+                  title="Digest just this chapter (M17 spotlight shortcut)"
+                >
+                  {digestingChapter ? "Digesting…" : digestChapterResult ?? "Digest chapter"}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1710,6 +1747,7 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
                 // threading highlight-identity changes through internal
                 // effect dependency arrays for "reset state on switch".
                 key={expandedHighlight.id}
+                resourceId={resourceId}
                 highlightId={expandedHighlight.id}
                 highlightExact={expandedHighlight.exact}
                 highlightKind={expandedHighlight.kind}

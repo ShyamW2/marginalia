@@ -39,8 +39,8 @@ export function renderDigestMarkdown(db: Database.Database, resource: Resource):
   lines.push("");
   lines.push(
     lastGeneratedAt
-      ? `_Digest generated ${lastGeneratedAt}. This page is a regenerated projection of the SQLite digest — hand-edits are overwritten on the next run, never read back._`
-      : `_Not yet digested. Start a digest from the Scan's spotlight or the reader's "digest this chapter" shortcut._`,
+      ? `*Digest generated ${lastGeneratedAt}. This page is a regenerated projection of the SQLite digest — hand-edits are overwritten on the next run, never read back.*`
+      : `*Not yet digested. Start a digest from the Scan's spotlight or the reader's "digest this chapter" shortcut.*`,
   );
 
   if (book) {

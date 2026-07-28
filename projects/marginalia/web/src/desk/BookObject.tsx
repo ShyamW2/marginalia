@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type WheelEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion, useMotionValue, type PanInfo } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
 import { playAirlock } from "../app/airlockBus.js";
@@ -202,6 +202,13 @@ export function BookObject({
             >
               Open scan
             </button>
+            <Link
+              to={`/digest/${resource.id}`}
+              className={styles.infoAction}
+              onClick={(e) => e.stopPropagation()}
+            >
+              Read digest
+            </Link>
             <button
               type="button"
               className={styles.infoAction}

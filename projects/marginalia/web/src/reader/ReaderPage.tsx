@@ -125,6 +125,9 @@ export function ReaderPage() {
         {resource.author && (
           <span className={styles.author}>{resource.author}</span>
         )}
+        <Link to={`/digest/${resource.id}`} className={styles.digestLink}>
+          Digest
+        </Link>
         <button type="button" className={styles.scanButton} onClick={handleOpenScan}>
           Scan
         </button>

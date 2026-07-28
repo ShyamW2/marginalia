@@ -1,0 +1,42 @@
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.toggle {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.button {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+}
+.button + .button {
+  border-left: 1px solid var(--color-border);
+}
+.buttonActive {
+  background: var(--color-highlight-active, var(--color-highlight));
+  color: var(--color-text);
+}
+
+.webSearchPill {
+  background: none;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  opacity: 0.6;
+  cursor: not-allowed;
+}

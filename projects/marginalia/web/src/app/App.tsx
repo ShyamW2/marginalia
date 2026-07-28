@@ -17,6 +17,9 @@ const ReaderPage = lazy(() =>
 const ScanPage = lazy(() =>
   import("../scan/ScanPage.js").then((m) => ({ default: m.ScanPage })),
 );
+const DigestPage = lazy(() =>
+  import("../digest/DigestPage.js").then((m) => ({ default: m.DigestPage })),
+);
 const SettingsModal = lazy(() =>
   import("../settings/SettingsModal.js").then((m) => ({ default: m.SettingsModal })),
 );
@@ -103,6 +106,7 @@ export function App() {
             <Route path="/" element={<DeskPage />} />
             <Route path="/read/:id" element={<ReaderPage />} />
             <Route path="/scan/:id" element={<ScanPage />} />
+            <Route path="/digest/:id" element={<DigestPage />} />
             {/* Deep link / hard refresh straight at /settings has no
                 background room to fall back on — the Desk stands in, per
                 TASKS.md ("/settings ... renders the desk with the modal

@@ -44,6 +44,29 @@
 .topRowRight {
   justify-self: end;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* M17 "digest this chapter" — plain, quiet, same visual weight as the
+   annotations button, not a primary action. */
+.digestChapterButton {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.15rem 0.3rem;
+  white-space: nowrap;
+}
+.digestChapterButton:hover:not(:disabled) {
+  color: var(--color-text);
+}
+.digestChapterButton:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .annotationsButton {

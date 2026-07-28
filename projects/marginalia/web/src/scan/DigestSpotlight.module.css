@@ -1,0 +1,130 @@
+/* Reuses the CRT custom properties ScanPage.module.css's .page sets — this
+   panel only ever renders inside that scope. Deliberately plainer than the
+   heat-field/warp instrument face: it's a utility panel that appears only
+   while initiating a digest, not part of the base glass (decisions.md
+   2026-07-28 later: warp applies to the base scan screen, and floating
+   panels like this one don't warp — this is exactly that kind of panel). */
+.panel {
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-raised);
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+
+.title {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-accent);
+  font-size: 0.85rem;
+}
+
+.closeButton {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.15rem 0.4rem;
+}
+.closeButton:hover {
+  color: var(--color-text);
+}
+
+.coverageLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 0.3rem;
+}
+
+.coverageDotDone,
+.coverageDotPending {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.coverageDotDone {
+  background: var(--color-accent);
+}
+.coverageDotPending {
+  background: var(--color-border);
+}
+
+.coverageLabel {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+
+.synopsis {
+  color: var(--color-text);
+  font-family: system-ui, sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0 0 0.75rem;
+}
+
+.pausedNotice {
+  color: var(--color-danger);
+  font-size: 0.78rem;
+  margin-bottom: 0.6rem;
+}
+
+.resumeButton,
+.digestButton,
+.cancelButton {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border: none;
+  border-radius: 5px;
+  padding: 0.3rem 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.cancelButton {
+  background: none;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.rangeRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.rangeLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.rangeSelect {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 0.3rem 0.4rem;
+  font-family: system-ui, sans-serif;
+  font-size: 0.8rem;
+  max-width: 16rem;
+}
