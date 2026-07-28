@@ -3,6 +3,126 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-29 (later) — Provider roles, the thematic layer, spoiler-safe digests, and a roadmap regroup
+
+Operator feedback after living with M17/M17.5. Two of these change architecture rather
+than surfaces, so they are settled here before any of it is built.
+
+### LLM provider *roles*, not one global provider
+
+The ask was a provider slider on the scan; the answer it resolved into is bigger and
+better. There are now **two named roles** — **query** (answering questions while reading)
+and **digest** (batch analysis: the digest, and later M18's themes and M22's cast) — each
+remembering its own complete provider setup, so a long book can be digested on a cheap
+local model while Claude answers questions.
+
+- The unit is a **provider profile**: a complete, named config (provider id, model, key,
+  base URL, context tokens). **Roles point at profiles.** This matters for simplicity:
+  when audio casting and semantic themes need a provider, they claim the existing
+  `digest` role rather than growing a third bespoke setting.
+- `getProvider(db)` becomes `getProvider(db, role)`. Every call site must say what it is
+  doing — which is a small cost paid once, and it makes "which model ran this?" answerable
+  from the usage ledger, which it currently isn't.
+- Three surfaces, **one picker component built once**: a tab per role in the settings
+  binder; the scan's slider (digest role); and a small icon in the reader menu that opens
+  the same slider on hover (or click, for touch), with a click-through to settings.
+  Building the picker three times is exactly the kind of duplication this round is
+  supposed to remove.
+- Migration must be silent: the existing single provider config becomes the initial
+  profile that both roles point at, so nobody has to reconfigure anything.
+
+### Thematic analysis is reader-driven, and separate from plot
+
+The operator's reframing, which is better than the options offered and is now the rule:
+**plot is fixed; thematic reading is personal and evolves as you read.** One person's
+questions of a chapter are not another's. So the digest splits into two layers with
+different lifecycles:
+
+| Layer | Generated | Regenerated | Cached by |
+|---|---|---|---|
+| **Plot** | once per chapter | only if the text changes | source hash |
+| **Thematic** | per chapter *per brief* | whenever the brief changes | chapter + brief |
+
+- A **brief** is the reader's standing angle on a book — questions, perspectives, or
+  interests they want the model to hold in mind ("read this for what it says about
+  self-determination"). Briefs are injected into the thematic pass's prompt, so a chapter
+  is analysed *through* that lens and the model arrives at question time already primed.
+- Set a brief **before** reading a stretch, which is the natural workflow the operator
+  described: you decide what you're reading *for*, then digest ahead of yourself.
+- The model also **poses its own questions** per chapter — two or three worth asking —
+  which double as a reading affordance: click one to open a thread on it.
+- Consequence worth stating: the thematic layer is **cheap to re-run and expected to be
+  re-run**, while the plot layer is expensive and generated once. Do not build them as one
+  call. This is also what makes the feature affordable — changing your brief re-runs
+  analysis, not summarisation.
+- The instruction problem stands separately and is fixed in the same milestone: today's
+  system prompt treats anything outside the book as a fallback to be "clearly marked",
+  which is why "how does this apply to daily life" comes back hedged. Thematic and applied
+  questions get instructions that *invite* grounded extrapolation instead of apologising
+  for it.
+
+### Spoiler-safe digests
+
+- **Chapter entries gate exactly** — anything past the reader's bookmark renders redacted
+  with a reveal control. Free, because chapters are stored individually.
+- **Book-level synopsis/cast/themes are reduces over everything digested**, so they
+  inherently spoil. They get a second **bookmark-bounded variant**, built only from
+  chapters up to the bookmark, generated lazily and only when the bookmark has moved far
+  enough to matter; the full version stays behind an explicit reveal.
+- ⚠️ **LLM-generated chapter titles are spoilers too.** A descriptive title ("The
+  betrayal") gives away the chapter it names. Titles are gated by the same rule as the
+  summary they come from, and the ungated fallback is positional ("Chapter 7 · 34–39%").
+- This composes with, and does not replace, M17's answer-time spoiler guard. One is about
+  what the model *says*; this is about what the page *shows*.
+
+### The digest instrument, and chapter labels
+
+- The coverage tiles are unlabelled squares, and EPUB TOC titles are frequently useless
+  ("I", "II", or absent). Fix at the data level: the digest's map step already summarises
+  each chapter, so have it also emit a **short descriptive title** — no new pipeline,
+  spoiler-gated as above. Hover a tile for title plus position range.
+- ⚠️ Position range is **percent and chapter, never pages** — the same rule M17 already
+  established. Reflowable EPUBs have no stable pages, and M16's text-size setting moves
+  epub.js's page-ish counts anyway.
+- The timeline gets larger, and the **torch UI lands now** rather than as a future arc —
+  explicitly as an experiment that can be reverted if it reads as clunky. The **FROM/TO
+  boxes stay** regardless: they are the precise input and the keyboard path, and the torch
+  is the charm on top of them, never the only way in.
+
+### Roadmap regroup (the efficiency review the operator asked for)
+
+Reviewing everything unstarted, two regroupings pay for themselves and one dependency was
+wrong:
+
+1. **The torch belongs in M18, not later.** It has to be positioned through the same
+   barrel mapping as the heat bands, or the beam points somewhere other than where it
+   lands — the identical hazard M18 already documents for hit targets. Building it
+   separately means solving that problem twice. Same canvas, same milestone.
+2. **M18's semantic theme mode had a broken dependency.** It was specified to colour by
+   themes from the digest — but the digest's themes are currently bare labels, and the
+   thematic layer that makes them meaningful does not exist yet. Theme mode therefore
+   **moves out of M18** into the digest-depth milestone that produces its data. This makes
+   M18 smaller even after adding the torch.
+3. **All three provider pickers land together** in the settings milestone, which is where
+   the profile/role data model lives anyway.
+
+**Numbering:** new work lands as **M19.5** and **M19.8**, not by renumbering M20–M23. This
+follows the rule set on 2026-07-28 after three renumbers — decimals absorb insertions
+without invalidating references across five documents. Two decimals in a row is slightly
+inelegant; five documents of stale cross-references is worse.
+
+### The refactor (M19.8)
+
+Requested, and scoped to two targets with measurements behind them: `ReaderView.tsx`
+(**1,839 lines, 64 hook calls**, having absorbed something in every milestone since M10)
+and the four-way expression of position (CFI / spineIndex / percent / char offsets).
+Placed **immediately before M20's paper fold**, the riskiest planned surgery on exactly
+that component — pay once, then let the hardest change land in a structure that can hold
+it. Method, safety net, and success metrics are written up in **`docs/REFACTORING.md`**,
+which also answers the general question of how this is done and how you know it worked.
+The rule that matters most: **a refactor changes structure and nothing else** — if you can
+see a difference in the app, it wasn't one.
+
 ## 2026-07-29 — Performance: measured, and the leading suspect isn't M17
 
 Operator reported the app becoming slow and unreliable after M17 shipped — library

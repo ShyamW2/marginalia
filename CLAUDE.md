@@ -17,6 +17,7 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/SONNET_PROMPT.md` — kickoff prompt + operator notes for implementation sessions
 - `docs/marginalia/NOTES.md` — running log of spec gaps, friction, blockers (create on first use)
 - `docs/decisions.md` — decision log (ADR-lite)
+- `docs/REFACTORING.md` — why/when/how we refactor, and how success is measured — binding for M19.8
 - `docs/OPUS.md` — how to run a **design/review** session: interrogating feedback,
   verifying premises before building on them, and writing docs an implementation
   session can execute. Read it before any session that decides rather than executes.

@@ -146,7 +146,10 @@ whole `data/audio/` tree deleted mid-session.
 
 ## Casting (multi-voice)
 
-User-initiated, never automatic. Two passes, both through the **existing** LLM seam
+User-initiated, never automatic. Both passes claim the **`digest` provider role** (M19
+provider roles) rather than the global provider — casting a long book is batch analysis
+and belongs on whichever model the reader chose for that. Two passes, both through the
+**existing** LLM seam
 (`extract`, zod-validated) and the existing context builder — no new provider code.
 
 **Pass 1 — the cast.** ⚠️ **Amended 2026-07-28: do not build a second scanner.** This was

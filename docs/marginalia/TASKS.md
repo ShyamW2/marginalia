@@ -1378,8 +1378,10 @@ milestones are unchanged):
 | M16 | — | Reading QOL & bug fixes (new) |
 | M17 | — | The book digest & AI context (new) |
 | M17.5 | — | Performance & responsiveness (inserted 2026-07-29) |
-| M18 | — | Scan v2: the instrument face (new) |
-| M19 | — | Settings as a binder (new) |
+| M18 | — | Scan v2: the instrument face + the digest torch (new) |
+| M19.5 | — | Digest depth & the semantic scan (inserted 2026-07-29) |
+| M19.8 | — | The refactor (inserted 2026-07-29) |
+| M19 | — | Settings as a binder & provider roles (new) |
 | M20 | M16 | The paper fold |
 | M21 | M17 | Audio I |
 | M22 | M18 | Audio II |
@@ -2157,18 +2159,6 @@ and the two-channel colour model are specified there.
       _Acceptance: a cluster of honey highlights reads as honey, not as generic hot; a
       mixed cluster shows its dominant kind; density is still legible as intensity;
       switching to density-only mode reproduces today's appearance._
-- [ ] **Two scan modes: by kind, by theme.** A mode toggle re-colours the same field and
-      the same hit targets — a palette swap, not a second component. Themes come from
-      M17's digest — the book-level theme set from its reduce step — tagged onto each
-      highlight (quote + note + thread) by an `extract` pass, persisted in SQLite. Only
-      highlights in **digested chapters** can be themed; the rest stay uncoloured in
-      theme mode and the coverage line explains why. This un-parks the 2026-07-19 "LLM note supplementation"
-      item, which is what this ask really is; concepts from the vault are **not** the
-      source (M9's reasoning still holds — they exist only for published threads).
-      _Acceptance: theme mode colours every highlight that has a theme and visibly greys
-      those that don't; the legend names the themes; filters, search, stars, tags, and
-      the airlock jump behave identically in both modes; a book with no digest falls back
-      to kind mode with an explanation, not an empty strip._
 - [ ] **Tighter bleed + zoom/pan.** Reduce the blob radii (M15's `26 + weight*44`px lets
       neighbours merge into an unreadable smear) **and** add zoom + pan over the same
       0–100% domain so dense regions can be opened up and clicked precisely. Zoom is a
@@ -2178,11 +2168,43 @@ and the two-channel colour model are specified there.
       structure; zoomed in, individual highlights separate and are individually
       clickable; zoom + warp together still hit-test correctly; keyboard users can zoom
       and pan._
+- [ ] **The digest instrument: bigger timeline, and the torch.** Enlarge the digest
+      coverage timeline, and replace the range handles with the **torch** (decisions.md
+      2026-07-29): a cartoon flashlight beam aimed by click-drag along the timeline, beam
+      width set by dragging up/down, drawn for the VHS/CRT aesthetic. **The FROM/TO boxes
+      stay** — they are the precise input and the keyboard path; the torch is the charm on
+      top, never the only way in. Shipped explicitly as an experiment: if it reads as
+      clunky in use, reverting to plain handles is a success, not a failure.
+      ⚠️ **Position the beam through the same barrel mapping as the heat bands.** It sits
+      on the warped base layer, so raw coordinates will land the beam somewhere other than
+      where it points — the identical hazard as hit targets, which is why this is in the
+      same milestone rather than a later one.
+      _Acceptance: the beam points where it lands at every CRT intensity including
+      maximum, and at both far edges of the timeline; FROM/TO stay in sync with the torch
+      in both directions; the whole range can be set keyboard-only without touching the
+      torch; the digest that results covers exactly the chapters shown._
+- [ ] **Chapter labels on the coverage tiles.** Unlabelled squares plus EPUB TOC titles
+      that are frequently useless ("I", "II", or absent) make the strip hard to read. Fix
+      at the data level: the digest's map step already summarises each chapter, so have it
+      also emit a **short descriptive title** (no new pipeline — a field on the existing
+      call; the schema change lands with M19.5's other digest work if this ships first).
+      Hover a tile for title plus position range.
+      ⚠️ Position range is **percent and chapter, never pages** — reflowable EPUBs have no
+      stable pages and M16's text-size setting moves epub.js's page-ish counts anyway.
+      ⚠️ A descriptive title is itself a **spoiler**; gate it by the same bookmark rule as
+      the summary it came from, falling back to the positional label ("Chapter 7 ·
+      34–39%").
+      _Acceptance: every tile is identifiable without hovering, and hovering gives the
+      title and range; a book whose TOC has no usable titles still reads clearly; titles
+      past the bookmark are gated; no page numbers anywhere._
 - [ ] **Verify:** open the scan on a book with a dozen clustered highlights — read the
-      heat by colour, switch to theme mode, zoom into a cluster and click a specific
-      highlight near a corner at full CRT intensity, then jump into the reader from it.
+      heat by colour, zoom into a cluster and click a specific highlight near a corner at
+      full CRT intensity, then jump into the reader from it. Then set a digest range with
+      the torch and confirm it digests exactly the chapters the beam covered.
+      _(Semantic theme mode moved to M19.5 on 2026-07-29 — it needs thematic data that
+      does not exist yet. See the decisions entry.)_
 
-### M19 — Settings as a binder
+### M19 — Settings as a binder & provider roles
 
 - [ ] **Binder shell.** Rebuild `SettingsPage`'s flat field list as a book/binder: tabbed
       dividers down the side — **Reading, LLM, Usage, Scan, Audio, Desk** — with a page-turn
@@ -2206,10 +2228,143 @@ and the two-channel colour model are specified there.
       _Acceptance: the whole binder is operable keyboard-only including switching
       sections; a screen reader announces the selected divider; reduced motion shows no
       animation at all._
+- [ ] **Provider profiles and roles.** Replace the single global provider config with
+      **profiles** (a complete named config: provider id, model, key, base URL, context
+      tokens) and **roles** that point at them: **query** (answering while reading) and
+      **digest** (batch analysis — the digest now, M19.5's themes and M22's cast later).
+      `getProvider(db)` becomes `getProvider(db, role)`, so every call site says what it
+      is doing and the usage ledger can finally answer "which model ran this?".
+      **Migration must be silent:** today's config becomes the initial profile that both
+      roles point at — nobody reconfigures anything.
+      _Acceptance: digest a book on a local model while questions are answered by Claude,
+      in the same session; existing settings survive the migration untouched; ledger rows
+      record the role; a role with no configured profile degrades to the same
+      "configure a provider" nudge the reader already shows._
+- [ ] **One picker, three surfaces.** Build the provider picker **once** and mount it in:
+      a tab per role in the binder; the scan's slider (digest role); and a small icon in
+      the reader menu that opens the same slider on hover — or click, for touch — with a
+      click-through into settings. Three bespoke pickers is exactly the duplication this
+      round exists to remove.
+      _Acceptance: the same component in all three places; switching a role from any
+      surface is reflected immediately in the others; the reader's icon is keyboard
+      reachable and its slider operable without a pointer; nothing about the picker
+      assumes hover exists._
 - [ ] **Verify:** open settings from all three rooms, visit every divider, change one
       setting on each and confirm it persists. The stated goal is that settings is
       **pleasant to open** — judge that honestly and fix what feels clumsy before
       checking this off.
+
+### M19.5 — Digest depth & the semantic scan
+
+**Read the 2026-07-29 (later) decisions entry first.** The operator's reframing is the
+design and is not open for re-derivation: **plot is fixed; thematic reading is personal
+and evolves as you read.** Two layers, two lifecycles — do not build them as one call.
+
+- [ ] **Split the digest into a plot layer and a thematic layer.** Plot: generated once
+      per chapter, cached by source hash, unchanged from M17. Thematic: generated per
+      chapter **per brief**, cheap, and *expected to be re-run*. Additive migration; the
+      existing chapter rows become the plot layer with no re-digest required.
+      _Acceptance: re-running thematic analysis does not re-run or invalidate plot
+      summaries (prove it by watching the ledger — the plot calls must not reappear);
+      an existing digested book keeps everything it had._
+- [ ] **Reader briefs.** A per-book standing angle — questions, perspectives, or interests
+      the model should hold in mind while analysing ("read this for what it says about
+      self-determination"). Injected into the thematic pass's prompt so chapters are
+      analysed *through* it. Editable, and set **ahead of** reading a stretch, which is
+      the workflow this is for. Changing the brief marks the thematic layer stale and
+      offers to re-run it — it never silently re-runs and never silently serves analysis
+      from an old brief.
+      _Acceptance: two different briefs on the same chapter produce visibly different
+      analysis; the brief in force is shown alongside the analysis it produced; a stale
+      layer is obvious, not silent._
+- [ ] **Questions the model poses.** Two or three per chapter, generated with the thematic
+      layer, surfaced in the digest page and the reader — clicking one opens a thread on
+      it, pre-filled.
+      _Acceptance: the questions are specific to the chapter rather than generic; clicking
+      one opens a real thread that answers well; they are spoiler-gated like everything
+      else past the bookmark._
+- [ ] **Let thematic questions be thematic.** Today's system prompt treats anything
+      outside the book as a fallback to be "clearly marked", which is why "how does this
+      apply to daily life" comes back hedged. Give thematic and applied questions
+      instructions that **invite grounded extrapolation** — still anchored in the text,
+      but not apologising for reasoning past it. The thematic layer for the covering
+      chapters ships as context when the question calls for it.
+      _Acceptance: a philosophical question about a fixture book gets a substantive
+      answer rather than a hedge, while a factual question about the plot stays as tightly
+      grounded as it is today — check both, since it is easy to fix one by breaking the
+      other._
+- [ ] **Spoiler-safe digest display.** Chapter entries past the bookmark render redacted
+      with a reveal control (free — chapters are stored individually). Book-level
+      synopsis/cast/themes get a **bookmark-bounded variant** built only from chapters up
+      to the bookmark, generated lazily and only once the bookmark has moved far enough to
+      matter, with the full version behind an explicit reveal. ⚠️ Descriptive chapter
+      titles are spoilers too and gate by the same rule, falling back to the positional
+      label.
+      _Acceptance: open a partly-read book's digest — nothing past the bookmark is
+      readable without a deliberate reveal, including titles; the safe synopsis genuinely
+      only reflects what you've read; revealing is per-item and does not unlock the rest;
+      the lazy regeneration does not fire on every page turn (watch the ledger)._
+- [ ] **The semantic scan mode.** *(Moved here from M18 on 2026-07-29: it needs the
+      thematic data above, which did not exist when it was written.)* A mode toggle
+      re-colours the same field and the same hit targets — a palette swap, not a second
+      component. Themes come from the thematic layer, tagged onto each highlight (quote +
+      note + thread) by an `extract` pass, persisted in SQLite. Only highlights in
+      **thematically analysed** chapters can be themed; the rest stay uncoloured and the
+      coverage line explains why. This un-parks the 2026-07-19 "LLM note supplementation"
+      item; vault concepts are **not** the source (M9's reasoning still holds).
+      _Acceptance: theme mode colours every themed highlight and visibly greys the rest;
+      the legend names the themes; filters, search, stars, tags and the airlock jump
+      behave identically in both modes; a book with no thematic layer falls back to kind
+      mode with an explanation, not an empty strip._
+- [ ] **Verify:** set a brief on a fixture book, digest a few chapters ahead of your
+      bookmark, read into them, and check the whole loop — analysis reflects the brief,
+      posed questions open useful threads, a philosophical question gets a real answer,
+      nothing past the bookmark leaks, and the scan's theme mode lights up.
+
+### M19.8 — The refactor
+
+**Read `docs/REFACTORING.md` first** — it defines the method, the safety net, and the
+success metrics, and it is binding for this milestone. The rule that matters most: **a
+refactor changes structure and nothing else.** If you can see a difference in the app, it
+was not a refactor. Find a bug on the way? Write it down and keep going.
+
+- [ ] **Baseline the metrics before touching anything.** Record: largest file sizes, the
+      hook count in `ReaderView.tsx` (currently **1,839 lines / 64 hook calls**), test
+      count, bundle size and chunk count (M17.5 added this to the build output), and the
+      current live-verification result for the reader. Into NOTES.md.
+      _Acceptance: a before-table exists that the after-table can be compared against._
+- [ ] **Thicken the net where it's thin.** Characterization tests for reader behaviour
+      that has no unit coverage — capturing what the code **currently does**, oddities
+      included. If current behaviour is strange, the test records the strangeness; you are
+      proving you changed nothing.
+      _Acceptance: new tests fail if page-turn, selection, or position behaviour changes;
+      they pass against today's code without modification to it._
+- [ ] **Decompose `ReaderView.tsx`** along the seams already implicit in it — book
+      lifecycle/rendition setup, navigation and position, selection and highlights, and
+      the chrome — into focused hooks and components with explicit inputs. **Move code
+      before improving it**: extract verbatim, green, commit; simplify as a separate step.
+      ⚠️ **Read the NOTES.md entries for this file first.** Several things that look
+      redundant are load-bearing and cost a live session each to find — the `gap` option
+      that means two things, the manager's one-time-copied settings, the marks-pane's
+      `pointer-events: none`, the lazily-captured airlock state. Isolating and naming that
+      complexity is a win; deleting it is a regression.
+      _Acceptance: no user-visible change at all; all tests green at every commit; the
+      live reader verification passes identically; largest-file and hook-count metrics
+      down materially._
+- [ ] **Unify position handling.** Position is expressed four ways — CFI, `spineIndex`,
+      percent, character offsets. **Audit first**: distinguish genuine conversion logic
+      (`server/src/annotations/position.ts`, `web/src/reader/toc.ts`,
+      `web/src/scan/chapterAxis.ts`, and inline code in `ReaderView`) from legitimate
+      consumers, then put the conversions in one tested module. The fold, the scan, the
+      digest and audio all depend on this concept — one definition is worth having.
+      _Acceptance: one module owns the conversions and is unit-tested; consumers call it
+      rather than re-deriving; anchoring tests unchanged and still green._
+- [ ] **Verify:** the after-table against the before-table, plus a full live reader pass —
+      import, read, highlight, ask, turn, resize, spread mode, both themes. Behaviour
+      identical; structure measurably better; no bundle or performance regression against
+      M17.5's baseline. The payoff test comes one milestone later: **M20's fold should
+      touch fewer files and produce a smaller diff than it would have.** Note the
+      prediction in NOTES.md now so it can be checked then.
 
 ### M20 — The paper fold (Apple Books curl)
 
