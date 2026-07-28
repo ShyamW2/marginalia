@@ -1,15 +1,17 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import type { HighlightImportance, ScanChapter, ScanHighlight } from "@marginalia/shared";
 import { ImportanceStars } from "../highlights/ImportanceStars.js";
 import { TagEditor } from "../highlights/TagEditor.js";
 import { phosphorHue } from "./scanPalette.js";
-import { ScanCrtFilter } from "./ScanCrtFilter.js";
-import { drawHeatField, type HeatPoint } from "./heatField.js";
+import { drawHeatField, type HeatColorMode, type HeatPoint } from "./heatField.js";
 import { chapterLabelText, thinLabels } from "./chapterAxis.js";
+import { warpPoint, type WarpGeometry } from "./warp.js";
 import styles from "./HeatStrip.module.css";
 
 const MIN_BAND_HEIGHT = 16;
 const MAX_BAND_HEIGHT = 160;
+const BASELINE_OFFSET = 48;
 // Two bands closer than this (in percent-of-strip-width) visually and
 // functionally overlap — confirmed live: a book with two highlights near
 // its opening made the second band's hit-area block the first's hover/click
@@ -29,7 +31,9 @@ function bandHeight(highlight: ScanHighlight): number {
  * Spreads out bands that would otherwise sit on top of each other, without
  * touching the *true* `positionPercent` (still shown in the readout, and
  * still what the heat field itself plots — see HeatStrip below) — this only
- * decides where the invisible hit-target is drawn.
+ * decides where the invisible hit-target is drawn, in *raw* (unwarped)
+ * strip-fraction space. M18 layers the barrel warp on top of this result
+ * (see `warpedLeft` below), it doesn't change what this function does.
  */
 function declutter(
   positioned: (ScanHighlight & { positionPercent: number })[],
@@ -50,9 +54,11 @@ interface HeatStripProps {
   highlights: ScanHighlight[];
   /** null = no filter active, every band is lit. */
   litIds: Set<string> | null;
-  /** M15 CRT treatment strength, 0-1; caller resolves the persisted setting. */
-  crtIntensity: number;
-  reducedMotion: boolean;
+  /** M18: the whole-face warp's geometry, in the shared wrapper's own px —
+   * identity (no displacement) when the CRT effect is off, so callers don't
+   * need a separate "is warp active" branch. */
+  warpGeometry: WarpGeometry;
+  warpWrapperRef: RefObject<HTMLDivElement>;
   onOpen: (highlight: ScanHighlight) => void;
   onImportanceChange: (highlightId: string, next: HighlightImportance) => void;
   onTagsChange: (highlightId: string, next: string[]) => void;
@@ -60,27 +66,42 @@ interface HeatStripProps {
 
 /**
  * The scan's full-width 0-100% strip (DESIGN.md Room 3): a real chapter
- * axis (M15) plus a continuous heat field (M15) under a CRT graphics
- * filter (M15) — with the pre-M15 discrete bands surviving underneath as
- * invisible hit-targets, so hover/click/filter/dim keep behaving exactly as
- * they did in M9.
+ * axis (M15) plus a continuous heat field (M15, two-channel colour as of
+ * M18) — the pre-M15 discrete bands survive underneath as invisible
+ * hit-targets, so hover/click/filter/dim keep behaving exactly as they did
+ * in M9. The CRT/VHS warp filter itself now lives one level up
+ * (ScanPage.tsx), applied to the whole base scan screen at once — this
+ * component only has to keep its hit-targets aligned with it, via
+ * `warpGeometry` (warp.ts).
  */
 export function HeatStrip({
   chapters,
   highlights,
   litIds,
-  crtIntensity,
-  reducedMotion,
+  warpGeometry,
+  warpWrapperRef,
   onOpen,
   onImportanceChange,
   onTagsChange,
 }: HeatStripProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredRect, setHoveredRect] = useState<DOMRect | null>(null);
   const [showChapterNames, setShowChapterNames] = useState(false);
+  // M18 "two scan modes, one strip" (decisions.md 2026-07-28): "by kind" is
+  // the default read ("what's what"); "density" keeps M15's cool→hot ramp
+  // for "where did I annotate most". A palette swap over the same field and
+  // the same hit targets, not a second component — see heatField.ts.
+  const [colorMode, setColorMode] = useState<HeatColorMode>("kind");
   const stripRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stripSize, setStripSize] = useState({ width: 0, height: 0 });
-  const filterId = useId().replace(/:/g, "");
+  // The strip's own offset within the warped wrapper — recomputed whenever
+  // the strip resizes (which also covers the common cases that would move
+  // it: window resize, chapter/name toggle changing nothing above it).
+  // Boring, not exhaustive: a change in sibling content's height *without*
+  // the strip itself resizing (rare — readouts/filters are static height)
+  // wouldn't re-trigger this, see NOTES.md "M18".
+  const [wrapperOffset, setWrapperOffset] = useState({ left: 0, top: 0 });
 
   useEffect(() => {
     const el = stripRef.current;
@@ -88,11 +109,25 @@ export function HeatStrip({
     const observer = new ResizeObserver((entries) => {
       const box = entries[0]?.contentRect;
       if (box) setStripSize({ width: box.width, height: box.height });
+      const wrapperEl = warpWrapperRef.current;
+      if (wrapperEl) {
+        const stripRect = el.getBoundingClientRect();
+        const wrapperRect = wrapperEl.getBoundingClientRect();
+        setWrapperOffset({ left: stripRect.left - wrapperRect.left, top: stripRect.top - wrapperRect.top });
+      }
     });
     observer.observe(el);
     setStripSize({ width: el.clientWidth, height: el.clientHeight });
     return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Raw (unwarped) local point -> warped local point, in strip-relative px. */
+  function warpLocal(xLocal: number, yLocal: number): { x: number; y: number } {
+    if (warpGeometry.maxPull === 0) return { x: xLocal, y: yLocal };
+    const warped = warpPoint(wrapperOffset.left + xLocal, wrapperOffset.top + yLocal, warpGeometry);
+    return { x: warped.x - wrapperOffset.left, y: warped.y - wrapperOffset.top };
+  }
 
   const positioned = highlights.filter(
     (h): h is ScanHighlight & { positionPercent: number } => h.positionPercent !== null,
@@ -104,14 +139,12 @@ export function HeatStrip({
     [chapters, stripSize.width, showChapterNames],
   );
 
-  const crtActive = !reducedMotion && crtIntensity > 0;
-
   const heatPoints = useMemo<HeatPoint[]>(
     () =>
       positioned.map((h) => {
         const lit = litIds === null || litIds.has(h.id);
         const base = 0.28 + threadDepth(h) * 0.72;
-        return { xFraction: h.positionPercent, weight: lit ? base : base * 0.22 };
+        return { xFraction: h.positionPercent, weight: lit ? base : base * 0.22, kind: h.kind };
       }),
     [positioned, litIds],
   );
@@ -119,21 +152,24 @@ export function HeatStrip({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || stripSize.width === 0 || stripSize.height === 0) return;
-    const baselineY = stripSize.height - 48;
+    const baselineY = stripSize.height - BASELINE_OFFSET;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    drawHeatField(canvas, heatPoints, stripSize.width, stripSize.height, baselineY, dpr);
-  }, [heatPoints, stripSize]);
+    drawHeatField(canvas, heatPoints, stripSize.width, stripSize.height, baselineY, dpr, colorMode);
+  }, [heatPoints, stripSize, colorMode]);
+
+  function handleHoverStart(id: string, rect: DOMRect) {
+    setHoveredId(id);
+    setHoveredRect(rect);
+  }
+  function handleHoverEnd(id: string) {
+    setHoveredId((prev) => (prev === id ? null : prev));
+  }
+
+  const hoveredHighlight = hoveredId ? positioned.find((h) => h.id === hoveredId) ?? null : null;
 
   return (
     <div className={styles.strip} ref={stripRef}>
-      {/* Graphics layer: the CRT filter — barrel warp, bloom, chromatic
-          fringe — applies here only. Ticks and the baseline are strokes
-          ("fuzz the strokes"); the heat field is graphics. Never the text
-          below, and never the interactive hit-targets/readouts. */}
-      <div
-        className={styles.graphicsLayer}
-        style={crtActive ? { filter: `url(#${filterId})` } : undefined}
-      >
+      <div className={styles.graphicsLayer}>
         <canvas
           ref={canvasRef}
           className={styles.heatCanvas}
@@ -151,55 +187,58 @@ export function HeatStrip({
         )}
       </div>
 
-      {crtActive && (
-        <>
-          <ScanCrtFilter id={filterId} intensity={crtIntensity} />
-          <div className={styles.vignette} style={{ opacity: 0.15 + crtIntensity * 0.35 }} />
-        </>
-      )}
-
-      {/* Chapter number/name labels — deliberately outside the filtered
-          graphics layer so they stay crisp and legible under any CRT
-          intensity. */}
       {chapters.map((chapter) =>
         chapter.startPercent > 0 && shownLabelSpineIndices.has(chapter.spineIndex) ? (
           <div
             key={chapter.spineIndex}
             className={styles.tickLabel}
             style={{ left: `${chapter.startPercent * 100}%` }}
+            title={chapter.title ? `${chapter.title} · ${Math.round(chapter.startPercent * 100)}%` : undefined}
           >
             {chapterLabelText(chapter, showChapterNames)}
           </div>
         ) : null,
       )}
 
-      {hasChapterNames && (
+      <div className={styles.stripToggles}>
         <button
           type="button"
           className={styles.chapterModeToggle}
-          aria-pressed={showChapterNames}
-          onClick={() => setShowChapterNames((v) => !v)}
+          aria-pressed={colorMode === "density"}
+          aria-label={colorMode === "kind" ? "Showing colour by kind — switch to density" : "Showing density — switch to colour by kind"}
+          onClick={() => setColorMode((m) => (m === "kind" ? "density" : "kind"))}
         >
-          {showChapterNames ? "Names" : "№"}
+          {colorMode === "kind" ? "By kind" : "Density"}
         </button>
-      )}
+        {hasChapterNames && (
+          <button
+            type="button"
+            className={styles.chapterModeToggle}
+            aria-pressed={showChapterNames}
+            onClick={() => setShowChapterNames((v) => !v)}
+          >
+            {showChapterNames ? "Names" : "№"}
+          </button>
+        )}
+      </div>
 
       {positioned.map((highlight) => {
         const lit = litIds === null || litIds.has(highlight.id);
         const hue = phosphorHue(highlight.kind);
-        const isHovered = hoveredId === highlight.id;
         const height = bandHeight(highlight);
+        // M18 "position the invisible hit-target bands through the same
+        // barrel function that displaces the graphics" (decisions.md
+        // 2026-07-28): declutter() above works in raw strip-fraction space;
+        // warpLocal() is the one remaining step that makes the click land
+        // where the glowing blob visually is, at every CRT intensity.
+        const rawX = (layoutPercent.get(highlight.id) ?? highlight.positionPercent) * stripSize.width;
+        const rawY = stripSize.height - BASELINE_OFFSET - height / 2;
+        const warped = stripSize.width > 0 ? warpLocal(rawX, rawY) : { x: rawX, y: rawY };
         return (
-          // Plain positioning wrapper (not interactive) — the band button and
-          // the hover readout are siblings inside it, not nested, since the
-          // readout hosts its own interactive controls (tag input, star
-          // buttons) and a <button> can't validly contain other controls.
           <div
             key={highlight.id}
             className={styles.slot}
-            style={{ left: `${(layoutPercent.get(highlight.id) ?? highlight.positionPercent) * 100}%` }}
-            onMouseEnter={() => setHoveredId(highlight.id)}
-            onMouseLeave={() => setHoveredId((prev) => (prev === highlight.id ? null : prev))}
+            style={{ left: warped.x }}
           >
             <button
               type="button"
@@ -210,39 +249,56 @@ export function HeatStrip({
               className={lit ? styles.band : `${styles.band} ${styles.dimmed}`}
               style={{ height, color: hue }}
               aria-label={`${highlight.kind} highlight: ${highlight.exact.slice(0, 60)}`}
-              onFocus={() => setHoveredId(highlight.id)}
-              onBlur={() => setHoveredId((prev) => (prev === highlight.id ? null : prev))}
+              onMouseEnter={(e) => handleHoverStart(highlight.id, e.currentTarget.getBoundingClientRect())}
+              onMouseLeave={() => handleHoverEnd(highlight.id)}
+              onFocus={(e) => handleHoverStart(highlight.id, e.currentTarget.getBoundingClientRect())}
+              onBlur={() => handleHoverEnd(highlight.id)}
               onClick={() => onOpen(highlight)}
             >
               {highlight.importance > 0 && <span className={styles.dogEar} />}
             </button>
-            {isHovered && (
-              <div
-                className={styles.readout}
-                role="note"
-                style={{ bottom: 48 + height + 10 }}
-              >
-                <div className={styles.readoutQuote}>&ldquo;{highlight.exact}&rdquo;</div>
-                {highlight.threadFirstLine && (
-                  <div className={styles.readoutLine}>{highlight.threadFirstLine}</div>
-                )}
-                <TagEditor
-                  tags={highlight.tags}
-                  onChange={(next) => onTagsChange(highlight.id, next)}
-                />
-                <div className={styles.readoutMeta}>
-                  <ImportanceStars
-                    value={highlight.importance}
-                    onChange={(next) => onImportanceChange(highlight.id, next)}
-                    size="small"
-                  />
-                  <span>{Math.round(highlight.positionPercent * 100)}%</span>
-                </div>
-              </div>
-            )}
           </div>
         );
       })}
+
+      {/* M18 "floating layers must be portalled out of the warped
+          container" (decisions.md 2026-07-28): a `filter` on an ancestor
+          both distorts descendants' paint and creates a containing block
+          for `position: fixed`, so this can't live inside the strip
+          anymore — it's positioned from the hovered band's own measured
+          rect instead of CSS placement relative to a warped parent. */}
+      {hoveredHighlight &&
+        hoveredRect &&
+        createPortal(
+          <div
+            className={styles.readout}
+            role="note"
+            style={{
+              position: "fixed",
+              left: hoveredRect.left + hoveredRect.width / 2,
+              bottom: window.innerHeight - hoveredRect.top + 10,
+              transform: "translateX(-50%)",
+            }}
+          >
+            <div className={styles.readoutQuote}>&ldquo;{hoveredHighlight.exact}&rdquo;</div>
+            {hoveredHighlight.threadFirstLine && (
+              <div className={styles.readoutLine}>{hoveredHighlight.threadFirstLine}</div>
+            )}
+            <TagEditor
+              tags={hoveredHighlight.tags}
+              onChange={(next) => onTagsChange(hoveredHighlight.id, next)}
+            />
+            <div className={styles.readoutMeta}>
+              <ImportanceStars
+                value={hoveredHighlight.importance}
+                onChange={(next) => onImportanceChange(hoveredHighlight.id, next)}
+                size="small"
+              />
+              <span>{Math.round(hoveredHighlight.positionPercent * 100)}%</span>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

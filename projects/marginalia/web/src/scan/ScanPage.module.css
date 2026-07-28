@@ -54,6 +54,50 @@
   flex-shrink: 0;
 }
 
+/* M18 "one filter, one wrapper": everything below the header shares this
+   single warped surface — see the comment above it in ScanPage.tsx for
+   what's deliberately excluded (the header itself) and why. */
+.warpWrapper {
+  position: relative;
+}
+
+.vignette {
+  position: absolute;
+  inset: 0;
+  border-radius: 10px;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 45%, rgba(0, 0, 0, 0.65) 100%);
+}
+
+/* M18 "occasional signal wobble" (decisions.md 2026-07-28): a brief
+   horizontal tear on the *whole* face, mostly resting at zero — applied
+   here (not inside VhsOverlay) because a wobble has to move everything the
+   warp filter already contains, not sit as an inert layer on top of it. */
+.wobbling {
+  animation: scanWobble 9s ease-in-out infinite;
+}
+
+/* Animates `transform` only — this element's `filter` is already the warp
+   SVG reference (set inline, per-render), and animating `filter` here
+   would fight that reference and kill the warp for the animation's
+   duration. */
+@keyframes scanWobble {
+  0%,
+  36%,
+  40%,
+  62%,
+  66%,
+  100% {
+    transform: translateX(0);
+  }
+  38% {
+    transform: translateX(3px);
+  }
+  64% {
+    transform: translateX(-2px);
+  }
+}
+
 .backButton {
   background: none;
   border: 1px solid var(--color-border);

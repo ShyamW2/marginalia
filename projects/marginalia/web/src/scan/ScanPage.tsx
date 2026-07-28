@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useReducedMotion } from "motion/react";
 import type { HighlightImportance, HighlightKind, ScanData, ScanHighlight } from "@marginalia/shared";
@@ -9,6 +9,9 @@ import { DigestSpotlight } from "./DigestSpotlight.js";
 import { HeatStrip } from "./HeatStrip.js";
 import { RevisitQueue } from "./RevisitQueue.js";
 import { KIND_ORDER, phosphorHue } from "./scanPalette.js";
+import { ScanWarpFilter } from "./ScanWarpFilter.js";
+import { VhsOverlay } from "./VhsOverlay.js";
+import { computeWarpGeometry } from "./warp.js";
 import styles from "./ScanPage.module.css";
 
 async function fetchScanCrtIntensity(): Promise<number> {
@@ -74,10 +77,45 @@ export function ScanPage() {
   const [crtIntensity, setCrtIntensity] = useState(0.6);
   const [spotlightOpen, setSpotlightOpen] = useState(false);
 
+  const warpWrapperRef = useRef<HTMLDivElement>(null);
+  const [warpSize, setWarpSize] = useState({ width: 0, height: 0 });
+  const warpFilterId = useId().replace(/:/g, "");
+  const warpActive = !reducedMotion && crtIntensity > 0;
+  const warpGeometry = useMemo(
+    () => computeWarpGeometry(warpSize.width, warpSize.height, warpActive ? crtIntensity : 0),
+    [warpSize, crtIntensity, warpActive],
+  );
+
   useEffect(() => {
     fetchScanCrtIntensity().then(setCrtIntensity);
     return onSettingsSaved((settings) => setCrtIntensity(settings.scanCrtIntensity));
   }, []);
+
+  // M18 "one filter, one wrapper" (decisions.md 2026-07-28/2026-07-29): the
+  // whole base scan screen — readouts, filters, the strip, the spotlight,
+  // the revisit queue — warps together as a single surface, so it's
+  // measured once here rather than per-piece the way M15's strip-local
+  // filter was. HeatStrip (and later the digest torch) convert their own
+  // local coordinates into this wrapper's space to keep hit-targets aligned
+  // with what the filter visually displaces them to (warp.ts).
+  //
+  // Deps on `Boolean(data)` rather than `[]`: this component mounts before
+  // `data` resolves (the "Loading scan…" branch renders first, with no
+  // wrapper element at all), so a mount-only effect would find
+  // `warpWrapperRef.current` null forever and never observe anything —
+  // caught live, see NOTES.md "M18". Re-arming once, when the real wrapper
+  // first appears, is enough; it never disappears again after that.
+  useEffect(() => {
+    const el = warpWrapperRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+      if (box) setWarpSize({ width: box.width, height: box.height });
+    });
+    observer.observe(el);
+    setWarpSize({ width: el.clientWidth, height: el.clientHeight });
+    return () => observer.disconnect();
+  }, [Boolean(data)]);
 
   useEffect(() => {
     if (!id) return;
@@ -227,107 +265,127 @@ export function ScanPage() {
         </div>
       </div>
 
-      {spotlightOpen && (
-        <DigestSpotlight
-          resourceId={id}
-          chapters={data.chapters}
-          onClose={() => setSpotlightOpen(false)}
-        />
-      )}
+      {/* M18 "one filter, one wrapper" (decisions.md 2026-07-28/2026-07-29):
+          everything below the header — spotlight, readouts, filters, the
+          strip, the revisit queue — is the base scan screen, and it warps
+          as one continuous surface. The header itself stays outside: it's
+          chrome (title, escape hatches) rather than the instrument glass,
+          and keeping "← Book" at its exact raw position is worth more than
+          strict completeness here — SPEC-GAP, see NOTES.md "M18". */}
+      <div
+        ref={warpWrapperRef}
+        className={warpActive ? `${styles.warpWrapper} ${styles.wobbling}` : styles.warpWrapper}
+        style={warpActive ? { filter: `url(#${warpFilterId})` } : undefined}
+      >
+        {spotlightOpen && (
+          <DigestSpotlight
+            resourceId={id}
+            chapters={data.chapters}
+            onClose={() => setSpotlightOpen(false)}
+          />
+        )}
 
-      <div className={styles.readouts}>
-        <div className={styles.readoutTile}>
-          <div className={styles.readoutLabel}>Highlights</div>
-          <div className={styles.readoutValue}>{data.totalHighlights}</div>
+        <div className={styles.readouts}>
+          <div className={styles.readoutTile}>
+            <div className={styles.readoutLabel}>Highlights</div>
+            <div className={styles.readoutValue}>{data.totalHighlights}</div>
+          </div>
+          <div className={styles.readoutTile}>
+            <div className={styles.readoutLabel}>Last visited</div>
+            <div className={styles.readoutValue}>{relativeLastRead(data.lastReadAt)}</div>
+          </div>
+          <div className={styles.readoutTile}>
+            <div className={styles.readoutLabel}>Chapters</div>
+            <div className={styles.readoutValue}>{data.chapters.length}</div>
+            <div className={styles.sparkline}>
+              {data.chapters.map((c) => (
+                <div
+                  key={c.spineIndex}
+                  className={styles.sparkBar}
+                  style={{ height: `${Math.max(8, (c.lengthPercent / maxChapterLength) * 100)}%` }}
+                />
+              ))}
+            </div>
+          </div>
         </div>
-        <div className={styles.readoutTile}>
-          <div className={styles.readoutLabel}>Last visited</div>
-          <div className={styles.readoutValue}>{relativeLastRead(data.lastReadAt)}</div>
-        </div>
-        <div className={styles.readoutTile}>
-          <div className={styles.readoutLabel}>Chapters</div>
-          <div className={styles.readoutValue}>{data.chapters.length}</div>
-          <div className={styles.sparkline}>
-            {data.chapters.map((c) => (
-              <div
-                key={c.spineIndex}
-                className={styles.sparkBar}
-                style={{ height: `${Math.max(8, (c.lengthPercent / maxChapterLength) * 100)}%` }}
+
+        <div className={styles.filters}>
+          <div className={styles.kindToggle} role="group" aria-label="Filter by kind">
+            <button
+              type="button"
+              className={
+                filterKind === null ? `${styles.kindAllButton} ${styles.kindAllButtonActive}` : styles.kindAllButton
+              }
+              aria-pressed={filterKind === null}
+              onClick={() => setFilterKind(null)}
+            >
+              All
+            </button>
+            {KIND_ORDER.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                className={filterKind === kind ? `${styles.kindButton} ${styles.kindButtonActive}` : styles.kindButton}
+                style={{ background: phosphorHue(kind) }}
+                aria-pressed={filterKind === kind}
+                aria-label={`Filter by ${kind}`}
+                onClick={() => setFilterKind((prev) => (prev === kind ? null : kind))}
               />
             ))}
           </div>
-        </div>
-      </div>
 
-      <div className={styles.filters}>
-        <div className={styles.kindToggle} role="group" aria-label="Filter by kind">
-          <button
-            type="button"
-            className={
-              filterKind === null ? `${styles.kindAllButton} ${styles.kindAllButtonActive}` : styles.kindAllButton
-            }
-            aria-pressed={filterKind === null}
-            onClick={() => setFilterKind(null)}
-          >
-            All
-          </button>
-          {KIND_ORDER.map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              className={filterKind === kind ? `${styles.kindButton} ${styles.kindButtonActive}` : styles.kindButton}
-              style={{ background: phosphorHue(kind) }}
-              aria-pressed={filterKind === kind}
-              aria-label={`Filter by ${kind}`}
-              onClick={() => setFilterKind((prev) => (prev === kind ? null : kind))}
-            />
-          ))}
-        </div>
+          {distinctTags.length > 0 && (
+            <select
+              className={styles.tagSelect}
+              value={filterTag ?? ""}
+              onChange={(e) => setFilterTag(e.target.value || null)}
+              aria-label="Filter by tag"
+            >
+              <option value="">All tags</option>
+              {distinctTags.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </select>
+          )}
 
-        {distinctTags.length > 0 && (
-          <select
-            className={styles.tagSelect}
-            value={filterTag ?? ""}
-            onChange={(e) => setFilterTag(e.target.value || null)}
-            aria-label="Filter by tag"
-          >
-            <option value="">All tags</option>
-            {distinctTags.map((tag) => (
-              <option key={tag} value={tag}>
-                {tag}
-              </option>
-            ))}
-          </select>
-        )}
-
-        <input
-          type="search"
-          className={styles.searchInput}
-          placeholder="Search quotes and threads…"
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          aria-label="Search highlights"
-        />
-      </div>
-
-      <div className={styles.stripSection}>
-        {data.highlights.length === 0 ? (
-          <div className={styles.emptyState}>No highlights yet — read a passage and ask a question.</div>
-        ) : (
-          <HeatStrip
-            chapters={data.chapters}
-            highlights={data.highlights}
-            litIds={litIds}
-            crtIntensity={crtIntensity}
-            reducedMotion={reducedMotion}
-            onOpen={handleOpenHighlight}
-            onImportanceChange={handleImportanceChange}
-            onTagsChange={handleTagsChange}
+          <input
+            type="search"
+            className={styles.searchInput}
+            placeholder="Search quotes and threads…"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            aria-label="Search highlights"
           />
-        )}
+        </div>
+
+        <div className={styles.stripSection}>
+          {data.highlights.length === 0 ? (
+            <div className={styles.emptyState}>No highlights yet — read a passage and ask a question.</div>
+          ) : (
+            <HeatStrip
+              chapters={data.chapters}
+              highlights={data.highlights}
+              litIds={litIds}
+              warpGeometry={warpGeometry}
+              warpWrapperRef={warpWrapperRef}
+              onOpen={handleOpenHighlight}
+              onImportanceChange={handleImportanceChange}
+              onTagsChange={handleTagsChange}
+            />
+          )}
+        </div>
+
+        <RevisitQueue highlights={data.highlights} onOpen={handleOpenHighlight} />
+
+        {warpActive && <VhsOverlay intensity={crtIntensity} />}
+        {warpActive && <div className={styles.vignette} style={{ opacity: 0.12 + crtIntensity * 0.28 }} />}
       </div>
 
-      <RevisitQueue highlights={data.highlights} onOpen={handleOpenHighlight} />
+      {warpActive && (
+        <ScanWarpFilter id={warpFilterId} width={warpSize.width} height={warpSize.height} intensity={crtIntensity} />
+      )}
     </div>
   );
 }

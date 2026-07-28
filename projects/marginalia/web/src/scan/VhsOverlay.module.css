@@ -1,0 +1,55 @@
+/* M18 "VHS treatment" (decisions.md 2026-07-28: "a slight buzz" is a
+   *visual* buzz — no audio, DESIGN.md's "no sound in v1.5" holds). Three
+   layered effects reading as a worn tape at rest, not a strobe: drifting
+   tracking lines, coloured chroma noise, and an occasional signal wobble.
+   Lives inside the warp wrapper so it bows with everything else — it's
+   part of the glass, not a floating layer. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  z-index: 5;
+}
+
+.trackingLines {
+  position: absolute;
+  inset: -20% 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 5px,
+    rgba(207, 238, 255, 0.05) 6px,
+    rgba(207, 238, 255, 0.09) 7px,
+    transparent 8px,
+    transparent 46px
+  );
+  animation: trackingDrift 11s linear infinite;
+}
+
+@keyframes trackingDrift {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(46px);
+  }
+}
+
+.chromaNoise {
+  position: absolute;
+  inset: 0;
+  mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100'%3E%3Cfilter id='n' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch' result='t'/%3E%3CfeColorMatrix in='t' type='matrix' values='1.4 0 0 0 0  0 0.6 0 0 0  0 0 1.6 0 0  0 0 0 0.5 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  animation: chromaFlicker 0.6s steps(2) infinite;
+}
+
+@keyframes chromaFlicker {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 37px 19px;
+  }
+}

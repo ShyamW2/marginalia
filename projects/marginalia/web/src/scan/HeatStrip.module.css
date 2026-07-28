@@ -16,9 +16,10 @@
   cursor: default;
 }
 
-/* M15: the only part of the strip that carries the CRT filter (barrel warp,
-   bloom, chromatic fringe) — never the chapter text or the interactive
-   hit-targets/readouts, which are the strip's direct children instead. */
+/* Groups the canvas/baseline/ticks so they clip to the strip's rounded
+   corners as one unit. M18 moved the CRT/VHS warp filter one level up
+   (ScanPage.module.css `.warpWrapper`) so the whole base scan screen bows
+   together — this is no longer where it's applied. */
 .graphicsLayer {
   position: absolute;
   inset: 0;
@@ -32,19 +33,16 @@
   inset: 0;
 }
 
-.vignette {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.65) 100%);
-}
-
-.chapterModeToggle {
+.stripToggles {
   position: absolute;
   top: 8px;
   right: 10px;
   z-index: 30;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.chapterModeToggle {
   background: var(--color-bg-raised);
   border: 1px solid var(--color-border);
   color: var(--color-text-muted);

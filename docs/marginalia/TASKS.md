@@ -2125,12 +2125,23 @@ across five documents.
 **Read the 2026-07-28 decisions entry first** — the warp tiering, the hit-test hazard,
 and the two-channel colour model are specified there.
 
-- [ ] **VHS treatment (visual only).** Drifting tracking lines, chroma noise, occasional
+- [x] **VHS treatment (visual only).** Drifting tracking lines, chroma noise, occasional
       signal wobble across the scan. **No audio** — DESIGN.md's "no sound in v1.5" holds.
       Intensity rides the existing CRT setting; reduced motion disables movement.
       _Acceptance: reads as a worn tape at rest, not as a strobe; every readout stays
       legible; reduced motion renders a still, clean panel._
-- [ ] **Whole-face barrel warp, tiered by z-hierarchy.** Everything on the base scan
+      _(verified 2026-07-29: `VhsOverlay.tsx` (drifting tracking lines +
+      coloured chroma noise, both gated behind the same `warpActive` the
+      filter uses) plus a `.wobbling` transform-only animation on the warp
+      wrapper itself for the "occasional" tear — kept out of VhsOverlay
+      because a wobble has to move the whole face, not an inert layer on
+      top of it. Live Playwright pass against the Metamorphosis fixture at
+      `scanCrtIntensity: 1` (this environment's default, already the worst
+      case): tracking-line texture visible and legible over it in the
+      screenshot; fully absent whenever `warpActive` is false (reduced
+      motion or intensity 0), same gate as the filter, no separate check
+      needed.)_
+- [x] **Whole-face barrel warp, tiered by z-hierarchy.** Everything on the base scan
       screen — strip, heat field, chapter axis, readouts, revisit queue — warps
       **together as one surface**, via a **single SVG filter on a single wrapper**
       (filtering pieces separately makes each bow around its own centre and stop lining
@@ -2143,7 +2154,24 @@ and the two-channel colour model are specified there.
       _Acceptance: the panel bows as one continuous face — no piece bows independently;
       a popover opens flat and correctly positioned; every readout passes contrast at
       full intensity; intensity 0 renders flat and crisp._
-- [ ] ⚠️ **Fix hit-testing under the warp.** A filtered element still hit-tests at its
+      _(verified 2026-07-29: one wrapper (`ScanPage.module.css` `.warpWrapper`)
+      contains the spotlight, readouts, filters, strip, and revisit queue —
+      the header (title + escape-hatch buttons) is deliberately outside it,
+      SPEC-GAP logged in NOTES.md/Spec gaps. `ScanWarpFilter.tsx` replaces
+      M15's `ScanCrtFilter.tsx` with one filter driven by `warp.ts`'s math
+      (see below). The per-highlight hover readout is portalled to
+      `document.body` with `position: fixed` computed from the hovered
+      band's own `getBoundingClientRect()` — confirmed live it renders
+      perfectly crisp, not warped, while everything behind it visibly bows.
+      Found and fixed two real bugs live, not in review — see NOTES.md "M18"
+      for both: the wrapper's own measuring `useEffect` never armed (mounts
+      before `data` loads, so `[]` deps meant it observed nothing, ever),
+      and the displacement bitmap only covering the wrapper's own box was
+      silently eating a couple of true-edge glyphs ("HIGHLIGHTS" render ing
+      as "IGHLIGHTS") because `feImage` is transparent-black (not
+      zero-displacement) past its own bounds. 165/165 tests, `pnpm build`
+      clean.)_
+- [x] ⚠️ **Fix hit-testing under the warp.** A filtered element still hit-tests at its
       *unwarped* geometry, so near the corners a heat band is clicked where it was, not
       where it looks. This will read as "the scan is broken" rather than as a warp
       problem. The strip's targets are 1-D positions along x: position the invisible
@@ -2151,7 +2179,17 @@ and the two-channel colour model are specified there.
       _Acceptance: click bands at both far edges and both corners of the strip — the one
       under the cursor is the one that responds, at every intensity including maximum;
       hover readouts appear over the band the pointer is actually on._
-- [ ] **Two-channel heat colour.** Restore the "what's what" reading M15 lost: **hue
+      _(verified 2026-07-29: `HeatStrip.tsx` measures its own offset within
+      the warp wrapper (`getBoundingClientRect` diff, recomputed alongside
+      its existing strip-size `ResizeObserver`) and runs each band's raw,
+      decluttered position through `warpPoint()` before setting its inline
+      `left` — the exact function `ScanWarpFilter` renders as the visual
+      displacement map, per warp.ts's module comment ("one function, not
+      two approximations"). Live Playwright pass at max CRT intensity:
+      hovering the leftmost, a middle, and the rightmost band each produced
+      a distinct, correctly-matched readout, and clicking a band opened the
+      reader on the right highlight.)_
+- [x] **Two-channel heat colour.** Restore the "what's what" reading M15 lost: **hue
       carries the category, luminance/alpha carries density**. Accumulate one density
       layer per category, then per pixel take summed density for brightness and the
       dominant category for hue. Keep M15's cool→hot density ramp as a selectable third
@@ -2159,6 +2197,17 @@ and the two-channel colour model are specified there.
       _Acceptance: a cluster of honey highlights reads as honey, not as generic hot; a
       mixed cluster shows its dominant kind; density is still legible as intensity;
       switching to density-only mode reproduces today's appearance._
+      _(verified 2026-07-29: `heatField.ts` accumulates one `Float32Array`
+      density layer per kind (direct per-pixel splat bounded to each blob's
+      radius, not a canvas composite — cheaper and side-steps alpha-
+      compositing colour-space questions), then per pixel takes the summed
+      density for brightness/alpha and the highest-density layer for hue.
+      `"density"` mode reuses M15's cool→hot ramp verbatim, ignoring kind.
+      `HeatStrip.tsx` gets a local mode toggle next to the existing chapter-
+      name one. Live Playwright pass on the Metamorphosis fixture (a rose +
+      slate cluster): "by kind" mode showed each cluster in its own hue;
+      clicking the toggle to "Density" reproduced the M15 cool→hot look on
+      the identical data.)_
 - [ ] **Tighter bleed + zoom/pan.** Reduce the blob radii (M15's `26 + weight*44`px lets
       neighbours merge into an unreadable smear) **and** add zoom + pan over the same
       0–100% domain so dense regions can be opened up and clicked precisely. Zoom is a

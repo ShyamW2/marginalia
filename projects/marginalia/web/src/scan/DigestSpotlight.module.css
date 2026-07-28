@@ -1,9 +1,10 @@
 /* Reuses the CRT custom properties ScanPage.module.css's .page sets — this
-   panel only ever renders inside that scope. Deliberately plainer than the
-   heat-field/warp instrument face: it's a utility panel that appears only
-   while initiating a digest, not part of the base glass (decisions.md
-   2026-07-28 later: warp applies to the base scan screen, and floating
-   panels like this one don't warp — this is exactly that kind of panel). */
+   panel only ever renders inside that scope. M18 (decisions.md 2026-07-29
+   later): this panel is *not* a floating overlay — it's laid out inline,
+   pushing the page below it down, so it lives inside ScanPage's warped
+   wrapper and bows with everything else. (An earlier note here said the
+   opposite, reasoning from the pre-M18 rule that only applied the filter to
+   the strip; superseded now that the whole base scan screen shares one.) */
 .panel {
   margin-bottom: 1.5rem;
   padding: 1rem 1.25rem;

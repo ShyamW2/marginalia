@@ -40,6 +40,16 @@ Append; don't rewrite history.
   is an index signature) — every CSS-module class reference in the web
   package would need `!` or a guard. Removed both flags, kept `strict: true`.
 
+- **2026-07-29 (M18):** decisions.md's "everything on the base scan screen
+  warps together" enumerates strip/heat-field/chapter-axis/readouts/
+  revisit-queue but doesn't say whether the page header (title, "← Book",
+  "Digest…", "Read digest") is inside or outside that surface. Boring
+  choice: outside — it's chrome/escape-hatches, not the instrument glass,
+  and the warp's hit-test-under-filter hazard (this milestone's own ⚠️) is
+  worse to risk on primary navigation than on precisely-positioned heat
+  bands, which already need — and get — explicit compensation regardless.
+  Revisit if the header visually reads as a seam once M18 ships.
+
 ## Friction
 
 - **2026-07-16 (M2):** epub.js's `ePub(url)` sniffs input type from the URL's
@@ -1967,3 +1977,95 @@ row as resumable/retryable rather than a permanent lock.
   position should run the same three flows over the tunnel in both dev and
   `pnpm start` mode and confirm the numbers actually move — that is the
   milestone's real acceptance bar, and it is still open.
+
+## M18 — Scan v2: the instrument face
+
+### The warp: one function, not two approximations
+
+M15's filter fed the *same* radius-only gradient into both the R and G
+channels of `feDisplacementMap`, so the true displacement vector pointed in
+one constant diagonal direction (scaled by radius) rather than genuinely
+outward from the center — decisions.md's own words, "isn't a mathematically
+perfect outward bulge, but it reads as one". That was fine while the filter
+only warped the strip's own graphics layer. M18 needs the *same* geometry to
+also position real hit-targets (heat bands, later the torch) and that
+approximation doesn't invert cleanly — there's no clean closed form for
+"where does raw point P visually end up" when the two channels aren't
+independent.
+
+Rebuilt as `web/src/scan/warp.ts`: a genuinely radial pull vector (toward
+center, magnitude ramps 0→max over a fraction of the half-diagonal), with
+`warpPoint()` answering "where does raw point P visually end up" by a few
+fixed-point iterations on the pull-sampling relationship (feDisplacementMap
+is a *pull* — output samples source at `x+dx,y+dy` — not a translation, so
+inverting it means solving `output + pull(output) = source`, which
+converges fast because the pull field is smooth). Fully unit-tested
+(`warp.test.ts`, 11 cases) with no canvas/DOM dependency — the geometry is
+pure math.
+
+`ScanCrtFilter.tsx` (M15) is gone; `ScanWarpFilter.tsx` renders the *same*
+math as a small canvas-generated bitmap fed to `feDisplacementMap`, rather
+than a declarative `<radialGradient>` — a plain gradient can't encode a
+direction that varies by angle, only by radius, so there was no way to keep
+the filter genuinely radial without rendering it. Both the filter and every
+hit-target compensation call the same `displacementAt`/`warpPoint` — one
+function, not two hand-tuned approximations drifting apart, which was the
+actual point of this milestone's ⚠️.
+
+### Two real bugs found live, not in code review
+
+- **The wrapper's own ResizeObserver never armed.** `ScanPage.tsx` mounts
+  before `data` resolves (the "Loading scan…" branch has no wrapper element
+  at all), so a `useEffect(..., [])` measuring `warpWrapperRef.current`
+  found it null on the only render it ever ran on, and the warp filter
+  silently never appeared — confirmed live: `filter: url("#r1")` was set on
+  the wrapper's style, but no `<filter id="r1">` existed anywhere in the DOM
+  (invalid filter references are simply ignored, so nothing errored). Fixed
+  by keying the effect on `Boolean(data)` instead of `[]`, so it re-arms
+  exactly once when the real wrapper first appears.
+- **Edge content was getting eaten, not just bowed.** The displacement map
+  (`feImage`) originally only covered the wrapper's own `0..width` box.
+  Since the pull points *toward* center, content sitting right at the true
+  edge (e.g. "HIGHLIGHTS" in the top-left readout tile) needs to be
+  *pulled outward*, past `x=0`, to render correctly under the warp — but
+  past its own bounds an `feImage` is transparent black, which
+  `feDisplacementMap` reads as a *spurious maximum negative displacement*,
+  not "no displacement". Confirmed live via screenshot: the leading "H" of
+  "HIGHLIGHTS" and "RE" of "REVISIT QUEUE" were simply missing at full CRT
+  intensity. Fixed by generating the displacement bitmap over the filter's
+  *entire* region (wrapper box plus margin), not just the box itself — see
+  the comment on `renderDisplacementMap` in `ScanWarpFilter.tsx`.
+
+### Two-channel heat colour
+
+`heatField.ts` now accumulates one `Float32Array` density layer per
+highlight kind (not a canvas composite — direct per-pixel accumulation
+bounded to each blob's radius, which is cheap enough at these blob counts
+and avoids canvas alpha-compositing color-space questions entirely) and
+takes, per pixel, the summed density for brightness/alpha and the
+highest-density layer's kind for hue. `"density"` mode keeps M15's old
+cool→hot ramp verbatim (ignoring kind) for the "where did I annotate most"
+reading — confirmed live that toggling between the two reproduces the
+respective expected appearance on the same fixture (Metamorphosis, 14
+highlights, a rose/slate cluster).
+
+### Verified live (Metamorphosis fixture, real Chromium via playwright-core,
+not mocked)
+
+- Filter renders (`<filter id>` + one `<feImage>` present in the DOM) at
+  the default `scanCrtIntensity: 1` (max — this environment's default
+  happened to already be the worst case, which is exactly the case this
+  milestone's own acceptance criteria call out).
+- Hovering the leftmost, a middle, and the rightmost band each produces a
+  distinct, correctly-matched `[role="note"]` readout — portalled to
+  `document.body` (`parentIsBody: true`), rendering perfectly crisp (not
+  warped/fringed) because it lives outside the filtered wrapper.
+  Clicking a band navigates to the reader on the right highlight.
+- The whole face bows as one surface in the screenshot — tile borders,
+  chapter tick numbers, and the revisit-queue text all curve together, not
+  independently.
+- Kind mode shows the rose/slate clusters in their own hues; Density mode
+  (via the strip's new toggle button) reproduces the M15 cool→hot look on
+  the same data.
+- Not yet exercised live: the tighter-bleed/zoom-pan, torch, and chapter-
+  label tasks below — still open at the time of this note.

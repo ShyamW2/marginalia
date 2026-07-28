@@ -7,15 +7,23 @@ import type { HighlightKind } from "@marginalia/shared";
  * against the scan's near-black panel background (~13.5:1 to 8.7:1 by eye,
  * comfortably past WCAG AA for the graphical elements they're used on).
  */
-const PHOSPHOR_HUE: Record<HighlightKind, string> = {
-  rose: "#ff6b81",
-  sage: "#59e39d",
-  honey: "#ffd166",
-  slate: "#5ec8ff",
+const PHOSPHOR_RGB: Record<HighlightKind, [number, number, number]> = {
+  rose: [255, 107, 129],
+  sage: [89, 227, 157],
+  honey: [255, 209, 102],
+  slate: [94, 200, 255],
 };
 
 export function phosphorHue(kind: HighlightKind): string {
-  return PHOSPHOR_HUE[kind];
+  const [r, g, b] = PHOSPHOR_RGB[kind];
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/** Raw channels — M18's two-channel heat field (heatField.ts) blends by
+ * category and needs to do real arithmetic on the colour, not just hand a
+ * CSS string to the DOM. */
+export function phosphorRgb(kind: HighlightKind): [number, number, number] {
+  return PHOSPHOR_RGB[kind];
 }
 
 export const KIND_ORDER: HighlightKind[] = ["rose", "sage", "honey", "slate"];
