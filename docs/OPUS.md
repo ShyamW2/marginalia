@@ -180,6 +180,12 @@ When you review — whether a diff or a milestone's shipped work:
   driven live, what was inferred, and what could not be verified in this environment and
   why. Write that way. An honest "not verified, here's why" is worth more than a
   confident claim that quietly rests on reading.
+- **Measure the layer you're blaming.** A performance complaint arrives attached to a
+  theory about its cause, and the theory is usually "the thing that changed most
+  recently". Time the actual layers before optimising any of them. In this project a
+  reported 15–20 second settings load measured **0.5 ms** server-side; the cost was 104
+  dev-mode module requests over an SSH tunnel. A milestone spent optimising the server
+  would have made a half-millisecond path faster and fixed nothing.
 - **Check the seams first.** This codebase's guarantees live in a handful of narrow
   interfaces (`LLMProvider`, `TTSEngine`, `VaultCompiler`, the anchoring rule). A change
   that widens a seam or leaks a provider type past it is a structural problem regardless

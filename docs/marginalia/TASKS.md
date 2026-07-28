@@ -1377,11 +1377,13 @@ milestones are unchanged):
 |---|---|---|
 | M16 | — | Reading QOL & bug fixes (new) |
 | M17 | — | The book digest & AI context (new) |
+| M17.5 | — | Performance & responsiveness (inserted 2026-07-29) |
 | M18 | — | Scan v2: the instrument face (new) |
 | M19 | — | Settings as a binder (new) |
 | M20 | M16 | The paper fold |
 | M21 | M17 | Audio I |
 | M22 | M18 | Audio II |
+| M23 | — | Web search (added 2026-07-28) |
 
 M17 must precede M18 and M22: the digest supplies the semantic scan's themes *and* is
 pass 1 of the audio cast scan. That dependency is why this renumber was worth doing —
@@ -1992,6 +1994,68 @@ cast scan. Build it once.
       true three-level comparison) are real follow-ups for a session with a
       faster provider, not blockers for calling this milestone done.)_
 
+### M17.5 — Performance & responsiveness (unplanned interlude)
+
+Inserted 2026-07-29 ahead of M18 at the operator's request. **Read the 2026-07-29
+decisions entry first** — it contains real measurements taken on the rig, and the
+headline is that the reported 15–20s settings load is a **0.5 ms** request server-side.
+Do not start by optimising the server.
+
+A decimal number deliberately, not a renumber: the 2026-07-28 entry committed to
+"prefer appending; reorder only when the dependency is real" after three renumbers, and
+an urgent insertion is exactly what a decimal handles without invalidating references
+across five documents.
+
+- [ ] **Measure first, and write the numbers down.** Before changing anything, capture a
+      baseline **from the operator's actual position** (over the SSH tunnel), not just on
+      the rig: browser devtools timings for a cold desk load, a settings open, and a
+      reader open — request count, transfer size, time to interactive — plus the same
+      three measured locally on the machine. The gap between those two columns *is* the
+      diagnosis. Record both in NOTES.md.
+      _Acceptance: a table in NOTES.md with local vs tunnelled figures for all three
+      flows; every later task in this milestone cites which number it moved._
+- [ ] **Serve the built app for remote use.** `server/src/index.ts` already serves
+      `web/dist` — but only under `NODE_ENV=production`, and no script runs it that way.
+      Add one (e.g. `pnpm start` = build + serve on the API port), document it as the way
+      to use Marginalia over a tunnel, and confirm the single-origin path works with no
+      Vite in the loop. Measured ratio to beat: **104 dev module requests / 4.7 MB**
+      versus **22 built files / ~305 KB gzipped**.
+      _Acceptance: over the same tunnel, a cold load in this mode is dramatically faster
+      than dev (record both); the API, SSE streams, and the digest run all still work
+      same-origin; dev mode is unchanged for local work._
+- [ ] **Find the stray Vite.** Two dev servers were found listening (5173 and 5174), only
+      one belonging to the running `pnpm dev`. Establish where the second comes from and
+      make it not happen — a tunnel pointed at a stale instance serving an old module
+      graph is its own bug, and it may be part of what the operator is seeing.
+      _Acceptance: `pnpm dev` produces exactly one Vite listener; a stale one is
+      impossible or loudly visible._
+- [ ] **Profile the client.** With the transport factor controlled for, profile a desk
+      load, a settings open, and a reader open in the browser's performance panel. M17
+      touched `ThreadPanel`, `ScanPage`, `ReaderView` and added the ladder and spotlight
+      components; a re-render storm is invisible to the `curl` timings that cleared the
+      server. Fix what the profile actually shows — no speculative memoisation.
+      _Acceptance: named, measured wins (component, before/after), or an explicit
+      recorded finding that client render time was not a significant contributor._
+- [ ] ⚠️ **Check subprocess and event-loop behaviour during a digest run.** `claudeAgent.ts`
+      now retains `lastQuery` so `planLimits()` has a live control channel; on the
+      subscription path each query is a spawned CLI subprocess, and a digest is one call
+      per chapter. Watch process count and RSS across a multi-chapter run, and time an
+      unrelated `/api/settings` request *while* one is in flight. If queries are being
+      retained, dispose them and get plan limits another way.
+      _Acceptance: process count and memory return to baseline after a run; an unrelated
+      API request during a digest still completes in single-digit milliseconds; if this
+      turns out to be a non-issue, record that too — a ruled-out suspect is a result._
+- [ ] **Guard against the regression returning.** A cheap, permanent signal: log
+      server-side handler duration for any request over a threshold, and record the
+      production bundle's size and chunk count in the build output so growth is visible
+      per milestone rather than discovered by feel three milestones later.
+      _Acceptance: a slow handler is visible in the server log without attaching a
+      profiler; bundle size is printed at build time._
+- [ ] **Verify:** from the operator's actual working position over the tunnel — open the
+      desk, open settings, open a book, run a short digest — and compare against the
+      baseline table. The milestone closes when the numbers moved, not when it feels
+      better.
+
 ### M18 — Scan v2: the instrument face
 
 **Read the 2026-07-28 decisions entry first** — the warp tiering, the hit-test hazard,
@@ -2286,6 +2350,29 @@ not milestones — do not start them from this list.**
   something the reader wrote. A free-floating chat box contradicts a standing discipline
   ("the highlight is the prompt") and would need that rule overturned deliberately in
   CLAUDE.md, not by drift.
+- **The spotlight as a literal torch** (decisions.md 2026-07-29). A cartoon flashlight
+  beam on the scan, aimed by click-drag along the timeline and widened/narrowed by
+  up/down — iOS-18-flashlight-style, drawn for the VHS/CRT aesthetic. However it looks,
+  it is still a *range picker* and must resolve to whole chapters (M17's storage unit),
+  with the numeric readout remaining the canonical keyboard path. Trap: a torch drawn
+  inside M18's warped base layer must be positioned through the **same barrel mapping**
+  as the heat bands, or the beam points somewhere other than where it lands.
+- **A scrolling manuscript mode** (decisions.md 2026-07-29). ⚠️ Reopens a settled
+  decision — PRODUCT.md records that pagination won in M2. The cost is not the
+  scrolling: **every reader effect since M10 assumes pages** (snapshot turns,
+  drag-to-peel, the M20 fold, turn zones, spread, the margin-vs-gutter model), so this
+  is a *second reading mode with its own affordances*, not a toggle. Highlights and
+  anchoring carry over (they are CFI/text-based); little else does. Decide between
+  epub.js's per-section `scrolled-doc` and a genuinely continuous manager **before**
+  building — they are different products.
+- **A speed reader (RSVP)**, framed as accessibility (decisions.md 2026-07-29). Must
+  reuse M21's sentence/word segmenter rather than growing a second chunker, and must save
+  position through the existing reading-position path so reading, listening, and
+  speed-reading never lose each other's place. Comes with requirements, not just a WPM
+  slider: instant pause-to-annotate, rewind by sentence, wide speed range, and a
+  lower-intensity alternative in the same feature (moving line-guide or bionic-style
+  emphasis) since RSVP helps some readers and harms others. "Lines per minute" is a
+  teleprompter and depends on the scrolling mode above.
 - **The evidence board.** Corkboard, pins, physics ropes, tabs. Two rulings: it is an
   **extension of the Desk, not a fourth room** (it hangs on the wall above the desk,
   keeping "three rooms, one building" intact), and it is a **view over data that already

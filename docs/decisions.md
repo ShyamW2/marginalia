@@ -3,6 +3,112 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-29 — Performance: measured, and the leading suspect isn't M17
+
+Operator reported the app becoming slow and unreliable after M17 shipped — library
+emptying, settings taking 15–20s where it was instant, books often not loading, the scan
+loading more reliably than the reader — while noting (and dismissing) that they are
+working over an `ssh -L` tunnel ~20km from the machine.
+
+**Measured on the rig itself, against the running dev server:**
+
+| What | Result |
+|---|---|
+| `GET /api/health` | 0.8 ms |
+| `GET /api/settings` | **0.5 ms** (3 consecutive runs, 0.48–0.56 ms) |
+| `GET /api/resources` | 0.8 ms |
+| Dev-mode module graph for one page load | **104 requests, 4.7 MB** |
+| Production build of the same app | **22 files, 1.08 MB raw / ~305 KB gzipped**, code-split per route |
+
+**The server is not slow.** A settings request that the operator experiences as 15–20
+seconds completes in half a millisecond locally, and the M17 code review supports that:
+the new tables are indexed, `GET /api/settings` is a plain synchronous row read, and
+nothing was added to the library or resource hot paths (`library/store.ts`'s diff is
+reading-position columns only).
+
+**The leading explanation is transport plus dev-mode module serving.** Vite in dev serves
+every source module as its own HTTP request — 104 of them, 4.7 MB, growing with every
+milestone (M17 added ~15 modules). An `ssh -L` tunnel multiplexes all of that onto a
+single TCP connection, so browser request parallelism buys much less than usual and
+SSH's own per-channel flow control becomes the bottleneck. The same app **built** is 22
+files and ~305 KB gzipped, of which one page loads a subset: roughly **15× fewer round
+trips and 15× less transfer**. That ratio is the right order of magnitude to turn ~1
+second into ~15–20. It also explains the two things that looked mysterious: "the scan
+loads, the reader rarely" (the reader additionally pulls the whole EPUB and the large
+epub.js dependency through the same pipe), and "it has got worse over versions" (the dev
+module graph grows every milestone, while nothing about the server did).
+
+**The fix already exists and is not being used.** `server/src/index.ts` already serves
+`web/dist` — but only when `NODE_ENV=production`, and there is no script that runs it
+that way. Remote sessions should be served the built app, not Vite dev.
+
+⚠️ **What this diagnosis does *not* cover, and must not be assumed away.** The
+measurements above were taken locally, on an idle server, with `curl` — they prove the
+API is fast; they do not prove the *app* is. Still open, and to be measured rather than
+reasoned about in M17.5:
+
+- **Client-side render cost.** M17 touched `ThreadPanel`, `ScanPage`, `ReaderView`, and
+  added the ladder/spotlight components. A re-render storm would be invisible to a
+  `curl` timing.
+- **Behaviour during and after a digest run.** `claudeAgent.ts` now retains `lastQuery`
+  so `planLimits()` has a live control channel. On the subscription path each query is a
+  spawned CLI subprocess; a retained query may be a retained subprocess, and a digest is
+  one call per chapter. Plausible, unproven, and cheap to check by watching process
+  count during a run.
+- **A stray second Vite.** Two Vite dev servers were found listening (5173 and 5174),
+  only one of which belongs to the running `pnpm dev`. If the tunnel points at the stale
+  one, that is its own class of confusion.
+
+**Rule this establishes:** *measure before optimising, and measure the layer you're
+blaming.* The operator's instinct was that new code made the app slow; the new code
+answers in half a millisecond. Had M17.5 begun by optimising server queries it would
+have spent a milestone making a 0.5 ms path faster.
+
+**Milestone numbering:** this lands as **M17.5**, deliberately not by renumbering
+everything downstream. The 2026-07-28 entry committed to "prefer appending; reorder only
+when the dependency is real" after three renumbers — an urgent unplanned insertion is
+exactly the case a decimal handles without invalidating references in five documents.
+
+## 2026-07-29 — Future UI directions (documented, not scheduled)
+
+Three operator ideas, recorded with their real constraints so the shape is settled
+before anyone starts. None are milestones.
+
+- **The spotlight becomes a literal torch.** A cartoon flashlight beam on the scan,
+  aimed by click-drag along the timeline (the `%` dial's gesture, which is already the
+  established "drag to scrub" idiom in this app), with up/down controlling beam width —
+  the iOS 18 flashlight gesture. Constraints that don't change: the beam is a *range
+  picker*, so however it looks it must still resolve to **whole chapters** (M17's
+  storage unit), and the numeric range readout stays the canonical keyboard path — the
+  torch is the charm, not the gate. One trap: a torch drawn inside M18's barrel-warped
+  base layer must be positioned through the **same barrel mapping** as the heat bands,
+  or the beam will point somewhere other than where it lands — the identical hazard M18
+  already documents for hit targets.
+- **A scrolling manuscript mode.** ⚠️ This reopens a settled decision — PRODUCT.md
+  records "pagination vs scroll: **pagination won** (shipped in M2, feel confirmed)" —
+  so it is a deliberate re-opening, not an addition. The real cost is not the scrolling:
+  it is that **every reader effect built since M10 assumes pages**. The snapshot page
+  turn, the drag-to-peel, the M20 fold, M11's turn zones, M12's spread, and M14's
+  margin-vs-gutter model are all page-shaped. A scroll mode is therefore a **second
+  reading mode with its own affordances**, not a toggle on the existing one — highlights
+  and anchoring carry over unchanged (they are CFI/text-based, not page-based), almost
+  nothing else does. epub.js offers `flow: "scrolled-doc"` per section; genuinely
+  continuous cross-chapter scrolling is a different manager and is the flakier path.
+  Decide *which* of those two before building, because they are different products.
+- **A speed reader (RSVP), framed as an accessibility feature.** Words or short chunks
+  presented at a set rate. Two architectural notes worth fixing now: it must **reuse
+  M21's sentence/word segmenter** (`server/src/audio/segment.ts`) rather than growing a
+  second text-chunking implementation — they are the same problem, and the audio one
+  already returns char offsets that map back to the page; and position must save through
+  the existing reading-position path, like audio, so switching between reading, listening
+  and speed-reading never loses your place. Design requirements that come with the
+  framing: pause-to-annotate (you cannot highlight mid-RSVP, so the control must be
+  instant), rewind by sentence, a wide speed range, and — since RSVP suits some readers
+  and actively harms others — a lower-intensity alternative in the same feature, such as
+  a moving line-guide or bionic-style emphasis. "Lines per minute" is really a
+  teleprompter, which depends on the scrolling mode above; treat it as a second mode of
+  this feature, gated on that decision.
+
 ## 2026-07-28 (later) — The digest in detail: chunking, the spotlight, the context ladder, usage accounting
 
 Follow-up to the v1.8 entry below, answering four operator questions about M17: how the
