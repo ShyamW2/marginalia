@@ -124,6 +124,45 @@
   white-space: nowrap;
 }
 
+/* M19.5 "the semantic scan: two layers": the Book layer's own register —
+   a flat, quantised bar right at the baseline, deliberately unlike Mine's
+   radial glow + tall variable-height bands below. Muted by default;
+   `.bookBandLit` brightens when the active theme filter matches this
+   chapter, the one visual language change the theme filter is allowed to
+   make here (never a taller band, never Mine's hue system). */
+.bookBand {
+  position: absolute;
+  bottom: 48px;
+  height: 8px;
+  background: var(--color-text-muted);
+  opacity: 0.18;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  padding: 0;
+  transition: opacity 200ms ease, background 200ms ease;
+}
+
+.bookBand:hover,
+.bookBand:focus-visible {
+  opacity: 0.35;
+}
+
+.bookBand:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.bookBandLit {
+  background: var(--color-accent);
+  opacity: 0.65;
+}
+
+.bookBandLit:hover,
+.bookBandLit:focus-visible {
+  opacity: 0.85;
+}
+
 .slot {
   position: absolute;
   top: 0;

@@ -2256,69 +2256,132 @@ Implementation, unaffected by the above:
   real mistake with no full recovery available, correctly escalated rather
   than papered over.
 
-## M19.5 — digest depth & the semantic scan (in progress) — 2026-07-29
+## M19.5 — digest depth & the semantic scan — 2026-07-29
 
-Backend groundwork landed first, in the order the checklist implies: the
-plot/thematic split has to exist before briefs or questions can be built on
-top of it, and the prompt fix is small and self-contained. Not yet started:
-the digest-page/reader UI for briefs and posed questions, spoiler-safe
-display, and the scan's second layer — flagged rather than rushed, since
-the scan work in particular is its own multi-part effort (canvas rendering,
-hit-testing, an extract pass, a shared theme vocabulary) comparable in size
-to M18.
+All six tasks implemented and unit/integration tested (server: 153 tests,
+shared: 11, web: 71 — 235 total, all passing); the milestone's own "Verify"
+step (set a brief on a fixture book, digest live, read into it, check the
+whole loop end to end) was **not** performed — no headless-browser tool was
+available in this environment, same limitation M19 hit. Flagged rather than
+claimed; the operator should drive this live before checking off Verify,
+especially the scan work below (canvas/warp hit-testing has a documented
+history of only failing in a real browser — see M18's notes).
 
-- **The split** (`server/src/digest/thematicStore.ts`,
-  `thematicBuild.ts`, migration 15). Plot (`chapter_digests`/`book_digests`)
-  is untouched — existing digested books keep everything, no re-digest, per
-  acceptance. Thematic is new: `resource_briefs` (one editable-in-place
-  brief per resource, no history) and `thematic_digests`
-  (resource + chapter + **brief hash**, snapshotting the brief's own text
-  alongside the hash so "the brief in force" can be shown even after the
-  live brief has since changed again). `thematic_runs` mirrors
-  `digest_runs`'s pause/resume-on-rate-limit shape but keys resumability on
-  `(spineStart, spineEnd, briefHash)` together — resuming under a since-
-  changed brief must not silently continue the old brief's run.
-- **Independence, proven by test, not just by construction.**
-  `thematicBuild.test.ts` asserts the plot provider is never touched by a
-  thematic run and the plot row's `generatedAt` never moves — the literal
-  "watch the ledger" acceptance criterion, as a test rather than a manual
-  check. Re-running under an unchanged brief is a true no-op (call count
-  test); changing the brief makes the prior row stale
-  (`isThematicStale`, hash comparison) and the next run regenerates exactly
-  that chapter with the new brief's text attached.
-  Deliberate design call not spelled out in decisions.md: the thematic pass
-  reads the chapter's **raw text**, not the plot summary — an intentional
-  redundancy that keeps the two calls structurally independent rather than
-  chaining one's output into the other's input, which would have made "do
-  not build them as one call" true in name only.
-  `LLMOperation` (`llm/usage.ts`) gained a fifth tag, `"thematic"`, sitting
-  alongside `"digest"` even though both resolve to the `digest` *role* —
-  the Usage divider's per-operation breakdown would otherwise blend plot
-  and thematic cost into one number, which is exactly the distinction this
-  milestone exists to draw.
-- **The prompt fix landed as its own small change**
-  (`llm/context.ts`'s `READING_COMPANION_INSTRUCTIONS`), not folded into
-  the thematic-generation prompt — it governs thread *answers*, a different
-  call site. Rewritten to state two postures explicitly rather than one
-  blended rule: factual/plot questions stay tightly grounded (unchanged
-  behavior), thematic/applied questions get explicit license to reason past
-  the page without hedging. Both are asserted by name in the comment above
-  it, because the acceptance criterion warns this is "easy to fix one by
-  breaking the other" — a blended rewrite would have silently done that.
-  `buildDigestContext` (same file) gained an optional `thematicChapters`
-  parameter, rendered as a new "THEMATIC READING" block alongside the
-  existing chapter-summaries block; `threads.ts`'s `resolveContext` passes
-  only chapters whose stored `briefHash` matches the resource's *current*
-  brief, so a stale analysis (from a brief the reader has since changed)
-  never silently grounds a live answer.
-- Not yet live-verified in a browser — no UI exists yet for any of this
-  (brief has no editor, thematic analysis has no display, nothing calls the
-  new `/thematic` or `/brief` endpoints from the client). The route/store/
-  pipeline layer is covered by 6 new automated tests (5 `thematicBuild`,
-  1 `context`) plus the existing suite (219 tests total across the
-  workspace, all passing) — genuine coverage of the acceptance criteria
-  that are data-level, but the UI-facing acceptance criteria for briefs,
-  posed questions, spoiler-safety, and the scan's two layers remain open.
+**The split** (`thematicStore.ts`, `thematicBuild.ts`, migration 15). Plot
+(`chapter_digests`/`book_digests`) is untouched — existing digested books
+keep everything, no re-digest. Thematic is new: `resource_briefs` (one
+editable-in-place brief per resource, no history) and `thematic_digests`
+(resource + chapter + **brief hash**, snapshotting the brief's own text
+alongside the hash so "the brief in force" can be shown even after the live
+brief has since changed again). `thematic_runs` mirrors `digest_runs`'s
+pause/resume-on-rate-limit shape but keys resumability on `(spineStart,
+spineEnd, briefHash)` together. Independence is proven by test, not just
+construction: `thematicBuild.test.ts` asserts the plot provider is never
+touched by a thematic run and the plot row's `generatedAt` never moves —
+the literal "watch the ledger" acceptance criterion, as a test. Deliberate
+design call not spelled out in decisions.md: the thematic pass reads the
+chapter's **raw text**, not the plot summary — keeps the two calls
+structurally independent rather than chaining one's output into the
+other's input. `LLMOperation` (`llm/usage.ts`) gained a fifth tag,
+`"thematic"`, alongside `"digest"` even though both resolve to the
+`digest` *role* — the Usage divider's per-operation breakdown would
+otherwise blend plot and thematic cost into one number.
 
+**Reader briefs & posed questions.** Brief CRUD (`GET`/`PUT
+/:id/brief`) and the thematic status route (`GET`/`POST /:id/thematic`)
+live in `routes/digest.ts`. Posed questions carry a verbatim **quote**
+alongside their text (decision 11: the model returns text, code locates
+it) — `chapterAnchor.ts`'s `locateQuoteAnchor` finds it in the chapter's
+raw text via a regex built from the quote's own words (tolerates the model
+collapsing whitespace differently), falling back to `chapterStartAnchor`
+if the quote genuinely isn't found. `POST /:id/chapter-anchor` turns that
+into a real, deduped highlight with a deliberately-unresolvable placeholder
+CFI (`UNRESOLVABLE_CHAPTER_ANCHOR_CFI`, `shared/anchorText.ts`) — safe for
+the reader's existing text-search anchor fallback, but **not** safe to hand
+to epub.js's `rendition.display()`, which parses a CFI directly rather than
+catching a failure. `ReaderView.tsx` now checks for that sentinel before
+navigating and falls back to the saved position instead; it and
+`ThreadPanel.tsx` gained `initialQuestion`/`initialDraft` plumbing (mirrors
+the existing `jumpToHighlightId` airlock pattern) so clicking a question
+opens a thread with it pre-filled in the draft, not auto-sent.
 
-  than guessed around.
+**The prompt fix** (`llm/context.ts`'s `READING_COMPANION_INSTRUCTIONS`)
+landed as its own small change, separate from the thematic-generation
+prompt — it governs thread *answers*. States two postures explicitly
+rather than one blended rule: factual/plot questions stay tightly
+grounded (unchanged), thematic/applied questions get explicit license to
+reason past the page without hedging — the acceptance criterion warns this
+is "easy to fix one by breaking the other," so both are named in the
+comment above it. `buildDigestContext` gained an optional
+`thematicChapters` block; `threads.ts`'s `resolveContext` passes only
+chapters whose stored `briefHash` matches the resource's *current* brief.
+
+**Spoiler-safe display.** `buildDigestStatus`/`buildThematicStatus`
+(`routes/digest.ts`) now redact summary/themes/characters/title/analysis/
+questions for any chapter past the bookmark unless its spine index is in
+the `?reveal=` query param — redaction happens server-side (content never
+sent), matching the existing M18 title-gating pattern extended to every
+field. Book-level synopsis/cast/themes get a second, bookmark-bounded
+reduce (`book_digest_snapshots`, migration 16) via
+`maybeRefreshBookDigestSnapshot`: regenerates only when the furthest
+digested chapter within the bookmark has advanced past what's cached
+(proven by test — a same-bookmark second call makes zero provider calls),
+so a page turn with no new coverage is a no-op. `DigestPage.tsx` was
+rewritten from a read-only markdown projection into the real interactive
+surface: brief editor, an "Analyze themes" trigger, book synopsis with an
+explicit reveal, and per-chapter cards with their own reveal button and
+question chips.
+
+**The semantic scan: two layers.** Mine (existing highlight heat field,
+unchanged) and Book (new) are independent toggles; a shared theme
+vocabulary filters both. Book layer data: `highlight_themes` (migration
+17, same shape as M9's `highlight_tags` but model-tagged rather than
+reader-authored — never merged with it) populated by a new extract pass
+(`themeTagging.ts`'s `runThemeTagging`, one call per untagged highlight
+against the resource's current theme vocabulary; "LLM proposes, code
+disposes" — the model's returned theme names are filtered against the
+actual vocabulary before anything is persisted). Scope cut, deliberate:
+first-time tagging only, no re-tag-on-vocabulary-growth pass — a highlight
+tagged once is never revisited even if later thematic runs add new themes.
+`buildScanData` (`annotations/scan.ts`) gained `highlights[].themes` and a
+new `book` field (`hasDigest`, `themeVocabulary`, per-chapter
+`{hasThematic, themes}`) — spoiler-gated by the same bookmark signal as
+the digest page (a chapter-level theme label like "betrayal" is exactly
+the kind of spoiler this milestone exists to gate, extended to a surface
+decisions.md didn't explicitly call out).
+
+On the client, `HeatStrip.tsx` renders Book-layer bands as flat, muted bars
+right at the baseline — deliberately unlike Mine's radial glow, per
+decisions.md's "own register" requirement — positioned through the same
+`warpLocal` pixel-warp pipeline the Mine hit-targets already use (approximated
+by warping just the two chapter-edge points and drawing a straight bar
+between them; a wide chapter's true barrel curve isn't traced exactly, which
+reads as acceptably "quantised" rather than as a bug). **"Mine wins on
+overlap" costs nothing extra**: Book bands render *before* Mine's highlight
+buttons in DOM order, so normal browser click-target resolution (topmost
+element at a point wins) gives the right precedence for free — no custom
+hit-test math needed, unlike the warp positioning itself. A band's `onClick`
+reuses the *same* `POST /:id/chapter-anchor` endpoint the digest page's
+questions use (an empty quote falls back to the chapter's own opening text),
+so "click a book band, land in the reader" needed no new anchoring
+machinery. `ScanPage.tsx` gained Mine/Book toggle buttons and a theme
+`<select>`, populated from `data.book.themeVocabulary`; when
+`!data.book.hasDigest` the select is replaced with a plain explanatory
+line rather than an empty dropdown, and the strip's own empty-state check
+now also considers `hasDigest` (a digested-but-highlight-free book still
+shows the strip, for its Book bands).
+
+**What's genuinely unverified**: everything under "the semantic scan"
+above touches the warp/hit-test system NOTES.md already flags as having a
+real history of only-fails-live bugs (M18's two documented incidents). The
+z-index/DOM-order argument for "Mine wins on overlap" is sound on paper but
+was never confirmed by an actual click in a real browser. Same for the
+band-edge-warp approximation's visual legibility, and whether
+`rendition.display()`'s sentinel-CFI guard in `ReaderView.tsx` actually
+avoids a crash (reasoned from the anchor-resolution code's documented
+try/catch behavior, not observed). Recommend a live pass covering: both
+scan layers on together with a theme filter active, clicking a highlight
+that sits inside a lit book band, clicking a bare book band with no
+highlight under it, and a posed question's pre-filled thread opening
+correctly in the reader — before trusting any of it in front of the
+operator's own library.

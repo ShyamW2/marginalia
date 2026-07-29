@@ -140,6 +140,20 @@ export function isThematicStale(digest: Pick<ThematicDigest, "briefHash">, curre
   return digest.briefHash !== currentBriefHash;
 }
 
+/** Every distinct theme across this resource's thematic layer — the one
+ * vocabulary the scan's Book layer and the Mine-layer tagging pass
+ * (themeTagging.ts) both draw from (decisions.md 2026-07-29 later: "one
+ * theme vocabulary across both, so filtering by a theme lights both
+ * layers"). Draws from every chapter's thematic row regardless of which
+ * brief produced it — a stale row's themes are still real book themes, even
+ * if the analysis text around them is due for a re-run. */
+export function listThemeVocabulary(db: Database.Database, resourceId: string): string[] {
+  const rows = listThematicDigests(db, resourceId);
+  const vocabulary = new Set<string>();
+  for (const row of rows) for (const theme of row.themes) vocabulary.add(theme);
+  return [...vocabulary].sort();
+}
+
 export type ThematicRunStatus = "running" | "paused_rate_limit" | "completed" | "failed";
 
 export interface ThematicRun {

@@ -18,6 +18,7 @@ import { sectionLabel } from "../llm/context.js";
 import { getRawSettings } from "../settings/store.js";
 import { estimateDigestRun, maybeRefreshBookDigestSnapshot, runDigest } from "../digest/build.js";
 import { runThematicDigest } from "../digest/thematicBuild.js";
+import { runThemeTagging } from "../digest/themeTagging.js";
 import { chapterStartAnchor, locateQuoteAnchor } from "../digest/chapterAnchor.js";
 import { writeDigestMarkdown, renderDigestMarkdown } from "../digest/markdown.js";
 import {
@@ -495,4 +496,41 @@ digestRouter.post("/:id/chapter-anchor", (req, res) => {
     kind: "slate", // "a question about the text" — the existing kind Ask defaults to
   });
   res.status(201).json(highlight);
+});
+
+/**
+ * Tags every not-yet-tagged highlight in this resource against the book's
+ * theme vocabulary — the Mine layer's theme signal for the scan (decisions.md
+ * 2026-07-29 later). A no-op (200, `{tagged: 0}`) if the book has no
+ * thematic layer yet rather than an error — there's simply nothing to tag
+ * against.
+ */
+digestRouter.post("/:id/theme-tagging", async (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+
+  const provider = getProvider(db, "digest", "extract", resource.id);
+  if (!provider) {
+    res.status(400).json({ error: "provider_unconfigured" });
+    return;
+  }
+
+  try {
+    const tagged = await runThemeTagging(db, provider, resource.id);
+    res.json({ tagged });
+  } catch (err) {
+    if (err instanceof LLMError) {
+      // eslint-disable-next-line no-console
+      console.error(`[theme-tagging] ${err.code}: ${err.message}`);
+      res.status(ERROR_STATUS[err.code]).json({ error: err.code });
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.error("[theme-tagging]", err);
+    res.status(500).json({ error: "theme_tagging_failed" });
+  }
 });

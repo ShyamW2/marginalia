@@ -1,10 +1,13 @@
 import type Database from "better-sqlite3";
-import type { ScanChapter, ScanData, ScanHighlight } from "@marginalia/shared";
+import type { ScanBookChapter, ScanChapter, ScanData, ScanHighlight } from "@marginalia/shared";
 import { getReadingPosition, getResourceById, getResourceTextSections } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "./highlights.js";
 import { listMessagesForThread } from "./threads.js";
 import { listTagsByHighlightId } from "./tags.js";
+import { listThemesByHighlightId } from "./highlightThemes.js";
 import { computeHighlightPositionPercent } from "./position.js";
+import { listChapterDigests } from "../digest/store.js";
+import { listThematicDigests } from "../digest/thematicStore.js";
 
 function firstLine(text: string, maxLength = 140): string {
   const line = text.split("\n").find((l) => l.trim().length > 0) ?? "";
@@ -45,6 +48,7 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
 
   const highlightRows = listHighlightsWithThreadsForResource(db, resourceId);
   const tagsByHighlight = listTagsByHighlightId(db, resourceId);
+  const themesByHighlight = listThemesByHighlightId(db, resourceId);
 
   const highlights: ScanHighlight[] = highlightRows.map((h) => {
     const positionPercent = computeHighlightPositionPercent(db, resourceId, h.spineIndex, {
@@ -68,6 +72,7 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
       exact: h.exact,
       importance: h.importance,
       tags: tagsByHighlight.get(h.id) ?? [],
+      themes: themesByHighlight.get(h.id) ?? [],
       note: h.note,
       positionPercent,
       threadId: h.thread?.id ?? null,
@@ -79,11 +84,37 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
 
   const readingPosition = getReadingPosition(db, resourceId);
 
+  // M19.5 "the semantic scan: two layers" — the Book layer. Chapter-
+  // resolution, gated by the same bookmark signal as the digest page's
+  // chapter entries (a theme label past the bookmark is a spoiler too).
+  const bookmarkSpineIndex = readingPosition?.spineIndex ?? -1;
+  const hasDigest = listChapterDigests(db, resourceId).length > 0;
+  const thematicByIndex = new Map(listThematicDigests(db, resourceId).map((t) => [t.spineIndex, t]));
+  const bookChapters: ScanBookChapter[] = chapters.map((c) => {
+    const t = thematicByIndex.get(c.spineIndex);
+    const revealed = c.spineIndex <= bookmarkSpineIndex;
+    const hasThematic = Boolean(t) && revealed;
+    return {
+      spineIndex: c.spineIndex,
+      hasThematic,
+      themes: hasThematic ? (t?.themes ?? []) : [],
+    };
+  });
+  // Vocabulary only draws from what's actually shown here — a theme that
+  // exists solely in a past-the-bookmark chapter shouldn't appear as a
+  // filterable option before the reader's read that far.
+  const themeVocabulary = [...new Set(bookChapters.flatMap((c) => c.themes))].sort();
+
   return {
     resource,
     totalHighlights: highlights.length,
     lastReadAt: readingPosition?.updatedAt ?? null,
     chapters,
     highlights,
+    book: {
+      hasDigest,
+      themeVocabulary,
+      chapters: bookChapters,
+    },
   };
 }

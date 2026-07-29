@@ -576,6 +576,12 @@ export const ScanHighlightSchema = z.object({
   exact: z.string(),
   importance: HighlightImportanceSchema,
   tags: z.array(z.string()),
+  // M19.5 "the semantic scan: two layers" (decisions.md 2026-07-29 later):
+  // the Mine layer's theme signal, from the extract pass in
+  // server/src/digest/themeTagging.ts — a *model proposal* filtered to the
+  // book's fixed theme vocabulary, kept in its own table/field from the
+  // reader-authored `tags` above, never merged with them.
+  themes: z.array(z.string()),
   note: z.string(),
   positionPercent: z.number().min(0).max(1).nullable(),
   threadId: z.string().nullable(),
@@ -585,12 +591,46 @@ export const ScanHighlightSchema = z.object({
 });
 export type ScanHighlight = z.infer<typeof ScanHighlightSchema>;
 
+/**
+ * One chapter's contribution to the scan's **Book** layer (decisions.md
+ * 2026-07-29 later: "themes from chapter digests", chapter resolution,
+ * "where does this book talk about X"). `themes` is empty and `hasThematic`
+ * is false both when the chapter has no thematic analysis yet *and* when it
+ * does but sits past the reader's bookmark — spoiler-gated the same way
+ * DigestChapterStatusSchema's chapter entries are, extended to this surface
+ * since a chapter-level theme label ("betrayal") is exactly the kind of
+ * spoiler M19.5 exists to gate.
+ */
+export const ScanBookChapterSchema = z.object({
+  spineIndex: z.number().int().nonnegative(),
+  hasThematic: z.boolean(),
+  themes: z.array(z.string()),
+});
+export type ScanBookChapter = z.infer<typeof ScanBookChapterSchema>;
+
+/**
+ * ⚠️ Never merge with the Mine layer's data — the Book layer is chapter-
+ * resolution, quantized, and must read as visually distinct from Mine's
+ * exact-position bands (decisions.md 2026-07-29 later). `hasDigest` false
+ * means "fall back to kind mode with an explanation, not an empty strip".
+ */
+export const ScanBookLayerSchema = z.object({
+  hasDigest: z.boolean(),
+  /** The one theme vocabulary shared with the Mine layer's `themes` field —
+   * union of every (unredacted) chapter's thematic themes, for the scan's
+   * theme filter UI. */
+  themeVocabulary: z.array(z.string()),
+  chapters: z.array(ScanBookChapterSchema),
+});
+export type ScanBookLayer = z.infer<typeof ScanBookLayerSchema>;
+
 export const ScanDataSchema = z.object({
   resource: ResourceSchema,
   totalHighlights: z.number().int().nonnegative(),
   lastReadAt: z.string().nullable(),
   chapters: z.array(ScanChapterSchema),
   highlights: z.array(ScanHighlightSchema),
+  book: ScanBookLayerSchema,
 });
 export type ScanData = z.infer<typeof ScanDataSchema>;
 

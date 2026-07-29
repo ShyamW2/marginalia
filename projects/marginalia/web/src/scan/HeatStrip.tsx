@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import type { HighlightImportance, ScanChapter, ScanHighlight } from "@marginalia/shared";
+import type { HighlightImportance, ScanBookChapter, ScanChapter, ScanHighlight } from "@marginalia/shared";
 import { ImportanceStars } from "../highlights/ImportanceStars.js";
 import { TagEditor } from "../highlights/TagEditor.js";
 import { phosphorHue } from "./scanPalette.js";
@@ -55,6 +55,24 @@ interface HeatStripProps {
   highlights: ScanHighlight[];
   /** null = no filter active, every band is lit. */
   litIds: Set<string> | null;
+  /** M19.5: "filter to either or show both" — Mine's heat field/bands only
+   * render while this is true; kind/tag/search filters and hit-testing are
+   * otherwise unaffected (this hides, it doesn't clear, the filters). */
+  showMineLayer: boolean;
+  /** M19.5 "the semantic scan: two layers" (decisions.md 2026-07-29 later):
+   * the Book layer's chapter-resolution data, and whether it's shown at
+   * all — independent of `litIds` above, which only ever governs the Mine
+   * layer ("digest/AI is a second signal, not a filter over the first"). */
+  bookChapters: ScanBookChapter[];
+  showBookLayer: boolean;
+  /** null = no theme filter active, every book band is lit at its neutral
+   * tone. Set = only bands (and, via litIds, highlights) carrying that
+   * theme light up — the one shared vocabulary lighting both layers. */
+  litTheme: string | null;
+  /** M19.5: a book band with no highlight under it "clicks through to the
+   * chapter start" (decisions.md) — the only honest target at chapter
+   * resolution. */
+  onOpenChapter: (spineIndex: number) => void;
   /** M18: the whole-face warp's geometry, in the shared wrapper's own px —
    * identity (no displacement) when the CRT effect is off, so callers don't
    * need a separate "is warp active" branch. */
@@ -79,6 +97,11 @@ export function HeatStrip({
   chapters,
   highlights,
   litIds,
+  showMineLayer,
+  bookChapters,
+  showBookLayer,
+  litTheme,
+  onOpenChapter,
   warpGeometry,
   warpWrapperRef,
   onOpen,
@@ -160,8 +183,10 @@ export function HeatStrip({
     if (!canvas || stripSize.width === 0 || stripSize.height === 0) return;
     const baselineY = stripSize.height - BASELINE_OFFSET;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    drawHeatField(canvas, heatPoints, stripSize.width, stripSize.height, baselineY, dpr, colorMode);
-  }, [heatPoints, stripSize, colorMode]);
+    // M19.5 "filter to either or show both": an empty point list clears the
+    // canvas to nothing, the same effect turning the layer off should have.
+    drawHeatField(canvas, showMineLayer ? heatPoints : [], stripSize.width, stripSize.height, baselineY, dpr, colorMode);
+  }, [heatPoints, stripSize, colorMode, showMineLayer]);
 
   function handleHoverStart(id: string, rect: DOMRect) {
     setHoveredId(id);
@@ -274,7 +299,43 @@ export function HeatStrip({
         </div>
       </div>
 
-      {positioned.map((highlight) => {
+      {/* M19.5 "the semantic scan: two layers" (decisions.md 2026-07-29
+          later): the Book layer — a flat, obviously-quantised band per
+          chapter with a thematic reading, sitting right at the baseline
+          (its own register, never borrowing Mine's radial-glow language).
+          Rendered *before* the Mine highlight bands below so normal DOM
+          stacking gives "Mine wins on overlap" for free: a highlight's
+          hit-target button paints later and sits on top at the same point,
+          so a click there opens the highlight, never falls through to this
+          chapter-level target. */}
+      {showBookLayer &&
+        bookChapters.map((bc) => {
+          if (!bc.hasThematic) return null;
+          const chapter = chapters.find((c) => c.spineIndex === bc.spineIndex);
+          if (!chapter) return null;
+          const lit = litTheme === null || bc.themes.includes(litTheme);
+          const rawStartX = fractionToView(chapter.startPercent, zoomState) * stripSize.width;
+          const rawEndX =
+            fractionToView(chapter.startPercent + chapter.lengthPercent, zoomState) * stripSize.width;
+          const rawY = stripSize.height - BASELINE_OFFSET;
+          const warpedStart = stripSize.width > 0 ? warpLocal(rawStartX, rawY) : { x: rawStartX, y: rawY };
+          const warpedEnd = stripSize.width > 0 ? warpLocal(rawEndX, rawY) : { x: rawEndX, y: rawY };
+          const left = Math.min(warpedStart.x, warpedEnd.x);
+          const width = Math.max(2, Math.abs(warpedEnd.x - warpedStart.x));
+          return (
+            <button
+              key={`book-${bc.spineIndex}`}
+              type="button"
+              className={lit ? `${styles.bookBand} ${styles.bookBandLit}` : styles.bookBand}
+              style={{ left, width }}
+              aria-label={`Chapter ${chapter.chapterNumber} book themes: ${bc.themes.join(", ") || "none"} — open chapter`}
+              onClick={() => onOpenChapter(bc.spineIndex)}
+            />
+          );
+        })}
+
+      {showMineLayer &&
+        positioned.map((highlight) => {
         const lit = litIds === null || litIds.has(highlight.id);
         const hue = phosphorHue(highlight.kind);
         const height = bandHeight(highlight);

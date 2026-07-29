@@ -428,4 +428,21 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M19.5 "the semantic scan: two layers" (docs/decisions.md 2026-07-29
+    // later): the Mine layer's theme signal — themes tagged onto a highlight
+    // (its quote + note + thread) by an extract pass against the thematic
+    // layer's vocabulary (server/src/digest/themeTagging.ts). Same shape as
+    // `highlight_tags` (M9) — a highlight's own reader-authored tags and its
+    // model-tagged themes are deliberately separate tables, never merged,
+    // since one is reader-authored and the other is a model proposal.
+    version: 17,
+    sql: `
+      CREATE TABLE highlight_themes (
+        highlight_id  TEXT NOT NULL REFERENCES highlights(id),
+        theme         TEXT NOT NULL,
+        PRIMARY KEY (highlight_id, theme)
+      );
+    `,
+  },
 ];

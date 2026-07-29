@@ -1,8 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createDb } from "../db.js";
+import { setReadingPosition } from "../library/store.js";
+import { putChapterDigest } from "../digest/store.js";
+import { putThematicDigest } from "../digest/thematicStore.js";
 import { createHighlight } from "./highlights.js";
 import { createThread, createMessage } from "./threads.js";
 import { setTagsForHighlight } from "./tags.js";
+import { setThemesForHighlight } from "./highlightThemes.js";
 import { buildScanData } from "./scan.js";
 
 type Db = ReturnType<typeof createDb>;
@@ -105,5 +109,85 @@ describe("buildScanData", () => {
 
     const data = buildScanData(db, "res-1")!;
     expect(data.highlights[0].positionPercent).toBeNull();
+  });
+
+  it("carries a highlight's tagged themes separately from its reader-authored tags", () => {
+    seedResource(db, "res-1");
+    seedSection(db, "res-1", 0, "some section text");
+    const highlight = createHighlight(db, {
+      resourceId: "res-1",
+      exact: "some",
+      prefix: "",
+      suffix: " section",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose",
+    });
+    setTagsForHighlight(db, highlight.id, ["my-tag"]);
+    setThemesForHighlight(db, highlight.id, ["autonomy"]);
+
+    const data = buildScanData(db, "res-1")!;
+    expect(data.highlights[0].tags).toEqual(["my-tag"]);
+    expect(data.highlights[0].themes).toEqual(["autonomy"]);
+  });
+
+  it("book layer falls back to hasDigest=false with no chapters when nothing's been digested", () => {
+    seedResource(db, "res-1");
+    seedSection(db, "res-1", 0, "chapter text");
+
+    const data = buildScanData(db, "res-1")!;
+    expect(data.book.hasDigest).toBe(false);
+    expect(data.book.themeVocabulary).toEqual([]);
+    expect(data.book.chapters[0]).toEqual({ spineIndex: 0, hasThematic: false, themes: [] });
+  });
+
+  it("book layer surfaces a chapter's thematic themes only once the bookmark has reached it", () => {
+    seedResource(db, "res-1");
+    seedSection(db, "res-1", 0, "chapter zero text");
+    seedSection(db, "res-1", 1, "chapter one text");
+    putChapterDigest(db, {
+      resourceId: "res-1",
+      spineIndex: 0,
+      summary: "s",
+      themes: [],
+      characters: [],
+      title: null,
+      sourceHash: "h",
+    });
+    putThematicDigest(db, {
+      resourceId: "res-1",
+      spineIndex: 0,
+      briefHash: "b",
+      briefText: "",
+      analysis: "a",
+      themes: ["autonomy"],
+      questions: [],
+    });
+    putThematicDigest(db, {
+      resourceId: "res-1",
+      spineIndex: 1,
+      briefHash: "b",
+      briefText: "",
+      analysis: "a",
+      themes: ["consequence"],
+      questions: [],
+    });
+
+    // No bookmark at all — nothing revealed yet, same conservative default
+    // as the digest page's chapter gating.
+    let data = buildScanData(db, "res-1")!;
+    expect(data.book.hasDigest).toBe(true);
+    expect(data.book.chapters).toEqual([
+      { spineIndex: 0, hasThematic: false, themes: [] },
+      { spineIndex: 1, hasThematic: false, themes: [] },
+    ]);
+    expect(data.book.themeVocabulary).toEqual([]);
+
+    // Bookmark at chapter 0 — chapter 0 revealed, chapter 1 still gated.
+    setReadingPosition(db, "res-1", "epubcfi(/6/4!/4/2)", 0, 0);
+    data = buildScanData(db, "res-1")!;
+    expect(data.book.chapters[0]).toEqual({ spineIndex: 0, hasThematic: true, themes: ["autonomy"] });
+    expect(data.book.chapters[1]).toEqual({ spineIndex: 1, hasThematic: false, themes: [] });
+    expect(data.book.themeVocabulary).toEqual(["autonomy"]);
   });
 });

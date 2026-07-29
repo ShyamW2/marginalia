@@ -2436,7 +2436,7 @@ and evolves as you read.** Two layers, two lifecycles — do not build them as o
       readable without a deliberate reveal, including titles; the safe synopsis genuinely
       only reflects what you've read; revealing is per-item and does not unlock the rest;
       the lazy regeneration does not fire on every page turn (watch the ledger)._
-- [ ] **The semantic scan: two layers.** *(Moved here from M18 on 2026-07-29 — it needs
+- [x] **The semantic scan: two layers.** *(Moved here from M18 on 2026-07-29 — it needs
       the thematic data above. Scope confirmed 2026-07-29 addendum: "digest/AI" is a
       **second signal**, not a filter over the first.)*
 
