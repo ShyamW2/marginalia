@@ -3,6 +3,63 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-30 (later) — M19.6 operator verification: the spread divisor bug, and book-wide pages by click not by character
+
+A manual verification pass of M19.6 by the operator, after the round above landed, found
+real remaining problems and one deliberate reversal of that same round's own reasoning.
+Full technical detail lives in NOTES.md ("operator manual verification, round 2" through
+"the reading pane is resizable" and "`r` opens the reader") — this entry records the
+decisions, not the mechanics.
+
+### The "page skip" was the spread-mode divisor bug, not a second bug
+
+Diagnosed live rather than re-guessed: epub.js's `location.start.displayed.page`/
+`.total` are single-*column* indices — a two-page spread's raw total is always double
+the real number of spreads (`layout.js`'s `pages = spreads * divisor`). The reader
+passed these through unadjusted, so the true last spread of a section reported itself as
+"page N-1 of N" (N always even) rather than "page N/2 of N/2" — indistinguishable, from
+the reading seat, from a skipped page, and exactly matching every example the operator
+gave ("page 7 of 8 is the last page", "skips the last page or two"). A 17-width × 2-mode
+sweep found this 100% reproducible in "auto" spread mode at any width ≥ 1200px and
+**zero** anomalies in single mode at any tested width/margin/font-scale combination —
+single mode's own `--reader-max-width` cap (800px, below the 1200px spread threshold)
+means it can never trigger a real spread at all. Fixed by reading the manager's own live
+`layout.divisor` and dividing the raw numbers back out (`bookPages.ts`). Single-mode
+"item 1" is not confidently closed despite the sweep — see NOTES.md for the reasoning
+on why the spread-mode fix is nonetheless believed to be the whole explanation.
+
+### Book-wide page numbers: reversed from "layout-independent" to "click-accurate"
+
+The 2026-07-30 (earlier) entry above chose `book.locations` (character-based, ~1600
+chars/location) specifically *for* being stable across font size, margin, and spread
+mode — accepting that a "page" wasn't a claim about any window's actual pagination. The
+operator, after living with it, explicitly rejected that trade: clicking "next" could
+move the book-wide number by 5+ at once (a location isn't one rendered page), and they
+want the opposite property — **every "next" is exactly +1**, even if the total shifts
+when text size or margin changes. This is a deliberate reversal, made directly and with
+specific, testable acceptance criteria ("clicking next increments by one," "percentage
+by percentage of pages, like Apple Books"), not implementation drift — recorded here per
+CLAUDE.md's own rule that settled decisions are overturned deliberately.
+
+New rule: **book-wide page numbers and percentage are click-accurate, not
+layout-stable.** Visited sections contribute their real, spread-adjusted page count;
+unvisited sections are estimated from their share of the book's text (reusing the Scan's
+own `lengthPercent`), calibrated from whatever has actually been measured, and the
+estimate is allowed to shift as more of the book is visited. `book.locations` itself is
+unaffected and stays the mechanism for the scrub dial and TOC chapter-start percents —
+this reversal is scoped to the reader's footer/percent readout only, the same "amendment
+about the reader's footer, not about position ranges in analysis" carve-out the earlier
+entry already drew around the digest's own percent-and-chapter convention.
+
+### The reading pane's outer measure is now user-resizable
+
+A fourth-knob risk the M19.6 task text itself flagged (`readerMargin`, the column-width
+target, and the spread gutter already each own a job) resolved the same way: the
+drag-set width **replaces** the spread-mode default outright rather than adding a fourth
+independent number, with `readerMargin` staying exactly what it was — a proportion
+*inside* the pane. Persisted (`readerPaneWidth`, `0` = unset) and resolved before the
+reader mounts, so there's no flash back to the default on reload.
+
 ## 2026-07-30 — The global overhaul: one control system, two registers, rooms vs. instruments
 
 A large operator feedback pass after living with M19/M19.5 — roughly forty items, mostly

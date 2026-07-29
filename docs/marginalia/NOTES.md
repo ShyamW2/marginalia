@@ -477,6 +477,16 @@ missing feature.
   -L` position). The milestone's own Verify step asks for an
   operator-position, over-the-tunnel comparison against the baseline table
   — still genuinely open.
+- **M19.6 — the chapter-boundary page skip / book-count "+2" jump the
+  operator reports is still open, unreproduced in this environment.** Two
+  separate live-diagnostic sessions (see "M19.6 — operator manual
+  verification, round 2" and "M19.6 — operator follow-up report, round 3"
+  below) swept both fixture books, the operator's own real book, both
+  spread modes, a wide range of viewport widths, real CSS zoom/DPI
+  emulation, non-default font scale/margin, keyboard/mouse/rapid-fire
+  input, and found zero anomalies each time. Needs the operator's exact
+  repro conditions (book, spread mode, window width, display zoom/scale)
+  next time it happens — see round 3's own closing paragraph.
 
 ## Session handoff — 2026-07-13 (M1 in progress, nothing committed)
 
@@ -2661,3 +2671,378 @@ instead rather than casting for `total` too. Narrowed with a local
 `LocationsIndexLookup` interface exposing just the one corrected method signature, same
 pattern as the file's existing two casts — worth knowing before trusting this package's
 `.d.ts` file over its own source for anything `Locations`-related.
+
+## M19.6 — operator manual verification, round 2: the spread divisor bug was the real "page skip" — 2026-07-30
+
+The operator's own manual pass after the M19.6 work above found real, reproducible
+problems the earlier sessions' sweeps missed: pages still skipping near chapter ends,
+chapter page counts occasionally claiming an even total that was actually odd (e.g.
+"page 7 of 8" being the last page reached), double-page mode counting each spread as two
+pages, and the book-wide count/percentage jumping unevenly per click instead of by
+exactly one. Diagnosed live against the running dev server (Playwright + a locally
+`npm install`ed `playwright` in the scratchpad, pointed at the already-running
+`pnpm dev` instance — no server restart, Alice fixture only, never Kafka on the Shore)
+rather than re-guessed from source reading alone.
+
+**Root cause, found by direct sweep, not reasoning:** `location.start.displayed.page`/
+`.total` (epub.js's own per-section pagination) are **single-column indices**, not
+spread indices. `layout.js`'s `count()` returns `pages = spreads * divisor`, and
+`divisor` is 2 whenever a real two-page spread is showing. The reader was passing these
+numbers straight through unadjusted. A sweep of 17 widths × 2 spread modes, paging via
+`rendition.next()` directly (bypassing the UI to isolate epub.js's own math), found
+**zero anomalies in single mode at any width** and **100% reproducible anomalies in
+"auto" mode at every width ≥ 1200px** (the point single mode's own `--reader-max-width`
+cap of 800px never reaches, which is why single mode never triggers a real spread and
+was clean) — always exactly `page === total - 1` at the section boundary, i.e. the
+*true* last spread (columns `total-1` and `total`) reporting itself via its left
+column's own index, one short of the (always-even) raw total. That is precisely what
+"page 7 of 8 is the last page" and "skips the last page (or two)" look like from the
+reader's seat: nothing was ever skipped, the number shown was just the wrong half of a
+pair.
+
+**Fix:** `bookPages.ts`'s `getSpreadDivisor`/`toSpreadAdjustedPage`/
+`toSpreadAdjustedTotal` read the manager's own live `layout.divisor` and divide it back
+out before the number ever reaches state or the footer. Re-verified after the fix: the
+same 17×2 sweep plus a live UI click-through (not just direct `rendition.next()` calls)
+came back with zero anomalies, and the auto-mode "page 5 of 6" cases from before the fix
+now correctly read "page 3 of 3" at the true last spread.
+
+**Single-page-mode "item 1" is not fully closed.** Despite an extensive sweep this
+round (margins × font scales × widths × both direct-API and real-UI-click navigation,
+~50 configurations on top of the earlier session's 254-width sweep), the skip did not
+reproduce in single mode at all. Given the operator's *current* saved setting is
+`spreadMode: "single"`, and given how exactly the spread-divisor bug's symptom matches
+every specific example given ("page 7 of 8", "skips the last page or two"), the working
+theory is that the operator's real-world report was made while using (or having
+recently toggled through) auto/double-page mode, and the now-fixed divisor bug is the
+whole explanation. Not confidently closed for single mode specifically — if it
+resurfaces there, it needs its own fresh diagnostic rather than re-running this sweep.
+
+## M19.6 — book-wide page count: replaced character-locations with a click-accurate estimate — 2026-07-30
+
+The M19.6 "page numbers, book-wide and stable" task (above, already checked off) built
+"book" mode on `book.locations` — a character-based index, deliberately chosen at the
+time for being layout-*independent*. Living with it, the operator explicitly rejected
+that trade: clicking "next" could jump the book-wide number by 5+ pages in one click
+(a location is ~1600 characters, not one rendered page), and wanted the opposite
+property — "next" always means exactly +1, even if the total shifts when text size or
+margin changes. This is a real, deliberate reversal of the 2026-07-30 (earlier) decision
+entry's own reasoning, made directly by the operator with specific, unambiguous
+acceptance criteria — recorded as an amendment in decisions.md, not drift.
+
+New design (`web/src/reader/bookPages.ts`, `computeBookPageInfo`): sections already
+visited under the *current* layout contribute their real, spread-adjusted page count
+(straight from `displayed.total`, already divisor-corrected by the fix above). Sections
+not yet visited are estimated from their share of the book's text — reusing
+`lengthPercent` from the Scan's own `GET /api/resources/:id/scan` payload (already
+computed server-side from the same immutable `resource_text` extraction, at zero extra
+server cost) — calibrated by a running "pages per unit of text weight" ratio derived
+from whatever has actually been measured so far. The estimate is naturally allowed to
+shift as the reader progresses (an already-open chapter can jump the total by a page or
+two once its neighbour is finally measured) — that's the trade the operator explicitly
+accepted. `sectionRealPagesRef` is cleared whenever the layout changes (font scale,
+margin, any resize that reaches `applyGapForWidth`) since a stale measurement under a
+different layout is worse than a fresh estimate.
+
+Percentage in the top popover now derives from the same page/total pair
+(`Math.round(page/total*100)`, Apple-Books style) rather than
+`location.start.percentage`, with a fallback to the old character-based percentage only
+until the section-weight fetch resolves (mirrors the existing "book mode shows nothing
+until locations are ready" pattern). Deliberately did **not** touch the scrub dial
+(`ScrubDial.tsx`/`ProgressPopover.tsx`) — its drag-to-percent-then-`cfiFromPercentage()`
+jump still uses the character-based percentage, which is fine for a coarse "jump roughly
+here" gesture and self-corrects to the new page-based percentage the instant the reader
+lands (one relocate event later). Widening the redesign to the scrub dial too was out of
+scope for what the operator asked.
+
+Live-verified (Playwright, real UI clicks with `waitForTimeout` past the 420ms curl
+animation so no click is silently dropped by the existing `turnLockRef`): starting at
+"Page 1 of 14, 7%" and clicking forward 40 times produced a **strictly +1 sequence**
+(1→2→3→...→40) with the total re-calibrating smoothly at each newly-measured chapter
+boundary (14→359→89→75→73→...→66, converging down as more of the book gets real
+measurements instead of the initial rough estimate) and the percentage tracking the
+page/total ratio exactly at every step (e.g. page 40/66 → 61%).
+
+`resource_locations`/`book.locations.generate()` itself is untouched and still used for
+the scrub dial and TOC chapter-start percents — only what the reader's footer/popover
+*display* changed.
+
+`shared/src/schemas.ts` note: `formatPageNumber`'s book-mode parameters changed meaning
+(previously a 0-based location index + total, now an already-1-based page/total pair) —
+`pageNumber.test.ts` updated to match. The `LocationsIndexLookup` interface documented in
+the entry above this one no longer exists in `ReaderView.tsx` — removed as part of this
+change, since nothing calls `book.locations.locationFromCfi()` from the footer path
+anymore.
+
+## M19.6 — annotation panel: the quote was eating the drag hitbox, and resize was one corner — 2026-07-30
+
+Two related operator complaints, both in `ThreadPanel.tsx`: (1) dragging the panel was
+hard because the quote `<button>` (M19.6's own "the quote expands" work) filled almost
+the entire header, leaving only a thin bare strip to grab, and clicking to drag would
+instead toggle the quote open; (2) resizing only worked from the bottom-right corner.
+
+**Drag-vs-click on the quote itself.** The quote's own `onPointerDown` now also calls
+`dragControls.start(event)` (previously only the bare header did, deliberately excluding
+the quote the same way the close button is excluded). First attempt assumed
+`dragControls.start` would suppress the native click that follows on pointerup — **it
+does not**: live-tested, a real drag gesture via `dragControls` still left a synthetic
+click that toggled `quoteExpanded` afterward, growing the panel unexpectedly mid-drag.
+Fixed with a plain ref-based movement threshold (4px) tracked independently in
+`handleQuotePointerDown`'s own `pointermove`/`pointerup` listeners, checked synchronously
+in the click handler (native `click` always fires *after* `pointerup`, so the ref is
+already set by the time it's read — no React state timing race). Quote's collapsed
+line-clamp also dropped from 3 to 2 lines, per the operator's own ask for a "little
+smaller" hitbox.
+
+**Resize from any edge/corner except the top.** `handleResizePointerDown` became a
+curried factory over `(horizontal: "left" | "right" | null, vertical: "bottom" | null)`,
+with five handle elements (left/right/bottom edges, bottom-left/bottom-right corners) —
+deliberately none on top, since that's the drag/quote strip. Found and fixed a real,
+previously-unnoticed directional bug while generalizing this: the panel is
+right-anchored (CSS `right`) plus top-anchored (`top` inline style), with
+`dragX`/`dragY` layered on as a transform. Growing `width` alone always extends the
+box's *left* edge (the right edge is anchor-fixed) — correct for a left-edge/
+bottom-left-corner drag with no adjustment needed, but **wrong** for a right-edge/
+bottom-right-corner one, where the *existing* single-handle implementation (bottom-right
+only, pre-this-change) would have silently grown the panel leftward under the cursor
+instead of following it rightward. A right-side handle now also shifts `dragX` by the
+same delta the width grew by (keeping the left edge visually fixed), verified live: a
+right-edge drag of +40px screen-space produced ~+46px width with the left edge staying
+put (small drift from box-shadow/border in the bounding-rect measurement, not a logic
+error); a left-edge drag of -40px produced exactly +40px width with zero `x` change, as
+designed. Bottom-edge and both corners verified similarly exact.
+
+## M19.6 — hover highlight color: raised again, but couldn't get a clean automated confirmation — 2026-07-30
+
+Operator: hover should feel as vivid as the moment of making a live text selection
+(`::selection`, a flat opaque color behind fully-rendered text) rather than the current
+muted wash. The mechanism from the earlier M19.6 hover fix (stay in the kind's own
+`mix-blend-mode`, scale `fill-opacity` up from the mark's real base) is unchanged and
+deliberately kept — decisions.md's own prior finding was that switching blend mode to
+`normal` at high opacity is what turns a wash into paint and obscures text, not opacity
+alone. Raised `HOVER_OPACITY_MULTIPLIER` 1.8× → 2.6× and `HOVER_OPACITY_MAX` 0.6 → 0.85
+(`ReaderView.tsx`).
+
+**Could not get a clean live pixel-level confirmation this session**, despite several
+attempts, and it's worth recording why rather than claiming a false "verified": epub.js
+keeps **multiple `.epub-view` instances mounted simultaneously** (each with its own
+iframe *and* its own marks-pane SVG overlay) — confirmed live via
+`document.querySelectorAll('g[class*="marginalia-highlight"]')` returning several
+groups whose parent `.epub-view` `getBoundingClientRect()` values were wildly different
+(one at `x: -1731`, container itself at `x: 291`), i.e. belonging to an
+off-screen/pre-rendered adjacent view, not the one currently displayed. A blind
+`querySelector`/`.first()` reliably grabbed the wrong instance's mark across five
+different attempts at this, including ones that first *created* the highlight from a
+real on-screen selection moments earlier. The actual hover code path itself was
+type-checked, unit-tested (nothing new to unit-test here — it's a live-DOM inline-style
+change) and is the exact same mechanism already screenshot-verified working in the prior
+M19.6 hover session; only the two numeric constants changed. Recommend the operator
+visually confirm the new vividness themselves; if it still reads as too muted or now
+obscures text, that's a number to retune in one place
+(`HOVER_OPACITY_MULTIPLIER`/`HOVER_OPACITY_MAX`), not a mechanism to redesign.
+
+## M19.6 — highlight across a page boundary: both required diagnostics run live before building — 2026-07-30
+
+TASKS.md's own acceptance criteria for this task required running a live diagnostic
+before writing any fix, since decisions.md flagged the underlying premise ("a selection
+survives `rendition.next()` within a section") as reasoned but not verified. Ran it, and
+the converse case, live against the Alice fixture:
+
+- **Within a section:** selected real text, called `rendition.next()` directly from the
+  page (not the UI), checked the iframe/document identity and the `Selection` object
+  before and after. `sameIframeAfterNext: true`, selection unchanged (`isCollapsed:
+  false`, identical text, `rangeCount: 1`) — the premise holds exactly as decisions.md
+  reasoned: pages inside one section are columns of one document, and `next()` just
+  scrolls the container.
+- **Across a section boundary:** navigated to the true last page of a section (page 8 of
+  8, confirmed via `displayed`), selected text there, called `rendition.next()`.
+  `sameIframe: false` (a new `IframeView`/document), and the selection was **destroyed
+  outright** (`isCollapsed: true`, `rangeCount: 0`, empty text) — confirming the second
+  half of the premise: a Range cannot span two iframe documents, and the gesture must
+  refuse before crossing, not after.
+
+**Built per the confirmed premise** (`web/src/reader/DwellRing.tsx` +
+`ReaderView.tsx`): `handleContentMouseDown`/`mouseup` (forwarded epub.js DOM events,
+same list M11's turn-zone hover already uses) track whether the pointer is down inside
+the content; `handleContentMouseMove` arms a ~2s dwell (`DWELL_DURATION_MS`) whenever
+that's true, the cursor sits in a turn zone (reusing `turnZoneForVisibleX`), and
+`contents.window.getSelection()` is non-empty. `completeDwell` checks
+`displayedPageRef.current` (a ref mirror of the already spread-adjusted `displayedPage`
+state, needed because the dwell timer's closure lives inside the book-loading effect,
+which only runs once per resource — same "mirror state into a ref" pattern as
+`fontScaleRef`/`focusModeRef` elsewhere in this file) — at the section's last/first
+page, it refuses (flashes the ring red via a `refused` prop, never calls
+`next()`/`prev()`, so the existing selection is never put at risk) rather than
+discovering the destruction after the fact. Deliberately **no curl/slide animation**
+here — those swap in a rasterized snapshot mid-turn, which would visually cover the very
+selection this gesture exists to keep visible; a plain `rendition.next()`/`.prev()` call
+keeps the live DOM (and the native selection anchored to it) on screen throughout.
+
+Live-verified end to end: armed the dwell via dispatched `mousemove` events (raw
+synthetic mouse events don't natively extend a browser text selection the way real
+click-drag input does, so the *test* pre-seeded the `Selection` via the Range API
+first — the app's own dwell-detection code only reads `getSelection()`, so this doesn't
+weaken the test of the actual feature) at the correct in-zone coordinates — the
+non-obvious part being that `event.clientX` inside the iframe is relative to its own
+*unclipped* internal document (matching `caretRangeFromPoint`'s coordinate space, not
+the visible viewport), and that space itself shifts as `container.scrollLeft` advances,
+so a coordinate computed for page 1 does not carry over to page 8 unchanged (this tripped
+up an early version of the refusal test — see the geometry dump technique in the
+scratchpad if this needs re-testing later). With that fixed: ring appeared on arming,
+page turned automatically after ~2s, the selection survived the turn, and releasing over
+a kind button created **one highlight spanning both pages'** worth of content
+(`exact` correctly included text that only exists past the original page-1-only
+selection endpoint). A second run confirmed the boundary case leaves the spine index
+unchanged and the original selection completely intact (byte-identical `toString()`)
+when dwelling at the true last page of a section — the transient "refused" CSS class
+itself proved too fast (260ms) to reliably catch with polling in this harness, but the
+two properties TASKS.md's acceptance criteria actually cares about (no navigation, no
+lost selection) are both confirmed.
+
+## M19.6 — the reading pane is resizable — 2026-07-30
+
+New `readerPaneWidth` setting (`shared/src/schemas.ts`, `server/src/settings/store.ts`
+— `0` is the "unset, use the spread-mode default" sentinel, same convention as
+`digestTokenBudget`'s "0 = no ceiling"). Resolved by `ReaderPage.tsx` before `ReaderView`
+ever mounts (same story as `spreadMode`) so a reader with a saved custom width never
+sees a flash back to 800/1400px on reload — the acceptance bar this task named
+explicitly, unlike `readerMargin`/`readerFontScale`, which *do* accept a brief flash
+(existing, already-accepted precedent) since they're fetched inside `ReaderView` itself.
+
+Deliberately a single override, not a fourth independent knob: `effectivePaneWidth`
+replaces the spread-mode default outright when set, with `readerMargin` staying exactly
+what it already was — a proportion *inside* the pane, unchanged — per decisions.md
+2026-07-27's "`gap` may only mean gutter" ruling this task's own TASKS.md entry pointed
+back to. A single drag handle (`.paneResizeHandle`, `ReaderView.module.css`) sits just
+*outside* `.stage`'s own border — not at `right: 0` the way M10's drag-to-peel
+`.edgeGrabRight` strip already is, so the two never overlap. Dragging updates
+`readerPaneWidth` state directly (same "React state per pointermove" pattern
+`ThreadPanel`'s own resize handles already use), which changes the CSS custom property
+on `.wrapper` → `.readerRow`'s `max-width` → `.stage`/`.pageClip`/`.marginWrapper` all
+resize in turn (flex-fill / 100%) → the **existing** `ResizeObserver` on
+`marginWrapperRef` fires exactly as it does for a window resize or a margin-setting
+change, running the integer-width pin and the debounced re-`display()` for free — no new
+geometry code needed for "never produces the two-column-halves render" or "the last-page
+skip does not reappear at any pane width", both already covered by the M16/M19.6
+re-display fix and the pin's own `Math.floor`.
+
+Dragging the right edge of a *centered* pane only moves that edge by half of any width
+change (the row grows/shrinks symmetrically) — the handler doubles the pointer's own
+delta so the edge tracks the cursor 1:1 instead of lagging at half speed; verified live
+(a +150px cursor delta produced exactly +300px of pane width, confirmed via both the
+rendered `.stage` box and the persisted setting value).
+
+Live-verified: dragged the handle (+150px cursor delta), stage width grew by exactly
++300px, `GET /api/settings` showed `readerPaneWidth: 1100` (800 default + 300); a fresh
+page load in a second tab showed the *same* 1056px stage width immediately, with no
+flash to the 800px default; `rendition.location.start.displayed` after a forced
+re-display was sane (`page: 1, total: 90`, no error). Settings modal UI intentionally
+not extended for this — the drag handle is the primary, sufficient interaction surface,
+per TASKS.md's own wording ("a drag handle on the pane edge"), not a form field.
+
+## M19.6 — `r` opens the reader from the Scan and the Digest — 2026-07-30
+
+Added as its own window-level `keydown` listener with its own `isTyping` guard in both
+`ScanPage.tsx` and `DigestPage.tsx` — deliberately **not** a new shared mechanism, per
+this task's own warning in TASKS.md ("do not add a fourth ad-hoc listener here... write
+this one so it can be moved into [M19.7's registry] without changing behaviour"), since
+M19.7 (the control system / shortcut registry) hasn't landed yet. On the Scan, `r`
+literally reuses the existing `handleBackToBook()` (the same function the room's own
+Escape key and its "← Book" affordance already call) — "the book currently in focus" has
+an unambiguous answer there (the book the room is scoped to), so there was no new
+navigation logic to write. Digest had no existing keydown handler at all; added one that
+navigates to `/read/:id`, the same target its own "← Book" `Link` already points at.
+
+Live-verified: `r` on `/scan/:id` and on `/digest/:id` both navigate to `/read/:id`; `r`
+typed into the Digest's own brief textarea does not navigate (the isTyping guard) and
+the textarea correctly ends up containing the literal "r"; `r` pressed on the Desk (`/`)
+does nothing at all — not an error, not a guess — since the Desk was never given a
+binding for it, matching "which book" having no answer there.
+
+## M19.6 — full verify pass — 2026-07-30
+
+Consolidated live pass (Playwright against the real running dev server, Alice fixture
+only): 25 sequential page turns in single-mode/Paper with `pageNumberMode: "book"`
+produced only 0-or-1 increments (0s where a click landed while the 420ms curl animation
+still had `turnLockRef` held — the same lock-respecting behavior verified for M19.6's
+original page-skip fix, not a defect) and zero jumps of 2+; created a highlight, reloaded
+the page, confirmed the mark re-rendered (unanchored-free); clicked the mark to open its
+thread panel and resized it via the new right-corner handle; changed `readerFontScale`
+live via the settingsBus and confirmed no error; 10 page turns in auto-mode/Ink and 6 in
+`prefers-reduced-motion: reduce` both completed with zero console/page errors. Full
+project test suite (shared + server + web, 253 tests) and `pnpm build` both clean at the
+end of this session. "Ask a question" was not exercised this round — no LLM provider is
+configured in this environment, and that path is unrelated to anything changed here (all
+prior M4/M5/M6 verification already covers it independently).
+
+M19.6 is whole. Three items above (spread-divisor page-count fix, highlight-across-a-
+page-boundary, resizable reading pane, `r`-opens-the-reader) plus the panel resize/quote
+and book-wide-count redesigns close out the milestone's remaining checkboxes. Next up
+per TASKS.md: M19.7, the control system.
+
+## M19.6 — operator follow-up report, round 3: still can't reproduce the chapter-boundary
+skip or the count jump — 2026-07-30 (later)
+
+After the round-2 spread-divisor fix and the book-wide-count redesign above, the operator
+reported the underlying symptom is **still happening**: the last page of a chapter still
+gets skipped going forward, and the book-wide page count still jumps by 2 (not 1) crossing
+into a new chapter — "without 1 click forward from the last page of Ch1, page goes up by 2
+on page 1 of Ch2." Ran a much wider live diagnostic than either prior round before touching
+any code, against the same running dev server the operator is actually using (confirmed the
+server processes started *after* every relevant file's last edit, so it's serving the exact
+code being reported on) — **it did not reproduce anywhere**:
+
+- Both fixture books (Alice) and, for the first time, the **operator's own real book**
+  (Kafka on the Shore — position backed up via the API before each run and restored via
+  the API after, never touched by hand; see the data/ caution elsewhere in this repo's own
+  operator guidance) across 13+ consecutive real chapter boundaries each run.
+- Both `spreadMode`s (`single`, `auto`), the latter confirmed actually showing real
+  two-page spreads (chapter totals roughly halved vs. single mode) at the widths tested.
+- Viewport widths 700–1400px, plus a real CSS-zoom emulation (110% zoom, 1.25 device scale
+  factor) — the one variable the round-2 entry above flagged as never having been swept.
+- Non-default `readerFontScale` (1.2) and `readerMargin` ("wide") together, the specific
+  combination the round-1 entry flagged as its own "not fully closed" untested variable.
+- Three input paths: the footer nav button, real `ArrowRight` key presses, and genuine
+  mouse clicks inside the right-hand turn zone (`page.mouse.click` at real screen
+  coordinates, exercising the same `handleContentClick` + curl-snapshot path a real reader
+  uses — not just the button).
+- A rapid-fire stress case: 150 `ArrowRight` presses at 40ms apart (far faster than the
+  ~420ms curl animation, simulating a held-down key) followed by resumed slow single-steps
+  — settled cleanly with no corruption and a clean `+1` sequence afterward.
+
+Every one of these came back with **zero anomalies**: every chapter's own last page was
+actually reached (`chapterPage` hit `chapterTotal` before the section advanced) in every
+`pageNumberMode: "chapter"` run, and every `pageNumberMode: "book"` run produced a strictly
+`0`-or-`1`-per-click sequence (`0` only where a click landed inside the curl lock, the
+same documented non-defect from the round-2 entry) with no `2`s, across several hundred
+total page turns and 50+ real chapter transitions between the two books.
+
+Also read the actual installed `epubjs@0.3.93` source (not just this repo's own comments
+about it) to check the round-1 fix's mechanism against ground truth, since decisions.md
+says the original cause is established and not to be re-derived, but a *second* report of
+the same symptom after the fix landed is new information, not a re-derivation: confirmed
+`DefaultViewManager.next()`'s `container.offsetWidth + layout.delta` vs. `scrollWidth`
+comparison operates on **`this.container`**, which is `Stage`'s own internally-created div
+(`managers/helpers/stage.js`), not `containerRef.current` directly — it's a *child* of our
+pinned element, sized via `container.style.width` set once at `Stage.create()` and
+re-derived on every `updateLayout()` call via `stage.size()` → `container.clientWidth`
+(always integer per the CSSOM View spec, same reasoning the round-1 fix already relied on).
+Traced this all the way through `updateLayout()` (called fresh, not cached, on every gap
+change) and found no place where a non-integer value re-enters the calculation once our
+pin is in place. This doesn't prove there's no bug, but it does mean the round-1 fix's
+mechanism is sound as far as static reading can tell — nothing found here contradicts it.
+
+**Not closed.** Two live-reproduction sessions in a row (this one and the round-1 entry
+above) have now failed to trigger this symptom in headless Chromium despite substantially
+different, deliberately adversarial sweeps each time, which is itself informative: whatever
+triggers it for the operator is very likely something neither sweep has been able to
+emulate — a real desktop browser's own sub-pixel/DPI handling, a specific OS/browser
+combination, or a specific real-mouse click/drag pattern (as opposed to `page.mouse.click`'s
+discrete, instantaneous synthetic click) are the leading remaining candidates, in that
+order. **If this resurfaces, the fastest path forward is not another blind sweep** — it's
+asking the operator for the exact conditions next time it happens: which book, which
+`spreadMode`, the window/browser width, and whether the OS or browser has a non-100% display
+scale or zoom active. Absent that, no further code change is safe to make here without
+either reproducing it or getting a report specific enough to reason about deterministically
+— speculatively touching the geometry code again risks trading a real, working fix for an
+unverified one.

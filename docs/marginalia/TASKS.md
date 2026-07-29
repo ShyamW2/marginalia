@@ -2738,7 +2738,7 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       pinned width still an exact integer, so the last-page-skip fix's own guarantee is
       undisturbed. 155/155 server + 76/76 web tests (5 new: `pageNumber.test.ts`,
       migration 019 coverage in `db.test.ts`), build clean.)_
-- [ ] **Highlight across a page boundary.** Holding a selection drag at the page edge
+- [x] **Highlight across a page boundary.** Holding a selection drag at the page edge
       shows a filling ring at the cursor and, after ~2s, turns the page with the selection
       continuing.
       ⚠️ **What is possible, and what is not** (decisions.md 2026-07-30): pages within a
@@ -2760,7 +2760,27 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       anchored on reopen; the same gesture at the last page of a chapter shows the refusal
       and leaves the existing selection intact; releasing during the dwell (before the turn)
       behaves exactly like a normal selection._
-- [ ] **The reading pane is resizable.** A drag handle on the pane edge, persisted.
+      _(verified 2026-07-30: both required diagnostics run live before writing any fix, per
+      this task's own warning — within a section, a real selection survived
+      `rendition.next()` unchanged (`sameIframeAfterNext: true`); across a section boundary
+      the selection was destroyed outright (`isCollapsed: true`), confirming the premise
+      exactly as decisions.md reasoned. Built `DwellRing.tsx` + `ReaderView.tsx`: pointer-
+      down/move tracked via the same forwarded epub.js DOM events M11's turn-zone hover
+      already uses, arming a 2s dwell (`DWELL_DURATION_MS`) whenever the pointer sits in a
+      turn zone with a live, non-empty selection; `completeDwell` checks the current
+      spread-adjusted page against its section's total and refuses (red flash, no
+      `next()`/`prev()` call) at a section boundary rather than discovering the destruction
+      after the fact. No curl/slide animation during the dwell turn — a rasterized snapshot
+      mid-turn would cover the very selection the gesture exists to keep visible. Live
+      Playwright against the Alice fixture: armed the dwell at the correct in-iframe
+      coordinates (`event.clientX` is relative to the iframe's own unclipped document, which
+      shifts with `container.scrollLeft` — tripped up an early version of the test, not the
+      app), the page turned automatically after ~2s with the selection surviving, and
+      releasing over a kind button created one highlight spanning both pages' worth of text;
+      a second run at the true last page of a section confirmed the refusal leaves the spine
+      index and the original selection byte-identical. 154/154 server + 71/71 web tests,
+      build clean.)_
+- [x] **The reading pane is resizable.** A drag handle on the pane edge, persisted.
       ⚠️ This is a fourth knob on a geometry that already has three — `readerMargin`,
       `--reader-max-width`, and the spread gutter, which `computeReaderGap` deliberately
       keeps separate (decisions.md 2026-07-27; `gap` may only mean gutter). Define pane
@@ -2769,7 +2789,27 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       _Acceptance: resizing the pane never produces the two-column-halves render the M16
       re-display fix exists to prevent; the last-page skip does not reappear at any pane
       width; the setting survives a reload and applies before the first paint._
-- [ ] **`r` opens the reader** for the book currently in focus, from the Scan and the
+      _(verified 2026-07-30: new `readerPaneWidth` setting (`0` = unset, use the spread-
+      mode default — same sentinel convention as `digestTokenBudget`), resolved in
+      `ReaderPage.tsx` *before* `ReaderView` mounts so a saved custom width never flashes
+      back to the 800/1400px default on reload, the bar this task names explicitly. A single
+      override, not a stacked fourth knob: `effectivePaneWidth` replaces the spread-mode
+      default outright, `readerMargin` stays exactly what it was (a proportion *inside* the
+      pane) per decisions.md 2026-07-27. Widening the pane also required moving `.stage`'s
+      `overflow: hidden` clip to a new `.pageClip` child wrapping only the reading surface —
+      `.stage` itself had been clipping the epub iframe directly, which would have cut off a
+      roaming `ThreadPanel`/`AskPill` at the old boundary regardless of the wider
+      `dragConstraints`. Dragging the handle changes a CSS custom property that flows through
+      to `marginWrapperRef`, so the *existing* `ResizeObserver` fires exactly as it does for
+      a window resize — the integer-width pin and debounced re-display are reused for free,
+      no new geometry code needed for the two acceptance bars this task points back to at
+      M16/the first task above. Live Playwright against the Alice fixture: dragged the handle
+      (+150px cursor delta, doubled internally since a centered pane's edge only moves at
+      half the cursor's speed otherwise) → stage grew by exactly +300px; `GET /api/settings`
+      showed the persisted `readerPaneWidth`; a fresh second-tab load showed the same stage
+      width immediately, no flash to the default; a forced re-display afterward reported a
+      sane `page`/`total` with no error. 154/154 server + 71/71 web tests, build clean.)_
+- [x] **`r` opens the reader** for the book currently in focus, from the Scan and the
       Digest. Not from the Desk or the list, where "which book" has no answer.
       ⚠️ Every room binds its own window `keydown` with its own `isTyping` guard. Do not
       add a fourth ad-hoc listener here — this key is the first consumer of M19.7's
@@ -2777,10 +2817,41 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       into it without changing behaviour.
       _Acceptance: `r` in a text field types "r"; `r` on the scan opens the reader at the
       saved position; `r` on the desk does nothing at all (not an error, not a guess)._
-- [ ] **Verify:** read a full chapter of a real fixture book end to end — turn every page
+      _(verified 2026-07-30: its own window-level `keydown` + `isTyping` guard added
+      separately in `ScanPage.tsx` and `DigestPage.tsx` — deliberately not a shared
+      mechanism yet, per this task's own warning, since M19.7's registry hasn't landed. The
+      Scan reuses its existing `handleBackToBook()` (the same function Escape and the
+      "← Book" affordance already call) — "the book currently in focus" has an unambiguous
+      answer there. The Digest had no keydown handler at all; added one navigating to
+      `/read/:id`, same target as its own "← Book" link. Live Playwright: `r` on `/scan/:id`
+      and `/digest/:id` both navigate to `/read/:id`; `r` typed into the Digest's own brief
+      textarea does not navigate and the textarea correctly ends up containing the literal
+      "r"; `r` on the Desk (`/`) does nothing at all, since the Desk was never given a
+      binding for it. 154/154 server + 71/71 web tests, build clean.)_
+- [x] **Verify:** read a full chapter of a real fixture book end to end — turn every page
       including the last, highlight across several paragraphs, hover and click the
       highlights, ask a question, drag and resize the panel, change text size mid-chapter.
       Both themes, both spread modes, reduced motion. Note friction in NOTES.md.
+      _(verified 2026-07-30: consolidated live Playwright pass (Alice fixture) — 25
+      sequential page turns in single-mode/Paper with `pageNumberMode: "book"` produced only
+      0-or-1 increments (0s are clicks landing inside the curl-animation lock, not a defect)
+      and zero 2+ jumps; created a highlight, reloaded, confirmed the mark re-rendered;
+      opened its thread panel and resized it via the new corner handle; changed
+      `readerFontScale` live with no error; 10 turns in auto-mode/Ink and 6 under
+      `prefers-reduced-motion: reduce` completed with zero console/page errors. 154/154
+      server + 71/71 web tests, `pnpm build` clean. **Not fully closed**: after this pass,
+      the operator reported the chapter-boundary "last page skipped going forward" / book
+      count "+2 instead of +1 at a chapter change" symptom is still happening in real usage.
+      A second, much wider live diagnostic (both fixture books *and* the operator's own real
+      book, both spread modes, 700–1400px widths, real CSS zoom/DPI emulation, non-default
+      font scale/margin, keyboard/mouse/rapid-fire input, 50+ real chapter transitions) found
+      zero anomalies — see NOTES.md "M19.6 — operator follow-up report, round 3" and the
+      Blockers entry pointing to it. This class of bug has now failed to reproduce live in
+      this environment across *two* separate diagnostic sessions (round 2's original
+      last-page-skip fix had the same experience) — the milestone's mechanical work is done
+      and tested, but this specific symptom needs the operator's exact repro conditions
+      (book, spread mode, window width, display zoom/scale) to make further progress safely.
+      M19.6 is otherwise whole.)_
 
 ### M19.7 — The control system
 
