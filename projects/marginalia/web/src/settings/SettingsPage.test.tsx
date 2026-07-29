@@ -17,6 +17,7 @@ const SETTINGS: Settings = {
   readerMargin: "normal",
   readerFontScale: 1,
   scanCrtIntensity: 0.6,
+  pageNumberMode: "off",
   maxResponseTokens: 8192,
   digestTokenBudget: 0,
 };

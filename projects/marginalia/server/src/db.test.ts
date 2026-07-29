@@ -52,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(18);
+    expect(version).toBe(19);
     db.close();
   });
 
@@ -220,6 +220,31 @@ describe("db migrations", () => {
     db.close();
   });
 
+  it("migration 019 adds resource_locations, a cache keyed by resource id", () => {
+    const db = createDb(":memory:");
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO resources (id, title, author, format, file_path, metadata, imported_at)
+       VALUES ('res-1', 'Title', NULL, 'epub', '/tmp/x.epub', '{}', @now)`,
+    ).run({ now });
+
+    const missing = db
+      .prepare("SELECT locations FROM resource_locations WHERE resource_id = 'res-1'")
+      .get();
+    expect(missing).toBeUndefined();
+
+    db.prepare(
+      `INSERT INTO resource_locations (resource_id, locations, generated_at)
+       VALUES ('res-1', '["epubcfi(...)"]', @now)`,
+    ).run({ now });
+    const row = db
+      .prepare("SELECT locations FROM resource_locations WHERE resource_id = 'res-1'")
+      .get() as { locations: string };
+    expect(row.locations).toBe('["epubcfi(...)"]');
+
+    db.close();
+  });
+
   it("is idempotent — reopening an already-migrated database file is a no-op", () => {
     const tmpPath = tmpDbPath("idempotent");
 
@@ -230,7 +255,7 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(18);
+      expect(second.pragma("user_version", { simple: true })).toBe(19);
       second.close();
     } finally {
       cleanupDbFile(tmpPath);

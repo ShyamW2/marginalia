@@ -2669,7 +2669,7 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       the stage's left edge at x=16) fully on-screen and completely unclipped
       (screenshotted); a panel left at its default position over the page survived a
       real page turn with no regression. 154/154 server + 71/71 web tests, build clean.)_
-- [ ] **Page numbers in the footer, book-wide and stable.** `book.locations.generate(1600)`
+- [x] **Page numbers in the footer, book-wide and stable.** `book.locations.generate(1600)`
       → `locations.save()` → persisted per resource in SQLite (additive migration;
       resources are immutable so the blob never rots), then `locationFromCfi` for the
       current number.
@@ -2686,6 +2686,58 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       spread modes for the same position (this is the whole reason for using locations);
       opening a large book is not visibly slower than today; a book whose locations
       haven't generated yet still reads normally with no error state._
+      _(implemented 2026-07-30: migration 019 adds `resource_locations` (resource id →
+      opaque blob + generated_at), a cache table alongside `book_digest_snapshots` rather
+      than a column on `resources` — resources are immutable-on-import (settled decision
+      5) and this is a derived cache generated after import, same reasoning. New
+      `GET`/`PUT /api/resources/:id/locations`, both pass the blob through unparsed.
+      `pageNumberMode` added to `SettingsSchema`/settings store (default `"off"`,
+      unchanged behavior) and to `ReadingTab.tsx` as a third toggle group alongside
+      margins/spread. In `ReaderView.tsx`'s book-loading effect: the cached blob is
+      fetched in the same `Promise.all` as position/highlights (cheap — a primary-key
+      row read, or `null` on a cache miss); if present, `book.locations.load(cachedBlob)`
+      (synchronous) runs where `generate()` used to unconditionally; on a miss, the
+      original `generate()` → `reportLocation()` → `buildToc()` chain runs unchanged and
+      now also calls `book.locations.save()` and `PUT`s it once resolved. Book-wide number
+      is computed in `handleRelocated` via `locationFromCfi(location.start.cfi)` (-1 until
+      locations are ready, mirroring how `displayedPage` already waits for `reportLocation`
+      to re-fire) and `locations.length() - 1` for the 0-based total — `length()` is
+      correctly typed in epub.js's bundled `.d.ts`, unlike `locationFromCfi` itself, whose
+      declared return type (`Location`, not `number`) is wrong; narrowed with a local
+      `LocationsIndexLookup` interface, same pattern as this file's existing
+      `ViewWithContents`/`RenditionOptionsWithGap` casts for other bundled-type gaps. New
+      pure `formatPageNumber()` (`pageNumber.ts`, unit-tested) and a thin
+      `PageNumberDisplay` component render the footer text between the nav buttons;
+      `"off"` and "data not ready yet" both render nothing, not an empty state. Live
+      Playwright against the Alice fixture: a fresh (uncached) open painted the first page
+      in ~310ms with no console error; a sweep of 3 text sizes × 2 spread modes at the
+      same saved position all read "Page 2 of 107" from the cached blob (107 locations,
+      confirmed via the raw cache row); a cache-hit reload showed the book-wide number in
+      ~330ms (`load()`, not `generate()`); "chapter" and "off" modes checked separately
+      ("Page 1 of 8" and blank respectively); the real Settings UI (Reading tab → Book-wide
+      → Save) was also driven directly, not just the API, and produced the same footer
+      text, screenshotted. Kafka on the Shore (the operator's real book, untouched
+      otherwise) painted its first page in ~383ms with no error and its own
+      `resource_locations` row and reading position both confirmed unchanged afterward —
+      the page was closed inside the 600ms position-save debounce specifically so the
+      relocate-triggered write-back (of the *same* position) would never fire. **A real,
+      unrelated bug found and fixed along the way, not part of this task's own scope**:
+      live-testing surfaced that the M19.6 last-page-skip fix's `pinContainerWidth()`
+      (`ReaderView.tsx`) measured `marginWrapperRef.clientWidth` — marginWrapper's own
+      border-box width, which *includes* the margin padding rather than the content area
+      inside it — and pinned the epub.js container to that full width. Since the container
+      still starts flush against the left padding edge as a normal-flow child, its right
+      edge overshot marginWrapper's own right edge by exactly the horizontal padding (the
+      margin itself), and epub.js paginated to fill that too-wide box: confirmed live via
+      `getBoundingClientRect()` at every margin setting (e.g. "generous" 96px → epub
+      container 96px past its clip boundary on the right, `overflowRight: 96`), matching
+      the operator's report of text running past the reading pane at every margin size.
+      Fixed by subtracting `getComputedStyle(wrapper)`'s horizontal padding from
+      `clientWidth` before pinning; re-verified the same live sweep now shows symmetric
+      left/right gaps (24/40/64/96px matching narrow/normal/wide/generous) with the
+      pinned width still an exact integer, so the last-page-skip fix's own guarantee is
+      undisturbed. 155/155 server + 76/76 web tests (5 new: `pageNumber.test.ts`,
+      migration 019 coverage in `db.test.ts`), build clean.)_
 - [ ] **Highlight across a page boundary.** Holding a selection drag at the page edge
       shows a filling ring at the cursor and, after ~2s, turns the page with the selection
       continuing.

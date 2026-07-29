@@ -2602,3 +2602,62 @@ same end states through direct `PUT` calls against the highlight's panel-offset/
 panel-size endpoints followed by a page reload, rather than a live drag gesture — same
 substitution, same reasoning both times. Useful to know before spending another 2
 minutes waiting on a hung `mouse.down()` in a future session.
+
+## M19.6 — page numbers: a real margin-overflow bug found live-testing, unrelated to this task — 2026-07-30
+
+Live-verifying the book-wide page number (identical across three text sizes and both
+spread modes, per acceptance) meant loading the reader repeatedly and reading
+`marginWrapper`/`epubContainer` geometry off `getBoundingClientRect()` — which is what
+surfaced a regression in the *previous* M19.6 task's fix, not this one: the operator's
+own report ("text was going beyond the reading pane, for all margin settings") matched
+exactly.
+
+**Cause:** `pinContainerWidth()` (the skipped-last-page fix, above) measures
+`marginWrapperRef.current.clientWidth` and pins the epub.js container
+(`containerRef.current.style.width`) to that value directly. `clientWidth` is
+marginWrapper's own border-box width — since the margin lives on marginWrapper's
+`padding`, `clientWidth` *includes* it rather than being the content area inside it.
+The container is still a normal-flow child starting flush against the left padding
+edge, so pinning it to the *full* clientWidth pushed its right edge past
+marginWrapper's own right edge by exactly the horizontal padding (i.e. by the margin
+itself) — epub.js then paginated to fill that too-wide box, and the margin's worth of
+text ran off the page, clipped by `.pageClip`'s `overflow: hidden`.
+
+Confirmed live against the Alice fixture before fixing anything (not just reasoned
+about): a script read `marginWrapper`/`epubContainer` rects directly.
+
+| Margin setting | padding | `epubContainer` overflow past `marginWrapper`'s right edge |
+|---|---|---|
+| normal | 40px | 40px |
+| generous | 96px | 96px |
+
+Exactly the padding amount, at every setting — matches "for all margin settings"
+precisely, and explains why it scaled with the margin size.
+
+**Fix:** subtract `getComputedStyle(wrapper)`'s `paddingLeft`/`paddingRight` from
+`clientWidth` before pinning. Re-ran the same live measurement after the fix: symmetric
+left/right gaps at all four margin settings (24/40/64/96px, matching
+narrow/normal/wide/generous exactly) and the pinned width still an exact integer (a
+`% 1 === 0` check across all four), so the last-page-skip fix's own guarantee — the
+entire reason `pinContainerWidth` exists — is undisturbed by the correction.
+
+**Process note:** this was not caught by the last-page-skip task's own acceptance
+criteria, which checked page-turn correctness (via `location.start.displayed.page` /
+`total`) at various widths, never whether the rendered content stayed inside the margin.
+A geometry fix's acceptance test should probably check both — turning correctly *and*
+staying inside its own box — since a container-width bug can satisfy one while
+violating the other.
+
+## M19.6 — page numbers: epub.js's bundled `Locations` typings are wrong, not just incomplete — 2026-07-30
+
+Unlike the `gap`/`contents` gaps this file's `RenditionOptionsWithGap`/`ViewWithContents`
+casts already work around (types that are merely *missing*), `epubjs/types/locations.d.ts`
+declares `locationFromCfi(cfi): Location` — copy-paste from a different overload,
+apparently, since the runtime (`lib/locations.js`) returns a plain 0-based number index
+(or `-1` before locations have generated/loaded), never the reader-position `Location`
+type. `total` (the 0-based max index, set at the end of `generate()`/`load()`) isn't
+declared at all, but `length()` (the count, `total + 1`) is typed correctly and was used
+instead rather than casting for `total` too. Narrowed with a local
+`LocationsIndexLookup` interface exposing just the one corrected method signature, same
+pattern as the file's existing two casts — worth knowing before trusting this package's
+`.d.ts` file over its own source for anything `Locations`-related.

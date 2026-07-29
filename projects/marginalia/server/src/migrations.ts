@@ -456,4 +456,22 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE highlights ADD COLUMN panel_height REAL;
     `,
   },
+  {
+    // M19.6 "page numbers, book-wide and stable" (decisions.md 2026-07-30):
+    // a cache for epub.js's book.locations.save() blob. Not a column on
+    // resources — resources are immutable-on-import (settled decision 5)
+    // and this is a derived cache generated *after* import, not part of the
+    // resource itself, same reasoning book_digest_snapshots already follows
+    // as its own table. The server never parses `locations` — epub.js is a
+    // web/-only dependency (SPEC: the server has no EPUB renderer) — so it
+    // stays an opaque string all the way through.
+    version: 19,
+    sql: `
+      CREATE TABLE resource_locations (
+        resource_id   TEXT PRIMARY KEY REFERENCES resources(id),
+        locations     TEXT NOT NULL,
+        generated_at  TEXT NOT NULL
+      );
+    `,
+  },
 ];

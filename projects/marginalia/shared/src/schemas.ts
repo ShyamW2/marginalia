@@ -91,6 +91,25 @@ export type UpdateReadingPositionBody = z.infer<
 >;
 
 // ---------------------------------------------------------------------------
+// Cached epub.js locations blob (M19.6 "page numbers, book-wide and stable")
+// ---------------------------------------------------------------------------
+
+/** GET /api/resources/:id/locations response. The server never parses this —
+ * epub.js is a web/-only dependency (SPEC: the server has no EPUB renderer)
+ * — so `locations` stays whatever `book.locations.save()` produced. */
+export const ResourceLocationsSchema = z.object({
+  locations: z.string().nullable(),
+});
+export type ResourceLocationsResponse = z.infer<typeof ResourceLocationsSchema>;
+
+export const UpdateResourceLocationsBodySchema = z.object({
+  locations: z.string().min(1),
+});
+export type UpdateResourceLocationsBody = z.infer<
+  typeof UpdateResourceLocationsBodySchema
+>;
+
+// ---------------------------------------------------------------------------
 // Anchor — W3C Web Annotation style: exact quote + prefix/suffix + position.
 // Embedded (flattened) into Highlight, matching the `highlights` table columns.
 // ---------------------------------------------------------------------------
@@ -378,6 +397,14 @@ export type ReaderFontScale = z.infer<typeof ReaderFontScaleSchema>;
  * motion disables the effect outright regardless of this value. */
 export const ScanCrtIntensitySchema = z.number().min(0).max(1);
 
+/** M19.6 "page numbers, book-wide and stable" (decisions.md 2026-07-30):
+ * "book" numbers off `book.locations` (stable across font size, margin,
+ * spread — see PageNumberDisplay/useBookLocations); "chapter" uses
+ * `location.start.displayed`, already received; "off" is today's default
+ * (unchanged until a reader opts in, same convention as readerMargin etc). */
+export const PageNumberModeSchema = z.enum(["book", "chapter", "off"]);
+export type PageNumberMode = z.infer<typeof PageNumberModeSchema>;
+
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset.
  * M19 (decisions.md 2026-07-29 later): provider configuration moved out of
  * this flat bag into provider *profiles* + *roles* (below) — this schema now
@@ -390,6 +417,7 @@ export const SettingsSchema = z.object({
   readerMargin: ReaderMarginSchema,
   readerFontScale: ReaderFontScaleSchema,
   scanCrtIntensity: ScanCrtIntensitySchema,
+  pageNumberMode: PageNumberModeSchema,
   // Global request ceiling, applied regardless of which profile/role serves
   // the call — not part of a profile (SPEC: a profile is "provider id,
   // model, key, base URL, context tokens").

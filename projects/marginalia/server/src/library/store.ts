@@ -187,3 +187,28 @@ export function setReadingPosition(
   ).run({ resourceId, location, spineIndex, percent, updatedAt });
   return { resourceId, location, spineIndex, percent, updatedAt };
 }
+
+/** M19.6 "page numbers, book-wide and stable": the cached
+ * `book.locations.save()` blob (opaque to the server — see migration 19). */
+export function getResourceLocations(
+  db: Database.Database,
+  resourceId: string,
+): string | null {
+  const row = db
+    .prepare("SELECT locations FROM resource_locations WHERE resource_id = ?")
+    .get(resourceId) as { locations: string } | undefined;
+  return row?.locations ?? null;
+}
+
+export function setResourceLocations(
+  db: Database.Database,
+  resourceId: string,
+  locations: string,
+): void {
+  db.prepare(
+    `INSERT INTO resource_locations (resource_id, locations, generated_at)
+     VALUES (@resourceId, @locations, @generatedAt)
+     ON CONFLICT (resource_id) DO UPDATE SET
+       locations = @locations, generated_at = @generatedAt`,
+  ).run({ resourceId, locations, generatedAt: new Date().toISOString() });
+}

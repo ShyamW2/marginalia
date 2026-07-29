@@ -1,0 +1,8 @@
+.pageNumber {
+  display: flex;
+  align-items: center;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

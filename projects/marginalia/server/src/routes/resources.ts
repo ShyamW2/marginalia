@@ -3,6 +3,7 @@ import multer from "multer";
 import fs from "node:fs";
 import {
   UpdateReadingPositionBodySchema,
+  UpdateResourceLocationsBodySchema,
   UpdateShelfStateBodySchema,
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
@@ -12,8 +13,10 @@ import {
   getReadingPosition,
   getResourceById,
   getResourceFilePath,
+  getResourceLocations,
   listResourceSummaries,
   setReadingPosition,
+  setResourceLocations,
   setShelfState,
 } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
@@ -120,6 +123,35 @@ resourcesRouter.put("/:id/position", (req, res) => {
     parsed.data.percent ?? null,
   );
   res.json(position);
+});
+
+// M19.6 "page numbers, book-wide and stable": epub.js generates and
+// serialises the `locations` blob in the browser (the server has no EPUB
+// renderer, per SPEC) and caches it here so it's never regenerated for the
+// same resource — resources are immutable-on-import (settled decision 5),
+// so the blob can never rot. The server treats it as opaque.
+resourcesRouter.get("/:id/locations", (req, res) => {
+  const resource = getResourceById(getDb(), req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ locations: getResourceLocations(getDb(), req.params.id) });
+});
+
+resourcesRouter.put("/:id/locations", (req, res) => {
+  const resource = getResourceById(getDb(), req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const parsed = UpdateResourceLocationsBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  setResourceLocations(getDb(), req.params.id, parsed.data.locations);
+  res.json({ locations: parsed.data.locations });
 });
 
 resourcesRouter.put("/:id/shelf", (req, res) => {

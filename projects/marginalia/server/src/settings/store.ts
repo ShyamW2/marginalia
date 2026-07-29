@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type {
   CursorStyleChoice,
+  PageNumberMode,
   ReaderMargin,
   Settings,
   SettingsUpdate,
@@ -31,6 +32,9 @@ const DEFAULTS = {
   // M17: 0 = no ceiling — a digest run pre-flight estimate above this many
   // input tokens is refused rather than started.
   digest_token_budget: "0",
+  // M19.6 "page numbers, book-wide and stable": "off" is today's behavior,
+  // unchanged until a reader opts in (same convention as reader_margin etc).
+  page_number_mode: "off" as PageNumberMode,
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -45,6 +49,7 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   scan_crt_intensity: "scanCrtIntensity",
   max_response_tokens: "maxResponseTokens",
   digest_token_budget: "digestTokenBudget",
+  page_number_mode: "pageNumberMode",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -71,6 +76,7 @@ export function getRawSettings(db: Database.Database): {
   scanCrtIntensity: number;
   maxResponseTokens: number;
   digestTokenBudget: number;
+  pageNumberMode: PageNumberMode;
 } {
   const raw = readRaw(db);
   return {
@@ -83,6 +89,7 @@ export function getRawSettings(db: Database.Database): {
     scanCrtIntensity: Number.parseFloat(raw.scan_crt_intensity),
     maxResponseTokens: Number.parseInt(raw.max_response_tokens, 10),
     digestTokenBudget: Number.parseInt(raw.digest_token_budget, 10),
+    pageNumberMode: raw.page_number_mode as PageNumberMode,
   };
 }
 

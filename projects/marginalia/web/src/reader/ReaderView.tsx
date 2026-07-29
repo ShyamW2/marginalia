@@ -22,6 +22,7 @@ import {
   type HighlightImportance,
   type HighlightKind,
   type HighlightWithThread,
+  type PageNumberMode,
   type ProviderRoleAssignment,
   type ReaderFontScale,
   type ReaderMargin,
@@ -49,6 +50,7 @@ import { AnnotationsOverview } from "./AnnotationsOverview.js";
 import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, currentChapter as deriveCurrentChapter, type TocEntry } from "./toc.js";
 import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
+import { PageNumberDisplay } from "./PageNumberDisplay.js";
 import { ScrubDial, DIAL_PX_PER_PERCENT } from "./ScrubDial.js";
 import styles from "./ReaderView.module.css";
 
@@ -116,6 +118,15 @@ function clampPercent(value: number): number {
 // exists at runtime (see managers/views/iframe.js) — narrow just that.
 interface ViewWithContents {
   contents: Contents;
+}
+
+// epub.js's bundled Locations typings wrongly declare `locationFromCfi` as
+// returning `Location` (the reader-position type) — the runtime
+// (lib/locations.js) returns a plain 0-based index, or -1 before locations
+// have generated or loaded. Narrow just that one method; `length()` (locations
+// count) is typed correctly and used in place of the untyped `total`.
+interface LocationsIndexLookup {
+  locationFromCfi(cfi: string): number;
 }
 
 // epub.js's bundled RenditionOptions typings omit `gap`, though the runtime
@@ -228,6 +239,31 @@ function savePosition(
     body: JSON.stringify({ location, spineIndex, percent }),
   }).catch(() => {
     // best-effort — losing one position write isn't worth surfacing an error
+  });
+}
+
+// M19.6 "page numbers, book-wide and stable": the cached `book.locations
+// .save()` blob, opaque past this point — the server never parses it (SPEC:
+// no EPUB renderer server-side). Null means "never generated for this
+// resource", not an error; the caller falls back to generate().
+async function fetchCachedLocations(resourceId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/locations`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { locations: string | null };
+    return data.locations;
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedLocations(resourceId: string, locations: string): void {
+  fetch(`/api/resources/${resourceId}/locations`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ locations }),
+  }).catch(() => {
+    // best-effort — worst case this book regenerates locations next open
   });
 }
 
@@ -439,6 +475,15 @@ export function ReaderView({
   useEffect(() => {
     fontScaleRef.current = readerFontScale;
   }, [readerFontScale]);
+  // M19.6 "page numbers, book-wide and stable": same live-via-settingsBus
+  // story as readerMargin/readerFontScale above.
+  const [pageNumberMode, setPageNumberMode] = useState<PageNumberMode>("off");
+  // Null until book.locations has generated or loaded from cache (see the
+  // book-loading effect) — "book" mode shows nothing until then, same as
+  // displayedPage does before epub.js reports its first location.
+  const [bookLocation, setBookLocation] = useState<{ index: number; total: number } | null>(
+    null,
+  );
   const [showAnnotations, setShowAnnotations] = useState(false);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
@@ -676,6 +721,7 @@ export function ReaderView({
       if (!settings) return;
       setReaderMargin(settings.readerMargin);
       setReaderFontScale(settings.readerFontScale);
+      setPageNumberMode(settings.pageNumberMode);
     });
     fetchQueryRoleConfigured().then(setProviderConfigured);
   }, []);
@@ -684,6 +730,7 @@ export function ReaderView({
     return onSettingsSaved((settings) => {
       setReaderMargin(settings.readerMargin);
       setReaderFontScale(settings.readerFontScale);
+      setPageNumberMode(settings.pageNumberMode);
     });
   }, []);
 
@@ -700,6 +747,7 @@ export function ReaderView({
     setStatus("loading");
     setProgressPercent(null);
     setDisplayedPage(null);
+    setBookLocation(null);
     setToc([]);
     setProgressPopoverOpen(false);
     setScrubPreviewPercent(null);
@@ -728,11 +776,26 @@ export function ReaderView({
     // Measured from marginWrapperRef, never from containerRef's own box —
     // once pinned, containerRef's box no longer reflects the *available*
     // space, only whatever we last told it to be.
+    // Bug found live-testing the page-number task below (not part of the
+    // original last-page-skip fix's own acceptance criteria, which never
+    // checked for overflow): `wrapper.clientWidth` is marginWrapper's own
+    // *border-box* width, which — since marginWrapper is where the margin
+    // padding lives — includes that padding rather than the content area
+    // inside it. Pinning containerRef to that full width, while containerRef
+    // still starts flush against the left padding edge as a normal-flow
+    // child, pushed its right edge past marginWrapper's own right edge by
+    // exactly the horizontal padding, i.e. by the margin itself — epub.js
+    // then paginated to fill that too-wide box and the right margin's worth
+    // of text ran off the page, clipped by .pageClip. Must subtract the
+    // padding to get the actual content width available.
     function pinContainerWidth(): number {
       const wrapper = marginWrapperRef.current;
       const container = containerRef.current;
       if (!wrapper || !container) return 0;
-      const integerWidth = Math.floor(wrapper.clientWidth);
+      const computed = getComputedStyle(wrapper);
+      const horizontalPadding =
+        Number.parseFloat(computed.paddingLeft) + Number.parseFloat(computed.paddingRight);
+      const integerWidth = Math.floor(wrapper.clientWidth - horizontalPadding);
       container.style.width = `${integerWidth}px`;
       return integerWidth;
     }
@@ -903,6 +966,17 @@ export function ReaderView({
       const displayed = location.start.displayed;
       if (displayed && typeof displayed.page === "number" && typeof displayed.total === "number") {
         setDisplayedPage({ page: displayed.page, total: displayed.total });
+      }
+
+      // M19.6 "page numbers, book-wide and stable": locationFromCfi returns
+      // -1 until book.locations has generated or loaded (see below) — mirrors
+      // the same "recompute once ready" story percent/displayedPage above
+      // already have, via the same reportLocation() re-fire.
+      const bookLoc = (book.locations as unknown as LocationsIndexLookup).locationFromCfi(
+        location.start.cfi,
+      );
+      if (bookLoc >= 0) {
+        setBookLocation({ index: bookLoc, total: book.locations.length() - 1 });
       }
 
       window.clearTimeout(saveTimerRef.current);
@@ -1156,9 +1230,10 @@ export function ReaderView({
     book.ready
       .then(async () => {
         if (cancelled) return;
-        const [position, resourceHighlights] = await Promise.all([
+        const [position, resourceHighlights, cachedLocations] = await Promise.all([
           fetchPosition(resourceId),
           fetchHighlights(resourceId),
+          fetchCachedLocations(resourceId),
         ]);
         if (cancelled) return;
         highlightsRef.current = resourceHighlights;
@@ -1187,16 +1262,31 @@ export function ReaderView({
           });
         }
 
-        // Locations let epub.js compute a whole-book percentage from a CFI;
-        // generating them is async, so the initial relocated event may fire
-        // before percentages are available — recompute once ready. M12's
-        // table of contents also needs locations (chapter-start percents
-        // are derived from them, see toc.ts), so build it here too.
-        book.locations.generate(LOCATIONS_CHAR_STEP).then(() => {
-          if (cancelled) return;
+        // Locations let epub.js compute a whole-book percentage from a CFI
+        // (and, per M19.6, a stable book-wide page number); generating them
+        // is async, so the initial relocated event may fire before
+        // percentages are available — recompute once ready via
+        // reportLocation(). M12's table of contents also needs locations
+        // (chapter-start percents are derived from them, see toc.ts), so
+        // build it here too.
+        // M19.6 "page numbers, book-wide and stable": resources are
+        // immutable-on-import (settled decision 5), so a cached blob from a
+        // prior open can never rot — `load()` is synchronous and cheap
+        // (unlike `generate()`, which walks every section) and skips
+        // regenerating this book's locations ever again. Cache miss falls
+        // back to the original generate()-then-save() path.
+        if (cachedLocations) {
+          book.locations.load(cachedLocations);
           rendition.reportLocation();
           setToc(buildToc(book));
-        });
+        } else {
+          book.locations.generate(LOCATIONS_CHAR_STEP).then(() => {
+            if (cancelled) return;
+            rendition.reportLocation();
+            setToc(buildToc(book));
+            saveCachedLocations(resourceId, book.locations.save());
+          });
+        }
       })
       .catch(() => {
         if (!cancelled) setStatus("error");
@@ -1989,6 +2079,13 @@ export function ReaderView({
         >
           <ChevronIcon direction="left" />
         </button>
+        <PageNumberDisplay
+          mode={pageNumberMode}
+          bookLocationIndex={bookLocation?.index ?? null}
+          bookLocationTotal={bookLocation?.total ?? null}
+          chapterPage={displayedPage?.page ?? null}
+          chapterTotal={displayedPage?.total ?? null}
+        />
         <button
           type="button"
           className={styles.navButton}

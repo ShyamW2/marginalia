@@ -1,4 +1,4 @@
-import type { ReaderMargin, Settings, SpreadMode } from "@marginalia/shared";
+import type { PageNumberMode, ReaderMargin, Settings, SpreadMode } from "@marginalia/shared";
 import styles from "../SettingsPage.module.css";
 
 interface ReadingTabProps {
@@ -74,6 +74,32 @@ export function ReadingTab({ form, update }: ReadingTabProps) {
           value={form.readerFontScale}
           onChange={(e) => update("readerFontScale", Number.parseFloat(e.target.value))}
         />
+      </div>
+      <div className={styles.field}>
+        <label className={styles.label}>Page numbers</label>
+        <div className={styles.providerToggle} role="group" aria-label="Page numbers">
+          {(
+            [
+              { value: "off", label: "Off" },
+              { value: "chapter", label: "Chapter" },
+              { value: "book", label: "Book-wide" },
+            ] satisfies { value: PageNumberMode; label: string }[]
+          ).map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={
+                form.pageNumberMode === option.value
+                  ? `${styles.providerButton} ${styles.providerButtonActive}`
+                  : styles.providerButton
+              }
+              aria-pressed={form.pageNumberMode === option.value}
+              onClick={() => update("pageNumberMode", option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
       </div>
     </>
   );
