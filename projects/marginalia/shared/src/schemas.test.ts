@@ -73,6 +73,7 @@ describe("schemas smoke test", () => {
       readerFontScale: 1,
       scanCrtIntensity: 0.6,
       pageNumberMode: "off",
+      readerPaneWidth: 0,
       maxResponseTokens: 8192,
       digestTokenBudget: 0,
     });

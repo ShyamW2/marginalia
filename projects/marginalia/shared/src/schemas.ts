@@ -405,6 +405,17 @@ export const ScanCrtIntensitySchema = z.number().min(0).max(1);
 export const PageNumberModeSchema = z.enum(["book", "chapter", "off"]);
 export type PageNumberMode = z.infer<typeof PageNumberModeSchema>;
 
+/** M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later):
+ * the pane's *outer* measure (`--reader-max-width` in ReaderView.module.css)
+ * as a drag-set pixel width, layered on top of — not replacing — the
+ * spread-mode default (single/auto/fullscreen), the same way readerMargin
+ * is a proportion *inside* it rather than a fourth independent knob. `0` is
+ * the "unset, use the spread-mode default" sentinel (same convention as
+ * digestTokenBudget's "0 = no ceiling"), not a real width — the client
+ * clamps any real drag to a sane [480, 1800] range. */
+export const ReaderPaneWidthSchema = z.number().int().min(0).max(1800);
+export type ReaderPaneWidth = z.infer<typeof ReaderPaneWidthSchema>;
+
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset.
  * M19 (decisions.md 2026-07-29 later): provider configuration moved out of
  * this flat bag into provider *profiles* + *roles* (below) — this schema now
@@ -418,6 +429,7 @@ export const SettingsSchema = z.object({
   readerFontScale: ReaderFontScaleSchema,
   scanCrtIntensity: ScanCrtIntensitySchema,
   pageNumberMode: PageNumberModeSchema,
+  readerPaneWidth: ReaderPaneWidthSchema,
   // Global request ceiling, applied regardless of which profile/role serves
   // the call — not part of a profile (SPEC: a profile is "provider id,
   // model, key, base URL, context tokens").

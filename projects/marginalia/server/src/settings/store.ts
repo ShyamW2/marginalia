@@ -3,6 +3,7 @@ import type {
   CursorStyleChoice,
   PageNumberMode,
   ReaderMargin,
+  ReaderPaneWidth,
   Settings,
   SettingsUpdate,
   SpreadMode,
@@ -35,6 +36,9 @@ const DEFAULTS = {
   // M19.6 "page numbers, book-wide and stable": "off" is today's behavior,
   // unchanged until a reader opts in (same convention as reader_margin etc).
   page_number_mode: "off" as PageNumberMode,
+  // M19.6 "the reading pane is resizable": 0 = unset, use the spread-mode
+  // default (same "0 = no override" convention as digest_token_budget).
+  reader_pane_width: "0",
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -50,6 +54,7 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   max_response_tokens: "maxResponseTokens",
   digest_token_budget: "digestTokenBudget",
   page_number_mode: "pageNumberMode",
+  reader_pane_width: "readerPaneWidth",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -77,6 +82,7 @@ export function getRawSettings(db: Database.Database): {
   maxResponseTokens: number;
   digestTokenBudget: number;
   pageNumberMode: PageNumberMode;
+  readerPaneWidth: ReaderPaneWidth;
 } {
   const raw = readRaw(db);
   return {
@@ -90,6 +96,7 @@ export function getRawSettings(db: Database.Database): {
     maxResponseTokens: Number.parseInt(raw.max_response_tokens, 10),
     digestTokenBudget: Number.parseInt(raw.digest_token_budget, 10),
     pageNumberMode: raw.page_number_mode as PageNumberMode,
+    readerPaneWidth: Number.parseInt(raw.reader_pane_width, 10),
   };
 }
 
