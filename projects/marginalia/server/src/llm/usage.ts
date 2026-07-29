@@ -11,9 +11,13 @@ import type {
  * M17 usage ledger (docs/decisions.md 2026-07-28 later). One row per
  * provider call — the four operations the digest work introduces
  * ("thread" already existed; "extract" covers vault distillation and the
- * desk notepad; "digest"/"cast" are M17/M22).
+ * desk notepad; "digest"/"cast" are M17/M22). "thematic" is M19.5's own tag,
+ * kept separate from "digest" even though both resolve to the digest role
+ * (decisions.md: roles are reused across features, but the ledger's
+ * "broken down by operation" would lose the plot/thematic distinction this
+ * milestone exists to draw if the two shared a tag).
  */
-export type LLMOperation = "thread" | "extract" | "digest" | "cast";
+export type LLMOperation = "thread" | "extract" | "digest" | "cast" | "thematic";
 
 /**
  * Every number's provenance: `reported` (the provider returned real counts),

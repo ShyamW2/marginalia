@@ -233,4 +233,31 @@ describe("buildDigestContext", () => {
     expect(result.highlightChapterCovered).toBe(false);
     expect(result.bookContext).toContain("No book-level digest available yet.");
   });
+
+  it("includes the thematic layer alongside the plot digest when provided, and omits the section when absent", () => {
+    const sections = makeSections(3, 100);
+    const chapterDigests = [{ spineIndex: 0, summary: "s", themes: [], characters: [] }];
+
+    const withThematic = buildDigestContext({
+      title: "Test Book",
+      author: null,
+      sections,
+      highlight,
+      bookDigest: null,
+      chapterDigests,
+      thematicChapters: [{ spineIndex: 0, analysis: "This chapter is about autonomy.", themes: ["autonomy"] }],
+    });
+    expect(withThematic.bookContext).toContain("THEMATIC READING");
+    expect(withThematic.bookContext).toContain("This chapter is about autonomy.");
+
+    const withoutThematic = buildDigestContext({
+      title: "Test Book",
+      author: null,
+      sections,
+      highlight,
+      bookDigest: null,
+      chapterDigests,
+    });
+    expect(withoutThematic.bookContext).not.toContain("THEMATIC READING");
+  });
 });

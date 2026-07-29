@@ -2254,4 +2254,71 @@ Implementation, unaffected by the above:
   directly rather than assumed. The `rm` that deleted the live database
   earlier is unrelated to that process and the conclusion stands: it was a
   real mistake with no full recovery available, correctly escalated rather
+  than papered over.
+
+## M19.5 — digest depth & the semantic scan (in progress) — 2026-07-29
+
+Backend groundwork landed first, in the order the checklist implies: the
+plot/thematic split has to exist before briefs or questions can be built on
+top of it, and the prompt fix is small and self-contained. Not yet started:
+the digest-page/reader UI for briefs and posed questions, spoiler-safe
+display, and the scan's second layer — flagged rather than rushed, since
+the scan work in particular is its own multi-part effort (canvas rendering,
+hit-testing, an extract pass, a shared theme vocabulary) comparable in size
+to M18.
+
+- **The split** (`server/src/digest/thematicStore.ts`,
+  `thematicBuild.ts`, migration 15). Plot (`chapter_digests`/`book_digests`)
+  is untouched — existing digested books keep everything, no re-digest, per
+  acceptance. Thematic is new: `resource_briefs` (one editable-in-place
+  brief per resource, no history) and `thematic_digests`
+  (resource + chapter + **brief hash**, snapshotting the brief's own text
+  alongside the hash so "the brief in force" can be shown even after the
+  live brief has since changed again). `thematic_runs` mirrors
+  `digest_runs`'s pause/resume-on-rate-limit shape but keys resumability on
+  `(spineStart, spineEnd, briefHash)` together — resuming under a since-
+  changed brief must not silently continue the old brief's run.
+- **Independence, proven by test, not just by construction.**
+  `thematicBuild.test.ts` asserts the plot provider is never touched by a
+  thematic run and the plot row's `generatedAt` never moves — the literal
+  "watch the ledger" acceptance criterion, as a test rather than a manual
+  check. Re-running under an unchanged brief is a true no-op (call count
+  test); changing the brief makes the prior row stale
+  (`isThematicStale`, hash comparison) and the next run regenerates exactly
+  that chapter with the new brief's text attached.
+  Deliberate design call not spelled out in decisions.md: the thematic pass
+  reads the chapter's **raw text**, not the plot summary — an intentional
+  redundancy that keeps the two calls structurally independent rather than
+  chaining one's output into the other's input, which would have made "do
+  not build them as one call" true in name only.
+  `LLMOperation` (`llm/usage.ts`) gained a fifth tag, `"thematic"`, sitting
+  alongside `"digest"` even though both resolve to the `digest` *role* —
+  the Usage divider's per-operation breakdown would otherwise blend plot
+  and thematic cost into one number, which is exactly the distinction this
+  milestone exists to draw.
+- **The prompt fix landed as its own small change**
+  (`llm/context.ts`'s `READING_COMPANION_INSTRUCTIONS`), not folded into
+  the thematic-generation prompt — it governs thread *answers*, a different
+  call site. Rewritten to state two postures explicitly rather than one
+  blended rule: factual/plot questions stay tightly grounded (unchanged
+  behavior), thematic/applied questions get explicit license to reason past
+  the page without hedging. Both are asserted by name in the comment above
+  it, because the acceptance criterion warns this is "easy to fix one by
+  breaking the other" — a blended rewrite would have silently done that.
+  `buildDigestContext` (same file) gained an optional `thematicChapters`
+  parameter, rendered as a new "THEMATIC READING" block alongside the
+  existing chapter-summaries block; `threads.ts`'s `resolveContext` passes
+  only chapters whose stored `briefHash` matches the resource's *current*
+  brief, so a stale analysis (from a brief the reader has since changed)
+  never silently grounds a live answer.
+- Not yet live-verified in a browser — no UI exists yet for any of this
+  (brief has no editor, thematic analysis has no display, nothing calls the
+  new `/thematic` or `/brief` endpoints from the client). The route/store/
+  pipeline layer is covered by 6 new automated tests (5 `thematicBuild`,
+  1 `context`) plus the existing suite (219 tests total across the
+  workspace, all passing) — genuine coverage of the acceptance criteria
+  that are data-level, but the UI-facing acceptance criteria for briefs,
+  posed questions, spoiler-safety, and the scan's two layers remain open.
+
+
   than guessed around.

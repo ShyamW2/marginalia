@@ -2,8 +2,12 @@ import { Router } from "express";
 import {
   DigestStatusSchema,
   StartDigestBodySchema,
+  StartThematicDigestBodySchema,
+  ThematicStatusSchema,
+  UpdateBriefBodySchema,
   UpdateContextLadderBodySchema,
   type DigestStatus,
+  type ThematicStatus,
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { getReadingPosition, getResourceById, getResourceTextSections } from "../library/store.js";
@@ -11,12 +15,21 @@ import { getProvider, LLMError, type LLMErrorCode } from "../llm/provider.js";
 import { sectionLabel } from "../llm/context.js";
 import { getRawSettings } from "../settings/store.js";
 import { estimateDigestRun, runDigest } from "../digest/build.js";
+import { runThematicDigest } from "../digest/thematicBuild.js";
 import { writeDigestMarkdown, renderDigestMarkdown } from "../digest/markdown.js";
 import {
   getBookDigest,
   getDigestRun,
   listChapterDigests,
 } from "../digest/store.js";
+import {
+  getBrief,
+  getThematicRun,
+  hashBrief,
+  isThematicStale,
+  listThematicDigests,
+  putBrief,
+} from "../digest/thematicStore.js";
 import {
   getStoredContextLadderDepth,
   resolveContextLadderDepth,
@@ -240,4 +253,125 @@ digestRouter.put("/:id/context-ladder", (req, res) => {
   }
   setContextLadderDepth(db, resource.id, parsed.data.depth);
   res.json({ depth: parsed.data.depth });
+});
+
+// ---------------------------------------------------------------------------
+// M19.5 — reader briefs & the thematic layer
+// ---------------------------------------------------------------------------
+
+digestRouter.get("/:id/brief", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const brief = getBrief(db, resource.id);
+  res.json({ text: brief.text, updatedAt: brief.updatedAt });
+});
+
+digestRouter.put("/:id/brief", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const parsed = UpdateBriefBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const brief = putBrief(db, resource.id, parsed.data.text);
+  res.json({ text: brief.text, updatedAt: brief.updatedAt });
+});
+
+function buildThematicStatus(db: ReturnType<typeof getDb>, resourceId: string): ThematicStatus {
+  const brief = getBrief(db, resourceId);
+  const currentBriefHash = hashBrief(brief.text);
+  const thematic = listThematicDigests(db, resourceId);
+  const byIndex = new Map(thematic.map((t) => [t.spineIndex, t]));
+  const sections = getResourceTextSections(db, resourceId).sort((a, b) => a.spineIndex - b.spineIndex);
+  const run = getThematicRun(db, resourceId);
+
+  const chapters = sections.map((s) => {
+    const t = byIndex.get(s.spineIndex);
+    return {
+      spineIndex: s.spineIndex,
+      analyzed: Boolean(t),
+      analysis: t?.analysis ?? null,
+      themes: t?.themes ?? [],
+      questions: t?.questions ?? [],
+      briefText: t?.briefText ?? null,
+      stale: t ? isThematicStale(t, currentBriefHash) : false,
+      generatedAt: t?.generatedAt ?? null,
+    };
+  });
+
+  return {
+    brief: { text: brief.text, updatedAt: brief.updatedAt },
+    chapters,
+    run: run
+      ? {
+          spineStart: run.spineStart,
+          spineEnd: run.spineEnd,
+          status: run.status,
+          failedSpineIndices: run.failedSpineIndices,
+          resumesAt: run.resumesAt,
+          lastError: run.lastError,
+          updatedAt: run.updatedAt,
+        }
+      : null,
+  };
+}
+
+digestRouter.get("/:id/thematic", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  res.json(ThematicStatusSchema.parse(buildThematicStatus(db, resource.id)));
+});
+
+digestRouter.post("/:id/thematic", async (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const parsed = StartThematicDigestBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const { spineStart, spineEnd } = parsed.data;
+  if (spineStart > spineEnd) {
+    res.status(400).json({ error: "invalid_range" });
+    return;
+  }
+
+  const provider = getProvider(db, "digest", "thematic", resource.id);
+  if (!provider) {
+    res.status(400).json({ error: "provider_unconfigured" });
+    return;
+  }
+
+  const sections = getResourceTextSections(db, resource.id);
+  try {
+    await runThematicDigest(db, provider, resource, sections, spineStart, spineEnd);
+    res.json(ThematicStatusSchema.parse(buildThematicStatus(db, resource.id)));
+  } catch (err) {
+    if (err instanceof LLMError) {
+      // eslint-disable-next-line no-console
+      console.error(`[thematic] ${err.code}: ${err.message}`);
+      res.status(ERROR_STATUS[err.code]).json({ error: err.code });
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.error("[thematic]", err);
+    res.status(500).json({ error: "thematic_digest_failed" });
+  }
 });

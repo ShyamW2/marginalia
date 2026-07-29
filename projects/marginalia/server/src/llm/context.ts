@@ -1,11 +1,27 @@
 import type { ResourceTextSection } from "../library/store.js";
 
+// M19.5 "let thematic questions be thematic" (decisions.md 2026-07-29
+// later): the old instructions treated anything outside the book as a
+// fallback to be "clearly marked", which made every applied or thematic
+// question come back hedged. Factual/plot questions still stay tightly
+// grounded — only the interpretive/applied kind get license to reason past
+// the page. Both rules are stated explicitly and separately: fixing one by
+// blending it into the other silently breaks the acceptance test for the
+// one not being fixed.
 export const READING_COMPANION_INSTRUCTIONS =
   "You are a thoughtful reading companion embedded in the reader's book. " +
   "Answer questions grounded in the book text provided below — quote the " +
   "book directly when referencing it. Be concise but substantive: real " +
-  "insight, not padding. If the answer isn't found in the book, say so " +
-  "plainly, then answer from general knowledge, clearly marked as such. " +
+  "insight, not padding.\n\n" +
+  "Two kinds of questions call for different postures. A factual question " +
+  "about the plot, characters, or events stays tightly grounded: if the " +
+  "answer isn't found in the book, say so plainly, then answer from " +
+  "general knowledge, clearly marked as such. A thematic, interpretive, or " +
+  "applied question (\"what does this say about X\", \"how does this apply " +
+  "to my life\") calls for grounded extrapolation instead: reason outward " +
+  "from the book's ideas with the same confidence you'd bring to a real " +
+  "conversation about it — anchor the connection in the text, but don't " +
+  "hedge or apologize for reasoning past the page.\n\n" +
   "The reader may not have finished the book yet. When their current " +
   "reading position is given with a question, do not reveal or hint at " +
   "plot developments beyond that position — even if the answer is in the " +
@@ -271,9 +287,26 @@ export interface DigestChapterSummary {
   characters: string[];
 }
 
+export interface DigestThematicSummary {
+  spineIndex: number;
+  analysis: string;
+  themes: string[];
+}
+
 export interface DigestContextInput extends LadderContextInput {
   bookDigest: DigestBookSummary | null;
   chapterDigests: DigestChapterSummary[];
+  /** M19.5 "the thematic layer ships as context when the question calls
+   * for it" (decisions.md 2026-07-29 later): rather than classifying the
+   * question first (fragile, and against decision 11's "code disposes"
+   * spirit), the thematic analysis simply rides alongside the plot digest
+   * whenever it exists — READING_COMPANION_INSTRUCTIONS already tells the
+   * model which kind of question calls for which posture, so a factual
+   * question ignores it and a thematic one draws on it. Callers pass only
+   * chapters whose analysis matches the resource's *current* brief — a
+   * stale one (from a brief the reader has since changed) never silently
+   * grounds a live answer. */
+  thematicChapters?: DigestThematicSummary[];
 }
 
 /** Digest rung: the book-level digest (synopsis/cast/themes) plus every
@@ -309,10 +342,19 @@ export function buildDigestContext(input: DigestContextInput): BuiltLadderContex
     .map((s) => `--- [${sectionLabel(s.spineIndex, input.chapterTitles)} — full text] ---\n${s.text}`)
     .join("\n\n");
 
+  const sortedThematic = [...(input.thematicChapters ?? [])].sort((a, b) => a.spineIndex - b.spineIndex);
+  const thematicText = sortedThematic
+    .map((t) => {
+      const themesLine = t.themes.length > 0 ? `\nThemes: ${t.themes.join(", ")}` : "";
+      return `--- [${sectionLabel(t.spineIndex, input.chapterTitles)} thematic reading] ---\n${t.analysis}${themesLine}`;
+    })
+    .join("\n\n");
+
   const bookContext =
     `${header}\n\n` +
     `BOOK DIGEST\n${bookPart}\n\n` +
     `CHAPTER SUMMARIES\n${chapterDigestText || "(no chapters digested yet)"}\n\n` +
+    (thematicText ? `THEMATIC READING (the reader's own angle on these chapters)\n${thematicText}\n\n` : "") +
     `FULL TEXT AROUND THE HIGHLIGHT\n${pagesText}`;
 
   const positionLine = renderPositionLine(input.readingPosition, input.chapterTitles);

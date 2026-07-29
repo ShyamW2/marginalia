@@ -24,6 +24,7 @@ import { buildContext, buildDigestContext, buildOffContext, WINDOWED_CONTEXT_NOT
 import { computeContextUsage, type UsageLedgerRow } from "../llm/usage.js";
 import { getBookDigest, listChapterDigests } from "../digest/store.js";
 import { resolveContextLadderDepth } from "../digest/ladder.js";
+import { getBrief, hashBrief, listThematicDigests } from "../digest/thematicStore.js";
 
 export const threadsRouter: Router = Router();
 
@@ -80,6 +81,10 @@ function resolveContext(
 
   if (depth === "digest") {
     const chapterDigests = listChapterDigests(db, resource.id);
+    const currentBriefHash = hashBrief(getBrief(db, resource.id).text);
+    const thematicChapters = listThematicDigests(db, resource.id)
+      .filter((t) => t.briefHash === currentBriefHash)
+      .map((t) => ({ spineIndex: t.spineIndex, analysis: t.analysis, themes: t.themes }));
     const built = buildDigestContext({
       title: resource.title,
       author: resource.author,
@@ -91,6 +96,7 @@ function resolveContext(
         ? { synopsis: bookDigest.synopsis, cast: bookDigest.cast, themes: bookDigest.themes }
         : null,
       chapterDigests,
+      thematicChapters,
     });
     return {
       instructions: built.instructions,

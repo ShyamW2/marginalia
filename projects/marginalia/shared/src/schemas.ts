@@ -464,7 +464,7 @@ export type SetProviderRoleBody = z.infer<typeof SetProviderRoleBodySchema>;
 // 2026-07-28 later / 2026-07-29 later)
 // ---------------------------------------------------------------------------
 
-export const UsageOperationSchema = z.enum(["thread", "extract", "digest", "cast"]);
+export const UsageOperationSchema = z.enum(["thread", "extract", "digest", "cast", "thematic"]);
 export type UsageOperation = z.infer<typeof UsageOperationSchema>;
 
 export const UsageProvenanceSchema = z.enum(["reported", "measured", "estimated", "mixed"]);
@@ -689,6 +689,58 @@ export const DigestPreflightSchema = z.object({
     .nullable(),
 });
 export type DigestPreflightPayload = z.infer<typeof DigestPreflightSchema>;
+
+// ---------------------------------------------------------------------------
+// M19.5 — the thematic layer & reader briefs (decisions.md 2026-07-29 later:
+// "plot is fixed; thematic reading is personal and evolves as you read")
+// ---------------------------------------------------------------------------
+
+/** GET /api/resources/:id/brief response, and the shape embedded in
+ * ThematicStatusSchema below so a chapter's analysis carries the brief it
+ * was actually produced under, not just the resource's current one. */
+export const BriefSchema = z.object({
+  text: z.string(),
+  updatedAt: z.string(),
+});
+export type Brief = z.infer<typeof BriefSchema>;
+
+/** PUT /api/resources/:id/brief body. */
+export const UpdateBriefBodySchema = z.object({
+  text: z.string().max(4000),
+});
+export type UpdateBriefBody = z.infer<typeof UpdateBriefBodySchema>;
+
+export const ThematicChapterStatusSchema = z.object({
+  spineIndex: z.number().int().nonnegative(),
+  analyzed: z.boolean(),
+  analysis: z.string().nullable(),
+  themes: z.array(z.string()),
+  questions: z.array(z.string()),
+  /** The brief text this chapter's analysis was generated under — null
+   * when never analyzed. Shown alongside the analysis per decisions.md:
+   * "the brief in force is shown alongside the analysis it produced". */
+  briefText: z.string().nullable(),
+  /** True when the resource's *current* brief no longer matches the one
+   * this analysis was generated under — never silently served as fresh. */
+  stale: z.boolean(),
+  generatedAt: z.string().nullable(),
+});
+export type ThematicChapterStatus = z.infer<typeof ThematicChapterStatusSchema>;
+
+/** GET /api/resources/:id/thematic response. Reuses DigestRunPayloadSchema's
+ * shape for `run` — a thematic run has the same lifecycle fields as a plot
+ * run; only the brief it ran under (server-internal) differs. */
+export const ThematicStatusSchema = z.object({
+  brief: BriefSchema,
+  chapters: z.array(ThematicChapterStatusSchema),
+  run: DigestRunPayloadSchema.nullable(),
+});
+export type ThematicStatus = z.infer<typeof ThematicStatusSchema>;
+
+/** POST /api/resources/:id/thematic body — same shape as starting a plot
+ * digest run, reused rather than duplicated. */
+export const StartThematicDigestBodySchema = StartDigestBodySchema;
+export type StartThematicDigestBody = StartDigestBody;
 
 // ---------------------------------------------------------------------------
 // The context ladder (M17 — "the brain button")

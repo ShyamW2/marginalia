@@ -2392,7 +2392,7 @@ and the two-channel colour model are specified there.
 design and is not open for re-derivation: **plot is fixed; thematic reading is personal
 and evolves as you read.** Two layers, two lifecycles — do not build them as one call.
 
-- [ ] **Split the digest into a plot layer and a thematic layer.** Plot: generated once
+- [x] **Split the digest into a plot layer and a thematic layer.** Plot: generated once
       per chapter, cached by source hash, unchanged from M17. Thematic: generated per
       chapter **per brief**, cheap, and *expected to be re-run*. Additive migration; the
       existing chapter rows become the plot layer with no re-digest required.
@@ -2415,7 +2415,7 @@ and evolves as you read.** Two layers, two lifecycles — do not build them as o
       _Acceptance: the questions are specific to the chapter rather than generic; clicking
       one opens a real thread that answers well; they are spoiler-gated like everything
       else past the bookmark._
-- [ ] **Let thematic questions be thematic.** Today's system prompt treats anything
+- [x] **Let thematic questions be thematic.** Today's system prompt treats anything
       outside the book as a fallback to be "clearly marked", which is why "how does this
       apply to daily life" comes back hedged. Give thematic and applied questions
       instructions that **invite grounded extrapolation** — still anchored in the text,

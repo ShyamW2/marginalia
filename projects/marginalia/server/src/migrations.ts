@@ -359,4 +359,54 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_llm_usage_resource ON llm_usage(resource_id);
     `,
   },
+  {
+    // M19.5 "the digest splits into a plot layer and a thematic layer"
+    // (docs/decisions.md 2026-07-29 later): plot is `chapter_digests`/
+    // `book_digests`, unchanged by this migration — the existing rows
+    // simply *become* the plot layer, no re-digest required. Thematic is
+    // new: per chapter *per brief*, cached by (resource, chapter, brief),
+    // and expected to be cheap and re-run often, so it gets its own run-
+    // tracking table rather than sharing `digest_runs` (a thematic run is
+    // keyed by which brief it ran under; a plot run isn't).
+    //
+    // `resource_briefs` holds the reader's one standing angle per book —
+    // editable in place, no history kept. `thematic_digests` snapshots the
+    // brief's text and a hash of it alongside the analysis it produced, so
+    // a later change to the live brief can be detected (hash mismatch =
+    // stale) without losing the ability to show "the brief in force" for
+    // analysis already on screen.
+    version: 15,
+    sql: `
+      CREATE TABLE resource_briefs (
+        resource_id   TEXT PRIMARY KEY REFERENCES resources(id),
+        text          TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE thematic_digests (
+        resource_id   TEXT NOT NULL REFERENCES resources(id),
+        spine_index   INTEGER NOT NULL,
+        brief_hash    TEXT NOT NULL,
+        brief_text    TEXT NOT NULL,
+        analysis      TEXT NOT NULL,
+        themes        TEXT NOT NULL DEFAULT '[]',
+        questions     TEXT NOT NULL DEFAULT '[]',
+        generated_at  TEXT NOT NULL,
+        PRIMARY KEY (resource_id, spine_index)
+      );
+
+      CREATE TABLE thematic_runs (
+        resource_id           TEXT PRIMARY KEY REFERENCES resources(id),
+        spine_start           INTEGER NOT NULL,
+        spine_end             INTEGER NOT NULL,
+        brief_hash            TEXT NOT NULL,
+        status                TEXT NOT NULL,
+        failed_spine_indices  TEXT NOT NULL DEFAULT '[]',
+        resumes_at            TEXT,
+        last_error            TEXT,
+        created_at            TEXT NOT NULL,
+        updated_at            TEXT NOT NULL
+      );
+    `,
+  },
 ];
