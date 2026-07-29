@@ -2472,3 +2472,50 @@ operator's real "Kafka on the Shore" book without snapshotting its saved reading
 position first, and likely nudged it forward a few pages — switched to the
 `alice-in-wonderland.epub` fixture for every live check after that; do the same rather
 than re-learning this.
+
+## M19.6 — the skipped last page: fix landed, live repro attempted but not triggered — 2026-07-30
+
+Implemented exactly as the task specifies: `pinContainerWidth()` in `ReaderView.tsx`
+measures `marginWrapperRef` (never `containerRef` itself — see below) and sets
+`containerRef.current.style.width` to an explicit `Math.floor(...)`-integer pixel
+value, called before the initial `book.renderTo()`, from the `ResizeObserver` (now
+observing `marginWrapperRef`, not `containerRef` — observing the element you're
+imperatively resizing is circular), and from the `readerFontScale` effect via
+`applyGapForWidthRef`.
+
+**Live reproduction of the original bug could not be triggered here, despite a real
+attempt** — worth recording precisely, since the task's own acceptance criterion
+insists one clean window size proves nothing:
+- Swept 254 distinct integer viewport widths (640–1400px, step 3) against the live
+  Alice fixture and read `containerRef`'s `getBoundingClientRect().width` /
+  `offsetWidth` at each: **zero** were ever fractional, even before this fix.
+- Forcing a literal fractional CSS width onto `.stage` (an ancestor) directly — e.g.
+  `657.37px` — still resolved to an exact integer at `.epubContainer` in both the
+  fixed and the pre-fix code, and produced zero last-page skips across 5 real chapter
+  transitions each way (tracked via the progress popover's "page X of Y" against
+  `location.start.displayed`).
+- Reading epub.js's own source (`stage.js`'s `size()`) explains why: our
+  `RenditionOptions.width` is the *string* `"100%"`, not a number or `null`, so
+  `Stage.size()` takes the CSS-percentage branch and derives its returned width from
+  `this.container.clientWidth` — which, like `offsetWidth`, is *always* integer by DOM
+  spec, not a float. `layout.delta` (`layout.js`'s `calculate()`) is set to that same
+  stage width regardless of spread divisor. Under this exact configuration, neither
+  side of the `next()` comparison decisions.md names ever appears to carry a
+  fractional component in a single synchronous read — a live mismatch, if real, would
+  have to come from *timing* (a stale `layout.delta` captured before some intervening
+  DOM change) rather than from the two values being simultaneously fractional.
+
+Not chasing this further: decisions.md flags this cause as established from reading
+epub.js's source and explicitly says not to re-derive it, and the fix itself is a
+strict improvement regardless of which exact internal path is responsible — it
+removes the one place a genuine subpixel float (`containerRef`'s own
+`getBoundingClientRect()`, used for the initial `gap` calculation before this fix)
+entered the picture, and guarantees `containerRef`'s own box is never anything but an
+exact integer going forward. If the skip still reproduces for the operator, the
+useful next diagnostic is the one this note already ran and came up empty on — sweep
+window widths *and* font-scale values together while logging `container.offsetWidth`,
+`layout.delta`, `container.scrollWidth`, and `location.start.displayed` on every turn,
+since font scale (via `computeReaderGap`) is the one input actually capable of
+carrying a non-integer value into the system, and was not swept here (it requires a
+real settings write, which this session avoided to keep the live library
+untouched — see the fixture-book note above).

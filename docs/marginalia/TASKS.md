@@ -2488,7 +2488,7 @@ riskiest planned change and shouldn't wait behind five milestones of chrome.
 Daily-use defects and the small reader asks that need no new vocabulary. Nothing here
 depends on M19.7, so it ships first and the app gets better before it gets prettier.
 
-- [ ] **Fix the skipped last page of a chapter.** ⚠️ **Cause is established — do not
+- [x] **Fix the skipped last page of a chapter.** ⚠️ **Cause is established — do not
       re-derive it, and do not "fix" it by intercepting turns.** epub.js's
       `DefaultViewManager.next()` compares `scrollLeft + container.offsetWidth + delta`
       against `container.scrollWidth`; `offsetWidth` is integer-rounded while
@@ -2505,6 +2505,26 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       `location.start.displayed.page`/`total`, which must reach `total` before the spine
       index changes. Repeat in spread mode and at three different text sizes; the bug is
       width-dependent, so one window size proving clean proves nothing._
+      _(implemented 2026-07-30: `pinContainerWidth()` measures `marginWrapperRef` — a
+      new ref, since observing/measuring `containerRef` itself once it's the thing
+      being pinned would be circular — and sets `containerRef.current.style.width` to
+      an explicit `Math.floor(...)` integer, called before the initial `renderTo()`,
+      from the `ResizeObserver` (now observing `marginWrapperRef`), and from the
+      `readerFontScale` effect. Live Playwright verification against the Alice fixture:
+      a sweep of 254 distinct viewport widths and a forced fractional ancestor CSS
+      width both confirmed the pin holds `containerRef` to an exact integer, and zero
+      last-page skips were observed across 5 real chapter transitions — but the
+      original skip could not actually be *triggered* here either before or after the
+      fix (epub.js's own `stage.js` derives its stage width from `clientWidth`, which
+      is integer-rounded by DOM spec regardless, given our `RenditionOptions.width` is
+      the string `"100%"` rather than a number) — full trace, including the one
+      untested variable (font scale, since sweeping it needs a real settings write),
+      in NOTES.md. Per decisions.md the cause is not to be re-derived; the fix is a
+      strict improvement regardless — it removes the one real subpixel float
+      (`containerRef`'s own `getBoundingClientRect()`, previously fed into the initial
+      `computeReaderGap` call) from the picture. 153/153 server + 71/71 web tests,
+      build clean. Text-size sweep and a from-scratch human read-through are still
+      worth doing if the skip resurfaces for the operator.)_
 - [ ] **Diagnose, then fix, the misaligned highlight overlay.** ⚠️ **The cause is not
       established. Run the diagnostic in the 2026-07-30 decisions entry before writing a
       fix** — `rendition.getContents()[0].range(cfi).toString()` returning the intended

@@ -286,6 +286,14 @@ export function ReaderView({
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettingsToLLM();
   const containerRef = useRef<HTMLDivElement>(null);
+  // M19.6 "the skipped last page of a chapter": the element epub.js measures
+  // as `container` (containerRef itself) must be an *integer* pixel width —
+  // see pinContainerWidth's own comment, in the book-loading effect below,
+  // for why. Its own CSS is percentage-based (`width: 100%` of this wrapper's
+  // padded content box), which is exactly the kind of layout that can land
+  // on a fractional pixel; marginWrapperRef is what the pin measures *from*,
+  // since its own box is never touched by the pin itself.
+  const marginWrapperRef = useRef<HTMLDivElement>(null);
   // M14: the reader's stage — the thread panel's drag is constrained to it,
   // and a stale panel offset gets clamped back into its bounds on reopen.
   const stageRef = useRef<HTMLDivElement>(null);
@@ -669,7 +677,7 @@ export function ReaderView({
   }, []);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !marginWrapperRef.current) return;
     let cancelled = false;
 
     setStatus("loading");
@@ -686,6 +694,32 @@ export function ReaderView({
     resolvedIdsRef.current = new Set();
     attachedCfiRef.current = new Map();
     cfiOwnersRef.current = new Map();
+
+    // M19.6 "the skipped last page of a chapter" (decisions.md 2026-07-30,
+    // established cause — not re-derived here): epub.js's DefaultViewManager
+    // decides "scroll one more page" vs. "advance to the next section" by
+    // comparing `container.offsetWidth + layout.delta` against
+    // `container.scrollWidth`. `offsetWidth` is integer-rounded; `delta` is a
+    // float derived from the stage width epub.js measured — a fractional
+    // measurement makes `offsetWidth` overshoot `delta` by up to a pixel, the
+    // comparison fails one page early, and the section advances, skipping the
+    // last page. Pinning `containerRef.current` — the exact element passed to
+    // `renderTo` below, which is what epub.js measures as `container` — to an
+    // explicit *integer* pixel width (not the CSS `width: 100%` its stylesheet
+    // uses, which is exactly the kind of layout that lands on a fractional
+    // value) closes the gap at the source instead of intercepting turns.
+    // Measured from marginWrapperRef, never from containerRef's own box —
+    // once pinned, containerRef's box no longer reflects the *available*
+    // space, only whatever we last told it to be.
+    function pinContainerWidth(): number {
+      const wrapper = marginWrapperRef.current;
+      const container = containerRef.current;
+      if (!wrapper || !container) return 0;
+      const integerWidth = Math.floor(wrapper.clientWidth);
+      container.style.width = `${integerWidth}px`;
+      return integerWidth;
+    }
+    const initialWidth = pinContainerWidth();
 
     // Our file route has no .epub extension for epub.js to sniff from the
     // URL, so it would otherwise be treated as an unpacked directory of
@@ -718,11 +752,7 @@ export function ReaderView({
       // becomes the native CSS column-gap between the two visible leaves in
       // spread mode, which is why computeReaderGap picks a much narrower
       // number once a spread is actually showing (SPREAD_GUTTER).
-      gap: computeReaderGap(
-        containerRef.current.getBoundingClientRect().width,
-        spreadMode,
-        fontScaleRef.current,
-      ),
+      gap: computeReaderGap(initialWidth, spreadMode, fontScaleRef.current),
     } as RenditionOptionsWithGap);
     renditionRef.current = rendition;
     applyTheme(rendition, themeVars);
@@ -748,7 +778,7 @@ export function ReaderView({
     // would swallow this update on anything other than a genuine size
     // change — calling the manager's `updateLayout()` directly re-lays-out
     // unconditionally instead.
-    let lastGapWidth = containerRef.current.getBoundingClientRect().width;
+    let lastGapWidth = initialWidth;
     let redisplayTimer: number | undefined;
     // Shared by real container resizes (below) and, since fontScale changes
     // the target column width without changing the container's own box size
@@ -777,20 +807,22 @@ export function ReaderView({
         if (currentCfiRef.current) void rendition.display(currentCfiRef.current);
       }, 120);
     }
+    // Observes marginWrapperRef, not containerRef — containerRef's own box
+    // is now the thing this pins, so observing it directly would mean
+    // reacting to our own writes rather than to real available-space
+    // changes (a window resize, or a margin-setting repaint of
+    // marginWrapper's padding).
     function handleContainerResize() {
-      const container = containerRef.current;
-      if (!container) return;
-      const width = container.getBoundingClientRect().width;
+      const width = pinContainerWidth();
       if (Math.abs(width - lastGapWidth) < 1) return;
       lastGapWidth = width;
       applyGapForWidth(width);
     }
     applyGapForWidthRef.current = () => {
-      const container = containerRef.current;
-      if (container) applyGapForWidth(container.getBoundingClientRect().width);
+      applyGapForWidth(pinContainerWidth());
     };
     const resizeObserver = new ResizeObserver(handleContainerResize);
-    resizeObserver.observe(containerRef.current);
+    resizeObserver.observe(marginWrapperRef.current);
 
     function markUnanchored(highlightId: string) {
       setUnanchoredIds((prev) => {
@@ -1759,6 +1791,7 @@ export function ReaderView({
       <div className={styles.readerRow}>
         <div className={styles.stage} ref={stageRef} onPointerLeave={handleStagePointerLeave}>
           <div
+            ref={marginWrapperRef}
             className={styles.marginWrapper}
             style={{ "--reader-margin": `${READER_MARGIN_PX[readerMargin]}px` } as CSSProperties}
           >
