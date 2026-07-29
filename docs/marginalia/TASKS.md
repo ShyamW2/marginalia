@@ -2606,10 +2606,32 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       showed 3.3–3.4 visible lines at every width, and every composer control (Off/
       Digest/Full, Web search, Ask) measured zero width/height overflow (no wrap) at
       all three. 153/153 server + 71/71 web tests, build clean.)_
-- [ ] **The quote expands.** Clicking the truncated quote on an annotation reveals it in
+- [x] **The quote expands.** Clicking the truncated quote on an annotation reveals it in
       full, pushing the divider and everything below it down; clicking again re-collapses.
       _Acceptance: expanding a long quote never overflows the panel or clips the controls
       beneath it; the panel's drag offset stays valid across the size change._
+      _(verified 2026-07-30: the quote is now a `<button>` (was a `<span>`) toggling a
+      `quoteExpanded` class that lifts `-webkit-line-clamp`; it's exempt from the
+      header's own drag-start handler for free, since that already excludes any
+      `closest("button")` the same way the close button is. `.panel`'s existing column-
+      flex layout pushes everything below the header down with no extra work needed —
+      `.messages` is the only `flex:1` child, so it's what actually absorbs the growth.
+      A new re-clamp effect re-runs the mount-time `clampPanelOffset` logic whenever
+      `quoteExpanded` turns on. **A real bug found and fixed along the way:** the first
+      attempt used `useLayoutEffect` (measure before paint, matching the mount clamp's
+      own timing) and left a live, reproducible few-pixel overflow with the panel
+      genuinely clipped — `-webkit-line-clamp`'s removal is its own multi-pass layout in
+      Chromium, and reading `getBoundingClientRect()` synchronously in the same tick
+      measures a height a few pixels short of the fully-resolved one. Fixed by moving
+      the re-clamp into a plain `useEffect` + one `requestAnimationFrame`. Live
+      Playwright against the Alice fixture: a 220-char selection (clamps to 3 lines,
+      confirmed via measured height) never overflowed at any tested position; a 971-
+      char selection at the mount-clamped default position grew the panel from 357px to
+      680px on expand and, **before the rAF fix**, left it 4px past the stage's bottom
+      edge with the composer genuinely clipped — **after** the fix, the same case lands
+      the panel's bottom edge exactly flush with the stage's, composer fully visible,
+      and collapsing returns to the original height and position. 153/153 server +
+      71/71 web tests, build clean.)_
 - [ ] **Annotations are resizable, and roam the app.** A resize handle on the panel, with
       the size persisted per highlight exactly as the drag offset already is; and
       `dragConstraints` widen from the reading stage to the app shell.

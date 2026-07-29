@@ -93,8 +93,18 @@
   touch-action: none;
 }
 
+/* M19.6 "the quote expands": a <button> now (was a <span>) so it's
+   keyboard-operable and exempt from the header's own drag-start handler for
+   free (handleHeaderPointerDown already excludes any `closest("button")` —
+   the same reason the close button next to it works). Reset to look like
+   the plain italic text it always was. */
 .quote {
   flex: 1;
+  border: none;
+  background: none;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
   font-family: var(--font-serif);
   font-size: 0.85rem;
   font-style: italic;
@@ -104,6 +114,11 @@
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.quoteExpanded {
+  -webkit-line-clamp: unset;
+  overflow: visible;
 }
 
 .metaRow {

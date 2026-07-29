@@ -104,12 +104,17 @@ export function ThreadPanel({
   const dragY = useMotionValue(panelDy);
   const [isDragging, setIsDragging] = useState(false);
   const tiltDeg = panelTiltDeg(highlightId);
+  // M19.6 "the quote expands": collapsed by default (the existing 3-line
+  // clamp); clicking toggles it. Local, resets on remount — same
+  // "no persistence needed" call as ReaderView's own expandedThread/
+  // focusMode state.
+  const [quoteExpanded, setQuoteExpanded] = useState(false);
 
-  useEffect(() => {
-    // Mount-only (this component remounts per-highlight via ReaderView's
-    // `key` prop): a dx/dy saved against an earlier stage size — a
-    // different margin setting, a narrower window — can overflow the
-    // *current* stage, so clamp back into view once, on open.
+  // Shared by mount (below) and the quote-expand toggle further down: a
+  // dx/dy that fit the panel's *previous* box can overflow the stage once
+  // the box changes size, so re-clamp back into view rather than trusting
+  // whatever was last persisted.
+  function reclampPanelOffset() {
     const panelEl = panelRef.current;
     const stageEl = stageRef.current;
     if (!panelEl || !stageEl) return;
@@ -125,8 +130,36 @@ export function ThreadPanel({
       onPanelOffsetChange(highlightId, clamped.dx, clamped.dy);
       void updateHighlightPanelOffset(highlightId, clamped.dx, clamped.dy);
     }
+  }
+
+  useEffect(() => {
+    // Mount-only (this component remounts per-highlight via ReaderView's
+    // `key` prop): a dx/dy saved against an earlier stage size — a
+    // different margin setting, a narrower window — can overflow the
+    // *current* stage, so clamp back into view once, on open.
+    reclampPanelOffset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    // Expanding the quote can grow the panel enough to push its
+    // (fixed-`top`, dragged) box past the stage's bottom edge — re-run the
+    // same clamp so the drag offset never goes stale the way a stage resize
+    // already had to be defended against above. Skipped on the initial
+    // mount (quoteExpanded starts false, so this would just re-run the
+    // identical mount clamp) and on collapsing back down (shrinking can
+    // only ever move a box further *inside* bounds, never out of them).
+    //
+    // Deliberately not useLayoutEffect: -webkit-line-clamp's removal is its
+    // own special multi-pass layout in Chromium, and measuring synchronously
+    // in the same tick (confirmed live) reads a height a few pixels short of
+    // the fully-resolved one — enough to leave a several-pixel overflow
+    // uncorrected. One rAF is enough to observe the settled layout.
+    if (!quoteExpanded) return;
+    const frame = requestAnimationFrame(reclampPanelOffset);
+    return () => cancelAnimationFrame(frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteExpanded]);
 
   function handleHeaderPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     // The close button lives in the same header strip — a pointerdown there
@@ -420,7 +453,14 @@ export function ThreadPanel({
         className={`${styles.header} ${isDragging ? styles.headerDragging : ""}`}
         onPointerDown={handleHeaderPointerDown}
       >
-        <span className={styles.quote}>&ldquo;{highlightExact}&rdquo;</span>
+        <button
+          type="button"
+          className={`${styles.quote} ${quoteExpanded ? styles.quoteExpanded : ""}`}
+          aria-expanded={quoteExpanded}
+          onClick={() => setQuoteExpanded((prev) => !prev)}
+        >
+          &ldquo;{highlightExact}&rdquo;
+        </button>
         <button type="button" className={styles.closeButton} aria-label="Collapse thread" onClick={onClose}>
           ×
         </button>
