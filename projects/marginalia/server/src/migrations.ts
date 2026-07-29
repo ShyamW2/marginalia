@@ -445,4 +445,15 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M19.6 "annotations are resizable": persisted per highlight exactly
+    // like panel_dx/panel_dy already are, but nullable — NULL means "use
+    // the panel's default size" (the existing `min(340px, ...)` CSS cap),
+    // not zero, which would mean an invisible panel.
+    version: 18,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN panel_width REAL;
+      ALTER TABLE highlights ADD COLUMN panel_height REAL;
+    `,
+  },
 ];

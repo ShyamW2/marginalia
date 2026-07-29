@@ -2632,7 +2632,7 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       the panel's bottom edge exactly flush with the stage's, composer fully visible,
       and collapsing returns to the original height and position. 153/153 server +
       71/71 web tests, build clean.)_
-- [ ] **Annotations are resizable, and roam the app.** A resize handle on the panel, with
+- [x] **Annotations are resizable, and roam the app.** A resize handle on the panel, with
       the size persisted per highlight exactly as the drag offset already is; and
       `dragConstraints` widen from the reading stage to the app shell.
       ⚠️ **Second-order effect, decided in the 2026-07-30 entry, not a bug:** panels ride
@@ -2643,6 +2643,32 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       _Acceptance: resize a panel, turn the page, reopen the book — the size and position
       survive; a panel dragged to the far side of the window is fully visible and not
       clipped; a panel left over the page still rides a page turn as it does today._
+      _(verified 2026-07-30: `panelWidth`/`panelHeight` persisted per highlight exactly
+      like `panelDx`/`panelDy` (nullable — null means "use the default size", never a
+      magic 0; migration 018). A corner `resizeHandle` (pointer-capture drag, same
+      pattern as M10's page-edge peel) sets an explicit inline width/height, overriding
+      both the CSS width cap and `max-height` (which was relative to the *stage*,
+      narrower than the new roam bounds). **The real geometry problem** this task's own
+      warning anticipates: `.stage` had `overflow: hidden` directly, to clip the
+      epub iframe (far wider than one visible page in paginated flow) — widening
+      `dragConstraints` alone would still have let a roaming panel get visually cut off
+      at the stage's own edge. Fixed by moving that clip to a new `.pageClip` child
+      wrapping only the reading surface and its curl/vignette/edge-grab decorations;
+      `.stage` itself now only clips nothing, and ThreadPanel/AskPill/AnnotationsOverview
+      stay direct children of it, outside `.pageClip`, free to roam past it uncropped.
+      `dragConstraints` now targets a new ref on `ReaderPage`'s own root (passed down as
+      `appBoundsRef`), not the stage — a stale/oversized offset also re-clamps against
+      that wider box on mount and after a resize, mirroring the quote-expand re-clamp
+      above. Live Playwright against the Alice fixture (drag gestures hang Playwright's
+      raw mouse API against this component in headless Chromium — confirmed
+      reproducible, worked around via direct API writes + reload, the same substitution
+      used for the last-page-skip diagnostic elsewhere in this milestone): resized a
+      panel via the handle (346×321 → 500×523), reloaded, size persisted; set
+      `panelDx: -700` (well past the stage's own left edge) plus a resized 420×400 via
+      the API, reloaded, opened the highlight — panel rendered at x≈7 (confirmed west of
+      the stage's left edge at x=16) fully on-screen and completely unclipped
+      (screenshotted); a panel left at its default position over the page survived a
+      real page turn with no regression. 154/154 server + 71/71 web tests, build clean.)_
 - [ ] **Page numbers in the footer, book-wide and stable.** `book.locations.generate(1600)`
       → `locations.save()` → persisted per resource in SQLite (additive migration;
       resources are immutable so the blob never rots), then `locationFromCfi` for the

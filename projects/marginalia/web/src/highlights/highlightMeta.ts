@@ -82,3 +82,20 @@ export async function updateHighlightPanelOffset(
     // reload this one time; the next drag or the next debounce tries again
   }
 }
+
+/** M19.6: the thread panel's resized dimensions, in px. */
+export async function updateHighlightPanelSize(
+  highlightId: string,
+  panelWidth: number,
+  panelHeight: number,
+): Promise<void> {
+  try {
+    await fetch(`/api/highlights/${highlightId}/panel-size`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ panelWidth, panelHeight }),
+    });
+  } catch {
+    // best-effort — same story as updateHighlightPanelOffset above
+  }
+}

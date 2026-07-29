@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 import ePub from "epubjs";
 import type { Book, Contents, Location, Rendition } from "epubjs";
 import {
@@ -283,6 +290,9 @@ interface ReaderViewProps {
    * (see the comment there) so it can be handed straight to epub.js's
    * `renderTo()` at creation time — not re-fetched in here. */
   spreadMode: SpreadMode;
+  /** M19.6 "annotations roam the app": the thread panel's dragConstraints —
+   * ReaderPage's own root, wider than the reading stage. */
+  appBoundsRef: RefObject<HTMLDivElement>;
 }
 
 export function ReaderView({
@@ -290,6 +300,7 @@ export function ReaderView({
   initialHighlightId,
   initialQuestion,
   spreadMode,
+  appBoundsRef,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettingsToLLM();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1685,6 +1696,12 @@ export function ReaderView({
     );
   }
 
+  function handlePanelSizeChange(highlightId: string, panelWidth: number, panelHeight: number) {
+    setHighlights((prev) =>
+      prev.map((h) => (h.id === highlightId ? { ...h, panelWidth, panelHeight } : h)),
+    );
+  }
+
   /** The iframe's own mousemove never fires once the pointer leaves it
    * entirely (into the parent document, or out of the window) — this
    * catches that case so the vignette/cursor don't get stuck lit. */
@@ -1821,56 +1838,58 @@ export function ReaderView({
 
       <div className={styles.readerRow}>
         <div className={styles.stage} ref={stageRef} onPointerLeave={handleStagePointerLeave}>
-          <div
-            ref={marginWrapperRef}
-            className={styles.marginWrapper}
-            style={{ "--reader-margin": `${READER_MARGIN_PX[readerMargin]}px` } as CSSProperties}
-          >
-            <motion.div
-              ref={containerRef}
-              className={styles.epubContainer}
-              animate={stageControls}
-            />
+          <div className={styles.pageClip}>
+            <div
+              ref={marginWrapperRef}
+              className={styles.marginWrapper}
+              style={{ "--reader-margin": `${READER_MARGIN_PX[readerMargin]}px` } as CSSProperties}
+            >
+              <motion.div
+                ref={containerRef}
+                className={styles.epubContainer}
+                animate={stageControls}
+              />
+            </div>
+            {curl && (
+              <PageCurl src={curl.src} direction={curl.direction} progress={curlProgress} />
+            )}
+            {!focusMode && (
+              <>
+                <div
+                  aria-hidden="true"
+                  className={`${styles.turnZoneVignette} ${styles.turnZoneVignetteLeft} ${
+                    turnZoneHover === "prev" ? styles.turnZoneVignetteVisible : ""
+                  }`}
+                />
+                <div
+                  aria-hidden="true"
+                  className={`${styles.turnZoneVignette} ${styles.turnZoneVignetteRight} ${
+                    turnZoneHover === "next" ? styles.turnZoneVignetteVisible : ""
+                  }`}
+                />
+              </>
+            )}
+            {status === "ready" && !stageReducedMotion && (
+              <>
+                <div
+                  className={`${styles.edgeGrab} ${styles.edgeGrabLeft}`}
+                  aria-hidden="true"
+                  onPointerDown={(event) => handleEdgePointerDown("prev", event)}
+                />
+                <div
+                  className={`${styles.edgeGrab} ${styles.edgeGrabRight}`}
+                  aria-hidden="true"
+                  onPointerDown={(event) => handleEdgePointerDown("next", event)}
+                />
+              </>
+            )}
+            {status === "loading" && (
+              <div className={styles.overlay}>Loading book…</div>
+            )}
+            {status === "error" && (
+              <div className={styles.overlay}>Couldn't load this book.</div>
+            )}
           </div>
-          {curl && (
-            <PageCurl src={curl.src} direction={curl.direction} progress={curlProgress} />
-          )}
-          {!focusMode && (
-            <>
-              <div
-                aria-hidden="true"
-                className={`${styles.turnZoneVignette} ${styles.turnZoneVignetteLeft} ${
-                  turnZoneHover === "prev" ? styles.turnZoneVignetteVisible : ""
-                }`}
-              />
-              <div
-                aria-hidden="true"
-                className={`${styles.turnZoneVignette} ${styles.turnZoneVignetteRight} ${
-                  turnZoneHover === "next" ? styles.turnZoneVignetteVisible : ""
-                }`}
-              />
-            </>
-          )}
-          {status === "ready" && !stageReducedMotion && (
-            <>
-              <div
-                className={`${styles.edgeGrab} ${styles.edgeGrabLeft}`}
-                aria-hidden="true"
-                onPointerDown={(event) => handleEdgePointerDown("prev", event)}
-              />
-              <div
-                className={`${styles.edgeGrab} ${styles.edgeGrabRight}`}
-                aria-hidden="true"
-                onPointerDown={(event) => handleEdgePointerDown("next", event)}
-              />
-            </>
-          )}
-          {status === "loading" && (
-            <div className={styles.overlay}>Loading book…</div>
-          )}
-          {status === "error" && (
-            <div className={styles.overlay}>Couldn't load this book.</div>
-          )}
           <AnimatePresence>
             {pendingSelection && (
               <AskPill
@@ -1897,16 +1916,19 @@ export function ReaderView({
                 highlightNote={expandedHighlight.note}
                 panelDx={expandedHighlight.panelDx}
                 panelDy={expandedHighlight.panelDy}
+                panelWidth={expandedHighlight.panelWidth}
+                panelHeight={expandedHighlight.panelHeight}
                 thread={expandedHighlight.thread}
                 top={expandedThread.top}
                 initialDraft={expandedThread.initialDraft}
                 providerConfigured={providerConfigured}
-                stageRef={stageRef}
+                appBoundsRef={appBoundsRef}
                 onClose={() => setExpandedThread(null)}
                 onThreadChange={handleThreadChange}
                 onImportanceChange={handleImportanceChange}
                 onNoteChange={handleNoteChange}
                 onPanelOffsetChange={handlePanelOffsetChange}
+                onPanelSizeChange={handlePanelSizeChange}
               />
             )}
           </AnimatePresence>

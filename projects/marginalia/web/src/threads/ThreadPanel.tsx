@@ -19,6 +19,7 @@ import {
   updateHighlightImportance,
   updateHighlightNote,
   updateHighlightPanelOffset,
+  updateHighlightPanelSize,
   updateHighlightTags,
 } from "../highlights/highlightMeta.js";
 import { clampPanelOffset, panelTiltDeg } from "./panelGeometry.js";
@@ -51,6 +52,10 @@ interface ThreadPanelProps {
   // panelGeometry.ts and decisions.md 2026-07-27).
   panelDx: number;
   panelDy: number;
+  /** M19.6 "annotations are resizable": null means "use the default size"
+   * (the CSS cap below) — never a magic 0. */
+  panelWidth: number | null;
+  panelHeight: number | null;
   thread: ThreadSummary | null;
   top: number;
   /** M19.5: seeds the draft textarea once, on this panel's mount (it
@@ -58,15 +63,24 @@ interface ThreadPanelProps {
    * question's text, arriving pre-filled rather than requiring retyping. */
   initialDraft?: string;
   providerConfigured: boolean;
-  /** The reader's stage element — drag is constrained to it, and it's the
-   * bounding box a stale offset gets clamped back into on reopen. */
-  stageRef: RefObject<HTMLDivElement>;
+  /** M19.6 "annotations roam the app": widened from the reading stage to
+   * this — the reader page's own root. Drag (and now resize) are
+   * constrained to it, and it's the bounding box a stale offset gets
+   * clamped back into on reopen. */
+  appBoundsRef: RefObject<HTMLDivElement>;
   onClose: () => void;
   onThreadChange: (highlightId: string, thread: ThreadSummary) => void;
   onImportanceChange: (highlightId: string, importance: HighlightImportance) => void;
   onNoteChange: (highlightId: string, note: string) => void;
   onPanelOffsetChange: (highlightId: string, panelDx: number, panelDy: number) => void;
+  onPanelSizeChange: (highlightId: string, panelWidth: number, panelHeight: number) => void;
 }
+
+// M19.6: the panel's default rendered size (CSS `min(340px, calc(100% - 2rem))`
+// wide, content-driven tall) as a starting point for a resize drag — read live
+// off the DOM rather than duplicated as a second source of truth for "340".
+const DEFAULT_PANEL_MIN_WIDTH_PX = 220;
+const DEFAULT_PANEL_MIN_HEIGHT_PX = 160;
 
 export function ThreadPanel({
   resourceId,
@@ -77,16 +91,19 @@ export function ThreadPanel({
   highlightNote,
   panelDx,
   panelDy,
+  panelWidth,
+  panelHeight,
   thread,
   top,
   initialDraft,
   providerConfigured,
-  stageRef,
+  appBoundsRef,
   onClose,
   onThreadChange,
   onImportanceChange,
   onNoteChange,
   onPanelOffsetChange,
+  onPanelSizeChange,
 }: ThreadPanelProps) {
   const location = useLocation();
   const [tags, setTags] = useState<string[]>([]);
@@ -94,7 +111,7 @@ export function ThreadPanel({
   // M14 "movable sticky notes" (decisions.md 2026-07-27): draggable by the
   // header only (dragListener={false} + dragControls.start from the header's
   // own pointerdown), a hard dragConstraints clamp (dragElastic 0) so the
-  // panel can never overflow the stage mid-drag, and a persisted offset —
+  // panel can never overflow its bounds mid-drag, and a persisted offset —
   // *from the anchor*, not an absolute coordinate, since the anchor moves on
   // every page turn/resize/margin change (the same reasoning M8 applied to
   // shelf state).
@@ -104,6 +121,12 @@ export function ThreadPanel({
   const dragY = useMotionValue(panelDy);
   const [isDragging, setIsDragging] = useState(false);
   const tiltDeg = panelTiltDeg(highlightId);
+  // M19.6 "annotations are resizable": explicit pixel size once the reader
+  // (or a prior session) has resized this panel; null defers to the CSS cap,
+  // same "null means default" story as panelWidth/panelHeight themselves.
+  const [size, setSize] = useState<{ width: number; height: number } | null>(
+    panelWidth !== null && panelHeight !== null ? { width: panelWidth, height: panelHeight } : null,
+  );
   // M19.6 "the quote expands": collapsed by default (the existing 3-line
   // clamp); clicking toggles it. Local, resets on remount — same
   // "no persistence needed" call as ReaderView's own expandedThread/
@@ -111,16 +134,16 @@ export function ThreadPanel({
   const [quoteExpanded, setQuoteExpanded] = useState(false);
 
   // Shared by mount (below) and the quote-expand toggle further down: a
-  // dx/dy that fit the panel's *previous* box can overflow the stage once
+  // dx/dy that fit the panel's *previous* box can overflow its bounds once
   // the box changes size, so re-clamp back into view rather than trusting
   // whatever was last persisted.
   function reclampPanelOffset() {
     const panelEl = panelRef.current;
-    const stageEl = stageRef.current;
-    if (!panelEl || !stageEl) return;
+    const boundsEl = appBoundsRef.current;
+    if (!panelEl || !boundsEl) return;
     const clamped = clampPanelOffset(
       panelEl.getBoundingClientRect(),
-      stageEl.getBoundingClientRect(),
+      boundsEl.getBoundingClientRect(),
       dragX.get(),
       dragY.get(),
     );
@@ -174,6 +197,57 @@ export function ThreadPanel({
     const dy = dragY.get();
     onPanelOffsetChange(highlightId, dx, dy);
     void updateHighlightPanelOffset(highlightId, dx, dy);
+  }
+
+  // M19.6 "annotations are resizable": a corner handle, dragged the same
+  // pointer-capture way M10's page-edge drag-to-peel and M12's scrub dial
+  // already do (setPointerCapture so the gesture survives leaving the
+  // handle's own small hit target). Clamped to a sensible minimum and to the
+  // bounds rect's own size, so a resize can never produce something too
+  // small to use or bigger than the room it's roaming.
+  function handleResizePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.stopPropagation();
+    const panelEl = panelRef.current;
+    const boundsEl = appBoundsRef.current;
+    if (!panelEl || !boundsEl) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+
+    const startRect = panelEl.getBoundingClientRect();
+    const startWidth = size?.width ?? startRect.width;
+    const startHeight = size?.height ?? startRect.height;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const boundsRect = boundsEl.getBoundingClientRect();
+
+    function onMove(moveEvent: PointerEvent) {
+      const nextWidth = Math.min(
+        Math.max(startWidth + (moveEvent.clientX - startX), DEFAULT_PANEL_MIN_WIDTH_PX),
+        boundsRect.width,
+      );
+      const nextHeight = Math.min(
+        Math.max(startHeight + (moveEvent.clientY - startY), DEFAULT_PANEL_MIN_HEIGHT_PX),
+        boundsRect.height,
+      );
+      setSize({ width: nextWidth, height: nextHeight });
+    }
+
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setSize((current) => {
+        if (current) {
+          onPanelSizeChange(highlightId, current.width, current.height);
+          void updateHighlightPanelSize(highlightId, current.width, current.height);
+        }
+        return current;
+      });
+      // Growing the panel can push it past the bounds edge exactly like
+      // expanding the quote can — same rAF-timed re-clamp, same reason.
+      requestAnimationFrame(reclampPanelOffset);
+    }
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   }
 
   useEffect(() => {
@@ -409,13 +483,27 @@ export function ThreadPanel({
     <motion.div
       ref={panelRef}
       className={`${styles.panel} ${styles[highlightKind]}`}
-      style={{ top, x: dragX, y: dragY, rotate: tiltDeg, transformPerspective: 900 }}
+      style={{
+        top,
+        x: dragX,
+        y: dragY,
+        rotate: tiltDeg,
+        transformPerspective: 900,
+        // M19.6 "annotations are resizable": explicit pixel dimensions once
+        // resized, overriding the default `min(340px, ...)` width and
+        // `max-height: calc(100% - 2rem)` cap (relative to the *stage*,
+        // narrower than the roam bounds this can now resize into) —
+        // undefined/"none" let those CSS defaults show through until then.
+        width: size?.width,
+        height: size?.height,
+        maxHeight: size ? "none" : undefined,
+      }}
       role="dialog"
       aria-label="Ask about this passage"
       drag
       dragControls={dragControls}
       dragListener={false}
-      dragConstraints={stageRef}
+      dragConstraints={appBoundsRef}
       dragElastic={0}
       dragMomentum={false}
       onDragStart={() => setIsDragging(true)}
@@ -585,6 +673,11 @@ export function ThreadPanel({
           </Link>
         </div>
       )}
+      <div
+        className={styles.resizeHandle}
+        aria-hidden="true"
+        onPointerDown={handleResizePointerDown}
+      />
     </motion.div>
   );
 }

@@ -142,6 +142,11 @@ export const HighlightSchema = AnchorSchema.extend({
   // resize, or margin change (the same reasoning M8 applied to shelf state).
   panelDx: z.number(),
   panelDy: z.number(),
+  // M19.6 "annotations are resizable": null means "use the panel's default
+  // size" (the CSS `min(340px, ...)` cap) — never a magic 0, which would
+  // mean an invisible panel.
+  panelWidth: z.number().nullable(),
+  panelHeight: z.number().nullable(),
   createdAt: z.string(),
 });
 export type Highlight = z.infer<typeof HighlightSchema>;
@@ -164,6 +169,14 @@ export const UpdateHighlightPanelOffsetBodySchema = z.object({
 });
 export type UpdateHighlightPanelOffsetBody = z.infer<
   typeof UpdateHighlightPanelOffsetBodySchema
+>;
+
+export const UpdateHighlightPanelSizeBodySchema = z.object({
+  panelWidth: z.number(),
+  panelHeight: z.number(),
+});
+export type UpdateHighlightPanelSizeBody = z.infer<
+  typeof UpdateHighlightPanelSizeBodySchema
 >;
 
 const TagSchema = z.string().trim().min(1).max(40);

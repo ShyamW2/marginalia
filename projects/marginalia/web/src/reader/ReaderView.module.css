@@ -170,7 +170,26 @@
   border: 1px solid var(--color-border);
   border-radius: 6px;
   box-shadow: var(--shadow-panel);
+  /* M19.6 "annotations roam the app": this used to be `overflow: hidden`
+     directly, which clipped a dragged-far-enough ThreadPanel at the page's
+     own edge — the whole point of widening its dragConstraints beyond the
+     stage. The clip itself is still needed (the epub iframe is far wider
+     than one visible page, per the paginated-flow comments elsewhere in
+     this file) — moved to .pageClip, a child that wraps only the reading
+     surface and its own decorations, not the panels beside it. */
+}
+
+/* M19.6: everything that must stay confined to the page's own box — the
+   epub content, the curl/vignette/edge-grab decorations — lives here now,
+   `inset: 0` filling exactly what .stage used to clip directly.
+   `border-radius: inherit` keeps the rounded-corner clip identical to
+   .stage's own. ThreadPanel/AskPill/AnnotationsOverview stay direct children
+   of .stage, outside this wrapper, so they can roam past it uncropped. */
+.pageClip {
+  position: absolute;
+  inset: 0;
   overflow: hidden;
+  border-radius: inherit;
 }
 
 /* M14 "customisable page margins" (decisions.md 2026-07-27): the outer

@@ -2576,3 +2576,29 @@ reach (real mouse-drag window resizing at non-1x DPI, actual OS/browser zoom, a
 different book/section, or a scenario this list didn't think to try) — the next
 session should ask what the operator was doing right before they saw it, rather than
 re-running this same sweep.
+
+## M19.6 — annotations roam the app: the real clipping problem was `.stage`'s own overflow — 2026-07-30
+
+Widening `dragConstraints` alone would not have delivered "roam the app" — `.stage` had
+`overflow: hidden` directly (to clip epub.js's paginated-flow iframe, which is far
+wider than one visible page), so a panel dragged past the stage's own edge would still
+have been visually cut off there regardless of how wide its drag bounds allowed it to
+go. Fixed by introducing `.pageClip`, a new child that wraps only the reading surface
+and its curl/vignette/edge-grab decorations and owns the `overflow: hidden` instead;
+`.stage` itself clips nothing now, and `ThreadPanel`/`AskPill`/`AnnotationsOverview`
+stay direct children of it, outside `.pageClip`, so they can render past it uncropped.
+`dragConstraints` (and the mount/resize re-clamp) now target a new ref on
+`ReaderPage`'s own root (`appBoundsRef`, threaded down through `ReaderView`), not the
+stage.
+
+**Playwright's raw `page.mouse.down()`/`move()`/`up()` hangs indefinitely against this
+component in headless Chromium** — confirmed reproducible across several attempts, not
+a one-off flake: starting a real OS-level mouse-down over the panel's header (which
+calls `dragControls.start(event)` inside React's `onPointerDown`) never returns control
+to the script, timing out even at 40s. Suspected cause is framer-motion's internal
+pointer capture interacting badly with CDP-dispatched synthetic events, not anything in
+this codebase. Worked around, here and for the quote-expand task above, by driving the
+same end states through direct `PUT` calls against the highlight's panel-offset/
+panel-size endpoints followed by a page reload, rather than a live drag gesture — same
+substitution, same reasoning both times. Useful to know before spending another 2
+minutes waiting on a hung `mouse.down()` in a future session.

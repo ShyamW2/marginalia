@@ -7,6 +7,7 @@ import {
   ThreadStreamEventSchema,
   UpdateHighlightNoteBodySchema,
   UpdateHighlightPanelOffsetBodySchema,
+  UpdateHighlightPanelSizeBodySchema,
 } from "./schemas.js";
 
 describe("schemas smoke test", () => {
@@ -90,6 +91,8 @@ describe("schemas smoke test", () => {
       importance: 0 as const,
       panelDx: 0,
       panelDy: 0,
+      panelWidth: null,
+      panelHeight: null,
       createdAt: new Date().toISOString(),
     };
     expect(HighlightSchema.safeParse({ ...base, note: "" }).success).toBe(true);
@@ -115,7 +118,21 @@ describe("schemas smoke test", () => {
       createdAt: new Date().toISOString(),
     };
     expect(HighlightSchema.safeParse(base).success).toBe(false);
-    expect(HighlightSchema.safeParse({ ...base, panelDx: 3, panelDy: -2 }).success).toBe(true);
+    expect(
+      HighlightSchema.safeParse({
+        ...base,
+        panelDx: 3,
+        panelDy: -2,
+        panelWidth: null,
+        panelHeight: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("accepts an UpdateHighlightPanelSizeBody, and a highlight with resized panel dimensions", () => {
+    expect(
+      UpdateHighlightPanelSizeBodySchema.safeParse({ panelWidth: 420, panelHeight: 560 }).success,
+    ).toBe(true);
   });
 
   it("accepts an UpdateHighlightPanelOffsetBody", () => {

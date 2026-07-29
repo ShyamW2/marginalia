@@ -5,6 +5,7 @@ import {
   UpdateHighlightImportanceBodySchema,
   UpdateHighlightNoteBodySchema,
   UpdateHighlightPanelOffsetBodySchema,
+  UpdateHighlightPanelSizeBodySchema,
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import {
@@ -14,6 +15,7 @@ import {
   setHighlightImportance,
   setHighlightNote,
   setHighlightPanelOffset,
+  setHighlightPanelSize,
 } from "../annotations/highlights.js";
 import { listTagsForHighlight, setTagsForHighlight } from "../annotations/tags.js";
 import { getResourceById } from "../library/store.js";
@@ -90,6 +92,21 @@ highlightsRouter.put("/:id/panel-offset", (req, res) => {
   }
   setHighlightPanelOffset(getDb(), req.params.id, parsed.data.panelDx, parsed.data.panelDy);
   res.json({ ...highlight, panelDx: parsed.data.panelDx, panelDy: parsed.data.panelDy });
+});
+
+highlightsRouter.put("/:id/panel-size", (req, res) => {
+  const highlight = getHighlightById(getDb(), req.params.id);
+  if (!highlight) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const parsed = UpdateHighlightPanelSizeBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  setHighlightPanelSize(getDb(), req.params.id, parsed.data.panelWidth, parsed.data.panelHeight);
+  res.json({ ...highlight, panelWidth: parsed.data.panelWidth, panelHeight: parsed.data.panelHeight });
 });
 
 highlightsRouter.get("/:id/tags", (req, res) => {

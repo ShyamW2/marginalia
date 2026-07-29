@@ -20,6 +20,8 @@ interface HighlightRow {
   note: string;
   panel_dx: number;
   panel_dy: number;
+  panel_width: number | null;
+  panel_height: number | null;
   created_at: string;
 }
 
@@ -37,6 +39,8 @@ function rowToHighlight(row: HighlightRow): Highlight {
     note: row.note,
     panelDx: row.panel_dx,
     panelDy: row.panel_dy,
+    panelWidth: row.panel_width,
+    panelHeight: row.panel_height,
     createdAt: row.created_at,
   };
 }
@@ -66,6 +70,8 @@ export function createHighlight(
     note: "", // matches the highlights.note column's DEFAULT ''
     panelDx: 0, // matches the highlights.panel_dx column's DEFAULT 0
     panelDy: 0, // matches the highlights.panel_dy column's DEFAULT 0
+    panelWidth: null, // matches panel_width's implicit NULL default
+    panelHeight: null, // matches panel_height's implicit NULL default
     createdAt: new Date().toISOString(),
   };
 
@@ -142,6 +148,20 @@ export function setHighlightPanelOffset(
   db.prepare("UPDATE highlights SET panel_dx = ?, panel_dy = ? WHERE id = ?").run(
     panelDx,
     panelDy,
+    id,
+  );
+}
+
+/** M19.6: the thread panel's resized dimensions, in px. */
+export function setHighlightPanelSize(
+  db: Database.Database,
+  id: string,
+  panelWidth: number,
+  panelHeight: number,
+): void {
+  db.prepare("UPDATE highlights SET panel_width = ?, panel_height = ? WHERE id = ?").run(
+    panelWidth,
+    panelHeight,
     id,
   );
 }

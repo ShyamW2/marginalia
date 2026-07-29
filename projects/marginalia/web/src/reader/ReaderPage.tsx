@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type { Resource, Settings, SpreadMode } from "@marginalia/shared";
@@ -23,6 +23,12 @@ export function ReaderPage() {
   const location = useLocation();
   const navigate = useNavigate();
   const [resource, setResource] = useState<Resource | null>(null);
+  // M19.6 "annotations roam the app": the thread panel's dragConstraints
+  // widen from the reading stage to this — the reader page's own root,
+  // everything a book's title bar and stage share. Handed down through
+  // ReaderView rather than reaching for App.tsx's outer shell, since the
+  // reader's own room is what a dragged note has license to roam within.
+  const appBoundsRef = useRef<HTMLDivElement>(null);
   // Fetched alongside the resource, not inside ReaderView, so the reader's
   // own book-loading effect can pass `spread` to epub.js's `renderTo()` at
   // creation time instead of racing a settings fetch against it (renderTo's
@@ -113,7 +119,7 @@ export function ReaderPage() {
   }
 
   return (
-    <div className={styles.readerPage}>
+    <div className={styles.readerPage} ref={appBoundsRef}>
       <div className={styles.titleBar}>
         {/* Doorway transition (DESIGN.md): shares a layoutId with the
             library card's cover — the same element the user just clicked,
@@ -148,6 +154,7 @@ export function ReaderPage() {
         initialHighlightId={initialLocationState?.jumpToHighlightId}
         initialQuestion={initialLocationState?.jumpToQuestion}
         spreadMode={spreadMode}
+        appBoundsRef={appBoundsRef}
       />
       {toast && (
         <Toast
