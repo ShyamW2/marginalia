@@ -152,6 +152,24 @@ export function ScanPage() {
       const target = event.target as HTMLElement | null;
       const isTyping = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
       if (event.key === "Escape" && !isTyping) void handleBackToBook();
+      // M19.6 "`r` opens the reader" (decisions.md 2026-07-30 later): "the
+      // book currently in focus" has an unambiguous answer on the Scan —
+      // whichever book this instrument is over — so this reuses
+      // handleBackToBook verbatim (same airlock, same target) rather than a
+      // second navigation path. Written as its own window-level listener
+      // with its own isTyping guard, matching every other room's shortcut
+      // convention today (TASKS.md's own note: this is meant to move into
+      // M19.7's shared registry without its behavior changing, once that
+      // registry exists — not to invent a new pattern ahead of it).
+      if (
+        event.key.toLowerCase() === "r" &&
+        !isTyping &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        void handleBackToBook();
+      }
     }
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
