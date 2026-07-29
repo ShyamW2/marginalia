@@ -2569,13 +2569,25 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       per-kind delta wasn't needed — reading the real base and scaling it covers all
       four kinds and both themes with one formula. 153/153 server + 71/71 web tests,
       build clean.)_
-- [ ] **Clicking a highlight never turns the page.** `handleContentClick` consults only
+- [x] **Clicking a highlight never turns the page.** `handleContentClick` consults only
       `a[href]` and live selections. Reuse the geometric mark hit-test that the mousemove
       handler already runs (marks are `pointer-events: none` by deliberate design — see
       NOTES.md M16 — so native hit-testing will never help here).
       _Acceptance: click a highlight that sits inside the right-hand turn zone; the page
       does not turn and the highlight's own action fires. Click bare text 2px outside the
       same mark; the page turns._
+      _(verified 2026-07-30: extracted `findMarkAtViewportPoint` — the exact rect-vs-
+      viewport-point test the hover boost already ran — so `handleContentClick` and
+      `handleContentMouseMove` share one implementation instead of two copies;
+      `handleContentClick` now checks it before consulting the turn zone at all, and
+      returns early on a hit (no page turn), leaving `handleMarkClicked` to open the
+      thread as it already did. Also corrected a stale comment on `handleMarkClicked`
+      that had assumed this was already handled. Live Playwright against the Alice
+      fixture: used `caretRangeFromPoint` to select real text at 85% across the
+      visible page (inside the right-hand turn zone), highlighted it, clicked the
+      mark's own center — progress stayed at 1% (no turn) and the thread panel opened;
+      clicked 2px past the same mark's right edge — progress moved 1%→3% (turned).
+      153/153 server + 71/71 web tests, build clean.)_
 - [ ] **A composer you can write in.** `.composer` is one flex row holding the context
       ladder, the textarea and Send, which is what squeezed the textarea and wrapped the
       Send label. Two rows: textarea full width on top, ladder + web + Send beneath.

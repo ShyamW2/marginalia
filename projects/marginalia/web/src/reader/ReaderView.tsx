@@ -957,17 +957,35 @@ export function ReaderView({
     rendition.on("selected", handleSelected);
 
     function handleMarkClicked(_cfiRange: string, data: { highlightId?: string }) {
-      // A click on a highlight mark still bubbles as a content 'click', but
-      // clicking within the highlighted text is exactly what should NOT
-      // page-turn — markClicked fires first, so nothing more to do here
-      // beyond the browser's own default (no page turn, since the click
-      // handler below sees a real link/selection-free click through text
-      // that happens to be marked). Clicking a highlight expands its thread.
+      // A click on a highlight mark also fires as a content 'click' below —
+      // handleContentClick's own mark hit-test (M19.6) is what keeps that
+      // from also turning the page. Clicking a highlight expands its thread.
       if (data.highlightId) {
         setExpandedThread({ highlightId: data.highlightId, top: DEFAULT_THREAD_PANEL_TOP });
       }
     }
     rendition.on("markClicked", handleMarkClicked);
+
+    // M19.6 "clicking a highlight never turns the page": shared by the
+    // click handler below and the hover boost further down — marks-pane
+    // draws every mark `pointer-events: none` (its own library default, not
+    // ours; see NOTES.md M16), so native hit-testing of a click's `target`
+    // can never see a mark either. Both need the exact same geometric
+    // rect-vs-viewport-point test, so it lives once here.
+    function findMarkAtViewportPoint(viewportX: number, viewportY: number): SVGElement | null {
+      const container = containerRef.current;
+      if (!container) return null;
+      const rects = container.querySelectorAll<SVGRectElement>(
+        `.${HIGHLIGHT_MARK_CLASS} rect`,
+      );
+      for (const rect of rects) {
+        const r = rect.getBoundingClientRect();
+        if (viewportX >= r.left && viewportX <= r.right && viewportY >= r.top && viewportY <= r.bottom) {
+          return rect.closest<SVGElement>(`.${HIGHLIGHT_MARK_CLASS}`);
+        }
+      }
+      return null;
+    }
 
     function handleContentClick(event: MouseEvent, contents: Contents) {
       const target = event.target as HTMLElement | null;
@@ -992,6 +1010,16 @@ export function ReaderView({
 
       const iframeRect = iframeEl.getBoundingClientRect();
       const containerRect = container.getBoundingClientRect();
+
+      // A click that lands on a highlight mark is that mark's own action
+      // (handleMarkClicked, above) — never a page turn, even inside a turn
+      // zone. Viewport-relative coordinates (not container-relative
+      // visibleX below), since that's what the marks' own
+      // getBoundingClientRect() is in.
+      if (findMarkAtViewportPoint(iframeRect.left + event.clientX, iframeRect.top + event.clientY)) {
+        return;
+      }
+
       const visibleX = iframeRect.left + event.clientX - containerRect.left;
       const zone = turnZoneForVisibleX(visibleX, containerRect.width);
 
@@ -1030,26 +1058,16 @@ export function ReaderView({
       setTurnZoneHover((prev) => (prev === zone ? prev : zone));
 
       // M16 "highlights pop on hover": marks-pane's SVG overlay is
-      // pointer-events:none (deliberately — an interactive overlay over the
-      // iframe would kill text selection, decisions.md 2026-07-20), so real
-      // CSS :hover can never reach it; native hit-testing skips straight
-      // through to the iframe underneath. Detected here instead, via the
-      // same forwarded-mousemove coordinates already used for the turn-zone
-      // cursor above, geometrically matched against each rendered mark's own
-      // (parent-document, real viewport) bounding box — a plain inline-style
-      // boost on the matched element, cleared on the next non-matching move.
+      // pointer-events:none (its own library default), so real CSS :hover
+      // can never reach it; native hit-testing skips straight through to
+      // the iframe underneath. Detected here instead, via the same
+      // forwarded-mousemove coordinates already used for the turn-zone
+      // cursor above and the same geometric test handleContentClick uses
+      // (findMarkAtViewportPoint, defined alongside it above) — a plain
+      // inline-style boost on the matched element, cleared on the next
+      // non-matching move.
       if (!focusModeRef.current) {
-        let hit: SVGElement | null = null;
-        const rects = container.querySelectorAll<SVGRectElement>(
-          `.${HIGHLIGHT_MARK_CLASS} rect`,
-        );
-        for (const rect of rects) {
-          const r = rect.getBoundingClientRect();
-          if (viewportX >= r.left && viewportX <= r.right && viewportY >= r.top && viewportY <= r.bottom) {
-            hit = rect.closest<SVGElement>(`.${HIGHLIGHT_MARK_CLASS}`);
-            break;
-          }
-        }
+        const hit = findMarkAtViewportPoint(viewportX, viewportY);
         if (hit !== hoveredMarkElRef.current) {
           clearMarkHover();
           if (hit) {
