@@ -6,16 +6,16 @@ describe("formatPageNumber", () => {
     expect(formatPageNumber("off", 10, 200, 3, 20)).toBeNull();
   });
 
-  it("book mode reports 1-based location index/total", () => {
-    expect(formatPageNumber("book", 0, 799, null, null)).toBe("Page 1 of 800");
-    expect(formatPageNumber("book", 399, 799, null, null)).toBe("Page 400 of 800");
+  it("book mode reports the already-1-based book page/total unchanged", () => {
+    expect(formatPageNumber("book", 1, 800, null, null)).toBe("Page 1 of 800");
+    expect(formatPageNumber("book", 400, 800, null, null)).toBe("Page 400 of 800");
   });
 
-  it("book mode is null while locations haven't generated or loaded yet", () => {
+  it("book mode is null while the section-weight/page data hasn't loaded yet", () => {
     expect(formatPageNumber("book", null, null, 3, 20)).toBeNull();
   });
 
-  it("chapter mode reports epub.js's own displayed page/total unchanged", () => {
+  it("chapter mode reports the (already spread-adjusted) page/total unchanged", () => {
     expect(formatPageNumber("chapter", null, null, 3, 20)).toBe("Page 3 of 20");
   });
 
