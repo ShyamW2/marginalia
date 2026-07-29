@@ -91,27 +91,38 @@
      button inside it opts back out via handleHeaderPointerDown. */
   cursor: grab;
   touch-action: none;
+  /* M19.6 operator feedback: stacked above the resize edge strips (see
+     .resizeEdge below), which are full-height for a simple hit-test —
+     without this the header (and the quote/close buttons inside it) would
+     be unreachable wherever a resize strip happens to underlap it. */
+  position: relative;
+  z-index: 2;
 }
 
 /* M19.6 "the quote expands": a <button> now (was a <span>) so it's
-   keyboard-operable and exempt from the header's own drag-start handler for
-   free (handleHeaderPointerDown already excludes any `closest("button")` —
-   the same reason the close button next to it works). Reset to look like
-   the plain italic text it always was. */
+   keyboard-operable. Its own pointerdown *also* arms the panel drag (see
+   handleQuotePointerDown) rather than being excluded from it the way the
+   close button is — operator feedback (2026-07-30 later): the quote used
+   to be the only thing under the cursor across most of the header, leaving
+   almost no bare strip to grab for a drag. A plain tap (no pointer
+   movement) still reaches this button's own onClick and toggles expand;
+   only an actual drag gesture is consumed by the panel instead. Collapsed
+   to two lines (was three) so the toggle's own hitbox takes up a little
+   less of that shared space, per the same feedback. */
 .quote {
   flex: 1;
   border: none;
   background: none;
   padding: 0;
   text-align: left;
-  cursor: pointer;
+  cursor: grab;
   font-family: var(--font-serif);
   font-size: 0.85rem;
   font-style: italic;
   color: var(--color-text-muted);
   line-height: 1.4;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -395,13 +406,51 @@
   line-height: 1.4;
 }
 
-/* M19.6 "annotations are resizable": a corner handle, the same drag-only
-   affordance pattern as M10's page-edge grab strips (pointer-only,
-   aria-hidden — there's no keyboard equivalent for a free-form resize any
-   more than there is for those). A diagonal stripe (not a solid square)
-   reads as "grip", not as decoration or a stray mark. */
+/* M19.6 "annotations are resizable", widened to every edge/corner except
+   the top (operator feedback, decisions.md 2026-07-30 later) — the same
+   drag-only affordance pattern as M10's page-edge grab strips (pointer-
+   only, aria-hidden — there's no keyboard equivalent for a free-form
+   resize any more than there is for those).
+   Full-height/full-width strips are the simplest reliable hit-test, but
+   the header (z-index: 2, see .header above) always paints above them, so
+   they can never actually intercept a pointerdown meant for the header,
+   the quote, or the close button regardless of how tall the quote grows. */
+.resizeEdge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  touch-action: none;
+}
+
+.resizeEdgeLeft {
+  left: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resizeEdgeRight {
+  right: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resizeEdgeBottom {
+  top: auto;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+/* Corner handles sit above the edge strips (z-index: 3) so the more
+   precise two-axis gesture wins in the corner region. A diagonal stripe
+   (not a solid square) reads as "grip", not as decoration or a stray
+   mark. */
 .resizeHandle {
   position: absolute;
+  z-index: 3;
   right: 2px;
   bottom: 2px;
   width: 16px;
@@ -421,6 +470,13 @@
     transparent 85%
   );
   opacity: 0.7;
+}
+
+.resizeHandleLeft {
+  right: auto;
+  left: 2px;
+  cursor: nesw-resize;
+  transform: scaleX(-1);
 }
 
 .resizeHandle:hover {

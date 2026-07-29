@@ -120,6 +120,8 @@ export function ThreadPanel({
   const dragX = useMotionValue(panelDx);
   const dragY = useMotionValue(panelDy);
   const [isDragging, setIsDragging] = useState(false);
+  // See handleQuotePointerDown/handleQuoteClick below.
+  const quoteDraggedRef = useRef(false);
   const tiltDeg = panelTiltDeg(highlightId);
   // M19.6 "annotations are resizable": explicit pixel size once the reader
   // (or a prior session) has resized this panel; null defers to the CSS cap,
@@ -186,9 +188,51 @@ export function ThreadPanel({
 
   function handleHeaderPointerDown(event: React.PointerEvent<HTMLDivElement>) {
     // The close button lives in the same header strip — a pointerdown there
-    // is a click, not a drag start.
+    // is a click, not a drag start. The quote arms the drag itself (see
+    // handleQuotePointerDown) rather than being excluded here.
     if ((event.target as HTMLElement).closest("button")) return;
     dragControls.start(event);
+  }
+
+  // M19.6 operator feedback (decisions.md 2026-07-30 later): the quote used
+  // to be excluded from dragging like the close button, but it also filled
+  // almost the entire header, leaving barely any bare strip to grab — this
+  // arms the same drag gesture from the quote's own pointerdown instead.
+  // ⚠️ `dragControls.start` does *not* suppress the native click that
+  // follows on pointerup — confirmed live: a real drag gesture (via
+  // dragControls) still left a synthetic click event that toggled
+  // quoteExpanded afterward, growing the panel unexpectedly. So this tracks
+  // real pointer movement itself, in a plain ref (not React state — it must
+  // be readable synchronously inside the click handler that fires right
+  // after the matching pointerup, with no re-render in between) and the
+  // click handler below skips the toggle whenever this pointerdown's own
+  // gesture actually moved.
+  function handleQuotePointerDown(event: React.PointerEvent<HTMLButtonElement>) {
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const DRAG_THRESHOLD_PX = 4;
+
+    function onMove(moveEvent: PointerEvent) {
+      if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) > DRAG_THRESHOLD_PX) {
+        quoteDraggedRef.current = true;
+      }
+    }
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+
+    dragControls.start(event);
+  }
+
+  function handleQuoteClick() {
+    if (quoteDraggedRef.current) {
+      quoteDraggedRef.current = false;
+      return;
+    }
+    setQuoteExpanded((prev) => !prev);
   }
 
   function handleDragEnd() {
@@ -199,55 +243,90 @@ export function ThreadPanel({
     void updateHighlightPanelOffset(highlightId, dx, dy);
   }
 
-  // M19.6 "annotations are resizable": a corner handle, dragged the same
-  // pointer-capture way M10's page-edge drag-to-peel and M12's scrub dial
-  // already do (setPointerCapture so the gesture survives leaving the
-  // handle's own small hit target). Clamped to a sensible minimum and to the
-  // bounds rect's own size, so a resize can never produce something too
-  // small to use or bigger than the room it's roaming.
-  function handleResizePointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    event.stopPropagation();
-    const panelEl = panelRef.current;
-    const boundsEl = appBoundsRef.current;
-    if (!panelEl || !boundsEl) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+  // M19.6 "annotations are resizable", widened per operator feedback
+  // (decisions.md 2026-07-30 later) from one bottom-right corner to every
+  // edge/corner except the top — the top strip is the drag handle and the
+  // quote, and reserved for those. Same pointer-capture pattern as M10's
+  // page-edge drag-to-peel and M12's scrub dial (so the gesture survives
+  // leaving the handle's own small hit target), clamped to a sensible
+  // minimum and to the bounds rect's own size.
+  //
+  // The panel is positioned right-anchored + top-anchored (`.panel`'s CSS
+  // `right`, plus the `top` inline style) with `dragX`/`dragY` layered on
+  // as a transform. Growing `width` alone always extends the box's *left*
+  // edge (the right edge is anchor-fixed) — correct, unprompted, for a
+  // left-edge/bottom-left-corner drag, but wrong for a right-edge/
+  // bottom-right-corner one, where the cursor is on the right and the left
+  // edge should stay put. A right-side handle therefore also shifts `dragX`
+  // by the same delta the width grew by, keeping the left edge fixed and
+  // letting the anchored right edge follow the cursor. The bottom edge
+  // needs no equivalent compensation — `top` is fixed and growth is a
+  // simple downward extension.
+  function handleResizePointerDown(horizontal: "left" | "right" | null, vertical: "bottom" | null) {
+    return function onPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+      event.stopPropagation();
+      const panelEl = panelRef.current;
+      const boundsEl = appBoundsRef.current;
+      if (!panelEl || !boundsEl) return;
+      event.currentTarget.setPointerCapture(event.pointerId);
 
-    const startRect = panelEl.getBoundingClientRect();
-    const startWidth = size?.width ?? startRect.width;
-    const startHeight = size?.height ?? startRect.height;
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const boundsRect = boundsEl.getBoundingClientRect();
+      const startRect = panelEl.getBoundingClientRect();
+      const startWidth = size?.width ?? startRect.width;
+      const startHeight = size?.height ?? startRect.height;
+      const startDragX = dragX.get();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const boundsRect = boundsEl.getBoundingClientRect();
 
-    function onMove(moveEvent: PointerEvent) {
-      const nextWidth = Math.min(
-        Math.max(startWidth + (moveEvent.clientX - startX), DEFAULT_PANEL_MIN_WIDTH_PX),
-        boundsRect.width,
-      );
-      const nextHeight = Math.min(
-        Math.max(startHeight + (moveEvent.clientY - startY), DEFAULT_PANEL_MIN_HEIGHT_PX),
-        boundsRect.height,
-      );
-      setSize({ width: nextWidth, height: nextHeight });
-    }
-
-    function onUp() {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      setSize((current) => {
-        if (current) {
-          onPanelSizeChange(highlightId, current.width, current.height);
-          void updateHighlightPanelSize(highlightId, current.width, current.height);
+      function onMove(moveEvent: PointerEvent) {
+        let nextWidth = startWidth;
+        let appliedWidthDelta = 0;
+        if (horizontal) {
+          const rawDelta = moveEvent.clientX - startX;
+          const widthDelta = horizontal === "left" ? -rawDelta : rawDelta;
+          nextWidth = Math.min(
+            Math.max(startWidth + widthDelta, DEFAULT_PANEL_MIN_WIDTH_PX),
+            boundsRect.width,
+          );
+          appliedWidthDelta = nextWidth - startWidth;
         }
-        return current;
-      });
-      // Growing the panel can push it past the bounds edge exactly like
-      // expanding the quote can — same rAF-timed re-clamp, same reason.
-      requestAnimationFrame(reclampPanelOffset);
-    }
+        let nextHeight = startHeight;
+        if (vertical) {
+          nextHeight = Math.min(
+            Math.max(startHeight + (moveEvent.clientY - startY), DEFAULT_PANEL_MIN_HEIGHT_PX),
+            boundsRect.height,
+          );
+        }
+        setSize({ width: nextWidth, height: nextHeight });
+        if (horizontal === "right") {
+          dragX.set(startDragX + appliedWidthDelta);
+        }
+      }
 
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
+      function onUp() {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        setSize((current) => {
+          if (current) {
+            onPanelSizeChange(highlightId, current.width, current.height);
+            void updateHighlightPanelSize(highlightId, current.width, current.height);
+          }
+          return current;
+        });
+        if (horizontal === "right") {
+          const dx = dragX.get();
+          const dy = dragY.get();
+          onPanelOffsetChange(highlightId, dx, dy);
+          void updateHighlightPanelOffset(highlightId, dx, dy);
+        }
+        // Growing the panel can push it past the bounds edge exactly like
+        // expanding the quote can — same rAF-timed re-clamp, same reason.
+        requestAnimationFrame(reclampPanelOffset);
+      }
+
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    };
   }
 
   useEffect(() => {
@@ -545,7 +624,8 @@ export function ThreadPanel({
           type="button"
           className={`${styles.quote} ${quoteExpanded ? styles.quoteExpanded : ""}`}
           aria-expanded={quoteExpanded}
-          onClick={() => setQuoteExpanded((prev) => !prev)}
+          onPointerDown={handleQuotePointerDown}
+          onClick={handleQuoteClick}
         >
           &ldquo;{highlightExact}&rdquo;
         </button>
@@ -673,10 +753,32 @@ export function ThreadPanel({
           </Link>
         </div>
       )}
+      {/* M19.6 operator feedback: every edge/corner except the top (the
+          drag handle + quote's own strip) gets a resize handle. */}
+      <div
+        className={`${styles.resizeEdge} ${styles.resizeEdgeLeft}`}
+        aria-hidden="true"
+        onPointerDown={handleResizePointerDown("left", null)}
+      />
+      <div
+        className={`${styles.resizeEdge} ${styles.resizeEdgeRight}`}
+        aria-hidden="true"
+        onPointerDown={handleResizePointerDown("right", null)}
+      />
+      <div
+        className={`${styles.resizeEdge} ${styles.resizeEdgeBottom}`}
+        aria-hidden="true"
+        onPointerDown={handleResizePointerDown(null, "bottom")}
+      />
       <div
         className={styles.resizeHandle}
         aria-hidden="true"
-        onPointerDown={handleResizePointerDown}
+        onPointerDown={handleResizePointerDown("right", "bottom")}
+      />
+      <div
+        className={`${styles.resizeHandle} ${styles.resizeHandleLeft}`}
+        aria-hidden="true"
+        onPointerDown={handleResizePointerDown("left", "bottom")}
       />
     </motion.div>
   );
