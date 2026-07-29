@@ -23,10 +23,18 @@ const MAP_BUDGET_FRACTION = 0.25;
 const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000;
 const RATE_LIMIT_JITTER_MS = 30_000;
 
+// Questions carry a verbatim `quote` alongside their `text` — decision 11
+// ("the model never returns positions... it returns text and code
+// locates it"): the quote is what lets a click-through create a real,
+// text-anchored highlight instead of guessing a chapter-start position.
+const ThematicQuestionSchema = z.object({
+  text: z.string(),
+  quote: z.string(),
+});
 const ThematicPartSchema = z.object({
   analysis: z.string(),
   themes: z.array(z.string()).max(8),
-  questions: z.array(z.string()).max(3),
+  questions: z.array(ThematicQuestionSchema).max(3),
 });
 type ThematicPart = z.infer<typeof ThematicPartSchema>;
 
@@ -50,8 +58,10 @@ function thematicInstructions(briefText: string): string {
     `{\n` +
     `  "analysis": "a paragraph or two on what this chapter is about thematically, through the reader's angle if one was given",\n` +
     `  "themes": ["short theme or motif names, at most 8"],\n` +
-    `  "questions": ["2-3 specific questions this chapter raises, worth a reader pausing on"]\n` +
+    `  "questions": [{"text": "a specific question this chapter raises", "quote": "a short passage copied VERBATIM from the chapter that the question is about"}]\n` +
     `}\n\n` +
+    `"questions" should have 2-3 entries, each with its own grounding quote copied exactly ` +
+    `from the chapter text — do not paraphrase the quote.\n\n` +
     `Return only the JSON object, no other text.`
   );
 }
@@ -64,8 +74,11 @@ Respond with a single JSON object with exactly these keys:
 {
   "analysis": "a paragraph or two combining the parts into one coherent thematic reading",
   "themes": ["short theme or motif names, at most 8, deduplicated"],
-  "questions": ["2-3 of the best questions from the parts, deduplicated"]
+  "questions": [{"text": "...", "quote": "..."}]
 }
+
+"questions" should keep the 2-3 best questions from the parts (deduplicated), each with its
+original verbatim quote unchanged — never paraphrase or invent a quote at merge time.
 
 Return only the JSON object, no other text.`;
 
@@ -96,7 +109,8 @@ async function mergeThematicParts(
   const input = parts
     .map(
       (p, i) =>
-        `Part ${i + 1} analysis: ${p.analysis}\nThemes: ${p.themes.join(", ")}\nQuestions: ${p.questions.join(" / ")}`,
+        `Part ${i + 1} analysis: ${p.analysis}\nThemes: ${p.themes.join(", ")}\n` +
+        `Questions: ${p.questions.map((q) => `"${q.text}" (quote: "${q.quote}")`).join(" / ")}`,
     )
     .join("\n\n");
   return provider.extract({

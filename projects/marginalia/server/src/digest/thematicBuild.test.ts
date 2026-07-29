@@ -72,9 +72,9 @@ describe("runThematicDigest", () => {
 
     const provider = makeProvider((req) => {
       if (req.input.includes("Chapter one")) {
-        return { analysis: "Ch1 is about autonomy.", themes: ["autonomy"], questions: ["Why does X choose?"] };
+        return { analysis: "Ch1 is about autonomy.", themes: ["autonomy"], questions: [{ text: "Why does X choose?", quote: "Chapter one text." }] };
       }
-      return { analysis: "Ch2 is about consequence.", themes: ["consequence"], questions: ["What changed?"] };
+      return { analysis: "Ch2 is about consequence.", themes: ["consequence"], questions: [{ text: "What changed?", quote: "Chapter two text." }] };
     });
 
     const run = await runThematicDigest(db, provider, resource, sections, 0, 1);
@@ -107,7 +107,7 @@ describe("runThematicDigest", () => {
 
     const thematicProvider = makeProvider((req) => {
       plotCalls.push(req.input); // would show up if the thematic pass ever hit the plot provider by mistake
-      return { analysis: "Ch1 is about hope.", themes: ["hope"], questions: ["What is hope here?"] };
+      return { analysis: "Ch1 is about hope.", themes: ["hope"], questions: [{ text: "What is hope here?", quote: "Chapter one text." }] };
     });
     await runThematicDigest(db, thematicProvider, resource, sections, 0, 0);
 

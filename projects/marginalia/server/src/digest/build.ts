@@ -7,9 +7,11 @@ import { LLMError, type LLMProvider } from "../llm/provider.js";
 import { sectionLabel } from "../llm/context.js";
 import type { ResourceTextSection } from "../library/store.js";
 import {
+  getBookDigestSnapshot,
   getDigestRun,
   listChapterDigests,
   putBookDigest,
+  putBookDigestSnapshot,
   putChapterDigest,
   putDigestRun,
   type DigestRun,
@@ -403,4 +405,48 @@ export async function runDigest(
   }
 
   return persistRun("completed", null, null);
+}
+
+/**
+ * M19.5 "spoiler-safe digest display" (decisions.md 2026-07-29 later):
+ * book-level synopsis/cast/themes are a reduce over every digested chapter,
+ * so they inherently spoil — this maintains the *safe* variant, reduced
+ * only from chapters up to the reader's bookmark. Regenerates only when the
+ * "frontier" (the furthest digested chapter within the bookmark) has
+ * advanced past what the cached snapshot already covers — a page turn with
+ * no new digest coverage inside that range is a no-op, satisfying "the lazy
+ * regeneration does not fire on every page turn". Best-effort: a missing
+ * provider just means the safe synopsis doesn't update this time, not an
+ * error surfaced to the reader.
+ */
+export async function maybeRefreshBookDigestSnapshot(
+  db: Database.Database,
+  provider: LLMProvider | null,
+  resource: Resource,
+  bookmarkSpineIndex: number,
+): Promise<void> {
+  const chaptersInBookmark = listChapterDigests(db, resource.id).filter(
+    (c) => c.spineIndex <= bookmarkSpineIndex,
+  );
+  if (chaptersInBookmark.length === 0) return;
+
+  const frontier = Math.max(...chaptersInBookmark.map((c) => c.spineIndex));
+  const existing = getBookDigestSnapshot(db, resource.id);
+  if (existing && existing.upToSpineIndex >= frontier) return;
+  if (!provider) return;
+
+  const reduced = await reduceBookDigest(
+    provider,
+    provider.capabilities().contextTokens,
+    resource.title,
+    resource.author,
+    chaptersInBookmark,
+  );
+  putBookDigestSnapshot(db, {
+    resourceId: resource.id,
+    upToSpineIndex: frontier,
+    synopsis: reduced.synopsis,
+    cast: reduced.cast,
+    themes: reduced.themes,
+  });
 }

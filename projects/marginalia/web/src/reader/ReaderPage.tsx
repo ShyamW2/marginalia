@@ -12,6 +12,9 @@ import styles from "./ReaderPage.module.css";
 
 interface ReaderLocationState {
   jumpToHighlightId?: string;
+  /** M19.5: a posed question's text, arriving from the digest page — seeds
+   * the jumped-to thread's draft, pre-filled. */
+  jumpToQuestion?: string;
   viaAirlock?: boolean;
 }
 
@@ -143,6 +146,7 @@ export function ReaderPage() {
       <ReaderView
         resourceId={resource.id}
         initialHighlightId={initialLocationState?.jumpToHighlightId}
+        initialQuestion={initialLocationState?.jumpToQuestion}
         spreadMode={spreadMode}
       />
       {toast && (

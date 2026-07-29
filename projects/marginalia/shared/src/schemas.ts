@@ -613,17 +613,27 @@ export const DigestChapterStatusSchema = z.object({
   startPercent: z.number().min(0).max(1),
   lengthPercent: z.number().min(0).max(1),
   digested: z.boolean(),
+  // M19.5 "chapter entries gate exactly" (decisions.md 2026-07-29 later):
+  // summary/themes/characters/title are all null whenever `pastBookmark &&
+  // !revealed` — redaction happens server-side (the content is never sent),
+  // not just hidden client-side. `pastBookmark` and `revealed` are exposed
+  // separately so the client can render a reveal control precisely when
+  // there's something to reveal (digested && pastBookmark && !revealed).
   summary: z.string().nullable(),
   themes: z.array(z.string()),
   characters: z.array(z.string()),
   generatedAt: z.string().nullable(),
   // A short descriptive title from the digest's own map step — null when
-  // never digested, or when digested but past the reader's bookmark (a
-  // descriptive title is a spoiler too; the route redacts it the same way
-  // it would redact the summary it came from). The positional fallback
-  // ("Chapter 7 · 34-39%") is always derivable from the fields above, never
-  // gated.
+  // never digested, or when digested but redacted (a descriptive title is a
+  // spoiler too; the route redacts it the same way it would redact the
+  // summary it came from). The positional fallback ("Chapter 7 · 34-39%")
+  // is always derivable from the fields above, never gated.
   title: z.string().nullable(),
+  pastBookmark: z.boolean(),
+  /** True when this chapter's spoiler content is currently being shown
+   * despite being past the bookmark — i.e. the reader explicitly revealed
+   * it. Always true when `!pastBookmark` (nothing to reveal). */
+  revealed: z.boolean(),
 });
 export type DigestChapterStatus = z.infer<typeof DigestChapterStatusSchema>;
 
@@ -654,11 +664,31 @@ export const DigestRunPayloadSchema = z.object({
 });
 export type DigestRunPayload = z.infer<typeof DigestRunPayloadSchema>;
 
+// M19.5 "book-level synopsis/cast/themes are reduces over everything
+// digested, so they inherently spoil" (decisions.md 2026-07-29 later): the
+// safe variant is a *second* reduce, built only from chapters up to the
+// bookmark. `full` is only present once the reader has explicitly revealed
+// it — same "never silently serve the spoiling version" rule as chapters.
+export const BookDigestStatusSchema = z.object({
+  /** Bookmark-bounded reduce — null only when the reader hasn't dug into
+   * the book far enough yet for one to exist (decisions.md: generated
+   * lazily, "only once the bookmark has moved far enough to matter"). */
+  safe: BookDigestSchema.nullable(),
+  /** The unrestricted reduce over every digested chapter — present only
+   * once explicitly revealed (see the `reveal=book` query param). */
+  full: BookDigestSchema.nullable(),
+  /** True once `full` would differ from `safe` (the book has undigested-
+   * past-bookmark chapters) — the client shows a reveal control exactly
+   * when this is true and `full` hasn't been fetched yet. */
+  hasMoreToReveal: z.boolean(),
+});
+export type BookDigestStatus = z.infer<typeof BookDigestStatusSchema>;
+
 /** GET /api/resources/:id/digest response. */
 export const DigestStatusSchema = z.object({
   totalChapters: z.number().int().nonnegative(),
   chapters: z.array(DigestChapterStatusSchema),
-  book: BookDigestSchema.nullable(),
+  book: BookDigestStatusSchema.nullable(),
   run: DigestRunPayloadSchema.nullable(),
 });
 export type DigestStatus = z.infer<typeof DigestStatusSchema>;
@@ -710,12 +740,21 @@ export const UpdateBriefBodySchema = z.object({
 });
 export type UpdateBriefBody = z.infer<typeof UpdateBriefBodySchema>;
 
+export const ThematicQuestionSchema = z.object({
+  text: z.string(),
+  /** Verbatim excerpt from the chapter — the client sends this straight
+   * back to POST /api/resources/:id/chapter-anchor to open a real,
+   * text-anchored thread on it. */
+  quote: z.string(),
+});
+export type ThematicQuestion = z.infer<typeof ThematicQuestionSchema>;
+
 export const ThematicChapterStatusSchema = z.object({
   spineIndex: z.number().int().nonnegative(),
   analyzed: z.boolean(),
   analysis: z.string().nullable(),
   themes: z.array(z.string()),
-  questions: z.array(z.string()),
+  questions: z.array(ThematicQuestionSchema),
   /** The brief text this chapter's analysis was generated under — null
    * when never analyzed. Shown alongside the analysis per decisions.md:
    * "the brief in force is shown alongside the analysis it produced". */
@@ -724,6 +763,11 @@ export const ThematicChapterStatusSchema = z.object({
    * this analysis was generated under — never silently served as fresh. */
   stale: z.boolean(),
   generatedAt: z.string().nullable(),
+  // Same spoiler-gating shape as DigestChapterStatusSchema — a thematic
+  // reading and the questions it poses are just as spoiler-bearing as the
+  // plot summary they sit next to.
+  pastBookmark: z.boolean(),
+  revealed: z.boolean(),
 });
 export type ThematicChapterStatus = z.infer<typeof ThematicChapterStatusSchema>;
 
@@ -741,6 +785,15 @@ export type ThematicStatus = z.infer<typeof ThematicStatusSchema>;
  * digest run, reused rather than duplicated. */
 export const StartThematicDigestBodySchema = StartDigestBodySchema;
 export type StartThematicDigestBody = StartDigestBody;
+
+/** POST /api/resources/:id/chapter-anchor body — turns a posed question's
+ * verbatim quote into a real highlight (decision 11: the model returns
+ * text, code locates it). Response is a plain Highlight. */
+export const CreateChapterAnchorBodySchema = z.object({
+  spineIndex: z.number().int().nonnegative(),
+  quote: z.string(),
+});
+export type CreateChapterAnchorBody = z.infer<typeof CreateChapterAnchorBodySchema>;
 
 // ---------------------------------------------------------------------------
 // The context ladder (M17 — "the brain button")

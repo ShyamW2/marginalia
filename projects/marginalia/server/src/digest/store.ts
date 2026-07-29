@@ -160,6 +160,69 @@ export function putBookDigest(
   return { ...digest, generatedAt };
 }
 
+export interface BookDigestSnapshot {
+  resourceId: string;
+  upToSpineIndex: number;
+  synopsis: string;
+  cast: { name: string; description: string }[];
+  themes: string[];
+  generatedAt: string;
+}
+
+interface BookDigestSnapshotRow {
+  resource_id: string;
+  up_to_spine_index: number;
+  synopsis: string;
+  cast: string;
+  themes: string;
+  generated_at: string;
+}
+
+function rowToBookDigestSnapshot(row: BookDigestSnapshotRow): BookDigestSnapshot {
+  return {
+    resourceId: row.resource_id,
+    upToSpineIndex: row.up_to_spine_index,
+    synopsis: row.synopsis,
+    cast: JSON.parse(row.cast),
+    themes: JSON.parse(row.themes),
+    generatedAt: row.generated_at,
+  };
+}
+
+/** M19.5 spoiler-safe book digest: the one cached bookmark-bounded reduce
+ * for this resource (see routes/digest.ts for the lazy-regen trigger). */
+export function getBookDigestSnapshot(
+  db: Database.Database,
+  resourceId: string,
+): BookDigestSnapshot | undefined {
+  const row = db
+    .prepare("SELECT * FROM book_digest_snapshots WHERE resource_id = ?")
+    .get(resourceId) as BookDigestSnapshotRow | undefined;
+  return row ? rowToBookDigestSnapshot(row) : undefined;
+}
+
+export function putBookDigestSnapshot(
+  db: Database.Database,
+  snapshot: Omit<BookDigestSnapshot, "generatedAt">,
+): BookDigestSnapshot {
+  const generatedAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO book_digest_snapshots (resource_id, up_to_spine_index, synopsis, cast, themes, generated_at)
+     VALUES (@resourceId, @upToSpineIndex, @synopsis, @cast, @themes, @generatedAt)
+     ON CONFLICT(resource_id) DO UPDATE SET
+       up_to_spine_index = @upToSpineIndex, synopsis = @synopsis, cast = @cast,
+       themes = @themes, generated_at = @generatedAt`,
+  ).run({
+    resourceId: snapshot.resourceId,
+    upToSpineIndex: snapshot.upToSpineIndex,
+    synopsis: snapshot.synopsis,
+    cast: JSON.stringify(snapshot.cast),
+    themes: JSON.stringify(snapshot.themes),
+    generatedAt,
+  });
+  return { ...snapshot, generatedAt };
+}
+
 interface DigestRunRow {
   resource_id: string;
   spine_start: number;

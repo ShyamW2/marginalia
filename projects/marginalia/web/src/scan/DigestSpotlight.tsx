@@ -269,8 +269,13 @@ export function DigestSpotlight({ resourceId, chapters, onClose, warpGeometry, w
         {coveredCount} of {totalCount} chapters digested — drag the torch or use From/To below
       </div>
 
-      {status?.book && (
-        <p className={styles.synopsis}>{status.book.synopsis}</p>
+      {/* M19.5: book-level synopsis now has a spoiler-safe (bookmark-
+          bounded) and full variant — the spotlight, being a "start a
+          digest run" control rather than a reading surface, shows whichever
+          is available without a reveal gesture of its own; the digest page
+          is where the full reveal control lives. */}
+      {status?.book && (status.book.safe ?? status.book.full) && (
+        <p className={styles.synopsis}>{(status.book.safe ?? status.book.full)!.synopsis}</p>
       )}
 
       {status?.run?.status === "paused_rate_limit" && status.run.resumesAt && (

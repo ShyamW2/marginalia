@@ -146,6 +146,22 @@ export function setHighlightPanelOffset(
   );
 }
 
+/** M19.5 dedup for posed-question anchors: re-clicking the same question
+ * should reuse its highlight/thread rather than spawning a duplicate. */
+export function findHighlightByExact(
+  db: Database.Database,
+  resourceId: string,
+  spineIndex: number,
+  exact: string,
+): Highlight | undefined {
+  const row = db
+    .prepare(
+      "SELECT * FROM highlights WHERE resource_id = ? AND spine_index = ? AND exact = ? ORDER BY created_at LIMIT 1",
+    )
+    .get(resourceId, spineIndex, exact) as HighlightRow | undefined;
+  return row ? rowToHighlight(row) : undefined;
+}
+
 export function getHighlightById(
   db: Database.Database,
   id: string,

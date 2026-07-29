@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createDb } from "../db.js";
 import { LLMError, type LLMExtractRequest, type LLMProvider } from "../llm/provider.js";
-import { estimateDigestRun, runDigest, splitIntoChunks } from "./build.js";
-import { getChapterDigest, getDigestRun, listChapterDigests } from "./store.js";
+import { estimateDigestRun, maybeRefreshBookDigestSnapshot, runDigest, splitIntoChunks } from "./build.js";
+import { getBookDigestSnapshot, getChapterDigest, getDigestRun, listChapterDigests } from "./store.js";
 import type { Resource } from "@marginalia/shared";
 import type { ResourceTextSection } from "../library/store.js";
 
@@ -227,6 +227,103 @@ describe("runDigest", () => {
     expect(run.failedSpineIndices).toContain(0);
     expect(getChapterDigest(db, resource.id, 0)).toBeUndefined();
     expect(getChapterDigest(db, resource.id, 1)).toBeDefined();
+    db.close();
+  });
+});
+
+describe("maybeRefreshBookDigestSnapshot", () => {
+  function makeProvider(scriptedExtract: (req: LLMExtractRequest<unknown>) => unknown): LLMProvider {
+    return {
+      id: "openai-compatible",
+      capabilities: () => ({ contextTokens: 100_000, supportsCaching: false }),
+      async *stream() {
+        yield { text: "" };
+      },
+      async extract<T>(req: LLMExtractRequest<T>): Promise<T> {
+        return scriptedExtract(req) as T;
+      },
+    };
+  }
+
+  it("does nothing when no chapter within the bookmark has been digested yet", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    let calls = 0;
+    const provider = makeProvider(() => {
+      calls++;
+      return { synopsis: "s", cast: [], themes: [] };
+    });
+
+    await maybeRefreshBookDigestSnapshot(db, provider, resource, 5);
+    expect(calls).toBe(0);
+    expect(getBookDigestSnapshot(db, resource.id)).toBeUndefined();
+    db.close();
+  });
+
+  it("builds a snapshot from only the chapters up to the bookmark, and skips chapters past it", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text." },
+      { spineIndex: 1, href: "b", text: "Chapter two text." },
+      { spineIndex: 2, href: "c", text: "Chapter three text." },
+    ];
+    seedSections(db, resource.id, sections);
+    const plotProvider = makeProvider((req) => {
+      if (req.input.includes("Chapter one")) return { summary: "Ch1", themes: [], characters: [] };
+      if (req.input.includes("Chapter two")) return { summary: "Ch2", themes: [], characters: [] };
+      if (req.input.includes("Chapter three")) return { summary: "Ch3", themes: [], characters: [] };
+      return { synopsis: "s", cast: [], themes: [] };
+    });
+    await runDigest(db, plotProvider, resource, sections, 0, 2);
+
+    let seenChapterNumbers: number[] = [];
+    const snapshotProvider = makeProvider((req) => {
+      seenChapterNumbers = [0, 1, 2].filter((n) => req.input.includes(`Chapter ${n}:`));
+      return { synopsis: "safe synopsis", cast: [], themes: [] };
+    });
+
+    // Bookmark at chapter 1 — chapter 2 is past it and must not appear.
+    await maybeRefreshBookDigestSnapshot(db, snapshotProvider, resource, 1);
+    const snapshot = getBookDigestSnapshot(db, resource.id);
+    expect(snapshot?.synopsis).toBe("safe synopsis");
+    expect(snapshot?.upToSpineIndex).toBe(1);
+    expect(seenChapterNumbers).toEqual([0, 1]);
+    db.close();
+  });
+
+  it("does not call the provider again once the snapshot already covers the bookmark's frontier", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+    await runDigest(
+      db,
+      makeProvider((req) =>
+        req.input.includes("Chapter one")
+          ? { summary: "Ch1", themes: [], characters: [] }
+          : { synopsis: "s", cast: [], themes: [] },
+      ),
+      resource,
+      sections,
+      0,
+      0,
+    );
+
+    let calls = 0;
+    const provider = makeProvider(() => {
+      calls++;
+      return { synopsis: "s", cast: [], themes: [] };
+    });
+    await maybeRefreshBookDigestSnapshot(db, provider, resource, 0);
+    expect(calls).toBe(1);
+    // Same bookmark, no new chapters digested since — a second call (e.g. a
+    // page turn that didn't advance into new digest coverage) is a no-op.
+    await maybeRefreshBookDigestSnapshot(db, provider, resource, 0);
+    expect(calls).toBe(1);
     db.close();
   });
 });

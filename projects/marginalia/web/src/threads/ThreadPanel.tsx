@@ -53,6 +53,10 @@ interface ThreadPanelProps {
   panelDy: number;
   thread: ThreadSummary | null;
   top: number;
+  /** M19.5: seeds the draft textarea once, on this panel's mount (it
+   * remounts per-highlight via ReaderView's `key` prop) — a posed
+   * question's text, arriving pre-filled rather than requiring retyping. */
+  initialDraft?: string;
   providerConfigured: boolean;
   /** The reader's stage element — drag is constrained to it, and it's the
    * bounding box a stale offset gets clamped back into on reopen. */
@@ -75,6 +79,7 @@ export function ThreadPanel({
   panelDy,
   thread,
   top,
+  initialDraft,
   providerConfigured,
   stageRef,
   onClose,
@@ -193,7 +198,7 @@ export function ThreadPanel({
     Record<string, ContextUsage>
   >({});
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(initialDraft ?? "");
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);

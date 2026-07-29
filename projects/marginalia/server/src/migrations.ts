@@ -409,4 +409,23 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M19.5 "spoiler-safe digest display" (docs/decisions.md 2026-07-29
+    // later): the book-level synopsis/cast/themes are a reduce over every
+    // digested chapter, so they inherently spoil past the reader's
+    // bookmark. This caches the *second*, bookmark-bounded reduce — only
+    // one snapshot per resource is kept (the most recent), regenerated
+    // lazily (see routes/digest.ts) rather than on every request.
+    version: 16,
+    sql: `
+      CREATE TABLE book_digest_snapshots (
+        resource_id      TEXT PRIMARY KEY REFERENCES resources(id),
+        up_to_spine_index INTEGER NOT NULL,
+        synopsis         TEXT NOT NULL,
+        cast             TEXT NOT NULL,
+        themes           TEXT NOT NULL,
+        generated_at     TEXT NOT NULL
+      );
+    `,
+  },
 ];

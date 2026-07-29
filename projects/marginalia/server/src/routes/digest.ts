@@ -1,9 +1,11 @@
 import { Router } from "express";
 import {
+  CreateChapterAnchorBodySchema,
   DigestStatusSchema,
   StartDigestBodySchema,
   StartThematicDigestBodySchema,
   ThematicStatusSchema,
+  UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
   UpdateBriefBodySchema,
   UpdateContextLadderBodySchema,
   type DigestStatus,
@@ -14,11 +16,13 @@ import { getReadingPosition, getResourceById, getResourceTextSections } from "..
 import { getProvider, LLMError, type LLMErrorCode } from "../llm/provider.js";
 import { sectionLabel } from "../llm/context.js";
 import { getRawSettings } from "../settings/store.js";
-import { estimateDigestRun, runDigest } from "../digest/build.js";
+import { estimateDigestRun, maybeRefreshBookDigestSnapshot, runDigest } from "../digest/build.js";
 import { runThematicDigest } from "../digest/thematicBuild.js";
+import { chapterStartAnchor, locateQuoteAnchor } from "../digest/chapterAnchor.js";
 import { writeDigestMarkdown, renderDigestMarkdown } from "../digest/markdown.js";
 import {
   getBookDigest,
+  getBookDigestSnapshot,
   getDigestRun,
   listChapterDigests,
 } from "../digest/store.js";
@@ -35,6 +39,7 @@ import {
   resolveContextLadderDepth,
   setContextLadderDepth,
 } from "../digest/ladder.js";
+import { createHighlight, findHighlightByExact } from "../annotations/highlights.js";
 
 export const digestRouter: Router = Router();
 
@@ -48,7 +53,25 @@ const ERROR_STATUS: Record<LLMErrorCode, number> = {
   unknown: 502,
 };
 
-function buildDigestStatus(db: ReturnType<typeof getDb>, resourceId: string): DigestStatus {
+/** `?reveal=0,3,5` — spine indices the reader has explicitly revealed this
+ * session (client-tracked; never persisted server-side — "revealing is
+ * per-item and does not unlock the rest", decisions.md 2026-07-29 later). */
+function parseRevealedIndices(raw: unknown): Set<number> {
+  if (typeof raw !== "string" || raw.length === 0) return new Set();
+  return new Set(
+    raw
+      .split(",")
+      .map((s) => Number(s))
+      .filter((n) => Number.isInteger(n) && n >= 0),
+  );
+}
+
+function buildDigestStatus(
+  db: ReturnType<typeof getDb>,
+  resourceId: string,
+  revealedSpineIndices: Set<number>,
+  revealBook: boolean,
+): DigestStatus {
   const resource = getResourceById(db, resourceId);
   if (!resource) throw new Error("resource not found");
 
@@ -57,7 +80,8 @@ function buildDigestStatus(db: ReturnType<typeof getDb>, resourceId: string): Di
   );
   const chapterDigests = listChapterDigests(db, resourceId);
   const byIndex = new Map(chapterDigests.map((c) => [c.spineIndex, c]));
-  const book = getBookDigest(db, resourceId);
+  const fullBook = getBookDigest(db, resourceId);
+  const snapshot = getBookDigestSnapshot(db, resourceId);
   const run = getDigestRun(db, resourceId);
   const totalLength = sections.reduce((sum, s) => sum + s.text.length, 0);
   // M18 "chapter labels are spoilers too" (decisions.md 2026-07-29 later):
@@ -74,6 +98,11 @@ function buildDigestStatus(db: ReturnType<typeof getDb>, resourceId: string): Di
     const lengthPercent = totalLength > 0 ? s.text.length / totalLength : 0;
     cursor += s.text.length;
     const pastBookmark = s.spineIndex > bookmarkSpineIndex;
+    // M19.5 "chapter entries gate exactly": summary/themes/characters/title
+    // are only ever included when not past the bookmark, or explicitly
+    // revealed — redacted server-side, never just hidden client-side.
+    const revealed = !pastBookmark || revealedSpineIndices.has(s.spineIndex);
+    const showContent = Boolean(digest) && revealed;
     return {
       spineIndex: s.spineIndex,
       label: sectionLabel(s.spineIndex, resource.metadata.chapterTitles),
@@ -81,25 +110,44 @@ function buildDigestStatus(db: ReturnType<typeof getDb>, resourceId: string): Di
       startPercent,
       lengthPercent,
       digested: Boolean(digest),
-      summary: digest?.summary ?? null,
-      themes: digest?.themes ?? [],
-      characters: digest?.characters ?? [],
+      summary: showContent ? (digest?.summary ?? null) : null,
+      themes: showContent ? (digest?.themes ?? []) : [],
+      characters: showContent ? (digest?.characters ?? []) : [],
       generatedAt: digest?.generatedAt ?? null,
-      title: pastBookmark ? null : digest?.title ?? null,
+      title: showContent ? (digest?.title ?? null) : null,
+      pastBookmark,
+      revealed,
     };
   });
+
+  const chaptersPastBookmarkDigested = chapterDigests.some((c) => c.spineIndex > bookmarkSpineIndex);
 
   return {
     totalChapters: sections.length,
     chapters,
-    book: book
-      ? {
-          synopsis: book.synopsis,
-          cast: book.cast,
-          themes: book.themes,
-          generatedAt: book.generatedAt,
-        }
-      : null,
+    book:
+      fullBook || snapshot
+        ? {
+            safe: snapshot
+              ? {
+                  synopsis: snapshot.synopsis,
+                  cast: snapshot.cast,
+                  themes: snapshot.themes,
+                  generatedAt: snapshot.generatedAt,
+                }
+              : null,
+            full:
+              revealBook && fullBook
+                ? {
+                    synopsis: fullBook.synopsis,
+                    cast: fullBook.cast,
+                    themes: fullBook.themes,
+                    generatedAt: fullBook.generatedAt,
+                  }
+                : null,
+            hasMoreToReveal: chaptersPastBookmarkDigested,
+          }
+        : null,
     run: run
       ? {
           spineStart: run.spineStart,
@@ -114,14 +162,23 @@ function buildDigestStatus(db: ReturnType<typeof getDb>, resourceId: string): Di
   };
 }
 
-digestRouter.get("/:id/digest", (req, res) => {
+digestRouter.get("/:id/digest", async (req, res) => {
   const db = getDb();
   const resource = getResourceById(db, req.params.id);
   if (!resource) {
     res.status(404).json({ error: "resource_not_found" });
     return;
   }
-  res.json(DigestStatusSchema.parse(buildDigestStatus(db, resource.id)));
+  const bookmarkSpineIndex = getReadingPosition(db, resource.id)?.spineIndex ?? -1;
+  // Best-effort, silent — see maybeRefreshBookDigestSnapshot's own comment
+  // for why this only actually calls the LLM when the safe synopsis is
+  // genuinely stale, not on every request.
+  const provider = getProvider(db, "digest", "digest", resource.id);
+  await maybeRefreshBookDigestSnapshot(db, provider, resource, bookmarkSpineIndex);
+
+  const revealed = parseRevealedIndices(req.query.reveal);
+  const revealBook = req.query.revealBook === "1" || req.query.revealBook === "true";
+  res.json(DigestStatusSchema.parse(buildDigestStatus(db, resource.id, revealed, revealBook)));
 });
 
 digestRouter.get("/:id/digest/markdown", (req, res) => {
@@ -211,7 +268,7 @@ digestRouter.post("/:id/digest", async (req, res) => {
   try {
     await runDigest(db, provider, resource, sections, spineStart, spineEnd);
     writeDigestMarkdown(db, resource);
-    res.json(DigestStatusSchema.parse(buildDigestStatus(db, resource.id)));
+    res.json(DigestStatusSchema.parse(buildDigestStatus(db, resource.id, new Set(), false)));
   } catch (err) {
     if (err instanceof LLMError) {
       // eslint-disable-next-line no-console
@@ -286,25 +343,37 @@ digestRouter.put("/:id/brief", (req, res) => {
   res.json({ text: brief.text, updatedAt: brief.updatedAt });
 });
 
-function buildThematicStatus(db: ReturnType<typeof getDb>, resourceId: string): ThematicStatus {
+function buildThematicStatus(
+  db: ReturnType<typeof getDb>,
+  resourceId: string,
+  revealedSpineIndices: Set<number>,
+): ThematicStatus {
   const brief = getBrief(db, resourceId);
   const currentBriefHash = hashBrief(brief.text);
   const thematic = listThematicDigests(db, resourceId);
   const byIndex = new Map(thematic.map((t) => [t.spineIndex, t]));
   const sections = getResourceTextSections(db, resourceId).sort((a, b) => a.spineIndex - b.spineIndex);
   const run = getThematicRun(db, resourceId);
+  // Same spoiler signal as the plot layer's buildDigestStatus — a thematic
+  // reading and the questions it poses are just as spoiler-bearing.
+  const bookmarkSpineIndex = getReadingPosition(db, resourceId)?.spineIndex ?? -1;
 
   const chapters = sections.map((s) => {
     const t = byIndex.get(s.spineIndex);
+    const pastBookmark = s.spineIndex > bookmarkSpineIndex;
+    const revealed = !pastBookmark || revealedSpineIndices.has(s.spineIndex);
+    const showContent = Boolean(t) && revealed;
     return {
       spineIndex: s.spineIndex,
       analyzed: Boolean(t),
-      analysis: t?.analysis ?? null,
-      themes: t?.themes ?? [],
-      questions: t?.questions ?? [],
-      briefText: t?.briefText ?? null,
+      analysis: showContent ? (t?.analysis ?? null) : null,
+      themes: showContent ? (t?.themes ?? []) : [],
+      questions: showContent ? (t?.questions ?? []) : [],
+      briefText: showContent ? (t?.briefText ?? null) : null,
       stale: t ? isThematicStale(t, currentBriefHash) : false,
       generatedAt: t?.generatedAt ?? null,
+      pastBookmark,
+      revealed,
     };
   });
 
@@ -332,7 +401,8 @@ digestRouter.get("/:id/thematic", (req, res) => {
     res.status(404).json({ error: "resource_not_found" });
     return;
   }
-  res.json(ThematicStatusSchema.parse(buildThematicStatus(db, resource.id)));
+  const revealed = parseRevealedIndices(req.query.reveal);
+  res.json(ThematicStatusSchema.parse(buildThematicStatus(db, resource.id, revealed)));
 });
 
 digestRouter.post("/:id/thematic", async (req, res) => {
@@ -362,7 +432,7 @@ digestRouter.post("/:id/thematic", async (req, res) => {
   const sections = getResourceTextSections(db, resource.id);
   try {
     await runThematicDigest(db, provider, resource, sections, spineStart, spineEnd);
-    res.json(ThematicStatusSchema.parse(buildThematicStatus(db, resource.id)));
+    res.json(ThematicStatusSchema.parse(buildThematicStatus(db, resource.id, new Set())));
   } catch (err) {
     if (err instanceof LLMError) {
       // eslint-disable-next-line no-console
@@ -374,4 +444,55 @@ digestRouter.post("/:id/thematic", async (req, res) => {
     console.error("[thematic]", err);
     res.status(500).json({ error: "thematic_digest_failed" });
   }
+});
+
+/**
+ * Turns a posed question's verbatim quote into a real, clickable highlight
+ * (decision 11: the model returns text, code locates it) — the seam that
+ * lets "click a question, open a thread" reuse the existing highlight/
+ * thread machinery instead of inventing a parallel one. Re-clicking the
+ * same question reuses its highlight (dedup by exact text) rather than
+ * spawning a duplicate thread.
+ */
+digestRouter.post("/:id/chapter-anchor", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const parsed = CreateChapterAnchorBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const { spineIndex, quote } = parsed.data;
+  const section = getResourceTextSections(db, resource.id).find((s) => s.spineIndex === spineIndex);
+  if (!section) {
+    res.status(404).json({ error: "chapter_not_found" });
+    return;
+  }
+
+  const anchor = locateQuoteAnchor(section.text, quote) ?? chapterStartAnchor(section.text);
+  const existing = findHighlightByExact(db, resource.id, spineIndex, anchor.exact);
+  if (existing) {
+    res.json(existing);
+    return;
+  }
+
+  const highlight = createHighlight(db, {
+    resourceId: resource.id,
+    exact: anchor.exact,
+    prefix: anchor.prefix,
+    suffix: anchor.suffix,
+    // Deliberately unresolvable — this anchor was never rendered from a
+    // live epub.js selection, so there's no real CFI to give it. The
+    // reader's existing anchor-resolution fallback (SPEC: CFI fails ->
+    // search prefix+exact+suffix) is what actually locates it on render;
+    // see web/src/reader/anchorResolution.ts.
+    cfi: UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
+    spineIndex,
+    kind: "slate", // "a question about the text" — the existing kind Ask defaults to
+  });
+  res.status(201).json(highlight);
 });

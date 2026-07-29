@@ -41,6 +41,14 @@ export function putBrief(db: Database.Database, resourceId: string, text: string
   return { resourceId, text, updatedAt };
 }
 
+export interface ThematicQuestion {
+  text: string;
+  /** Verbatim excerpt from the chapter the question is about — decision 11:
+   * the model returns text, code locates it (see routes/digest.ts's
+   * chapter-anchor endpoint). */
+  quote: string;
+}
+
 export interface ThematicDigest {
   resourceId: string;
   spineIndex: number;
@@ -48,7 +56,7 @@ export interface ThematicDigest {
   briefText: string;
   analysis: string;
   themes: string[];
-  questions: string[];
+  questions: ThematicQuestion[];
   generatedAt: string;
 }
 

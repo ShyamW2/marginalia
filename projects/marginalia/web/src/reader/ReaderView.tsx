@@ -9,18 +9,19 @@ import {
   useMotionValue,
   useReducedMotion,
 } from "motion/react";
-import type {
-  CreateHighlightBody,
-  HighlightImportance,
-  HighlightKind,
-  HighlightWithThread,
-  ProviderRoleAssignment,
-  ReaderFontScale,
-  ReaderMargin,
-  ReadingPosition,
-  Settings,
-  SpreadMode,
-  ThreadSummary,
+import {
+  UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
+  type CreateHighlightBody,
+  type HighlightImportance,
+  type HighlightKind,
+  type HighlightWithThread,
+  type ProviderRoleAssignment,
+  type ReaderFontScale,
+  type ReaderMargin,
+  type ReadingPosition,
+  type Settings,
+  type SpreadMode,
+  type ThreadSummary,
 } from "@marginalia/shared";
 import { onSettingsSaved } from "../settings/settingsBus.js";
 import { onProviderRolesSaved } from "../settings/providerBus.js";
@@ -266,13 +267,22 @@ interface ReaderViewProps {
    * highlight's position and open its thread, instead of the saved reading
    * position. */
   initialHighlightId?: string;
+  /** M19.5 "clicking a posed question opens a thread on it, pre-filled":
+   * seeds the opened thread's draft textarea. Only meaningful alongside
+   * initialHighlightId. */
+  initialQuestion?: string;
   /** M12 two-page spread: resolved by ReaderPage before this ever mounts
    * (see the comment there) so it can be handed straight to epub.js's
    * `renderTo()` at creation time — not re-fetched in here. */
   spreadMode: SpreadMode;
 }
 
-export function ReaderView({ resourceId, initialHighlightId, spreadMode }: ReaderViewProps) {
+export function ReaderView({
+  resourceId,
+  initialHighlightId,
+  initialQuestion,
+  spreadMode,
+}: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettingsToLLM();
   const containerRef = useRef<HTMLDivElement>(null);
   // M14: the reader's stage — the thread panel's drag is constrained to it,
@@ -381,6 +391,12 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
   const [expandedThread, setExpandedThread] = useState<{
     highlightId: string;
     top: number;
+    /** M19.5 "clicking a posed question opens a thread on it, pre-filled":
+     * set only on the initial jump-to-highlight open (see initialHighlightId
+     * below), never on a plain highlight click — ThreadPanel seeds its
+     * draft textarea from this once, on mount, via its own `key`-per-
+     * highlight remount. */
+    initialDraft?: string;
   } | null>(null);
   const [providerConfigured, setProviderConfigured] = useState(false);
   // M14: persisted, but must take effect live while this component stays
@@ -1052,12 +1068,24 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
         const jumpTarget = initialHighlightId
           ? resourceHighlights.find((h) => h.id === initialHighlightId)
           : undefined;
+        // M19.5 posed-question anchors carry a deliberately-unparseable CFI
+        // (see UNRESOLVABLE_CHAPTER_ANCHOR_CFI's own comment) — safe for the
+        // mark-rendering fallback, but rendition.display() parses a CFI
+        // directly rather than catching a failure, so handing it one here
+        // would risk crashing epub.js's navigation. Fall back to the saved
+        // position instead; the thread panel below still opens regardless.
+        const displayTarget =
+          jumpTarget && jumpTarget.cfi !== UNRESOLVABLE_CHAPTER_ANCHOR_CFI ? jumpTarget.cfi : undefined;
 
-        await rendition.display(jumpTarget?.cfi ?? position?.location ?? undefined);
+        await rendition.display(displayTarget ?? position?.location ?? undefined);
         if (cancelled) return;
         setStatus("ready");
         if (jumpTarget) {
-          setExpandedThread({ highlightId: jumpTarget.id, top: DEFAULT_THREAD_PANEL_TOP });
+          setExpandedThread({
+            highlightId: jumpTarget.id,
+            top: DEFAULT_THREAD_PANEL_TOP,
+            initialDraft: initialQuestion,
+          });
         }
 
         // Locations let epub.js compute a whole-book percentage from a CFI;
@@ -1783,6 +1811,7 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
                 panelDy={expandedHighlight.panelDy}
                 thread={expandedHighlight.thread}
                 top={expandedThread.top}
+                initialDraft={expandedThread.initialDraft}
                 providerConfigured={providerConfigured}
                 stageRef={stageRef}
                 onClose={() => setExpandedThread(null)}

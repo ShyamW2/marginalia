@@ -13,6 +13,20 @@ export interface AnchorText {
   suffix: string;
 }
 
+/**
+ * M19.5 posed-question anchors (server/src/digest/chapterAnchor.ts) are
+ * never rendered from a live epub.js selection, so they have no real CFI —
+ * this deliberately-unparseable placeholder marks that. It's safe for the
+ * *mark-rendering* fallback (prefix+exact+suffix text search, this file +
+ * anchorResolution.ts), which already treats a throwing/failing CFI as
+ * "fall back to text search". It is NOT safe to hand to epub.js's
+ * `rendition.display()` for *navigation* — that call parses the CFI
+ * directly rather than catching a failure — so callers doing initial
+ * navigation must check for this sentinel and fall back to some other
+ * target (e.g. the reader's saved position) instead.
+ */
+export const UNRESOLVABLE_CHAPTER_ANCHOR_CFI = "epubcfi(unresolvable-chapter-anchor)";
+
 export interface TextMatch {
   start: number;
   end: number;
