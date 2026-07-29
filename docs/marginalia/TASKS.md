@@ -2399,7 +2399,7 @@ and evolves as you read.** Two layers, two lifecycles — do not build them as o
       _Acceptance: re-running thematic analysis does not re-run or invalidate plot
       summaries (prove it by watching the ledger — the plot calls must not reappear);
       an existing digested book keeps everything it had._
-- [ ] **Reader briefs.** A per-book standing angle — questions, perspectives, or interests
+- [x] **Reader briefs.** A per-book standing angle — questions, perspectives, or interests
       the model should hold in mind while analysing ("read this for what it says about
       self-determination"). Injected into the thematic pass's prompt so chapters are
       analysed *through* it. Editable, and set **ahead of** reading a stretch, which is
@@ -2409,7 +2409,7 @@ and evolves as you read.** Two layers, two lifecycles — do not build them as o
       _Acceptance: two different briefs on the same chapter produce visibly different
       analysis; the brief in force is shown alongside the analysis it produced; a stale
       layer is obvious, not silent._
-- [ ] **Questions the model poses.** Two or three per chapter, generated with the thematic
+- [x] **Questions the model poses.** Two or three per chapter, generated with the thematic
       layer, surfaced in the digest page and the reader — clicking one opens a thread on
       it, pre-filled.
       _Acceptance: the questions are specific to the chapter rather than generic; clicking
@@ -2425,7 +2425,7 @@ and evolves as you read.** Two layers, two lifecycles — do not build them as o
       answer rather than a hedge, while a factual question about the plot stays as tightly
       grounded as it is today — check both, since it is easy to fix one by breaking the
       other._
-- [ ] **Spoiler-safe digest display.** Chapter entries past the bookmark render redacted
+- [x] **Spoiler-safe digest display.** Chapter entries past the bookmark render redacted
       with a reveal control (free — chapters are stored individually). Book-level
       synopsis/cast/themes get a **bookmark-bounded variant** built only from chapters up
       to the bookmark, generated lazily and only once the bookmark has moved far enough to

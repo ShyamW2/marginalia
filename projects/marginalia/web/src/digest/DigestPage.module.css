@@ -23,38 +23,208 @@
   color: var(--color-text);
 }
 
-.regeneratedNotice {
-  font-size: 0.78rem;
-  color: var(--color-text-muted);
-  font-style: italic;
-  margin-bottom: 2rem;
-  padding-bottom: 1rem;
-  border-bottom: 1px solid var(--color-border);
-}
-
 .loading {
   color: var(--color-text-muted);
 }
 
-.markdown {
+.mutedNote {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  font-style: italic;
+}
+
+.briefSection {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.5rem;
+  background: var(--color-bg-raised);
+}
+
+.briefLabel {
+  display: block;
   font-family: var(--font-serif);
   font-size: 1.05rem;
+  margin-bottom: 0.3rem;
+}
+
+.briefHint {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin: 0 0 0.6rem;
+}
+
+.briefTextarea {
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  font-family: var(--font-serif);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.briefTextarea:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.briefFooter {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.saveButton {
+  font-size: 0.8rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.4rem 0.8rem;
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.saveButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.saveButton:not(:disabled):hover {
+  border-color: var(--color-accent);
+}
+
+.pausedNotice {
+  font-size: 0.8rem;
+  color: var(--color-danger);
+  margin: 0.6rem 0 0;
+}
+
+.bookSection {
+  margin-bottom: 2rem;
+}
+
+.bookHeading {
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  margin: 0 0 0.5rem;
+}
+
+.synopsis {
+  font-family: var(--font-serif);
+  font-size: 1.02rem;
   line-height: 1.7;
 }
 
-.markdown p {
-  margin: 0 0 1rem;
+.revealButton {
+  font-size: 0.78rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.revealButton:hover {
+  color: var(--color-text);
+  border-color: var(--color-accent);
 }
 
-.markdown blockquote {
-  margin: 0 0 1rem;
-  padding-left: 1rem;
-  border-left: 2px solid var(--color-border);
+.chapterList {
+  display: flex;
+  flex-direction: column;
+  gap: 1.2rem;
+}
+
+.chapterCard {
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 1.2rem;
+}
+
+.chapterTitle {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+}
+
+.chapterMeta {
+  font-weight: normal;
+  color: var(--color-text-muted);
+  font-size: 0.82rem;
+}
+
+.chapterSummary {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  margin: 0 0 0.4rem;
+}
+
+.themeRow {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin: 0 0 0.4rem;
+}
+
+.thematicBlock {
+  margin-top: 0.7rem;
+  padding: 0.7rem 0.9rem;
+  border-left: 2px solid var(--color-accent);
+  background: var(--color-bg-raised);
+  border-radius: 0 6px 6px 0;
+}
+
+.thematicHeader {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+}
+
+.thematicLabel {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--color-text-muted);
 }
 
-.markdown ul,
-.markdown ol {
-  margin: 0 0 1rem;
-  padding-left: 1.3rem;
+.staleBadge {
+  font-size: 0.7rem;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: 4px;
+  padding: 0.05rem 0.4rem;
+}
+
+.briefInForce {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--color-text-muted);
+  margin: 0 0 0.4rem;
+}
+
+.questionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.questionChip {
+  font-size: 0.8rem;
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent-text, var(--color-text));
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+  text-align: left;
+}
+.questionChip:hover {
+  background: var(--color-accent);
+  color: var(--color-bg);
 }
