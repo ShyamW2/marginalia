@@ -6,7 +6,9 @@
 // built with `import { z } from "zod/v4"`.
 import type { z } from "zod/v4";
 import type Database from "better-sqlite3";
+import type { ProviderRole } from "@marginalia/shared";
 import { getRawSettings } from "../settings/store.js";
+import { getRoleProfileRaw } from "../settings/providers.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { ClaudeAgentProvider } from "./claudeAgent.js";
 import { OpenAICompatProvider } from "./openaiCompat.js";
@@ -82,58 +84,64 @@ export interface LLMProvider {
 }
 
 /**
- * Returns the configured provider, or null if none is configured yet (no API
- * key / base URL set) — the reader must stay usable with no provider set
+ * Returns the provider configured for `role`, or null if that role has no
+ * profile assigned yet — the reader must stay usable with no provider set
  * (SPEC: "configure a provider" nudge instead of erroring).
  *
- * `operation` names what this call is for (M17 usage ledger, decisions.md
- * 2026-07-28 later) — the returned provider is pre-wrapped with
- * `withUsageLedger` so every stream()/extract() the caller makes through it
- * is logged automatically. Callers never log usage themselves.
+ * M19 (docs/decisions.md 2026-07-29 later): `role` ("query" | "digest")
+ * resolves to a *profile* (a complete named config) rather than reading a
+ * single global provider config — every call site now says what it's doing,
+ * so a long book can be digested on a local model while Claude answers
+ * questions in the same session. `operation` still names the finer-grained
+ * usage-ledger tag (M17, decisions.md 2026-07-28 later) — several operations
+ * can share a role (extract/digest/cast all use the digest role). The
+ * returned provider is pre-wrapped with `withUsageLedger` so every
+ * stream()/extract() the caller makes through it is logged automatically,
+ * tagged with both role and operation. Callers never log usage themselves.
  */
 export function getProvider(
   db: Database.Database,
+  role: ProviderRole,
   operation: LLMOperation,
+  resourceId: string | null = null,
   onUsageLogged?: (row: Omit<UsageLedgerRow, "id" | "createdAt">) => void,
 ): LLMProvider | null {
-  const settings = getRawSettings(db);
+  const profile = getRoleProfileRaw(db, role);
+  if (!profile) return null;
+  const { maxResponseTokens } = getRawSettings(db);
 
   function wrap(provider: LLMProvider, model: string): LLMProvider {
-    return withUsageLedger(provider, db, model, operation, onUsageLogged);
+    return withUsageLedger(provider, db, model, operation, role, resourceId, onUsageLogged);
   }
 
-  if (settings.provider === "anthropic") {
-    if (!settings.anthropicApiKey) return null;
+  if (profile.provider === "anthropic") {
+    if (!profile.anthropicApiKey) return null;
     return wrap(
-      new AnthropicProvider(
-        settings.anthropicApiKey,
-        settings.anthropicModel,
-        settings.maxResponseTokens,
-      ),
-      settings.anthropicModel,
+      new AnthropicProvider(profile.anthropicApiKey, profile.anthropicModel, maxResponseTokens),
+      profile.anthropicModel,
     );
   }
 
-  if (settings.provider === "claude-agent") {
+  if (profile.provider === "claude-agent") {
     // No key needed — the Agent SDK uses the machine's Claude Code login.
     // A missing/expired login surfaces as an LLMError("auth") at call time.
     return wrap(
-      new ClaudeAgentProvider(settings.claudeAgentModel, settings.maxResponseTokens),
-      settings.claudeAgentModel,
+      new ClaudeAgentProvider(profile.claudeAgentModel, maxResponseTokens),
+      profile.claudeAgentModel,
     );
   }
 
-  if (settings.provider === "openai-compatible") {
-    if (!settings.openaiBaseUrl || !settings.openaiModel) return null;
+  if (profile.provider === "openai-compatible") {
+    if (!profile.openaiBaseUrl || !profile.openaiModel) return null;
     return wrap(
       new OpenAICompatProvider({
-        baseUrl: settings.openaiBaseUrl,
-        model: settings.openaiModel,
-        apiKey: settings.openaiApiKey,
-        contextTokens: settings.openaiContextTokens,
-        maxResponseTokens: settings.maxResponseTokens,
+        baseUrl: profile.openaiBaseUrl,
+        model: profile.openaiModel,
+        apiKey: profile.openaiApiKey,
+        contextTokens: profile.openaiContextTokens,
+        maxResponseTokens,
       }),
-      settings.openaiModel,
+      profile.openaiModel,
     );
   }
 

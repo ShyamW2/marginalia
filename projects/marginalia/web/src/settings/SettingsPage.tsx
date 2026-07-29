@@ -1,23 +1,35 @@
-import { useEffect, useState } from "react";
-import type {
-  CursorStyleChoice,
-  LLMProviderId,
-  ReaderMargin,
-  Settings,
-  SettingsUpdate,
-  SpreadMode,
-} from "@marginalia/shared";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useLocation } from "react-router-dom";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import type { Settings, SettingsUpdate } from "@marginalia/shared";
 import { emitSettingsSaved } from "./settingsBus.js";
+import { ReadingTab } from "./tabs/ReadingTab.js";
+import { LLMTab } from "./tabs/LLMTab.js";
+import { UsageDivider } from "./UsageDivider.js";
+import { ScanTab } from "./tabs/ScanTab.js";
+import { AudioTab } from "./tabs/AudioTab.js";
+import { DeskTab } from "./tabs/DeskTab.js";
 import styles from "./SettingsPage.module.css";
 
-const BASE_URL_PRESETS = [
-  { label: "OpenRouter", value: "https://openrouter.ai/api/v1" },
-  { label: "Ollama (local)", value: "http://localhost:11434/v1" },
-  { label: "LM Studio (local)", value: "http://localhost:1234/v1" },
-  { label: "Custom", value: "" },
+type FormState = Settings;
+
+type TabId = "reading" | "llm" | "usage" | "scan" | "audio" | "desk";
+
+/** The book/binder shell (TASKS.md M19: "tabbed dividers down the side").
+ * Reading/Scan/Desk are still one shared Settings form + Save button, same
+ * as before this milestone — only reorganized into dividers. LLM manages
+ * its own provider profiles/roles (M19's other task) and Usage is a
+ * read-only ledger view; neither needs the Save bar. */
+const TABS: { id: TabId; label: string }[] = [
+  { id: "reading", label: "Reading" },
+  { id: "llm", label: "LLM" },
+  { id: "usage", label: "Usage" },
+  { id: "scan", label: "Scan" },
+  { id: "audio", label: "Audio" },
+  { id: "desk", label: "Desk" },
 ];
 
-type FormState = Settings;
+const SAVES_VIA_FORM: ReadonlySet<TabId> = new Set(["reading", "scan", "desk"]);
 
 async function fetchSettings(): Promise<Settings | null> {
   try {
@@ -29,6 +41,13 @@ async function fetchSettings(): Promise<Settings | null> {
   }
 }
 
+interface SettingsLocationState {
+  background?: unknown;
+  /** Deep-link into a specific divider — used by the reader/scan provider
+   * pickers' "Settings →" click-through so it lands on LLM, not the first tab. */
+  settingsTab?: TabId;
+}
+
 interface SettingsPageProps {
   /** Set when rendered inside SettingsModal so aria-labelledby can point at
    * the heading; undefined (no id) when there's no dialog wrapper needing one. */
@@ -36,16 +55,27 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ titleId }: SettingsPageProps = {}) {
+  const location = useLocation();
+  const reducedMotion = Boolean(useReducedMotion());
+  const requestedTab = (location.state as SettingsLocationState | null)?.settingsTab;
+
   const [form, setForm] = useState<FormState | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>(requestedTab ?? "reading");
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [testState, setTestState] = useState<
-    { status: "idle" } | { status: "testing" } | { status: "ok" } | { status: "error"; message: string }
-  >({ status: "idle" });
+  const tabRefs = useRef<Partial<Record<TabId, HTMLButtonElement>>>({});
 
   useEffect(() => {
     fetchSettings().then((s) => setForm(s));
   }, []);
+
+  // A click-through from the reader/scan pickers arrives with a fresh
+  // `settingsTab` in location.state (react-router replaces state per
+  // navigation) — jump the binder to it even if it's already mounted.
+  useEffect(() => {
+    if (requestedTab) setActiveTab(requestedTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedTab]);
 
   if (!form) {
     return (
@@ -58,22 +88,18 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
     setSaveMessage(null);
-    setTestState({ status: "idle" });
-  }
-
-  function buildUpdateBody(): SettingsUpdate {
-    if (!form) return {};
-    return { ...form };
   }
 
   async function handleSave() {
+    if (!form) return;
     setSaving(true);
     setSaveMessage(null);
     try {
+      const body: SettingsUpdate = { ...form };
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildUpdateBody()),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         const saved = (await res.json()) as Settings;
@@ -90,378 +116,95 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
     }
   }
 
-  async function handleTestConnection() {
-    setTestState({ status: "testing" });
-    try {
-      const res = await fetch("/api/settings/test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildUpdateBody()),
-      });
-      const body = (await res.json()) as { ok: boolean; error?: string };
-      if (body.ok) {
-        setTestState({ status: "ok" });
-      } else {
-        setTestState({ status: "error", message: body.error ?? "Connection failed." });
-      }
-    } catch {
-      setTestState({ status: "error", message: "Couldn't reach the server." });
-    }
+  function goToTab(id: TabId, focus: boolean) {
+    setActiveTab(id);
+    if (focus) tabRefs.current[id]?.focus();
   }
 
-  const isAnthropic = form.provider === "anthropic";
-  const isClaudeAgent = form.provider === "claude-agent";
+  // WAI-ARIA tabs pattern: Left/Right (Home/End) move focus *and* activate
+  // (automatic activation) — a real tablist, never divs with click handlers
+  // (TASKS.md acceptance).
+  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % TABS.length;
+    else if (event.key === "ArrowLeft") nextIndex = (index - 1 + TABS.length) % TABS.length;
+    else if (event.key === "Home") nextIndex = 0;
+    else if (event.key === "End") nextIndex = TABS.length - 1;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    goToTab(TABS[nextIndex].id, true);
+  }
 
   return (
     <div className={styles.page}>
       <h1 id={titleId} className={styles.title}>Settings</h1>
-      <p className={styles.hint}>
-        Configure an LLM provider to enable asking questions about your books.
-        Marginalia works as a reader with no provider configured — the Ask
-        pill will nudge you to set one up here.
-      </p>
 
-      <div className={styles.field}>
-        <label className={styles.label}>Provider</label>
-        <div className={styles.providerToggle} role="group" aria-label="Provider">
-          {(
-            [
-              { value: "claude-agent", label: "Claude (subscription)" },
-              { value: "anthropic", label: "Anthropic API key" },
-              { value: "openai-compatible", label: "OpenAI-compatible" },
-            ] satisfies { value: LLMProviderId; label: string }[]
-          ).map((option) => (
+      <div className={styles.binder}>
+        <div className={styles.dividers} role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+          {TABS.map((tab, index) => (
             <button
-              key={option.value}
+              key={tab.id}
+              ref={(el) => {
+                if (el) tabRefs.current[tab.id] = el;
+              }}
               type="button"
-              className={
-                form.provider === option.value
-                  ? `${styles.providerButton} ${styles.providerButtonActive}`
-                  : styles.providerButton
-              }
-              aria-pressed={form.provider === option.value}
-              onClick={() => update("provider", option.value)}
+              role="tab"
+              id={`settings-tab-${tab.id}`}
+              aria-selected={activeTab === tab.id}
+              aria-controls={`settings-panel-${tab.id}`}
+              tabIndex={activeTab === tab.id ? 0 : -1}
+              className={activeTab === tab.id ? `${styles.divider} ${styles.dividerActive}` : styles.divider}
+              onClick={() => goToTab(tab.id, false)}
+              onKeyDown={(e) => handleTabKeyDown(e, index)}
             >
-              {option.label}
+              {tab.label}
             </button>
           ))}
         </div>
-      </div>
 
-      {isClaudeAgent ? (
-        <>
-          <p className={styles.hint}>
-            Uses your Claude Pro/Max subscription via the local Claude Code
-            login — no API key, no per-token billing. Sign in once with{" "}
-            <code>claude /login</code> in a terminal (or set a long-lived token
-            with <code>claude setup-token</code>), then test the connection.
-          </p>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="claude-agent-model">
-              Model
-            </label>
-            <input
-              id="claude-agent-model"
-              className={styles.input}
-              type="text"
-              value={form.claudeAgentModel}
-              placeholder="claude-sonnet-5"
-              onChange={(e) => update("claudeAgentModel", e.target.value)}
-            />
-          </div>
-        </>
-      ) : isAnthropic ? (
-        <>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="anthropic-model">
-              Model
-            </label>
-            <input
-              id="anthropic-model"
-              className={styles.input}
-              type="text"
-              value={form.anthropicModel}
-              placeholder="claude-opus-4-8"
-              onChange={(e) => update("anthropicModel", e.target.value)}
-            />
-          </div>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="anthropic-key">
-              API key
-            </label>
-            <input
-              id="anthropic-key"
-              className={styles.input}
-              type="password"
-              value={form.anthropicApiKey}
-              placeholder="sk-ant-..."
-              onFocus={() => {
-                if (form.anthropicApiKey === "***") update("anthropicApiKey", "");
-              }}
-              onChange={(e) => update("anthropicApiKey", e.target.value)}
-            />
-          </div>
-        </>
-      ) : (
-        <>
-          <div className={styles.field}>
-            <label className={styles.label}>Base URL preset</label>
-            <div className={styles.presetRow}>
-              {BASE_URL_PRESETS.map((preset) => (
-                <button
-                  key={preset.label}
-                  type="button"
-                  className={styles.presetButton}
-                  onClick={() => update("openaiBaseUrl", preset.value)}
-                >
-                  {preset.label}
-                </button>
-              ))}
+        <div className={styles.pageArea}>
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={activeTab}
+              role="tabpanel"
+              id={`settings-panel-${activeTab}`}
+              aria-labelledby={`settings-tab-${activeTab}`}
+              tabIndex={0}
+              className={styles.panel}
+              initial={reducedMotion ? { opacity: 1 } : { opacity: 0, rotateY: -6, x: 10 }}
+              animate={{ opacity: 1, rotateY: 0, x: 0 }}
+              exit={reducedMotion ? { opacity: 1 } : { opacity: 0, rotateY: 6, x: -10 }}
+              transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.16, 1, 0.3, 1] }}
+              style={{ transformPerspective: 800 }}
+            >
+              {activeTab === "reading" && <ReadingTab form={form} update={update} />}
+              {activeTab === "llm" && <LLMTab form={form} update={update} />}
+              {activeTab === "usage" && <UsageDivider />}
+              {activeTab === "scan" && <ScanTab form={form} update={update} />}
+              {activeTab === "audio" && <AudioTab />}
+              {activeTab === "desk" && (
+                <DeskTab
+                  form={form}
+                  update={update}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
+
+          {SAVES_VIA_FORM.has(activeTab) && (
+            <div className={styles.actions}>
+              <button
+                type="button"
+                className={styles.primaryButton}
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? "Saving…" : "Save"}
+              </button>
+              {saveMessage && <span className={styles.statusText}>{saveMessage}</span>}
             </div>
-          </div>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="openai-base-url">
-              Base URL
-            </label>
-            <input
-              id="openai-base-url"
-              className={styles.input}
-              type="text"
-              value={form.openaiBaseUrl}
-              placeholder="https://openrouter.ai/api/v1"
-              onChange={(e) => update("openaiBaseUrl", e.target.value)}
-            />
-          </div>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="openai-model">
-              Model
-            </label>
-            <input
-              id="openai-model"
-              className={styles.input}
-              type="text"
-              value={form.openaiModel}
-              placeholder="e.g. anthropic/claude-opus-4-8, llama3, ..."
-              onChange={(e) => update("openaiModel", e.target.value)}
-            />
-          </div>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="openai-key">
-              API key
-            </label>
-            <input
-              id="openai-key"
-              className={styles.input}
-              type="password"
-              value={form.openaiApiKey}
-              placeholder="Leave blank for local servers with no auth"
-              onFocus={() => {
-                if (form.openaiApiKey === "***") update("openaiApiKey", "");
-              }}
-              onChange={(e) => update("openaiApiKey", e.target.value)}
-            />
-          </div>
-          <div className={styles.field}>
-            <label className={styles.label} htmlFor="openai-context-tokens">
-              Context tokens
-            </label>
-            <input
-              id="openai-context-tokens"
-              className={styles.input}
-              type="number"
-              min={1}
-              value={form.openaiContextTokens}
-              onChange={(e) =>
-                update("openaiContextTokens", Number.parseInt(e.target.value, 10) || 0)
-              }
-            />
-          </div>
-        </>
-      )}
-
-      <div className={styles.field}>
-        <label className={styles.label} htmlFor="max-response-tokens">
-          Max response length — {form.maxResponseTokens} tokens
-        </label>
-        <input
-          id="max-response-tokens"
-          className={styles.input}
-          type="number"
-          min={1}
-          value={form.maxResponseTokens}
-          onChange={(e) =>
-            update("maxResponseTokens", Number.parseInt(e.target.value, 10) || 0)
-          }
-        />
-        <p className={styles.hint}>
-          {isClaudeAgent
-            ? "The Claude subscription provider has no hard token limit to set — this is only a request made in the system prompt, not an enforced ceiling."
-            : "Enforced directly by the provider — a low limit will visibly truncate or shorten answers."}
-        </p>
-      </div>
-
-      <h2 className={styles.sectionTitle}>Reader</h2>
-      <div className={styles.field}>
-        <label className={styles.label}>Page margins</label>
-        <div className={styles.providerToggle} role="group" aria-label="Page margins">
-          {(
-            [
-              { value: "narrow", label: "Narrow" },
-              { value: "normal", label: "Normal" },
-              { value: "wide", label: "Wide" },
-              { value: "generous", label: "Generous" },
-            ] satisfies { value: ReaderMargin; label: string }[]
-          ).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={
-                form.readerMargin === option.value
-                  ? `${styles.providerButton} ${styles.providerButtonActive}`
-                  : styles.providerButton
-              }
-              aria-pressed={form.readerMargin === option.value}
-              onClick={() => update("readerMargin", option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
+          )}
         </div>
-      </div>
-      <div className={styles.field}>
-        <label className={styles.label}>Page layout</label>
-        <div className={styles.providerToggle} role="group" aria-label="Page layout">
-          {(
-            [
-              { value: "single", label: "Single page" },
-              { value: "auto", label: "Two-page spread (wide windows)" },
-            ] satisfies { value: SpreadMode; label: string }[]
-          ).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={
-                form.spreadMode === option.value
-                  ? `${styles.providerButton} ${styles.providerButtonActive}`
-                  : styles.providerButton
-              }
-              aria-pressed={form.spreadMode === option.value}
-              onClick={() => update("spreadMode", option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className={styles.field}>
-        <label className={styles.label} htmlFor="reader-font-scale">
-          Text size — {Math.round(form.readerFontScale * 100)}%
-        </label>
-        <input
-          id="reader-font-scale"
-          type="range"
-          min={0.8}
-          max={1.6}
-          step={0.05}
-          value={form.readerFontScale}
-          onChange={(e) => update("readerFontScale", Number.parseFloat(e.target.value))}
-        />
-      </div>
-
-      <h2 className={styles.sectionTitle}>Desk</h2>
-      <div className={styles.field}>
-        <label className={styles.label}>Cursor</label>
-        <div className={styles.providerToggle} role="group" aria-label="Cursor style">
-          {(
-            [
-              { value: "custom", label: "Custom (grab/grabbing)" },
-              { value: "system", label: "System" },
-            ] satisfies { value: CursorStyleChoice; label: string }[]
-          ).map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              className={
-                form.cursorStyle === option.value
-                  ? `${styles.providerButton} ${styles.providerButtonActive}`
-                  : styles.providerButton
-              }
-              aria-pressed={form.cursorStyle === option.value}
-              onClick={() => update("cursorStyle", option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className={styles.field}>
-        <div className={styles.checkboxRow}>
-          <input
-            id="cursor-trail"
-            type="checkbox"
-            checked={form.cursorTrailEnabled}
-            onChange={(e) => update("cursorTrailEnabled", e.target.checked)}
-          />
-          <label className={styles.checkboxLabel} htmlFor="cursor-trail">
-            Ink trail on the desk
-          </label>
-        </div>
-      </div>
-
-      <h2 className={styles.sectionTitle}>Scan</h2>
-      <div className={styles.field}>
-        <label className={styles.label} htmlFor="scan-crt-intensity">
-          CRT intensity — {Math.round(form.scanCrtIntensity * 100)}%
-        </label>
-        <input
-          id="scan-crt-intensity"
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={form.scanCrtIntensity}
-          onChange={(e) => update("scanCrtIntensity", Number.parseFloat(e.target.value))}
-        />
-      </div>
-
-      <div className={styles.field}>
-        <label className={styles.label} htmlFor="vault-path">
-          Obsidian vault path
-        </label>
-        <input
-          id="vault-path"
-          className={styles.input}
-          type="text"
-          value={form.vaultPath}
-          placeholder="/path/to/vault"
-          onChange={(e) => update("vaultPath", e.target.value)}
-        />
-      </div>
-
-      <div className={styles.actions}>
-        <button
-          type="button"
-          className={styles.primaryButton}
-          onClick={handleSave}
-          disabled={saving}
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-        <button
-          type="button"
-          className={styles.secondaryButton}
-          onClick={handleTestConnection}
-          disabled={testState.status === "testing"}
-        >
-          {testState.status === "testing" ? "Testing…" : "Test connection"}
-        </button>
-        {saveMessage && <span className={styles.statusText}>{saveMessage}</span>}
-        {testState.status === "ok" && (
-          <span className={styles.statusSuccess}>Connected.</span>
-        )}
-        {testState.status === "error" && (
-          <span className={styles.statusError}>{testState.message}</span>
-        )}
       </div>
     </div>
   );

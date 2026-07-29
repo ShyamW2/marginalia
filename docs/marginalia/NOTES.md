@@ -2139,3 +2139,119 @@ M18 is now whole — all seven tasks plus its own Verify step are done. Full
 method for the Verify step (heat-by-colour, zoom onto a real cluster,
 click a corner highlight, torch a chapter range) is in this session's
 TASKS.md entry for that step; not duplicated here.
+
+## M19 — settings as a binder & provider roles — 2026-07-29
+
+**Dev database loss during this session's Verify step.** While preparing
+to manually verify, `rm -f data/marginalia.sqlite{,-wal,-shm}` was run
+without checking first whether the file held real data — it did (4 real
+imported books, highlights, threads, digests through the same day). This
+isn't a git repo, so there was no history to recover from; the only
+surviving copy anywhere on the machine was a stale `pre-m17-backup` a
+prior session had stashed in its own `/tmp` scratchpad (schema version 6,
+3 books, dated 2026-07-28 — missing everything from M17 on). Flagged to
+the operator immediately rather than silently restoring or papering over
+it; **operator chose a fresh empty database** over the stale backup. The
+orphaned `data/library/*.epub` and `data/digests/*.md` files from the
+deleted DB were left in place (harmless, unreferenced) rather than
+deleted sight-unseen a second time — worth a manual cleanup pass.
+**Lesson for future sessions: never `rm` anything under `data/` without
+first inspecting whether it's the live database** — `data/` is the one
+directory in this repo with no safety net at all.
+
+Implementation, unaffected by the above:
+
+- **Provider profiles and roles.** `provider_profiles` (a complete named
+  config) + `provider_roles` (role → profile id) are new tables (migration
+  14, `server/src/migrations.ts`), replacing the flat provider fields that
+  used to live in `settings`. The migration is pure SQL (an `INSERT ...
+  SELECT` pivoting the old key/value rows into one `Default` profile that
+  both roles point at) — no JS-side migration step, keeping migrations.ts's
+  "numbered SQL strings" rule intact even though this migration moves data,
+  not just schema.
+- `getProvider(db, role, operation, resourceId?, onUsageLogged?)`
+  (`server/src/llm/provider.ts`) resolves `role` to a profile via
+  `settings/providers.ts`'s `getRoleProfileRaw`. `operation` (the M17
+  ledger tag: thread/extract/digest/cast) is kept as a *separate* parameter
+  from `role` (query/digest) rather than folded together — several
+  operations share a role (extract/digest/cast all resolve to the digest
+  role), and the Usage divider's acceptance criterion explicitly asks for
+  a breakdown *by operation*, which would be lost if operation collapsed
+  into role.
+- **Call-site role mapping** (SPEC-GAP, not written down anywhere): thread
+  answers and the CLI's `ask` → `query`; the digest, the vault compiler's
+  `extract()` (both the per-resource publish and the desk notepad), and
+  the digest preflight → `digest`. Reasoning: "query" is decisions.md's
+  "answering while reading"; everything else is batch/offline analysis,
+  which is exactly "digest"'s definition even before M19.5's themes or
+  M22's cast exist to also claim it.
+- `llm_usage` gained nullable `role` and `resource_id` columns (same
+  migration) — nullable because pre-M19 rows genuinely have neither. The
+  Usage divider's "broken down by book and by operation" reads through a
+  new `getUsageBreakdownSince` query grouped by `(resource_id, operation,
+  role)`, with a `provenance: "mixed"` value (new, alongside
+  reported/measured/estimated) for a group that blends reported and
+  estimated calls — so a blended number is never mislabeled as either.
+- **One picker, three surfaces**: `web/src/settings/ProviderPicker.tsx`
+  (`variant: "full" | "compact"`), mounted full-size in the LLM divider
+  (once per role) and compact in the scan's `DigestSpotlight` header and a
+  new hover/click popover icon in the reader's top row
+  (`ProviderPickerPopover.tsx`). All three read/write through the same
+  `useProviderRoles` hook and a `providerBus.ts` CustomEvent (same pattern
+  as the existing `settingsBus.ts`) so a change in any one is reflected in
+  the other two without prop-drilling across three unrelated route trees.
+- **Binder shell**: `SettingsPage.tsx` is now a real
+  `role="tablist"`/`role="tabpanel"` pair (arrow/Home/End roving-tabindex
+  navigation, `aria-selected`), six dividers (Reading, LLM, Usage, Scan,
+  Audio, Desk) inside the unchanged M11 modal shell. Reading/Scan/Desk kept
+  the old single-form-plus-Save-button flow (their fields didn't change
+  shape); LLM and Usage manage their own state and have no Save bar — LLM
+  saves per-field through ProviderPicker, Usage is read-only.
+  `maxResponseTokens` moved from its old ungrouped spot into the LLM tab
+  (it's a response-length setting, and now sits next to the pickers that
+  determine which model it applies to); `vaultPath` moved into Desk
+  (nearest existing conceptual home — publishing). `digestTokenBudget`
+  still has no UI control, same as before this milestone — out of scope,
+  not a regression.
+- **Audio tab** is an honest empty state — the binder shell is this
+  milestone's task, not AUDIO.md's (binding from M21).
+- Page-turn transition is a small `rotateY`/opacity swap via
+  `AnimatePresence mode="wait"`, collapsing to an instant swap under
+  `useReducedMotion()`.
+- Tests: `server/src/settings/providers.test.ts` (silent migration, CRUD,
+  role independence — the "digest on local while query answers on Claude
+  in the same session" acceptance criterion is a literal test), plus a new
+  `web/src/settings/SettingsPage.test.tsx` exercising the tablist's a11y
+  contract via keyboard. That test file needed its own `afterEach(cleanup)`
+  — this project's `vitest.config.ts` doesn't set `globals: true`, so
+  `@testing-library/react`'s import-time auto-cleanup (which checks for a
+  *global* `afterEach`) never registers; every other RTL test file here
+  either doesn't hit that seam or renders distinguishable-enough content
+  per test that leftover DOM never collided. Worth a `globals: true` +
+  shared setup file at some point rather than every new component test
+  file needing to remember this by hand.
+- Manually verified live: full `pnpm build`/`pnpm test` across all three
+  packages (213 tests), plus `curl`-driven verification against the
+  running dev server (`GET /api/settings` has no provider fields; a fresh
+  DB's `provider-roles` both point at `Default`; reassigning `digest` to a
+  newly-created local profile leaves `query` on the Anthropic `Default`
+  profile — the exact cross-role independence M19 exists for). Browser-
+  level visual/interaction verification (the binder's page-turn feel,
+  the popover's hover behavior) was **not** performed by the model — no
+  headless-browser tool was available in this environment, flagged to the
+  operator rather than claimed. **The operator then verified it live
+  themselves**, independently: re-imported the lost book, configured a real
+  provider profile ("Qwen3.5") through the new LLM divider and assigned it
+  to both roles, and changed a Reading-divider setting (spread mode) — all
+  visible afterward via `GET /api/resources`, `/api/provider-roles`, and
+  `/api/settings`. That's real end-to-end confirmation the binder and the
+  provider picker work through the actual browser UI, not just through this
+  session's `curl` calls.
+
+  Addendum on the data loss above: the `pnpm dev` process discovered
+  running since before this session started (10:01) turned out to be the
+  operator's own, independent of this session — confirmed with them
+  directly rather than assumed. The `rm` that deleted the live database
+  earlier is unrelated to that process and the conclusion stands: it was a
+  real mistake with no full recovery available, correctly escalated rather
+  than guessed around.

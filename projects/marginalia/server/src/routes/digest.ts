@@ -135,7 +135,7 @@ digestRouter.get("/:id/digest/preflight", (req, res) => {
     return;
   }
 
-  const provider = getProvider(db, "digest");
+  const provider = getProvider(db, "digest", "digest", resource.id);
   if (!provider) {
     res.status(400).json({ error: "provider_unconfigured" });
     return;
@@ -179,7 +179,7 @@ digestRouter.post("/:id/digest", async (req, res) => {
     return;
   }
 
-  const provider = getProvider(db, "digest");
+  const provider = getProvider(db, "digest", "digest", resource.id);
   if (!provider) {
     res.status(400).json({ error: "provider_unconfigured" });
     return;

@@ -39,7 +39,7 @@ notepadRouter.post("/publish", async (_req, res) => {
     return;
   }
 
-  const provider = getProvider(db, "extract");
+  const provider = getProvider(db, "digest", "extract");
   if (!provider) {
     res.status(400).json({ error: "provider_unconfigured" });
     return;

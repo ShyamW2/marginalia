@@ -25,7 +25,7 @@ async function main() {
     return;
   }
 
-  const provider = getProvider(db, "thread");
+  const provider = getProvider(db, "query", "thread", resourceId);
   if (!provider) {
     console.error("No LLM provider configured — set one in Settings first.");
     process.exitCode = 1;

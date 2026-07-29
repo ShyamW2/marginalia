@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import type { DigestStatus, ScanChapter } from "@marginalia/shared";
+import { ProviderPicker } from "../settings/ProviderPicker.js";
+import { useOpenSettingsToLLM } from "../settings/useOpenSettingsToLLM.js";
 import {
   beamFromChapterRange,
   beamHalfWidthFromDrag,
@@ -76,6 +78,7 @@ interface DigestSpotlightProps {
  * kept in sync with them in both directions, never the only way in.
  */
 export function DigestSpotlight({ resourceId, chapters, onClose, warpGeometry, warpWrapperRef }: DigestSpotlightProps) {
+  const openSettingsToLLM = useOpenSettingsToLLM();
   const [status, setStatus] = useState<DigestStatus | null>(null);
   const [startIdx, setStartIdx] = useState(0);
   const [endIdx, setEndIdx] = useState(Math.max(0, chapters.length - 1));
@@ -207,7 +210,10 @@ export function DigestSpotlight({ resourceId, chapters, onClose, warpGeometry, w
   return (
     <div className={styles.panel} role="region" aria-label="Digest spotlight">
       <div className={styles.header}>
-        <span className={styles.title}>Digest</span>
+        <div className={styles.headerLeft}>
+          <span className={styles.title}>Digest</span>
+          <ProviderPicker role="digest" variant="compact" onNavigateToSettings={openSettingsToLLM} />
+        </div>
         <button type="button" className={styles.closeButton} onClick={onClose} aria-label="Close spotlight">
           ×
         </button>

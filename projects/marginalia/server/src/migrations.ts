@@ -297,4 +297,66 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE chapter_digests ADD COLUMN title TEXT;
     `,
   },
+  {
+    // M19 "provider profiles and roles" (docs/decisions.md 2026-07-29 later):
+    // the single global provider config becomes a *profile*, and two named
+    // *roles* (query, digest) point at profiles rather than each call site
+    // reading the settings table directly. Migration must be silent — the
+    // INSERT below reads whatever is already in `settings` (falling back to
+    // the same defaults settings/store.ts's DEFAULTS uses, in case a key was
+    // never written) and both roles point at the resulting profile, so
+    // nobody has to reconfigure anything. llm_usage gains `role` (nullable —
+    // pre-M19 rows genuinely have none) and `resource_id` (nullable — the
+    // desk notepad's extract calls aren't tied to one book) so the Usage
+    // divider can answer "which model, for which book".
+    version: 14,
+    sql: `
+      CREATE TABLE provider_profiles (
+        id                     TEXT PRIMARY KEY,
+        name                   TEXT NOT NULL,
+        provider               TEXT NOT NULL,
+        anthropic_model        TEXT NOT NULL DEFAULT '',
+        anthropic_api_key      TEXT NOT NULL DEFAULT '',
+        claude_agent_model     TEXT NOT NULL DEFAULT '',
+        openai_base_url        TEXT NOT NULL DEFAULT '',
+        openai_model           TEXT NOT NULL DEFAULT '',
+        openai_api_key         TEXT NOT NULL DEFAULT '',
+        openai_context_tokens  TEXT NOT NULL DEFAULT '32768',
+        created_at             TEXT NOT NULL,
+        updated_at             TEXT NOT NULL
+      );
+
+      CREATE TABLE provider_roles (
+        role        TEXT PRIMARY KEY,
+        profile_id  TEXT REFERENCES provider_profiles(id)
+      );
+
+      INSERT INTO provider_profiles
+        (id, name, provider, anthropic_model, anthropic_api_key, claude_agent_model,
+         openai_base_url, openai_model, openai_api_key, openai_context_tokens,
+         created_at, updated_at)
+      VALUES (
+        'default',
+        'Default',
+        COALESCE((SELECT value FROM settings WHERE key = 'provider'), 'anthropic'),
+        COALESCE((SELECT value FROM settings WHERE key = 'anthropic_model'), 'claude-opus-4-8'),
+        COALESCE((SELECT value FROM settings WHERE key = 'anthropic_api_key'), ''),
+        COALESCE((SELECT value FROM settings WHERE key = 'claude_agent_model'), 'claude-sonnet-5'),
+        COALESCE((SELECT value FROM settings WHERE key = 'openai_base_url'), ''),
+        COALESCE((SELECT value FROM settings WHERE key = 'openai_model'), ''),
+        COALESCE((SELECT value FROM settings WHERE key = 'openai_api_key'), ''),
+        COALESCE((SELECT value FROM settings WHERE key = 'openai_context_tokens'), '32768'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+      );
+
+      INSERT INTO provider_roles (role, profile_id) VALUES ('query', 'default');
+      INSERT INTO provider_roles (role, profile_id) VALUES ('digest', 'default');
+
+      ALTER TABLE llm_usage ADD COLUMN role TEXT;
+      ALTER TABLE llm_usage ADD COLUMN resource_id TEXT REFERENCES resources(id);
+
+      CREATE INDEX idx_llm_usage_resource ON llm_usage(resource_id);
+    `,
+  },
 ];

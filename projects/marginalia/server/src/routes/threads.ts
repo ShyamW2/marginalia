@@ -268,7 +268,7 @@ threadsRouter.post("/", async (req, res) => {
   const usageRowRef: { current: Omit<UsageLedgerRow, "id" | "createdAt"> | null } = {
     current: null,
   };
-  const provider = getProvider(db, "thread", (row) => {
+  const provider = getProvider(db, "query", "thread", resource.id, (row) => {
     usageRowRef.current = row;
   });
   if (!provider) {
@@ -334,7 +334,7 @@ threadsRouter.post("/:id/messages", async (req, res) => {
   const usageRowRef: { current: Omit<UsageLedgerRow, "id" | "createdAt"> | null } = {
     current: null,
   };
-  const provider = getProvider(db, "thread", (row) => {
+  const provider = getProvider(db, "query", "thread", resource.id, (row) => {
     usageRowRef.current = row;
   });
   if (!provider) {

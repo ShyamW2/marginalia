@@ -14,6 +14,7 @@ import type {
   HighlightImportance,
   HighlightKind,
   HighlightWithThread,
+  ProviderRoleAssignment,
   ReaderFontScale,
   ReaderMargin,
   ReadingPosition,
@@ -22,6 +23,9 @@ import type {
   ThreadSummary,
 } from "@marginalia/shared";
 import { onSettingsSaved } from "../settings/settingsBus.js";
+import { onProviderRolesSaved } from "../settings/providerBus.js";
+import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
+import { useOpenSettingsToLLM } from "../settings/useOpenSettingsToLLM.js";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
@@ -41,10 +45,18 @@ import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
 
-function isProviderConfigured(settings: Settings): boolean {
-  return settings.provider === "anthropic"
-    ? Boolean(settings.anthropicApiKey)
-    : Boolean(settings.openaiBaseUrl && settings.openaiModel);
+/** M19: provider config moved out of Settings into profiles/roles — whether
+ * the reader can Ask now means "does the query role have a configured
+ * profile" (docs/decisions.md 2026-07-29 later), not a flat settings field. */
+async function fetchQueryRoleConfigured(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/provider-roles");
+    if (!res.ok) return false;
+    const roles = (await res.json()) as ProviderRoleAssignment[];
+    return roles.find((r) => r.role === "query")?.configured ?? false;
+  } catch {
+    return false;
+  }
 }
 
 const POSITION_SAVE_DEBOUNCE_MS = 600;
@@ -261,6 +273,7 @@ interface ReaderViewProps {
 }
 
 export function ReaderView({ resourceId, initialHighlightId, spreadMode }: ReaderViewProps) {
+  const openSettingsToLLM = useOpenSettingsToLLM();
   const containerRef = useRef<HTMLDivElement>(null);
   // M14: the reader's stage — the thread panel's drag is constrained to it,
   // and a stale panel offset gets clamped back into its bounds on reopen.
@@ -585,14 +598,22 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
   useEffect(() => {
     fetchSettings().then((settings) => {
       if (!settings) return;
-      setProviderConfigured(isProviderConfigured(settings));
       setReaderMargin(settings.readerMargin);
       setReaderFontScale(settings.readerFontScale);
     });
+    fetchQueryRoleConfigured().then(setProviderConfigured);
+  }, []);
+
+  useEffect(() => {
     return onSettingsSaved((settings) => {
       setReaderMargin(settings.readerMargin);
       setReaderFontScale(settings.readerFontScale);
-      setProviderConfigured(isProviderConfigured(settings));
+    });
+  }, []);
+
+  useEffect(() => {
+    return onProviderRolesSaved(() => {
+      fetchQueryRoleConfigured().then(setProviderConfigured);
     });
   }, []);
 
@@ -1673,6 +1694,11 @@ export function ReaderView({ resourceId, initialHighlightId, spreadMode }: Reade
                   {digestingChapter ? "Digesting…" : digestChapterResult ?? "Digest chapter"}
                 </button>
               )}
+              <ProviderPickerPopover
+                role="query"
+                label="Query provider"
+                onNavigateToSettings={openSettingsToLLM}
+              />
             </>
           )}
         </div>

@@ -44,6 +44,34 @@ that area. Refactoring code nobody will touch again is waste.
 **When not to:** the week you wrote the code (you don't know its real shape yet); while a
 feature is half-finished; or as a way of avoiding a hard feature.
 
+## First decide whether you need one at all
+
+"Should we refactor?" is answerable with measurement, not taste. Look at the **shape of
+the distribution**, not any single file:
+
+- How many source files are over ~400 lines, as a fraction of the whole?
+- Is the biggest file an outlier, or the top of a gentle slope? An outlier is a specific
+  problem with a specific fix; a slope is a culture problem no single refactor solves.
+- Is the big file *long but simple* (a schema, a constants table, a switch over many
+  cases) or *long and stateful*? Length alone is not the issue — a 700-line schema file
+  is fine. Count state instead: `useState`/`useRef` in a component, or fields on a class.
+- Does upcoming work actually touch it?
+
+**Worked example — this codebase, measured 2026-07-29:** 92 files under 200 lines, 16
+between 200 and 400, five over 400. Of those five, one is a schema file (fine), three are
+between 400 and 550 (unremarkable), and `ReaderView.tsx` is 1,865 lines with 64 hook
+calls — **3.4× the next-largest component**. And M20's page fold is surgery on exactly
+that file.
+
+That distribution says something specific: this is a *disciplined codebase with one
+outlier*, not a codebase that has gone soft. The correct response is not a broad refactor
+— it is one narrow one, aimed at the outlier, timed just before the work that depends on
+it. Which is why M19.8's scope was cut in half on the day it was measured.
+
+The general rule: **let the measurement pick the scope.** A refactor justified by "it
+feels messy" expands without limit; one justified by a number stops when the number
+moves.
+
 ## The safety net comes first
 
 You cannot refactor safely without a way to detect that behaviour changed. Before
@@ -116,22 +144,20 @@ requires a 600-line change to one file afterwards, the refactor missed.
 
 ## Marginalia's refactor (M19.8)
 
-Two targets, both with measurements behind them rather than opinions:
+**One target**, after the assessment above cut the original two down:
 
-1. **`ReaderView.tsx` — 1,839 lines, 64 hook calls.** It has absorbed something in every
-   milestone since M10: page-turn snapshots, drag-to-peel, turn zones, the scrub dial,
-   chapter nav, spread mode, margins, text size, fullscreen, the context ladder. Split
-   along the seams that already exist implicitly — book lifecycle and rendition setup,
-   navigation and position, selection and highlights, and the chrome — into focused
-   hooks/components with explicit inputs.
-2. **Position handling.** Position is expressed four ways across the app — CFI,
-   `spineIndex`, percent, and character offsets — and conversion happens in several
-   places (`server/src/annotations/position.ts`, `web/src/reader/toc.ts`,
-   `web/src/scan/chapterAxis.ts`, and inline in `ReaderView`). Audit which of those are
-   genuine conversions versus legitimate consumers, then put the conversions in one place
-   with tests. This is also the concept the fold, the scan, the digest, and audio all
-   depend on, so it is worth having exactly one definition of.
+**`ReaderView.tsx` — 1,865 lines, 64 hook calls.** It has absorbed something in every
+milestone since M10: page-turn snapshots, drag-to-peel, turn zones, the scrub dial,
+chapter nav, spread mode, margins, text size, fullscreen, the context ladder. Split along
+the seams that already exist implicitly — book lifecycle and rendition setup, navigation
+and position, selection and highlights, and the chrome — into focused hooks and
+components with explicit inputs, prioritising the seams **the fold will touch**.
 
-Placed deliberately **immediately before M20's paper fold**, which is the riskiest
-surgery planned on exactly this component. That timing is the point: pay once, then let
-the hardest change land in a structure that can hold it.
+*Dropped 2026-07-29:* unifying the four representations of position (CFI, `spineIndex`,
+percent, char offsets). It was a "one definition would be nicer" argument with no consumer
+under pressure, and the measured discipline elsewhere says it is not currently hurting.
+Recorded here so the reasoning survives if it ever does start hurting.
+
+Placed deliberately **immediately before M20's paper fold**, the riskiest surgery planned
+on exactly this component. That timing is the point: pay once, then let the hardest change
+land in a structure that can hold it.

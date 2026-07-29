@@ -3,6 +3,63 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-29 (addendum) — The scan's two layers, and the refactor narrowed
+
+### Is this codebase disciplined enough to skip the refactor? Measured, mostly yes
+
+The operator asked whether the refactor could be parked "if the codebase is well
+disciplined and written". That is answerable with evidence, so here it is (measured after
+M18/M19 shipped):
+
+| | |
+|---|---|
+| Files under 200 lines | **92** |
+| 200–400 lines | 16 |
+| Over 400 lines | **5** |
+| Test files / cases | 30 / 214 |
+
+The five over 400: `ReaderView.tsx` **1,865**, `schemas.ts` 709 (a schema file — long is
+appropriate), `ThreadPanel.tsx` 543, `ProviderPicker.tsx` 433, `digest/build.ts` 406.
+
+**Verdict: the codebase is well disciplined — with exactly one exception.** 108 of 113
+source files are under 400 lines, the seams are real, and test coverage is concentrated
+where the fragility is. Nothing here justifies a broad refactor. `ReaderView.tsx` is the
+outlier at **3.4× the next-largest component**, and it is precisely the file M20's fold
+performs surgery on.
+
+**So the refactor stays at M19.8 but is narrowed to one target.** The
+position-unification half is **dropped** — it was a "one definition would be nicer"
+argument with no consumer under pressure, and the measured discipline elsewhere says it
+is not hurting. What remains is decomposing `ReaderView.tsx`, scoped to the seams the
+fold actually needs. Smaller, cheaper, and it still de-risks the riskiest planned change.
+This is the right shape of answer to "can we skip it": not yes or no, but *which part
+earns its cost*.
+
+### The semantic scan plots two layers, not one
+
+Confirmed with the operator: "digest/AI" is a **second signal**, not a filter over the
+first. They answer different questions and must not be blended.
+
+| Layer | Signal | Resolution | Answers |
+|---|---|---|---|
+| **Mine** | highlights, notes, threads | exact position | *where did I engage with X* |
+| **Book** | themes from chapter digests | chapter | *where does this book talk about X* |
+
+- Filter to either, or show both.
+- ⚠️ **Never merge them into one field.** Chapter-resolution data rendered in the precise
+  field's visual language would claim an accuracy it does not have. The Book layer gets
+  its own visual register — a quantised, obviously chapter-wide underlay — with the Mine
+  field precise on top.
+- **One theme vocabulary** across both, so filtering by a theme lights both layers.
+- **Mine wins on overlap** for hit-testing: your own annotations are the primary object;
+  the book layer must never steal a click from a highlight. Its own bands click through
+  to the chapter start, which is the only honest target at that resolution.
+- No digest → kind mode, as already specified. Digest but no thematic layer for a chapter
+  → that chapter's Book layer is simply absent, and the coverage line explains it.
+- Worth noting for later, not building now: the *difference* between the layers is
+  itself interesting — a chapter the book develops a theme in heavily that you never
+  annotated is a revisit suggestion.
+
 ## 2026-07-29 (later) — Provider roles, the thematic layer, spoiler-safe digests, and a roadmap regroup
 
 Operator feedback after living with M17/M17.5. Two of these change architecture rather

@@ -11,6 +11,8 @@ import { threadsRouter } from "./routes/threads.js";
 import { publishRouter } from "./routes/publish.js";
 import { notepadRouter } from "./routes/notepad.js";
 import { digestRouter } from "./routes/digest.js";
+import { providerProfilesRouter, providerRolesRouter } from "./routes/providerProfiles.js";
+import { usageRouter } from "./routes/usage.js";
 
 const PORT = Number(process.env.PORT ?? 5175);
 
@@ -45,6 +47,9 @@ app.use("/api/resources", publishRouter);
 app.use("/api/resources", digestRouter);
 app.use("/api/highlights", highlightsRouter);
 app.use("/api/settings", settingsRouter);
+app.use("/api/provider-profiles", providerProfilesRouter);
+app.use("/api/provider-roles", providerRolesRouter);
+app.use("/api/usage", usageRouter);
 app.use("/api/threads", threadsRouter);
 app.use("/api/notepad", notepadRouter);
 

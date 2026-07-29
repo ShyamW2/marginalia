@@ -1,0 +1,158 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.hint {
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.periodCard {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+}
+
+.periodHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
+.periodTitle {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.periodStats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.statValue {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.statLabel {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.table th {
+  text-align: left;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table td {
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  color: var(--color-text);
+}
+
+.emptyRow {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.badge {
+  font-size: 0.68rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badgeReported {
+  color: var(--color-accent-text);
+  background: var(--color-accent);
+}
+
+.badgeEstimated {
+  color: var(--color-text-muted);
+  background: color-mix(in srgb, var(--color-border) 50%, transparent);
+}
+
+.section {
+  border-top: 1px solid var(--color-border);
+  padding-top: 1rem;
+}
+
+.sectionTitle {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  margin: 0 0 0.5rem;
+  color: var(--color-text);
+}
+
+.lastDigest {
+  font-size: 0.9rem;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.planRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.4rem 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+
+.planRow:last-child {
+  border-bottom: none;
+}
+
+.planRoleLabel {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.planUnavailable {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.planLocal {
+  color: var(--color-text-muted);
+}
+
+.planWindows {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.15rem;
+  color: var(--color-text-muted);
+}
+
+.planWindow {
+  white-space: nowrap;
+}

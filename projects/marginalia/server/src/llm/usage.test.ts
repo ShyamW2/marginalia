@@ -31,6 +31,8 @@ describe("recordUsage / getUsageTotalsSince", () => {
       provider: "anthropic",
       model: "claude-opus-4-8",
       operation: "thread",
+      role: "query",
+      resourceId: null,
       inputTokens: 100,
       outputTokens: 20,
       cacheReadTokens: 5,
@@ -42,6 +44,8 @@ describe("recordUsage / getUsageTotalsSince", () => {
       provider: "openai-compatible",
       model: "local-model",
       operation: "extract",
+      role: "digest",
+      resourceId: null,
       inputTokens: 50,
       outputTokens: 10,
       cacheReadTokens: null,
@@ -70,7 +74,7 @@ describe("withUsageLedger", () => {
     const db = createDb(":memory:");
     const usage: ReportedUsage = { inputTokens: 10, outputTokens: 2, costUsd: 0.01 };
     const provider = makeFakeProvider({ reportedUsage: () => usage });
-    const wrapped = withUsageLedger(provider, db, "test-model", "thread");
+    const wrapped = withUsageLedger(provider, db, "test-model", "thread", "query", null);
 
     const text = await drain(
       wrapped.stream({ instructions: "i", bookContext: "b", messages: [] }),
@@ -97,7 +101,7 @@ describe("withUsageLedger", () => {
   it("falls back to an 'estimated' row when the provider doesn't implement reportedUsage()", async () => {
     const db = createDb(":memory:");
     const provider = makeFakeProvider(); // no reportedUsage member at all
-    const wrapped = withUsageLedger(provider, db, "test-model", "extract");
+    const wrapped = withUsageLedger(provider, db, "test-model", "extract", "digest", null);
 
     await wrapped.extract({ instructions: "i", input: "some input text", schema: undefined as never });
 
@@ -120,7 +124,7 @@ describe("withUsageLedger", () => {
         throw new Error("boom");
       },
     });
-    const wrapped = withUsageLedger(provider, db, "test-model", "thread");
+    const wrapped = withUsageLedger(provider, db, "test-model", "thread", "query", null);
 
     await expect(
       drain(wrapped.stream({ instructions: "i", bookContext: "b", messages: [] })),
@@ -133,7 +137,7 @@ describe("withUsageLedger", () => {
 
   it("passes through planLimits() only when the wrapped provider implements it", async () => {
     const db = createDb(":memory:");
-    const withoutPlanLimits = withUsageLedger(makeFakeProvider(), db, "m", "thread");
+    const withoutPlanLimits = withUsageLedger(makeFakeProvider(), db, "m", "thread", "query", null);
     expect(withoutPlanLimits.planLimits).toBeUndefined();
 
     const withPlanLimits = withUsageLedger(
@@ -141,6 +145,8 @@ describe("withUsageLedger", () => {
       db,
       "m",
       "thread",
+      "query",
+      null,
     );
     await expect(withPlanLimits.planLimits?.()).resolves.toEqual({ windows: [] });
     db.close();

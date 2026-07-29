@@ -365,16 +365,11 @@ export type ReaderFontScale = z.infer<typeof ReaderFontScaleSchema>;
  * motion disables the effect outright regardless of this value. */
 export const ScanCrtIntensitySchema = z.number().min(0).max(1);
 
-/** GET /api/settings response — secrets are masked ("***") if set, "" if unset. */
+/** GET /api/settings response — secrets are masked ("***") if set, "" if unset.
+ * M19 (decisions.md 2026-07-29 later): provider configuration moved out of
+ * this flat bag into provider *profiles* + *roles* (below) — this schema now
+ * covers only the settings that aren't about "which LLM answers what". */
 export const SettingsSchema = z.object({
-  provider: LLMProviderIdSchema,
-  anthropicModel: z.string(),
-  anthropicApiKey: z.string(), // masked
-  claudeAgentModel: z.string(), // claude-agent provider: model id or alias (no key — uses local Claude Code login)
-  openaiBaseUrl: z.string(),
-  openaiModel: z.string(),
-  openaiApiKey: z.string(), // masked
-  openaiContextTokens: z.number().int().positive(),
   vaultPath: z.string(),
   cursorStyle: CursorStyleSchema,
   cursorTrailEnabled: z.boolean(),
@@ -382,6 +377,9 @@ export const SettingsSchema = z.object({
   readerMargin: ReaderMarginSchema,
   readerFontScale: ReaderFontScaleSchema,
   scanCrtIntensity: ScanCrtIntensitySchema,
+  // Global request ceiling, applied regardless of which profile/role serves
+  // the call — not part of a profile (SPEC: a profile is "provider id,
+  // model, key, base URL, context tokens").
   maxResponseTokens: z.number().int().positive(),
   // M17 "pre-flight before committing": 0 = no ceiling (default) — a digest
   // run whose pre-flight estimate exceeds this many input tokens is
@@ -397,6 +395,156 @@ export type Settings = z.infer<typeof SettingsSchema>;
  */
 export const SettingsUpdateSchema = SettingsSchema.partial();
 export type SettingsUpdate = z.infer<typeof SettingsUpdateSchema>;
+
+// ---------------------------------------------------------------------------
+// Provider profiles & roles (M19 — docs/decisions.md 2026-07-29 later)
+// ---------------------------------------------------------------------------
+
+/** The two named roles: "query" answers questions while reading; "digest"
+ * covers batch analysis (the digest, and later the thematic scan / cast).
+ * Roles point at profiles, not the other way around. */
+export const ProviderRoleSchema = z.enum(["query", "digest"]);
+export type ProviderRole = z.infer<typeof ProviderRoleSchema>;
+
+/** A complete, named provider config. Secrets masked on the wire, same
+ * "***"-means-unchanged convention as Settings. */
+export const ProviderProfileSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  provider: LLMProviderIdSchema,
+  anthropicModel: z.string(),
+  anthropicApiKey: z.string(), // masked
+  claudeAgentModel: z.string(),
+  openaiBaseUrl: z.string(),
+  openaiModel: z.string(),
+  openaiApiKey: z.string(), // masked
+  openaiContextTokens: z.number().int().positive(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProviderProfile = z.infer<typeof ProviderProfileSchema>;
+
+export const CreateProviderProfileBodySchema = z.object({
+  name: z.string().min(1),
+  provider: LLMProviderIdSchema,
+  anthropicModel: z.string().optional(),
+  anthropicApiKey: z.string().optional(),
+  claudeAgentModel: z.string().optional(),
+  openaiBaseUrl: z.string().optional(),
+  openaiModel: z.string().optional(),
+  openaiApiKey: z.string().optional(),
+  openaiContextTokens: z.number().int().positive().optional(),
+});
+export type CreateProviderProfileBody = z.infer<typeof CreateProviderProfileBodySchema>;
+
+export const UpdateProviderProfileBodySchema = CreateProviderProfileBodySchema.partial();
+export type UpdateProviderProfileBody = z.infer<typeof UpdateProviderProfileBodySchema>;
+
+/** GET /api/provider-roles response: one entry per role, resolved to its
+ * profile (or null — "a role with no configured profile degrades to the
+ * same 'configure a provider' nudge the reader already shows"). */
+export const ProviderRoleAssignmentSchema = z.object({
+  role: ProviderRoleSchema,
+  profileId: z.string().nullable(),
+  profile: ProviderProfileSchema.nullable(),
+  configured: z.boolean(),
+});
+export type ProviderRoleAssignment = z.infer<typeof ProviderRoleAssignmentSchema>;
+
+export const ProviderRolesResponseSchema = z.array(ProviderRoleAssignmentSchema);
+export type ProviderRolesResponse = z.infer<typeof ProviderRolesResponseSchema>;
+
+export const SetProviderRoleBodySchema = z.object({
+  profileId: z.string().nullable(),
+});
+export type SetProviderRoleBody = z.infer<typeof SetProviderRoleBodySchema>;
+
+// ---------------------------------------------------------------------------
+// Usage ledger summary (M19 Usage divider — reads M17's ledger, decisions.md
+// 2026-07-28 later / 2026-07-29 later)
+// ---------------------------------------------------------------------------
+
+export const UsageOperationSchema = z.enum(["thread", "extract", "digest", "cast"]);
+export type UsageOperation = z.infer<typeof UsageOperationSchema>;
+
+export const UsageProvenanceSchema = z.enum(["reported", "measured", "estimated", "mixed"]);
+export type UsageProvenanceValue = z.infer<typeof UsageProvenanceSchema>;
+
+export const UsageBreakdownRowSchema = z.object({
+  resourceId: z.string().nullable(),
+  resourceTitle: z.string().nullable(),
+  operation: UsageOperationSchema,
+  role: ProviderRoleSchema.nullable(), // null for pre-M19 ledger rows
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  costUsd: z.number().nullable(),
+  provenance: UsageProvenanceSchema,
+  callCount: z.number(),
+});
+export type UsageBreakdownRow = z.infer<typeof UsageBreakdownRowSchema>;
+
+export const UsagePeriodSchema = z.object({
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  costUsd: z.number().nullable(),
+  callCount: z.number(),
+  provenance: UsageProvenanceSchema,
+  byBookAndOperation: z.array(UsageBreakdownRowSchema),
+});
+export type UsagePeriod = z.infer<typeof UsagePeriodSchema>;
+
+export const RolePlanLimitsSchema = z.object({
+  role: ProviderRoleSchema,
+  profileName: z.string().nullable(),
+  provider: LLMProviderIdSchema.nullable(),
+  /** null = provider doesn't report plan limits (e.g. every local model) —
+   * the UI renders "plan limits unavailable", never a blank or an error. */
+  windows: z
+    .array(
+      z.object({
+        label: z.string(),
+        utilization: z.number().nullable(),
+        resetsAt: z.string().nullable(),
+      }),
+    )
+    .nullable(),
+  /** Local (openai-compatible) models show tokens/context%/speed instead of
+   * quota UI — this flag is what the Usage divider branches on. */
+  isLocal: z.boolean(),
+  contextTokens: z.number().nullable(),
+  /** From the most recent ledger row logged under this role — local models
+   * have no quota API, so this is what "tokens, context percentage, and
+   * speed" (TASKS.md M19) is built from. Null until this role has made a
+   * call, or for a non-local role (the windows above cover it instead). */
+  lastCall: z
+    .object({
+      tokensUsed: z.number(),
+      contextPercent: z.number().nullable(),
+      tokensPerSecond: z.number().nullable(),
+      provenance: UsageProvenanceSchema,
+    })
+    .nullable(),
+});
+export type RolePlanLimits = z.infer<typeof RolePlanLimitsSchema>;
+
+export const LastDigestUsageSchema = z.object({
+  resourceId: z.string(),
+  resourceTitle: z.string().nullable(),
+  costUsd: z.number().nullable(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  provenance: UsageProvenanceSchema,
+  createdAt: z.string(),
+});
+export type LastDigestUsage = z.infer<typeof LastDigestUsageSchema>;
+
+export const UsageSummarySchema = z.object({
+  today: UsagePeriodSchema,
+  last7Days: UsagePeriodSchema,
+  lastDigest: LastDigestUsageSchema.nullable(),
+  planLimits: z.array(RolePlanLimitsSchema),
+});
+export type UsageSummary = z.infer<typeof UsageSummarySchema>;
 
 // ---------------------------------------------------------------------------
 // Scan (M9 — the timeline/heat-map room, DESIGN.md "Room 3")

@@ -1380,7 +1380,7 @@ milestones are unchanged):
 | M17.5 | — | Performance & responsiveness (inserted 2026-07-29) |
 | M18 | — | Scan v2: the instrument face + the digest torch (new) |
 | M19.5 | — | Digest depth & the semantic scan (inserted 2026-07-29) |
-| M19.8 | — | The refactor (inserted 2026-07-29) |
+| M19.8 | — | The refactor — ReaderView only (inserted 2026-07-29, narrowed same day) |
 | M19 | — | Settings as a binder & provider roles (new) |
 | M20 | M16 | The paper fold |
 | M21 | M17 | Audio I |
@@ -2333,14 +2333,14 @@ and the two-channel colour model are specified there.
 
 ### M19 — Settings as a binder & provider roles
 
-- [ ] **Binder shell.** Rebuild `SettingsPage`'s flat field list as a book/binder: tabbed
+- [x] **Binder shell.** Rebuild `SettingsPage`'s flat field list as a book/binder: tabbed
       dividers down the side — **Reading, LLM, Usage, Scan, Audio, Desk** — with a page-turn
       animation between sections, inside M11's existing modal shell (dialog semantics,
       focus trap, Escape, backdrop click, and the `/settings` deep link all stay).
       Existing fields move; none are redesigned here.
       _Acceptance: every setting that exists today is still reachable and still saves;
       the deep link still opens over the current room; Escape still restores focus._
-- [ ] **The Usage divider.** Surface M17's ledger: totals for today / 7 days, broken down
+- [x] **The Usage divider.** Surface M17's ledger: totals for today / 7 days, broken down
       by book and by operation (thread, digest, cast); the last digest run's cost; and —
       **only where the provider reports them** — plan utilization with reset times. Local
       models show tokens, context percentage, and speed, with no quota UI at all. Every
@@ -2349,13 +2349,13 @@ and the two-channel colour model are specified there.
       _Acceptance: the panel is correct on a local model and on the subscription path;
       with plan limits unavailable it reads "plan limits unavailable" and everything else
       still renders; the numbers match the ledger._
-- [ ] **A11y and motion.** The dividers are a real tablist/tabpanel (arrow-key
+- [x] **A11y and motion.** The dividers are a real tablist/tabpanel (arrow-key
       navigation between tabs, correct roles and `aria-selected`) — never divs with click
       handlers. The page turn collapses to an instant swap under reduced motion.
       _Acceptance: the whole binder is operable keyboard-only including switching
       sections; a screen reader announces the selected divider; reduced motion shows no
       animation at all._
-- [ ] **Provider profiles and roles.** Replace the single global provider config with
+- [x] **Provider profiles and roles.** Replace the single global provider config with
       **profiles** (a complete named config: provider id, model, key, base URL, context
       tokens) and **roles** that point at them: **query** (answering while reading) and
       **digest** (batch analysis — the digest now, M19.5's themes and M22's cast later).
@@ -2367,7 +2367,7 @@ and the two-channel colour model are specified there.
       in the same session; existing settings survive the migration untouched; ledger rows
       record the role; a role with no configured profile degrades to the same
       "configure a provider" nudge the reader already shows._
-- [ ] **One picker, three surfaces.** Build the provider picker **once** and mount it in:
+- [x] **One picker, three surfaces.** Build the provider picker **once** and mount it in:
       a tab per role in the binder; the scan's slider (digest role); and a small icon in
       the reader menu that opens the same slider on hover — or click, for touch — with a
       click-through into settings. Three bespoke pickers is exactly the duplication this
@@ -2376,10 +2376,15 @@ and the two-channel colour model are specified there.
       surface is reflected immediately in the others; the reader's icon is keyboard
       reachable and its slider operable without a pointer; nothing about the picker
       assumes hover exists._
-- [ ] **Verify:** open settings from all three rooms, visit every divider, change one
+- [x] **Verify:** open settings from all three rooms, visit every divider, change one
       setting on each and confirm it persists. The stated goal is that settings is
       **pleasant to open** — judge that honestly and fix what feels clumsy before
       checking this off.
+      _Verified: automated (213 tests incl. a11y tablist keyboard nav) + curl against a
+      live dev server + the operator's own live browser session (imported a book,
+      configured a real provider profile through the LLM divider, changed the Reading
+      divider's spread mode — all persisted). See NOTES.md "M19" for the full account,
+      including a dev-database incident during this session's verify step._
 
 ### M19.5 — Digest depth & the semantic scan
 
@@ -2431,67 +2436,80 @@ and evolves as you read.** Two layers, two lifecycles — do not build them as o
       readable without a deliberate reveal, including titles; the safe synopsis genuinely
       only reflects what you've read; revealing is per-item and does not unlock the rest;
       the lazy regeneration does not fire on every page turn (watch the ledger)._
-- [ ] **The semantic scan mode.** *(Moved here from M18 on 2026-07-29: it needs the
-      thematic data above, which did not exist when it was written.)* A mode toggle
-      re-colours the same field and the same hit targets — a palette swap, not a second
-      component. Themes come from the thematic layer, tagged onto each highlight (quote +
-      note + thread) by an `extract` pass, persisted in SQLite. Only highlights in
-      **thematically analysed** chapters can be themed; the rest stay uncoloured and the
-      coverage line explains why. This un-parks the 2026-07-19 "LLM note supplementation"
-      item; vault concepts are **not** the source (M9's reasoning still holds).
-      _Acceptance: theme mode colours every themed highlight and visibly greys the rest;
-      the legend names the themes; filters, search, stars, tags and the airlock jump
-      behave identically in both modes; a book with no thematic layer falls back to kind
-      mode with an explanation, not an empty strip._
+- [ ] **The semantic scan: two layers.** *(Moved here from M18 on 2026-07-29 — it needs
+      the thematic data above. Scope confirmed 2026-07-29 addendum: "digest/AI" is a
+      **second signal**, not a filter over the first.)*
+
+      | Layer | Signal | Resolution | Answers |
+      |---|---|---|---|
+      | **Mine** | highlights, notes, threads | exact position | *where did I engage with X* |
+      | **Book** | themes from chapter digests | chapter | *where does this book talk about X* |
+
+      Filter to either or show both. Themes are tagged onto highlights (quote + note +
+      thread) by an `extract` pass against the thematic layer's vocabulary, persisted in
+      SQLite — this un-parks the 2026-07-19 "LLM note supplementation" item. Vault
+      concepts are **not** the source (M9's reasoning still holds).
+      ⚠️ **Never merge the layers into one field.** Chapter-resolution data drawn in the
+      precise field's visual language claims an accuracy it does not have. The Book layer
+      gets its own register — an obviously quantised, chapter-wide underlay — with the
+      Mine field precise on top of it.
+      ⚠️ **Mine wins on overlap** for hit-testing: your annotations are the primary
+      object, and the book layer must never steal a click from a highlight. Book bands
+      click through to the chapter start, the only honest target at that resolution.
+      One theme vocabulary across both, so filtering by a theme lights both layers.
+      _Acceptance: with both layers on, a theme filter lights matching regions in each and
+      the two are visually unmistakable from one another; clicking a highlight that sits
+      inside a lit book band opens the highlight, not the chapter; a chapter with a
+      thematic layer but no annotations still shows a book band; a book with no digest
+      falls back to kind mode with an explanation, not an empty strip; kind mode, filters,
+      search, stars, tags and the airlock jump all behave exactly as they do today._
 - [ ] **Verify:** set a brief on a fixture book, digest a few chapters ahead of your
       bookmark, read into them, and check the whole loop — analysis reflects the brief,
       posed questions open useful threads, a philosophical question gets a real answer,
       nothing past the bookmark leaks, and the scan's theme mode lights up.
 
-### M19.8 — The refactor
+### M19.8 — The refactor (narrowed to one target)
 
-**Read `docs/REFACTORING.md` first** — it defines the method, the safety net, and the
-success metrics, and it is binding for this milestone. The rule that matters most: **a
-refactor changes structure and nothing else.** If you can see a difference in the app, it
-was not a refactor. Find a bug on the way? Write it down and keep going.
+**Read `docs/REFACTORING.md` first** — method, safety net and success metrics live there
+and are binding. The rule that matters most: **a refactor changes structure and nothing
+else.** If you can see a difference in the app, it was not a refactor. Find a bug on the
+way? Write it down and keep going.
 
-- [ ] **Baseline the metrics before touching anything.** Record: largest file sizes, the
-      hook count in `ReaderView.tsx` (currently **1,839 lines / 64 hook calls**), test
-      count, bundle size and chunk count (M17.5 added this to the build output), and the
-      current live-verification result for the reader. Into NOTES.md.
+**Scope was cut on 2026-07-29 after measuring the codebase** (decisions.md addendum): 108
+of 113 source files are under 400 lines and the seams are real, so the broad refactor is
+not justified. The position-unification half is **dropped**. One target remains, because
+it is a genuine outlier *and* it is the file M20 operates on.
+
+- [ ] **Baseline the metrics before touching anything.** Record: `ReaderView.tsx` size and
+      hook count (currently **1,865 lines**, 64 hook calls), test count (currently 214),
+      bundle size and chunk count (M17.5 put this in the build output), and the current
+      live-verification result for the reader. Into NOTES.md.
       _Acceptance: a before-table exists that the after-table can be compared against._
 - [ ] **Thicken the net where it's thin.** Characterization tests for reader behaviour
-      that has no unit coverage — capturing what the code **currently does**, oddities
-      included. If current behaviour is strange, the test records the strangeness; you are
+      with no unit coverage — capturing what the code **currently does**, oddities
+      included. If today's behaviour is strange, the test records the strangeness; you are
       proving you changed nothing.
-      _Acceptance: new tests fail if page-turn, selection, or position behaviour changes;
-      they pass against today's code without modification to it._
+      _Acceptance: the new tests fail if page-turn, selection, or position behaviour
+      changes, and pass against today's code without modifying it._
 - [ ] **Decompose `ReaderView.tsx`** along the seams already implicit in it — book
       lifecycle/rendition setup, navigation and position, selection and highlights, and
       the chrome — into focused hooks and components with explicit inputs. **Move code
       before improving it**: extract verbatim, green, commit; simplify as a separate step.
+      Prioritise the seams **the fold will touch** (page-turn/snapshot, stage geometry,
+      spread awareness); a piece the fold never goes near is optional.
       ⚠️ **Read the NOTES.md entries for this file first.** Several things that look
       redundant are load-bearing and cost a live session each to find — the `gap` option
       that means two things, the manager's one-time-copied settings, the marks-pane's
       `pointer-events: none`, the lazily-captured airlock state. Isolating and naming that
       complexity is a win; deleting it is a regression.
-      _Acceptance: no user-visible change at all; all tests green at every commit; the
-      live reader verification passes identically; largest-file and hook-count metrics
-      down materially._
-- [ ] **Unify position handling.** Position is expressed four ways — CFI, `spineIndex`,
-      percent, character offsets. **Audit first**: distinguish genuine conversion logic
-      (`server/src/annotations/position.ts`, `web/src/reader/toc.ts`,
-      `web/src/scan/chapterAxis.ts`, and inline code in `ReaderView`) from legitimate
-      consumers, then put the conversions in one tested module. The fold, the scan, the
-      digest and audio all depend on this concept — one definition is worth having.
-      _Acceptance: one module owns the conversions and is unit-tested; consumers call it
-      rather than re-deriving; anchoring tests unchanged and still green._
+      _Acceptance: no user-visible change at all; tests green at every commit; the live
+      reader verification passes identically; file size and hook count down materially._
 - [ ] **Verify:** the after-table against the before-table, plus a full live reader pass —
       import, read, highlight, ask, turn, resize, spread mode, both themes. Behaviour
-      identical; structure measurably better; no bundle or performance regression against
-      M17.5's baseline. The payoff test comes one milestone later: **M20's fold should
-      touch fewer files and produce a smaller diff than it would have.** Note the
-      prediction in NOTES.md now so it can be checked then.
+      identical, structure measurably better, no bundle or performance regression against
+      M17.5's baseline. The payoff test lands one milestone later: **M20's fold should
+      touch fewer files and produce a smaller diff than it would have.** Write that
+      prediction into NOTES.md now so it can actually be checked then.
 
 ### M20 — The paper fold (Apple Books curl)
 
