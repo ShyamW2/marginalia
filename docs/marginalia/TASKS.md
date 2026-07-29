@@ -2525,7 +2525,7 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       `computeReaderGap` call) from the picture. 153/153 server + 71/71 web tests,
       build clean. Text-size sweep and a from-scratch human read-through are still
       worth doing if the skip resurfaces for the operator.)_
-- [ ] **Diagnose, then fix, the misaligned highlight overlay.** ⚠️ **The cause is not
+- [x] **Diagnose, then fix, the misaligned highlight overlay.** ⚠️ **The cause is not
       established. Run the diagnostic in the 2026-07-30 decisions entry before writing a
       fix** — `rendition.getContents()[0].range(cfi).toString()` returning the intended
       quote means the anchor is fine and the rects are stale (epub.js calls
@@ -2535,6 +2535,21 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       _Acceptance: the diagnostic's result and the chosen cause are written into NOTES.md
       before the fix lands; a highlight stays aligned across a text-size change, a margin
       change, a spread toggle, a window resize, and a page turn away and back._
+      _(diagnosed 2026-07-30, no fix landed — full method and result in NOTES.md. Ran
+      the exact diagnostic live against the Alice fixture (a real highlight, real
+      selection) across every named scenario plus two adversarial ones (rapid resize
+      spam, resize mid-page-turn): the mark's rect matched the live-resolved range's
+      rect exactly (`dx`/`dy` = 0,0) and the resolved text was always the original
+      selection — the misalignment did not reproduce anywhere it was tried, including
+      beyond the acceptance criteria's own list. Leading theory: the existing M16
+      `applyGapForWidth` bug-fix (a forced `rendition.display()` after every
+      layout-affecting change) already achieves what `reframe()`/`pane.render()`
+      firing would have, as a side effect. **Not confidently closed** — if this
+      resurfaces for the operator, ask what they were doing right before it appeared
+      rather than re-running this same sweep, since real mouse-driven resize/DPI/zoom
+      and other books/sections weren't reachable from this environment. Margin was
+      tested live through the real Settings UI (Normal → Wide → Normal) and restored
+      to the operator's actual setting afterward, confirmed via the API.)_
 - [ ] **Hover emphasises without obscuring.** The hover boost currently switches to
       `mix-blend-mode: normal` at `fill-opacity: 0.85`, which is why the ink underneath
       disappears. Stay in the kind's blend mode (multiply on paper, screen on ink) and

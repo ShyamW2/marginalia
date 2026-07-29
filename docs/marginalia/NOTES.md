@@ -2519,3 +2519,60 @@ since font scale (via `computeReaderGap`) is the one input actually capable of
 carrying a non-integer value into the system, and was not swept here (it requires a
 real settings write, which this session avoided to keep the live library
 untouched — see the fixture-book note above).
+
+## M19.6 — the misaligned highlight overlay: diagnosed, not reproduced — 2026-07-30
+
+Ran the decisions.md diagnostic (`rendition.getContents()[0].range(cfi).toString()`)
+before writing anything, per the task's own instruction — via a temporary
+`window.__rendition` hook in `ReaderView.tsx`'s book-loading effect, removed again
+once the diagnostic was done (net diff on this task: zero — see below).
+
+Method: created a real highlight against the Alice fixture (selected 40 live
+characters via a `Range` built in the epub.js iframe, clicked the honey kind-dot,
+same path a real user takes), then for each named acceptance scenario, compared the
+mark's SVG `rect.getBoundingClientRect()` against the *live* resolved range's rect
+(`contents.range(cfi)`, translated from iframe-local into parent-viewport coordinates
+via the iframe element's own bounding rect) — `dx`/`dy` between them is "is the mark
+where the anchor actually is right now", and the range's `.toString()` is the
+decisions.md diagnostic itself.
+
+**Result: `dx`/`dy` was `(0, 0)` and the resolved text was the exact original
+selection, every time, across every scenario tried:**
+- Window resize, and page-turn-away-and-back (both direct acceptance-criteria items).
+- A margin change (Normal → Wide → Normal, driven through the real Settings UI from
+  inside the reader, not the API — settingsBus only fires for a save the same tab
+  performed). Restored the operator's real setting back to `"normal"` afterward and
+  confirmed via `GET /api/settings`.
+- Two adversarial cases beyond what the acceptance criteria named, since the "diagnose
+  before fixing" instruction implied real doubt about *when* this manifests: rapid
+  resize spam (7 resizes at 40ms intervals — faster than the 120ms redisplay
+  debounce, to try to orphan an in-flight one), and a resize fired ~60ms into an
+  in-flight page-curl turn animation.
+- Spread-mode toggle was not driven live — `ReaderPage.tsx`'s own comment establishes
+  it's read once at mount by design ("toggling it... takes effect on the next
+  open/reload, not live"), so a toggle can only ever be observed after a full
+  remount, which trivially re-resolves every mark from scratch.
+- Text-size (font scale) was not driven through the real slider live, to limit
+  real-settings writes against the live library in one session, but is very unlikely
+  to differ from the margin result: both go through the exact same
+  `applyGapForWidth` → debounced `rendition.display()` path already proven clean
+  above. Worth noting for anyone revisiting this: the settings slider's own range
+  (`min=0.8, max=1.6, step=0.05`) can **never** actually produce a fractional
+  `computeReaderGap` result in the first place — `READER_TARGET_COLUMN_WIDTH` (520) ×
+  any multiple of 0.05 is always an integer (520 × 0.05 = 26 exactly) — so even the
+  UI-reachable range of this input can't carry a non-integer into the system, the same
+  way the last-page-skip note above found for plain window widths.
+
+**No fix landed.** Nothing here reproduces the reported symptom in this environment,
+including two scenarios more adversarial than the acceptance criteria asked for. The
+leading candidate for *why* it doesn't reproduce: the M16 bug-fix already in
+`applyGapForWidth` (`rendition.display(currentCfiRef.current)`, added for the
+"two column-halves" symptom) forces a full re-display after every layout-affecting
+change — which, as a side effect, achieves exactly what `pane.render()`/`reframe()`
+firing would have achieved for cause 1 (stale rects), regardless of whether epub.js's
+own internal reframe check would have fired on its own. If this reproduces for the
+operator in real use, the gap is likely somewhere this session's testing couldn't
+reach (real mouse-drag window resizing at non-1x DPI, actual OS/browser zoom, a
+different book/section, or a scenario this list didn't think to try) — the next
+session should ask what the operator was doing right before they saw it, rather than
+re-running this same sweep.
