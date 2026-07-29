@@ -2385,3 +2385,90 @@ that sits inside a lit book band, clicking a bare book band with no
 highlight under it, and a posed question's pre-filled thread opening
 correctly in the reader — before trusting any of it in front of the
 operator's own library.
+
+## M19.6/M20.5 pre-flight — epub.js source findings (read, NOT run) — 2026-07-30 (Opus)
+
+Design session, not an implementation one. Everything below comes from reading
+this repo's source plus `epubjs@0.3.93`'s own source in `node_modules`. **Nothing
+here was reproduced in a browser this session** — each item's live reproduction is
+part of its task's acceptance criteria in TASKS.md. Recorded here because these are
+library quirks, which is what this file is for, and because two of them are the kind
+of thing that costs a session to re-derive.
+
+- **The skipped last page is sub-pixel geometry, not a race.**
+  `DefaultViewManager.next()` (`lib/managers/default/index.js:412`) decides between
+  scrolling one page and moving to the next section with:
+  ```js
+  left = this.container.scrollLeft + this.container.offsetWidth + this.layout.delta;
+  if (left <= this.container.scrollWidth) { this.scrollBy(this.layout.delta, 0, true); }
+  else { next = this.views.last().section.next(); }
+  ```
+  On the second-to-last page this reduces to `offsetWidth <= delta + rounding`.
+  `offsetWidth` is an **integer-rounded** DOM value; `layout.delta` is a float derived
+  from the stage width. Any fractional stage width therefore makes `offsetWidth` exceed
+  `delta` and the last page is skipped. This explains the "sometimes" precisely — it is
+  a function of window width, and `computeReaderGap` plus the M14 margin setting both
+  move the numbers. Fix is to pin the stage to an integer width, not to intercept turns.
+  Diagnostic if it resurfaces: log `container.offsetWidth`, `layout.delta`,
+  `container.scrollWidth` and `location.start.displayed.page/total` on the failing turn.
+
+- **`pane.render()` only runs from `reframe()`.** `IframeView.reframe()`
+  (`lib/managers/views/iframe.js:331`) is the only caller, and `expand()` only calls
+  `reframe` when the computed width/height actually differ from `this._width/_height`.
+  So **any layout change that leaves the iframe's box the same size leaves the SVG marks
+  drawn where they were**. This is candidate cause (1) for the misaligned-highlight
+  report; candidate (2) is a genuinely wrong anchor. They look identical on screen. The
+  separating diagnostic — run it before writing any fix — is
+  `rendition.getContents()[0].range(<cfi>).toString()`: the intended quote means stale
+  rects, the displaced text means a bad anchor.
+
+- **`Locations` is layout-independent, and serialisable.** `lib/locations.js`:
+  `generate(chars)` splits each *linear* section by character count (not by rendered
+  layout), `save()` returns the CFI array as JSON and `load()` restores it,
+  `locationFromCfi(cfi)` gives the index and `total` the count. Two consequences: a
+  book-wide page number built on locations does **not** drift with font size, margin or
+  spread — which is better than the operator expected and is why book-wide numbering was
+  adopted; and because resources are immutable on import, the serialised blob can be
+  generated once per book and stored forever. ⚠️ `generate()` loads every section, so it
+  must run off the critical path.
+
+- **`codex-cli 0.114.0` is installed at `/snap/bin/codex`; `claude` is not on this
+  machine.** `codex exec` offers `--json` (JSONL events on stdout), `--output-schema
+  <file>` (a real structured-output path for `extract()`), `-m/--model`, `--ephemeral`,
+  `--skip-git-repo-check`, `-C <dir>`, `--sandbox {read-only,workspace-write,
+  danger-full-access}` and `-o/--output-last-message`. ⚠️ **The flags were read from
+  `--help`; the JSONL event shape was not read from a real run.** Do not write a parser
+  from a remembered shape — run one call, read the output, and record the shape here.
+  M4's zod v3/v4 incident is the precedent for why.
+
+## M19.6 — the shortcut registry landed ahead of M19.7 — 2026-07-30
+
+M19.6's `r` task flags itself as the registry's first consumer and asks either to land
+M19.7's registry first or write `r` so it moves in unchanged. Took the first option:
+`web/src/shortcuts/useShortcuts.ts` is the mechanism only — a module-level stack of
+scope handlers (most-recently-mounted wins, replacing the ad-hoc capture-phase trick
+`SettingsModal` used to beat `ReaderView`'s own listener) behind one `useShortcuts(bindings)`
+hook, `{key, shift?, handler, allowWhileTyping?}` per binding. **Not** built yet: the
+keycap-hint UI (deriving on-screen hints from what's actually bound) and migrating
+`ScanPage`/`SettingsModal` to it — those depend on the `Button`/`IconButton` kit M19.7
+itself hasn't built, and are still that milestone's job.
+
+`ReaderView.tsx`'s window-level shortcuts (arrows, `[`/`]`, Escape, `f`/shift+`f`) are
+migrated as the proof case — each is now a discrete `useCallback` handler fed to the
+registry, rather than one monolithic `handleKeydown`. The iframe-forwarded half
+(`rendition.on("keydown", ...)`, needed because epub.js's sandboxed iframe is a
+separate document that never bubbles a keydown to `window`) still has to duplicate the
+key-matching as a small if/else chain calling the same handlers — that duplication is
+inherent to there being two physically different event sources, not something the
+registry itself can remove.
+
+Live-verified via Playwright against a real running dev server (arrows turn the page —
+confirmed by the rendered iframe's `getBoundingClientRect().left`/`width` actually
+changing, not just by reading `body.innerText()`, which is the *whole* section's text
+in epub.js's paginated flow regardless of which page is visible; `f` toggles the
+"Notes hidden" indicator and the Annotations button; shift+`F` engages the fullscreen
+wrapper class and Escape clears it). ⚠️ First attempt at this check ran against the
+operator's real "Kafka on the Shore" book without snapshotting its saved reading
+position first, and likely nudged it forward a few pages — switched to the
+`alice-in-wonderland.epub` fixture for every live check after that; do the same rather
+than re-learning this.

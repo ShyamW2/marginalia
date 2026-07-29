@@ -27,6 +27,7 @@ import { onSettingsSaved } from "../settings/settingsBus.js";
 import { onProviderRolesSaved } from "../settings/providerBus.js";
 import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
 import { useOpenSettingsToLLM } from "../settings/useOpenSettingsToLLM.js";
+import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
@@ -506,6 +507,40 @@ export function ReaderView({
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
+
+  // M19.7: the reader's shortcuts, as discrete handlers the shared registry
+  // (useShortcuts) can dispatch by key — replacing the single monolithic
+  // window keydown listener this used to be one of four ad-hoc copies of
+  // (decisions.md 2026-07-30). Each handler only touches refs and stable
+  // setters, so none of these need dependencies beyond what's shown.
+  const handleArrowLeftShortcut = useCallback(() => turnPageRef.current("prev"), []);
+  const handleArrowRightShortcut = useCallback(() => turnPageRef.current("next"), []);
+  const handleChapterPrevShortcut = useCallback(() => chapterJumpRef.current("prev"), []);
+  const handleChapterNextShortcut = useCallback(() => chapterJumpRef.current("next"), []);
+  const handleEscapeShortcut = useCallback(() => {
+    setPendingSelection(null);
+    setExpandedThread(null);
+    setProgressPopoverOpen(false);
+    if (fullscreenModeRef.current) toggleFullscreen();
+  }, [toggleFullscreen]);
+  const handleFocusModeShortcut = useCallback(() => {
+    setFocusMode((prev) => {
+      const next = !prev;
+      // A clean page and an open annotations list are contradictory.
+      if (next) setShowAnnotations(false);
+      return next;
+    });
+  }, []);
+
+  useShortcuts([
+    { key: "ArrowLeft", handler: handleArrowLeftShortcut },
+    { key: "ArrowRight", handler: handleArrowRightShortcut },
+    { key: "[", handler: handleChapterPrevShortcut },
+    { key: "]", handler: handleChapterNextShortcut },
+    { key: "Escape", handler: handleEscapeShortcut },
+    { key: "f", shift: false, handler: handleFocusModeShortcut },
+    { key: "f", shift: true, handler: toggleFullscreen },
+  ]);
 
   // M11 semicircular turn zones: which edge (if any) the pointer is
   // currently hovering, driving both the parent-document vignette and the
@@ -1009,11 +1044,14 @@ export function ReaderView({
     }
     rendition.on("mousemove", handleContentMouseMove);
 
-    function handleKeydown(event: KeyboardEvent) {
-      // This same handler is also bound to window (below) to catch keydowns
-      // outside the epub iframe — e.g. the thread panel's textarea, where
-      // ArrowLeft/Right/F are ordinary typing/editing keys, not page-turn or
-      // focus-mode shortcuts.
+    // The shared shortcut registry (useShortcuts, above) only ever sees
+    // window-level keydowns — epub.js's own iframe is a separate document,
+    // so a keypress inside it never bubbles to window at all. This forwards
+    // exactly the same set of keys, via the exact same handlers, from
+    // epub.js's own "keydown" event (which it re-emits from inside the
+    // iframe for precisely this reason) — the one bit of unavoidable
+    // duplication between the two paths.
+    function handleIframeKeydown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const isTyping =
         target?.tagName === "TEXTAREA" ||
@@ -1022,37 +1060,24 @@ export function ReaderView({
 
       if (isTyping) return;
 
-      if (event.key === "ArrowLeft") turnPageRef.current("prev");
-      else if (event.key === "ArrowRight") turnPageRef.current("next");
-      else if (event.key === "[") chapterJumpRef.current("prev");
-      else if (event.key === "]") chapterJumpRef.current("next");
-      else if (event.key === "Escape") {
-        setPendingSelection(null);
-        setExpandedThread(null);
-        setProgressPopoverOpen(false);
-        if (fullscreenModeRef.current) toggleFullscreen();
-      } else if (
+      if (event.key === "ArrowLeft") handleArrowLeftShortcut();
+      else if (event.key === "ArrowRight") handleArrowRightShortcut();
+      else if (event.key === "[") handleChapterPrevShortcut();
+      else if (event.key === "]") handleChapterNextShortcut();
+      else if (event.key === "Escape") handleEscapeShortcut();
+      else if (
         event.key.toLowerCase() === "f" &&
         !event.metaKey &&
         !event.ctrlKey &&
         !event.altKey
       ) {
-        if (event.shiftKey) {
-          // M14: fullscreen (shift+F) is a different axis from focus mode
-          // (f) — they hide different things and compose independently.
-          toggleFullscreen();
-        } else {
-          setFocusMode((prev) => {
-            const next = !prev;
-            // A clean page and an open annotations list are contradictory.
-            if (next) setShowAnnotations(false);
-            return next;
-          });
-        }
+        // M14: fullscreen (shift+F) is a different axis from focus mode
+        // (f) — they hide different things and compose independently.
+        if (event.shiftKey) toggleFullscreen();
+        else handleFocusModeShortcut();
       }
     }
-    rendition.on("keydown", handleKeydown);
-    window.addEventListener("keydown", handleKeydown);
+    rendition.on("keydown", handleIframeKeydown);
 
     book.ready
       .then(async () => {
@@ -1107,7 +1132,6 @@ export function ReaderView({
       cancelled = true;
       window.clearTimeout(saveTimerRef.current);
       window.clearTimeout(redisplayTimer);
-      window.removeEventListener("keydown", handleKeydown);
       resizeObserver.disconnect();
       renditionRef.current = null;
       bookRef.current = null;
