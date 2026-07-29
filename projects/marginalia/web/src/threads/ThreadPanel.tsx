@@ -509,7 +509,6 @@ export function ThreadPanel({
 
       {providerConfigured ? (
         <div className={styles.composer}>
-          <ContextLadderToggle resourceId={resourceId} />
           <textarea
             ref={textareaRef}
             className={styles.textarea}
@@ -518,22 +517,25 @@ export function ThreadPanel({
             disabled={isStreaming}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={handleKeyDown}
-            rows={2}
+            rows={3}
           />
-          {isStreaming ? (
-            <button type="button" className={styles.stopButton} onClick={handleStop}>
-              Stop
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={styles.sendButton}
-              disabled={!draft.trim()}
-              onClick={() => submit(draft)}
-            >
-              {messages.length === 0 ? "Ask" : "Send"}
-            </button>
-          )}
+          <div className={styles.composerControls}>
+            <ContextLadderToggle resourceId={resourceId} />
+            {isStreaming ? (
+              <button type="button" className={styles.stopButton} onClick={handleStop}>
+                Stop
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={styles.sendButton}
+                disabled={!draft.trim()}
+                onClick={() => submit(draft)}
+              >
+                {messages.length === 0 ? "Ask" : "Send"}
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <div className={styles.nudge}>

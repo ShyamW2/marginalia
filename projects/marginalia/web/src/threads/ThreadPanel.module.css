@@ -303,12 +303,24 @@
   cursor: pointer;
 }
 
+/* M19.6: two rows, not one oversubscribed flex row (decisions.md 2026-07-30
+   — the ladder, the textarea and Send were all fighting one row, which is
+   what squeezed the textarea and wrapped the Send label). Textarea gets the
+   full width on its own row; the ladder/web-search/Send cluster sits below
+   it in .composerControls. */
 .composer {
   display: flex;
+  flex-direction: column;
   gap: 0.4rem;
   padding: 0.6rem;
   border-top: 1px solid var(--color-border);
-  align-items: flex-end;
+}
+
+.composerControls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
 }
 
 .textarea {

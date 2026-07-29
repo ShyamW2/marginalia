@@ -2588,11 +2588,24 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       mark's own center — progress stayed at 1% (no turn) and the thread panel opened;
       clicked 2px past the same mark's right edge — progress moved 1%→3% (turned).
       153/153 server + 71/71 web tests, build clean.)_
-- [ ] **A composer you can write in.** `.composer` is one flex row holding the context
+- [x] **A composer you can write in.** `.composer` is one flex row holding the context
       ladder, the textarea and Send, which is what squeezed the textarea and wrapped the
       Send label. Two rows: textarea full width on top, ladder + web + Send beneath.
       _Acceptance: at the panel's narrowest rendered width, the textarea shows at least
       three lines of text and no control label wraps mid-word._
+      _(verified 2026-07-30: `.composer` is now `flex-direction: column`; the textarea
+      is its own full-width row, with a new `.composerControls` row (ladder/web-search
+      on the left, Send/Stop on the right via `justify-content: space-between`)
+      beneath it — `ContextLadderToggle`'s own root also had a vestigial
+      `justify-content: space-between` + `margin-bottom` left over from the old
+      single-row layout, both dead weight in the new one, removed. Bumped the
+      textarea's `rows` from 2 to 3 to actually satisfy "at least three lines" — row
+      count is font-metric-driven, not width-driven, so this was needed regardless of
+      the reflow. Live Playwright against the Alice fixture at three window widths
+      (1100px, 700px, 420px, the narrowest a reader stage plausibly gets): textarea
+      showed 3.3–3.4 visible lines at every width, and every composer control (Off/
+      Digest/Full, Web search, Ask) measured zero width/height overflow (no wrap) at
+      all three. 153/153 server + 71/71 web tests, build clean.)_
 - [ ] **The quote expands.** Clicking the truncated quote on an annotation reveals it in
       full, pushing the divider and everything below it down; clicking again re-collapses.
       _Acceptance: expanding a long quote never overflows the panel or clips the controls
