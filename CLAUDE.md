@@ -12,7 +12,8 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/SPEC.md` — prescriptive implementation spec (stack, schema, API, seams) — **binding**
 - `docs/marginalia/TASKS.md` — ordered task list with per-milestone acceptance criteria; check boxes off as you go
 - `docs/marginalia/PRODUCT.md` — product requirements and vision
-- `docs/marginalia/DESIGN.md` — aesthetic & interaction blueprint (the "three rooms" system) — binding for M7+
+- `docs/marginalia/DESIGN.md` — aesthetic & interaction blueprint (two rooms + four
+  instruments; the control system) — binding for M7+
 - `docs/marginalia/AUDIO.md` — audio/TTS subsystem spec (engine seam, casting, cache) — **binding for M21+**
 - `docs/marginalia/SONNET_PROMPT.md` — kickoff prompt + operator notes for implementation sessions
 - `docs/marginalia/NOTES.md` — running log of spec gaps, friction, blockers (create on first use)
@@ -38,6 +39,11 @@ doc), never by drift.
    JSON. It never touches files. All vault writes, concept linking, and library mutations
    are deterministic code acting on model *proposals*. This keeps us provider-agnostic
    and makes the vault un-manglable.
+   *Bounded 2026-07-30 (M19.7):* the Codex CLI provider is a shell-running agent with no
+   `tools: []` equivalent, so it is permitted **only caged** — read-only sandbox, no
+   approvals, ephemeral, pointed at a dedicated empty scratch directory, environment
+   scrubbed. The general rule: *a provider that could touch files is permitted only where
+   the seam can prove it cannot.*
 3. **EPUB first.** Nail reflowable books (rendering, typography, CFI anchoring) before
    PDF or Markdown. The core loop must feel wonderful in one format before breadth.
 4. **Node server + browser UI.** Local server owns the library, annotation store, and
@@ -67,6 +73,17 @@ doc), never by drift.
 11. **The model never returns positions.** An extension of decision 2, learned at
    casting: the LLM returns *text* (a quoted string, a concept name) and code locates
    it. Never ask a model for char offsets, indices, or counts and then trust them.
+12. **One control system, two registers** (2026-07-30, M19.7). Buttons, sliders, overlays
+   and keycaps are built once and skinned by **material, not by room**: `paper` (Desk,
+   Book, Digest, Settings — the reader taking its quietest variant) and `glass` (the
+   Scan). Coherence is structural — shared sizes, states, focus rings and timings — never
+   the same skin everywhere. A new control belongs to a register; nothing gets a bespoke
+   one again. Spec in DESIGN.md "The control system".
+13. **Two rooms, four instruments** (2026-07-30, amends DESIGN.md's "three rooms").
+   You are only ever *in* the Desk or the Book; the Scan, the Digest, Settings and
+   Annotations are instruments you put *on* what you're in — popups over a background
+   location, keeping their real routes. "No fourth room" still holds; an instrument is
+   not a room. The cost was the airlock's full-screen form, recorded in DESIGN.md.
 
 ## Discipline
 

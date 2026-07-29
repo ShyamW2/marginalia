@@ -168,7 +168,9 @@ disconnect by aborting the provider stream. If the provider errors mid-stream, e
 ```ts
 // server/src/llm/provider.ts — the ONLY types the rest of the server may import
 export interface LLMProvider {
-  readonly id: 'anthropic' | 'openai-compatible';
+  // Kept in sync with server/src/llm/provider.ts, which is the real definition.
+  // Today: 'anthropic' | 'openai-compatible' | 'claude-agent'; M19.7 adds 'codex-cli'.
+  readonly id: 'anthropic' | 'openai-compatible' | 'claude-agent';
   capabilities(): { contextTokens: number; supportsCaching: boolean };
   // Streams plain text chunks. `system` is split into stable/volatile parts so the
   // provider can place cache boundaries. Throws LLMError on failure.
@@ -251,6 +253,27 @@ Verified against current SDK docs (July 2026) — do not substitute remembered A
   error appended to the prompt; then `extract_parse_failed`.
 - `capabilities().contextTokens` from settings key `openai_context_tokens`
   (default 32768).
+
+### Codex CLI implementation (`codexCli.ts`, M19.7)
+
+A fourth implementation of the same seam — no new call sites. Verified against
+`codex-cli 0.114.0` on the Linux rig; **the flags below were read from `--help`, the
+JSONL event shape was not.** Run one real call and record the shape in NOTES.md before
+writing the parser.
+
+- Spawn `codex exec --json` with the prompt on stdin; `-m/--model` from the profile.
+- `extract()` uses `--output-schema <tempfile>` (a JSON Schema file) plus
+  `-o/--output-last-message <tempfile>`; the result still goes through `schema.safeParse`
+  and still throws `extract_parse_failed` on invalid output, exactly like the others.
+- **The cage is part of the provider, not its configuration** (CLAUDE.md decision 2, as
+  bounded 2026-07-30): `--sandbox read-only`, approvals never, `--ephemeral`,
+  `--skip-git-repo-check`, and `-C <a dedicated empty scratch directory>` — never the
+  repo, never `data/`. Scrub inherited provider credentials from the child environment
+  the way `claudeAgent.ts` scrubs `ANTHROPIC_API_KEY`.
+- No `max_tokens`: response length is a system-prompt *request*, not an enforced ceiling,
+  and the settings UI must say so — the same caveat `claude-agent` already carries.
+- If the CLI reports no token counts, usage is logged as `estimated` provenance. An
+  estimate is never displayed as a measurement.
 
 ### Context builder (`context.ts`)
 

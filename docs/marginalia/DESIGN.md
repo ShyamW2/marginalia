@@ -25,6 +25,23 @@ The polarity is deliberate: the reader is the most *analogue* surface, the scan 
 most *digital* — reading a book vs. putting it under an instrument. The desk sits
 between them. Moving between rooms should feel like the lights changing.
 
+**Amended 2026-07-30 — two rooms and four instruments.** The Scan and the Digest become
+*popups over whatever you are already in*, not places you travel to. The thesis survives
+in a sharper form: you are only ever **in** the Desk or the Book, and you put an
+**instrument** on top of what you're in.
+
+| | |
+|---|---|
+| **Rooms** — you are in them | The Desk, The Book |
+| **Instruments** — you put them on what you're in | The Scan, The Digest, Settings, Annotations |
+
+"The book under an instrument" was always the Scan's job; bringing the instrument to the
+book is more honest than travelling to a room to do it. The Scan keeps its route
+(`/scan/:id`) as a real bookmarkable URL rendered over a background location — the same
+pattern Settings has used since M11. **The cost, recorded rather than glossed:** the
+airlock's full-screen form is spent (see Motion below). Reasoning: decisions.md
+2026-07-30.
+
 ## Room 1 — The Desk (bookshelf)
 
 The default view the app opens into. Not a grid: a **freeform workspace** where books
@@ -87,7 +104,19 @@ The design work here is restraint plus two signature elements.
   gutter, however epub.js chooses to conflate them (decisions.md 2026-07-27).
 - **Threads are sticky notes you can move.** A panel is draggable by its header and
   remembers where you put it, stored as an offset from its anchor — where you put a
-  thing is data about that thing, the same rule the Desk follows for books.
+  thing is data about that thing, the same rule the Desk follows for books. They are
+  resizable on the same principle (M19.6), and they roam the whole app rather than the
+  reading pane. **On the page it rides, off the page it stays put:** panels ride the
+  turning page because they sit inside the stage the page-turn snapshot captures, so a
+  panel dragged beside the book is furniture, not part of the sheet.
+- **Position is percent and chapter; the page number is a bookmark, not a measurement**
+  (M19.6). The footer's book-wide page number comes from epub.js `Locations`, which
+  splits by **character count**, so it is stable across text size, margin and spread —
+  generated once per book and persisted, since resources are immutable on import. It is
+  page-*like* (~1600 chars), not a claim about this window's pagination, and
+  `pageNumberMode` lets the reader choose book-wide, in-chapter, or none. The standing
+  "percent and chapter, never pages" rule keeps its original jurisdiction: **analysis
+  position ranges** (the digest) are never expressed in pages.
 - **Page turns.** Today: instant column shift. Target: a page that *moves* — see the
   3D honesty note under Technical foundations. Interim (M7): a fast 150–200ms slide +
   opacity pass so turning feels physical without faking paper. Full 3D turn with notes
@@ -132,6 +161,16 @@ dark panel, neon strokes, scanline grain, data readouts in a mono face).
   the screen, not on it. This supersedes the earlier "graphics layer only" rule:
   legibility is now a bounded constraint (gentle displacement, contrast still passes,
   intensity reaches zero) rather than a veto on warping text at all.
+- **The screen sits in a television** (M20.5). The scan is a popup framed as a retro CRT
+  set. ⚠️ **The bezel does not warp** — it is a sibling of the filtered wrapper, never a
+  child; a bending television reads as broken rather than retro. Only the glass bows, and
+  it bows harder than before, still inside M18's legibility bound: contrast passes, and
+  intensity 0 still means zero displacement.
+- **Zoom is a domain transform, never a CSS scale.** `zoom.ts`'s `fractionToView()` is the
+  one mechanism; every layer positions through it and the heat field is *redrawn* at the
+  zoomed domain. A CSS `scaleX` scales glyphs and bitmaps as well as positions, which is
+  what stretched the axis labels before M20.5. Scroll-to-zoom is then a state change, not
+  a second rendering path, and composes correctly with the barrel warp.
 - **Colour encodes category, brightness encodes density.** The heat field carries two
   channels: hue says *what kind* of annotation (or which theme, in semantic mode),
   luminance says *how much*. A field that only encodes density looks impressive and
@@ -161,6 +200,53 @@ the page reading itself to you. It is deliberately **not** a player room:
   playing" maps to "what is on screen" exactly, with no dependence on per-word timings
   the engine may not expose. Word-level is a stretch goal, never a prerequisite.
 
+## The control system (M19.7 — binding for every surface)
+
+Added 2026-07-30. Before this, each surface styled its own buttons and the one real
+slider (the reader's `%` scrub) was a bespoke one-off. The goal is coherence, and
+coherence is structural — the same sizes, hit areas, focus rings, states and timings
+everywhere — **not** the same skin everywhere.
+
+**Two registers, split by material, not by room.**
+
+| Register | Surfaces | Material |
+|---|---|---|
+| `paper` | The Desk, The Book, The Digest, Settings | Warm, tactile. Soft drop shadows, gentle 3D, playful but restrained. |
+| `glass` | The Scan | CRT instrument. Phosphor strokes, bezel, scanline, mono readouts. |
+
+The reader takes the **quietest variant of the paper register** — flatter, lower-contrast
+chrome — because "the reader earns its analogue feel by being still" is still the law of
+that room. It is a dial on one register, never a third system.
+
+Rule for cases nobody has thought of yet: **a control belongs to a register, and a
+register belongs to a material.** A new paper surface takes the paper register; a surface
+rendered as instrument glass takes the glass one. Nothing gets a bespoke button again.
+
+- **`Button` / `IconButton`.** Icon-only, icon+label, label-only. One size scale, one
+  focus ring, one disabled and pressed state, per register.
+- **`Slider`** — one component with two input modes on one value: **drag** (pointer lock
+  so travel is unbounded, cursor hidden, live value floating above the handle, Escape
+  cancels) and **click-to-type** (the track becomes a text field). Detents are
+  **advisory**: a released value inside the capture window snaps to the stop and passing
+  one gives feedback, but any value in range stays typable. `scale: "linear" | "log2"`;
+  log2 detents on powers of two with a capture window that is a *percentage* of the
+  current value, or it is unusable at the top of the range. Keyboard is a first-class
+  path with a real `role="slider"` and an `aria-valuetext` carrying the formatted value.
+- **Overlays fly from the control that opened them**, using the invoking element's rect —
+  never a hardcoded corner, because the same overlay has more than one caller. Resizing an
+  open overlay morphs its box. **~240ms with a spring**, not the 500ms first proposed:
+  DESIGN.md's own motion law is 150–200ms for system-initiated motion, and settings tabs
+  are clicked through in sequence. Reduced motion collapses this to a crossfade.
+- **One shortcut registry.** Key, scope, handler, one `isTyping` guard — replacing the
+  per-room `keydown` listeners. The on-screen keycap hints are **derived from the
+  registry**, so a hint can never advertise a binding that no longer exists. Keycaps are
+  proximity-revealed and tucked behind their icon otherwise; they are the charm, never the
+  only path to a function.
+- **The chrome cluster.** The top nav bar is gone. Library, settings and theme live as a
+  floating icon cluster in the top-right of every room. In the reader it joins M14's
+  proximity-revealed set rather than sitting over the page, and it never intrudes on the
+  left/right turn-zone strips.
+
 ## Motion language (shared physics of the building)
 
 One motion system everywhere — springs, not fixed curves, for anything the user
@@ -181,6 +267,11 @@ Signature transitions ("doorways"):
   glowing bands — the same marks, re-materialized as data. Reverse on the way back
   (a band flares, becomes a paper highlight, page relights). This one transition is
   what sells "one building."
+  **Amended 2026-07-30:** with the Scan becoming an instrument rather than a room, the
+  full-screen form of this is spent — there is no longer a room to travel to. The
+  **band materialisation survives** inside the popup as it slides in from its control;
+  the lights-changing, chrome-receding half does not. Recorded as a real loss, not a
+  neutral substitution: this was named here as *the* transition that sells the building.
 - **Scan/Book → Desk: the put-down.** The view shrinks back into the book's cover
   landing on the desk where it lives.
 - **Scroll-to-open (crown feel).** On the desk, scrolling while hovering a book
@@ -261,6 +352,8 @@ collapses all of the above to crossfades (M7 already requires this).
 - No sound in v1.5. Revisit only after the rooms exist. *(Audio arrives in M21–M22 as
   speech — the book read aloud. Sound **design** — clicks, page rustle, ambience — is
   still parked and is a separate question.)*
-- **No fourth room.** Three rooms, one building. Listening is a mode of the Book; the
+- **No new rooms.** Two rooms and four instruments since 2026-07-30 (was "three rooms";
+  see the amendment under the thesis) — and the count only ever goes *down*. Anything new
+  is an instrument you put on a room, not a place to travel to. Listening is a mode of the Book; the
   evidence board, if it happens, hangs on the wall above the Desk (decisions.md
   2026-07-27).

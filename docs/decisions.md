@@ -3,6 +3,313 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-30 — The global overhaul: one control system, two registers, rooms vs. instruments
+
+A large operator feedback pass after living with M19/M19.5 — roughly forty items, mostly
+front-end, with one stated goal: **"a more stable and coherent app."** That goal is the
+lens for everything below. Where an item was a symptom, the cause was looked up in the
+code before anything was designed on top of it; where the cause could not be established
+by reading, that is said so explicitly and a diagnostic is written into the task instead
+of a guess (OPUS.md's rule).
+
+The operator also **deferred M19.8 (the refactor)** — "everything currently works, and I
+want to understand more about refactoring when I get into it." Recorded, with its cost,
+at the end of this entry.
+
+### What was verified before designing (read, not run)
+
+All findings below are from reading this repo's source plus epub.js 0.3.93's own source
+in `node_modules`. Nothing here was reproduced live this session; the live reproduction is
+part of each task's acceptance criteria.
+
+| Reported | Established cause |
+|---|---|
+| Page turns sometimes skip a chapter's last page | epub.js `DefaultViewManager.next()` (`lib/managers/default/index.js:412`) chooses "scroll" vs. "next section" with `scrollLeft + container.offsetWidth + delta <= container.scrollWidth`. `offsetWidth` is an **integer-rounded** DOM value; `layout.delta` is a float from the stage width. A fractional stage width makes `offsetWidth` exceed `delta` by up to a pixel, the comparison fails one page early, and the section advances. Intermittent **because it depends on window width** — which `computeReaderGap` and the margin setting also move. |
+| Hovering a highlight makes the text under it unreadable | `ReaderView.tsx` hover boost sets `fillOpacity = 0.85` **and** `mixBlendMode = "normal"` — the mark stops being a wash and becomes paint. |
+| Chat textbox too small since the context ladder arrived | `.composer` (`ThreadPanel.module.css`) is a single flex row holding the ladder, the textarea and Send. Nothing is wrong with the textarea; the row is oversubscribed. |
+| Clicking a highlighted passage turns the page | `handleContentClick` exempts only `a[href]` and live selections; marks are not consulted, though a geometric mark hit-test already exists in the mousemove handler. |
+| Scan zoom stretches the axis text | `transform: scaleX(zoom)` on `.zoomContent` (`HeatStrip.tsx`), which contains the tick labels and the heat canvas. The book bands below it already position through `fractionToView()` and are correct. |
+| The digest calls the real "Chapter 1" Chapter 5 | `chapterNumber: index + 1` over all text-bearing sections (`routes/digest.ts`). It is a section ordinal wearing a chapter's name. |
+| The desk doesn't extend down the page | `min-height: 640px`, fixed, in `DeskCanvas.module.css`. |
+| "Cancel a digest" | Not possible today, and the current cancel is theatre: `POST /:id/digest` runs the whole range synchronously; the client's `AbortController` abandons the *response* while the server keeps digesting. |
+
+**Not established — do not guess it in the fix.** The misaligned highlight overlay
+(a mark drawn over different text than the quote it belongs to). Two live candidates:
+
+1. **Stale mark rects.** `pane.render()` is called only from `IframeView.reframe()`
+   (`lib/managers/views/iframe.js:331`), and `reframe` runs only when the iframe's own box
+   changes. Any layout change that leaves the box the same size leaves the marks drawn at
+   their old positions.
+2. **A wrong anchor.** The CFI resolved to a non-collapsed but incorrect range, or the
+   text-offset fallback (`selectionContext.ts`'s `rangeFromTextOffsets` against
+   `body.textContent`) landed at a shifted offset.
+
+**The diagnostic that separates them:** with a bad mark on screen, evaluate
+`rendition.getContents()[0].range(<the highlight's cfi>).toString()`. Returns the
+*intended* quote → cause 1, the anchor is fine and the displacement is purely visual.
+Returns the *displaced* text → cause 2, and the anchor itself is wrong. Fixing the wrong
+one of these produces a change that appears to work until the window is resized.
+
+### One control system, two registers — split by material, not by room
+
+The ask was "standardise buttons and sliders, universal across the app, with
+modifications for the Scan page." Taken literally that collides with DESIGN.md's binding
+rule that *the reader earns its analogue feel by being still* — playful 3D chrome is
+exactly the sort of thing that rule exists to keep off the page.
+
+The operator's refinement is better than the options offered and is now the rule: the
+split is by **material, not by room**. Reader, Desk, Digest and Settings are all *paper*
+and share one register (the reader taking the quietest variant of it); the Scan is
+*glass* and has its own. So:
+
+- **One component set, built once**: `Button`, `Slider`, `Popover`/`Sheet`, `IconButton`,
+  `KeyCap`. One set of sizes, focus rings, disabled states, hit areas and motion timings.
+- **Two registers as a theme context**, layered on the existing CSS custom properties
+  exactly as room theming already is — `paper` (warm, tactile, soft drop shadows, gentle
+  3D) and `glass` (CRT/instrument: phosphor strokes, bezel, scanline). **Never a third
+  system**, and never per-room bespoke buttons.
+- The reader's variant is the paper register with its ornament turned down (flatter,
+  lower contrast chrome), not a separate design. This is what keeps "coherent" from
+  meaning "flattened".
+
+Rule this settles for cases nobody has thought of yet: **a new control belongs to a
+register, and a register belongs to a material.** A surface that is paper takes the paper
+register even if it is new; a surface rendered as instrument glass takes the glass one.
+Nothing gets its own.
+
+### The slider is a gesture that already exists
+
+The specified slider — click-drag with the cursor hidden, live value floating above the
+handle, click-to-type as a text field, detents you can feel, log scales for token
+counts — is not new interaction design. `ReaderView`'s `%` scrub already does the hard
+half: pointer-lock so travel is unbounded, a live preview value that is not the committed
+value, Escape-cancels, and a keyboard path that never needs the pointer. That gesture is
+**generalised into the shared `Slider`**, and the `%` dial becomes its first consumer
+rather than staying a bespoke one-off.
+
+Requirements that are part of the component, not per-use decisions:
+
+- **Two input modes, one value.** Drag (pointer-lock, cursor hidden, floating readout) and
+  click-to-type (the track becomes a text field, commits on Enter/blur, rejects out-of-
+  range rather than silently clamping to a number the reader didn't type).
+- **Detents are advisory, not quantisation.** A detented slider snaps *into* a stop when
+  released within its capture window and reports a visible/haptic-ish tick as it passes
+  one, but arbitrary values remain typable. Context length may sit at 12000 if typed.
+- **Log scale is a scale, not a value set.** `scale: "linear" | "log2"`. Log2 sliders
+  detent on powers of two; the capture window is a *percentage* of the current value
+  (2–3%), not a fixed number, or the detents are unusable at the top of the range.
+- **Keyboard is a first-class path**, per the existing a11y bar: arrows step, shift+arrow
+  steps by a detent, and a real `role="slider"` with `aria-valuetext` carrying the
+  formatted value (`"16,384 tokens"`, not `"14"`).
+
+### Popups slide from where they were called, and morph when they resize
+
+Adopted. Two constraints on top of it:
+
+- The origin is the **invoking control's rect**, read at click time and handed to the
+  overlay — not a hardcoded corner per overlay type. A settings panel opened from a
+  reader menu and from the desk cluster must fly from two different places, and a
+  hardcoded "top right" is a bug waiting for the second call site.
+- **Size morphs run at ~240ms, not 500ms.** The operator asked for 0.5s. DESIGN.md's
+  motion language says 150–200ms for anything the system does, and 500ms is over the
+  "nothing blocks input for more than ~400ms" line for a control the reader is actively
+  clicking through (settings tabs). Shipping at ~240ms with a spring, which reads as
+  *smoother* rather than faster. **Disagreement preserved:** if 240ms still feels abrupt
+  in the hand, the number moves — it is a constant in one place, not a redesign.
+- Reduced motion collapses all of it to a crossfade, as everything else already does.
+
+### Scan and Digest stop being rooms and become instruments
+
+The biggest structural consequence in the whole pass, and it is not a skin: the Scan
+becomes **a popup over whatever you were doing**, framed as a CRT television, and the
+Digest becomes a popup too. DESIGN.md's thesis is "three rooms, one building". After
+this it is **two rooms and four instruments**:
+
+| | |
+|---|---|
+| **Rooms** (you are *in* them) | The Desk, The Book |
+| **Instruments** (you put them *on* what you're in) | The Scan, The Digest, Settings, Annotations |
+
+This is a genuine improvement to the thesis rather than a compromise of it — "the book
+under an instrument" was always the Scan's stated job, and an instrument you bring to
+the book is more honest than a room you travel to. It is recorded as an **amendment**
+because it changes a binding document, not by drift.
+
+What it costs, stated plainly: **the airlock transition loses its full-screen form.**
+"The lights change; the highlights you were just reading *become* the glowing bands" was
+named in DESIGN.md as *the* transition that sells "one building". The replacement is
+smaller: the instrument slides in from its invoking control and the bands materialise
+inside it. The band-materialisation half survives; the room-to-room half does not,
+because there is no longer a room to travel to. Worth knowing that a signature was spent
+here.
+
+Consequences that fall out and are therefore not open:
+
+- The Scan keeps its route (`/scan/:id`) as a real, bookmarkable URL and renders over a
+  background location — **the exact pattern Settings already uses** (`App.tsx`'s
+  `background` nav state). No new routing concept, and a deep link still works by
+  falling back to the Desk underneath.
+- The CRT **bezel does not warp.** Only the glass bows. A frame drawn inside the warp
+  wrapper would bend, and a bending television reads as broken rather than retro. The
+  bezel is a sibling of the filtered wrapper, not a child.
+- Barrel distortion scaling with CRT intensity is already how `warp.ts` works
+  (`maxPull = intensity * MAX_PULL_PX`) — "more distortion" is a change to `MAX_PULL_PX`,
+  bounded by M18's standing legibility rule, which is *not* repealed: contrast still
+  passes, and intensity 0 still reaches zero displacement. Larger type in the scan pays
+  for part of the extra warp; it does not license unbounded warp.
+
+### The scan's zoom becomes a domain transform everywhere
+
+`zoom.ts` already models zoom correctly — `fractionToView()` maps domain fraction to view
+fraction, and the book bands and highlight hit-targets already go through it. The strip's
+*graphics* layer instead uses a CSS `scaleX`, which is why the axis text stretches: a CSS
+transform scales glyphs and bitmaps, not just positions.
+
+Ruling: **there is one zoom mechanism, and it is the domain transform.** The CSS
+`scaleX` is deleted; labels position through `fractionToView()` like everything else, and
+the heat canvas is redrawn at the zoomed domain rather than being stretched. Scroll-to-
+zoom then costs almost nothing, because it is a state change rather than a new rendering
+path — and it stays correct under the barrel warp, which composes after it.
+
+### Page numbers: book-wide, cached, and layout-independent
+
+The operator asked for book-wide numbering and accepted that it would drift with text
+size. **It doesn't have to.** epub.js's `Locations` (`lib/locations.js`) splits each
+section by **character count**, not layout — so a location index is stable across font
+size, margin, and spread mode. That makes book-wide numbering both what they wanted and
+honest, which the 2026-07-29 "percent and chapter, never pages" rule assumed was
+impossible.
+
+- Generated once with `book.locations.generate(~1600)`, serialised with
+  `locations.save()`, and **persisted per resource in SQLite**. Resources are immutable on
+  import (settled decision 5), so the blob can never rot — generate once per book, ever.
+- ⚠️ `generate()` loads every section. It must run **off the critical path** (after the
+  first page paints) and never block a page turn. Until it resolves, the footer shows
+  percent and chapter, which is what it shows today.
+- A location is ~1600 characters, so it is *page-like*, not identical to a rendered page.
+  The number is stable and familiar; it is not a claim about this window's pagination.
+- The **existing** rule stands where it was aimed: the digest's chapter ranges remain
+  percent-and-chapter. This amendment is about the reader's footer, not about position
+  ranges in analysis.
+- Reader setting `pageNumberMode: "book" | "chapter" | "off"` — the operator asked for the
+  choice explicitly. `"chapter"` uses `location.start.displayed`, which the reader already
+  receives and currently only shows inside the progress popover.
+
+### Background work is a job model, not a popup
+
+Presented as a UI item ("background tasks show in a dismissible popup"), and it is
+architecture. Today a digest is one blocking HTTP request with no id, no progress, and no
+cancellation; the "cancel" the UI appears to offer abandons the response while the server
+continues. A tray and a cancel button on top of that would be **a lie in the interface**,
+which is worse than not having them.
+
+So: one **job registry** on the server — id, kind, resource, status, progress, an
+`AbortController` per job, SSE for progress, and a real cancel endpoint. Rules:
+
+- **Built once, before audio.** M21's render progress and M22's cast scan are the same
+  shape; AUDIO.md already specs an SSE progress endpoint. A second progress system built
+  three milestones later is the duplication this round exists to remove — the same
+  argument that made one provider picker serve three surfaces in M19.
+- **Cancel means the work stops**, verified by watching it stop (process/ledger), not by
+  reading the code. The `LLMProvider` seam already takes an `AbortSignal`; the digest loop
+  does not thread one through, and that is the actual work.
+- A cancelled job leaves **no half-written state** — the digest is per-chapter and cached
+  by source hash, so completed chapters stay and the run simply ends early.
+- The tray is the *view* over the registry. Dismissing a popup must not cancel the job;
+  those are two different verbs and conflating them is how someone loses a 40-chapter
+  digest.
+
+### Response length is per role; context length stays per profile
+
+`maxResponseTokens` is currently one global setting, and profiles carry
+`openaiContextTokens`. The ask ("digest can be larger") lands on the **role**, not the
+profile: one profile can serve both roles, so a per-profile length could not express
+"same model, longer digests". Roles gain their own `maxResponseTokens` (250–10000);
+context length stays on the profile, where the model's actual window lives.
+
+⚠️ On `claude-agent` — and now `codex-cli` — response length remains a *request in the
+system prompt*, not an enforced ceiling (decisions.md 2026-07-28). The settings UI must
+keep saying so next to the field for both.
+
+### Codex CLI: a fourth provider, and a caged one
+
+Verified on the Linux machine rather than assumed: `codex-cli 0.114.0` is installed at
+`/snap/bin/codex`, and `claude` is **not** — which is a large part of why this is wanted.
+`codex exec` supports `--json` (JSONL events on stdout), `--output-schema <file>` (a real
+structured-output path for `extract()`), `-m/--model`, `--ephemeral`, and
+`-o/--output-last-message`.
+
+The problem it raises is not integration, it is **CLAUDE.md settled decision 2** — "the
+model only returns text or validated JSON; it never touches files." `claude-agent`
+satisfies that by passing `tools: []`. Codex has no equivalent: it is a shell-running
+agent by design. Therefore it is permitted **only caged**, and the cage is part of the
+provider, not of its configuration:
+
+- `--sandbox read-only`, approvals never, `--ephemeral`, `--skip-git-repo-check`, and
+  `-C <a dedicated empty scratch directory>` — never the repo, never `data/`.
+- The environment is scrubbed the way `claudeAgent.ts` already scrubs `ANTHROPIC_API_KEY`,
+  for the same reason: an inherited key silently changes who is billed.
+- ⚠️ The event shape of `--json` is **not documented in this decision on purpose.** It was
+  read from `--help`, not from a real run. The implementer's first step is to run one
+  call, read the actual JSONL, and write the shape into NOTES.md — this project has been
+  burned before by trusting a documented shape (the zod v3/v4 `extract` incident, M4).
+
+This does not overturn decision 2; it bounds it. The rule becomes: *a provider that could
+touch files is permitted only where the seam can prove it cannot.*
+
+### Section labels: `S5`, and one number in the UI
+
+Adopted as proposed. The digest's `chapterNumber` is a 1-based ordinal over text-bearing
+sections and calling it a chapter is what produces "Chapter 5" for the real Chapter 1.
+Displaying it as **`S5 · <title>`** stops the false claim without needing chapter mapping
+that EPUB TOCs often can't support anyway.
+
+⚠️ Two numbers exist: the section ordinal (`S`) and `spineIndex`. **`S<n>` is the only one
+that appears in the UI**, everywhere — digest, scan axis, spotlight, chapter nav. A
+surface printing `spineIndex` next to a surface printing `S<n>` is a bug report waiting
+to happen.
+
+### Highlighting across a page boundary — what is actually possible
+
+Buildable *within* a chapter and impossible *across* one, and the design must say which
+it is rather than promising both. Pages inside a spine section are columns of one
+document, so a DOM Range spans them; scrolling the container mid-drag extends the native
+selection. A section boundary is a different iframe document, and a Range cannot span two
+documents.
+
+So the dwell gesture (hold at the page edge, ring fills, page turns, selection continues)
+operates within the section and **visibly refuses at a chapter boundary** rather than
+silently doing nothing. ⚠️ `setPointerCapture` stays: a drag crossing into the sandboxed
+epub.js iframe crashed the tab outright when it was missing, and that is a reproduced
+crash (M10, NOTES.md).
+
+### Annotations dragged off the page stop riding the page
+
+Widening the panels' drag bounds from the reading stage to the app shell has a second-
+order effect the ask didn't mention: panels are DOM children of the stage, and **that is
+why notes ride the turning page** — the page-turn snapshot captures the stage, marks pane
+and panels together (M10). A panel dragged outside the stage cannot be in that bitmap.
+
+Rather than treat that as a defect, it becomes the rule: **on the page, it rides; off the
+page, it stays put.** A note pinned beside the book is furniture, not part of the sheet.
+The implementation must verify no ancestor clips the panel once it leaves the stage's box.
+
+### Numbering, and the deferred refactor
+
+New work lands as **M19.6, M19.7** (before the refactor) and **M20.5, M20.6, M20.7**
+(after the fold, before audio). No renumbering — the rule set on 2026-07-28 after three
+renumbers, and reaffirmed on 2026-07-29, is that decimals absorb insertions rather than
+invalidating cross-references in five documents.
+
+**M19.8 is deferred, not cancelled and not moved.** The operator's reason — wanting to
+direct it themselves once they know more about refactoring — is a good one, and it is
+their call. The cost, stated once: M19.8 sat immediately before M20 *because* the fold is
+surgery on `ReaderView.tsx`, which is 1,894 lines and 3.4× the next-largest component;
+M19.6 will make it slightly larger. Deferring means the hardest planned change lands in a
+structure that was measured and found wanting. That is a defensible trade — it just
+shouldn't be an accident. The milestone stays in place, in order, with a banner, so
+picking it back up costs nothing.
+
 ## 2026-07-29 (addendum) — The scan's two layers, and the refactor narrowed
 
 ### Is this codebase disciplined enough to skip the refactor? Measured, mostly yes
