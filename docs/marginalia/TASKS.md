@@ -2550,7 +2550,7 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       and other books/sections weren't reachable from this environment. Margin was
       tested live through the real Settings UI (Normal → Wide → Normal) and restored
       to the operator's actual setting afterward, confirmed via the API.)_
-- [ ] **Hover emphasises without obscuring.** The hover boost currently switches to
+- [x] **Hover emphasises without obscuring.** The hover boost currently switches to
       `mix-blend-mode: normal` at `fill-opacity: 0.85`, which is why the ink underneath
       disappears. Stay in the kind's blend mode (multiply on paper, screen on ink) and
       raise opacity modestly instead — the target is "the same wash, more of it", which is
@@ -2558,6 +2558,17 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       _Acceptance: hovered text is still comfortably readable in both themes at every one
       of the four kinds; the hovered mark is still unmistakably distinguishable from its
       unhovered neighbours (check with two adjacent highlights of the same kind)._
+      _(verified 2026-07-30: `mix-blend-mode` is never touched now — the hover boost
+      only ever sets `fillOpacity`, scaling the mark's own real base (read live off
+      the `.marginalia-highlight` group's `fill-opacity` presentation attribute —
+      `markStyleForKind` sets `fill`/`fill-opacity`/`mix-blend-mode` on that group,
+      not the child `<rect>`) by 1.8×, capped at 0.6. Live Playwright against the
+      Alice fixture: paper 0.22→0.396, ink 0.34→0.6 (clamped); `mix-blend-mode`
+      attribute confirmed unchanged ("multiply"/"screen") before, during, and after
+      hover in both themes; reverts to exactly the base value on un-hover. A fixed
+      per-kind delta wasn't needed — reading the real base and scaling it covers all
+      four kinds and both themes with one formula. 153/153 server + 71/71 web tests,
+      build clean.)_
 - [ ] **Clicking a highlight never turns the page.** `handleContentClick` consults only
       `a[href]` and live selections. Reuse the geometric mark hit-test that the mousemove
       handler already runs (marks are `pointer-events: none` by deliberate design — see

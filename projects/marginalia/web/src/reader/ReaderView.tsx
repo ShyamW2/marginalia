@@ -65,6 +65,13 @@ const POSITION_SAVE_DEBOUNCE_MS = 600;
 const LOCATIONS_CHAR_STEP = 1600;
 const SELECTION_CONTEXT_MAX_LEN = 64;
 const HIGHLIGHT_MARK_CLASS = "marginalia-highlight";
+// M19.6 "hover emphasises without obscuring" (decisions.md 2026-07-30): the
+// bug was switching to mix-blend-mode: normal at a near-opaque fill, which
+// turns the wash into paint. The fix stays in the kind's own blend mode
+// (multiply on paper, screen on ink — markStyleForKind) and just scales its
+// existing fill-opacity up — "the same wash, more of it".
+const HOVER_OPACITY_MULTIPLIER = 1.8;
+const HOVER_OPACITY_MAX = 0.6;
 // Shared by click-to-turn and the M11 semicircular turn-zone hover/cursor —
 // the outer 30% of the visible page on either side.
 const TURN_ZONE_FRACTION = 0.3;
@@ -572,7 +579,6 @@ export function ReaderView({
     // properties on an element that's since been removed from the DOM
     // (e.g. a page turn recreated the mark) is a harmless no-op.
     el.style.fillOpacity = "";
-    el.style.mixBlendMode = "";
     hoveredMarkElRef.current = null;
   }
   useEffect(() => {
@@ -1047,8 +1053,15 @@ export function ReaderView({
         if (hit !== hoveredMarkElRef.current) {
           clearMarkHover();
           if (hit) {
-            hit.style.fillOpacity = "0.85";
-            hit.style.mixBlendMode = "normal";
+            // Scale the mark's own base wash up rather than replacing it —
+            // reads the group's real fill-opacity presentation attribute
+            // (markStyleForKind sets fill/fill-opacity/mix-blend-mode on the
+            // `.marginalia-highlight` group itself, not the child `<rect>`;
+            // 0.22 on paper, 0.34 on ink) rather than assuming a fixed
+            // starting point.
+            const baseOpacity = Number.parseFloat(hit.getAttribute("fill-opacity") ?? "0.22") || 0.22;
+            const boosted = Math.min(baseOpacity * HOVER_OPACITY_MULTIPLIER, HOVER_OPACITY_MAX);
+            hit.style.fillOpacity = String(boosted);
             hoveredMarkElRef.current = hit;
           }
         }
