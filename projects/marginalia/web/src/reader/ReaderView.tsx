@@ -26,12 +26,13 @@ import {
   type ProviderRoleAssignment,
   type ReaderFontScale,
   type ReaderMargin,
+  type ReaderPaneWidth,
   type ReadingPosition,
   type Settings,
   type SpreadMode,
   type ThreadSummary,
 } from "@marginalia/shared";
-import { onSettingsSaved } from "../settings/settingsBus.js";
+import { emitSettingsSaved, onSettingsSaved } from "../settings/settingsBus.js";
 import { onProviderRolesSaved } from "../settings/providerBus.js";
 import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
 import { useOpenSettingsToLLM } from "../settings/useOpenSettingsToLLM.js";
@@ -43,6 +44,7 @@ import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js
 import { markStyleForKind } from "./highlightKinds.js";
 import { capturePageSnapshot } from "./pageSnapshot.js";
 import { PageCurl } from "./PageCurl.js";
+import { DwellRing } from "./DwellRing.js";
 import { AskPill } from "./AskPill.js";
 import { MarginRail } from "./MarginRail.js";
 import { ThreadPanel } from "../threads/ThreadPanel.js";
@@ -52,6 +54,12 @@ import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
 import { PageNumberDisplay } from "./PageNumberDisplay.js";
 import { ScrubDial, DIAL_PX_PER_PERCENT } from "./ScrubDial.js";
+import {
+  computeBookPageInfo,
+  getSpreadDivisor,
+  toSpreadAdjustedPage,
+  toSpreadAdjustedTotal,
+} from "./bookPages.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -79,11 +87,26 @@ const HIGHLIGHT_MARK_CLASS = "marginalia-highlight";
 // turns the wash into paint. The fix stays in the kind's own blend mode
 // (multiply on paper, screen on ink — markStyleForKind) and just scales its
 // existing fill-opacity up — "the same wash, more of it".
-const HOVER_OPACITY_MULTIPLIER = 1.8;
-const HOVER_OPACITY_MAX = 0.6;
+// Raised again per operator feedback (2026-07-30 later): the first pass
+// (1.8x, capped 0.6) was judged still noticeably duller than the vivid,
+// fully-legible look of a live text selection (the native `::selection`
+// moment right before a highlight is even created) — pushed further while
+// staying in the same blend mode, verified against the same "text stays
+// comfortably readable" bar the original fix used.
+const HOVER_OPACITY_MULTIPLIER = 2.6;
+const HOVER_OPACITY_MAX = 0.85;
 // Shared by click-to-turn and the M11 semicircular turn-zone hover/cursor —
 // the outer 30% of the visible page on either side.
 const TURN_ZONE_FRACTION = 0.3;
+// M19.6 "highlight across a page boundary": ~2s dwell per the task's own
+// acceptance criteria; the refusal flash is a quick, legible "no", not a
+// second dwell.
+const DWELL_DURATION_MS = 2000;
+const REFUSAL_FLASH_MS = 260;
+// M19.6 "the reading pane is resizable": clamps for the drag-set override —
+// wide enough to be pointless below, tall-screen-friendly above.
+const READER_PANE_WIDTH_MIN = 480;
+const READER_PANE_WIDTH_MAX = 1800;
 
 /** Which edge zone (if any) a point translated into container-space falls
  * in — shared by the click handler and the hover/cursor handler below. */
@@ -118,15 +141,6 @@ function clampPercent(value: number): number {
 // exists at runtime (see managers/views/iframe.js) — narrow just that.
 interface ViewWithContents {
   contents: Contents;
-}
-
-// epub.js's bundled Locations typings wrongly declare `locationFromCfi` as
-// returning `Location` (the reader-position type) — the runtime
-// (lib/locations.js) returns a plain 0-based index, or -1 before locations
-// have generated or loaded. Narrow just that one method; `length()` (locations
-// count) is typed correctly and used in place of the untyped `total`.
-interface LocationsIndexLookup {
-  locationFromCfi(cfi: string): number;
 }
 
 // epub.js's bundled RenditionOptions typings omit `gap`, though the runtime
@@ -267,6 +281,49 @@ function saveCachedLocations(resourceId: string, locations: string): void {
   });
 }
 
+// M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later):
+// same direct-PUT-from-the-reader pattern ThreadPanel's own size/offset
+// persistence uses, rather than routing through the Settings modal — the
+// drag handle lives in the reading surface, not a form. Broadcasts via the
+// settingsBus (settings/settingsBus.ts) on success so any other mounted
+// consumer of readerPaneWidth (there is none today, but readerMargin/
+// readerFontScale already establish "settings changes are always live") is
+// never silently out of sync.
+function saveReaderPaneWidth(width: number): void {
+  fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ readerPaneWidth: width }),
+  })
+    .then((res) => (res.ok ? (res.json() as Promise<Settings>) : null))
+    .then((settings) => {
+      if (settings) emitSettingsSaved(settings);
+    })
+    .catch(() => {
+      // best-effort — worst case this reverts to the spread-mode default
+      // next open
+    });
+}
+
+// M19.6 operator feedback (decisions.md 2026-07-30 later): bookPages.ts's
+// estimate for not-yet-visited sections needs a cheap per-section "how much
+// text does this hold" weight. The Scan (annotations/scan.ts) already
+// computes exactly this from the same immutable, server-cached
+// `resource_text` extraction — reused rather than duplicated, at the cost
+// of fetching a payload that also carries highlights/themes this reader
+// doesn't need.
+async function fetchSectionWeights(resourceId: string): Promise<Map<number, number> | null> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/scan`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { chapters?: { spineIndex: number; lengthPercent: number }[] };
+    if (!data.chapters || data.chapters.length === 0) return null;
+    return new Map(data.chapters.map((c) => [c.spineIndex, c.lengthPercent]));
+  } catch {
+    return null;
+  }
+}
+
 async function fetchHighlights(resourceId: string): Promise<HighlightWithThread[]> {
   const res = await fetch(`/api/resources/${resourceId}/highlights`);
   if (!res.ok) return [];
@@ -329,6 +386,10 @@ interface ReaderViewProps {
   /** M19.6 "annotations roam the app": the thread panel's dragConstraints —
    * ReaderPage's own root, wider than the reading stage. */
   appBoundsRef: RefObject<HTMLDivElement>;
+  /** M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later):
+   * same "resolved before mount" story as spreadMode above — 0 means unset
+   * (use the spread-mode default). */
+  initialReaderPaneWidth: ReaderPaneWidth;
 }
 
 export function ReaderView({
@@ -336,6 +397,7 @@ export function ReaderView({
   initialHighlightId,
   initialQuestion,
   spreadMode,
+  initialReaderPaneWidth,
   appBoundsRef,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettingsToLLM();
@@ -427,6 +489,14 @@ export function ReaderView({
   const [displayedPage, setDisplayedPage] = useState<{ page: number; total: number } | null>(
     null,
   );
+  // M19.6 "highlight across a page boundary": read inside a setTimeout
+  // closure captured by the book-loading effect (which only runs once per
+  // resourceId) — same "mirror state into a ref for a long-lived closure"
+  // story as fontScaleRef/focusModeRef elsewhere in this file.
+  const displayedPageRef = useRef(displayedPage);
+  useEffect(() => {
+    displayedPageRef.current = displayedPage;
+  }, [displayedPage]);
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
   const [currentSpineIndex, setCurrentSpineIndex] = useState<number | null>(
@@ -478,12 +548,29 @@ export function ReaderView({
   // M19.6 "page numbers, book-wide and stable": same live-via-settingsBus
   // story as readerMargin/readerFontScale above.
   const [pageNumberMode, setPageNumberMode] = useState<PageNumberMode>("off");
-  // Null until book.locations has generated or loaded from cache (see the
-  // book-loading effect) — "book" mode shows nothing until then, same as
-  // displayedPage does before epub.js reports its first location.
-  const [bookLocation, setBookLocation] = useState<{ index: number; total: number } | null>(
-    null,
+  // M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later):
+  // a drag-set override for --reader-max-width, layered on top of the
+  // spread-mode default the same way readerMargin sits *inside* it rather
+  // than being a fourth independent knob. 0 = unset. Initialized from the
+  // prop (resolved by ReaderPage before mount, same story as spreadMode) so
+  // there's no flash back to the default on reload; same live-via-
+  // settingsBus story as readerMargin/readerFontScale above thereafter.
+  const [readerPaneWidth, setReaderPaneWidth] = useState<ReaderPaneWidth>(
+    initialReaderPaneWidth,
   );
+  const [paneWidthDragging, setPaneWidthDragging] = useState(false);
+  // M19.6 operator feedback (decisions.md 2026-07-30 later): replaces the
+  // character-location-based book-wide count with bookPages.ts's
+  // click-accurate, spread-adjusted one. Null until the section-weight
+  // fetch (below) resolves — "book" mode shows nothing until then, same as
+  // displayedPage does before epub.js reports its first location.
+  const [bookPage, setBookPage] = useState<{ page: number; total: number } | null>(null);
+  // Section-weight (lengthPercent from the Scan's own text-length data) and
+  // real, spread-adjusted page counts measured as sections are visited —
+  // see bookPages.ts. Refs, not state: read inside handleRelocated without
+  // needing to be a render dependency themselves.
+  const sectionWeightRef = useRef<Map<number, number> | null>(null);
+  const sectionRealPagesRef = useRef<Map<number, number>>(new Map());
   const [showAnnotations, setShowAnnotations] = useState(false);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
@@ -637,11 +724,41 @@ export function ReaderView({
     el.style.fillOpacity = "";
     hoveredMarkElRef.current = null;
   }
+
+  // M19.6 "highlight across a page boundary" (decisions.md 2026-07-30
+  // later): holding a drag-selection at the page edge dwells ~2s, then
+  // turns the page with the selection continuing — buildable *within* a
+  // section (a Range there spans columns of one document, confirmed live:
+  // it survives rendition.next() untouched) and impossible *across* one (a
+  // fresh iframe document, confirmed live: the selection was destroyed
+  // outright), per the diagnostic this task's own acceptance criteria
+  // required before building. `isPointerDownInContentRef` is what lets
+  // mousemove below tell an active drag-selection from a passive hover;
+  // dwellZoneRef/dwellTimerRef are refs (not state) since mousemove fires
+  // far more often than a render should reset them.
+  const isPointerDownInContentRef = useRef(false);
+  const dwellZoneRef = useRef<"prev" | "next" | null>(null);
+  const dwellTimerRef = useRef<number | undefined>(undefined);
+  const dwellKeyRef = useRef(0);
+  const [dwellRing, setDwellRing] = useState<
+    { dwellKey: number; x: number; y: number; refused: boolean } | null
+  >(null);
+
+  function cancelDwell() {
+    window.clearTimeout(dwellTimerRef.current);
+    dwellTimerRef.current = undefined;
+    dwellZoneRef.current = null;
+    setDwellRing(null);
+  }
+
   useEffect(() => {
     // Zones "disappear in focus mode" (TASKS.md acceptance) — clear
-    // immediately rather than waiting for the next pointer move.
+    // immediately rather than waiting for the next pointer move. A dwell
+    // in progress is exactly the same kind of turn-zone affordance, so it
+    // cancels here too.
     if (!focusMode) return;
     setTurnZoneHover(null);
+    cancelDwell();
     if (lastContentsWithCursorRef.current) {
       lastContentsWithCursorRef.current.document.body.style.cursor = "";
     }
@@ -722,6 +839,7 @@ export function ReaderView({
       setReaderMargin(settings.readerMargin);
       setReaderFontScale(settings.readerFontScale);
       setPageNumberMode(settings.pageNumberMode);
+      setReaderPaneWidth(settings.readerPaneWidth);
     });
     fetchQueryRoleConfigured().then(setProviderConfigured);
   }, []);
@@ -731,6 +849,7 @@ export function ReaderView({
       setReaderMargin(settings.readerMargin);
       setReaderFontScale(settings.readerFontScale);
       setPageNumberMode(settings.pageNumberMode);
+      setReaderPaneWidth(settings.readerPaneWidth);
     });
   }, []);
 
@@ -747,7 +866,9 @@ export function ReaderView({
     setStatus("loading");
     setProgressPercent(null);
     setDisplayedPage(null);
-    setBookLocation(null);
+    setBookPage(null);
+    sectionWeightRef.current = null;
+    sectionRealPagesRef.current = new Map();
     setToc([]);
     setProgressPopoverOpen(false);
     setScrubPreviewPercent(null);
@@ -873,6 +994,14 @@ export function ReaderView({
       manager.settings.gap = computeReaderGap(width, spreadMode, fontScaleRef.current);
       manager.updateLayout?.();
 
+      // M19.6 operator feedback: every already-visited section's real page
+      // count (bookPages.ts) was measured under the layout that's about to
+      // change (font size or margin) — stale the moment the gap changes.
+      // Cleared, not migrated: the debounced re-display below re-measures
+      // the current section within ~120ms, and every other section's real
+      // count gets replaced by a fresh estimate until it's revisited.
+      sectionRealPagesRef.current.clear();
+
       // M16 bug fix: `updateLayout()` recomputes column geometry (confirmed
       // live via computed styles — gap/padding update correctly, instantly)
       // but leaves the iframe's own scroll offset untouched, so anywhere
@@ -960,23 +1089,48 @@ export function ReaderView({
       setAtEnd(Boolean(location.atEnd));
       setCurrentSpineIndex(location.start.index);
       const pct = location.start.percentage;
-      if (typeof pct === "number") {
-        setProgressPercent(Math.round(pct * 100));
-      }
+
+      // M19.6 operator feedback (decisions.md 2026-07-30 later): epub.js's
+      // own displayed.page/total are single-column indices — divide out the
+      // manager's real spread divisor so "one spread = one page" (see
+      // bookPages.ts). This is also what fixes the display reaching e.g.
+      // "page 7 of 8" one turn before the chapter actually ends — that was
+      // never a skipped page, just an un-adjusted odd column index against
+      // an always-even raw total.
+      const divisor = getSpreadDivisor(rendition);
       const displayed = location.start.displayed;
+      let chapterPage: number | null = null;
+      let chapterTotal: number | null = null;
       if (displayed && typeof displayed.page === "number" && typeof displayed.total === "number") {
-        setDisplayedPage({ page: displayed.page, total: displayed.total });
+        chapterPage = toSpreadAdjustedPage(displayed.page, divisor);
+        chapterTotal = toSpreadAdjustedTotal(displayed.total, divisor);
+        setDisplayedPage({ page: chapterPage, total: chapterTotal });
       }
 
-      // M19.6 "page numbers, book-wide and stable": locationFromCfi returns
-      // -1 until book.locations has generated or loaded (see below) — mirrors
-      // the same "recompute once ready" story percent/displayedPage above
-      // already have, via the same reportLocation() re-fire.
-      const bookLoc = (book.locations as unknown as LocationsIndexLookup).locationFromCfi(
-        location.start.cfi,
-      );
-      if (bookLoc >= 0) {
-        setBookLocation({ index: bookLoc, total: book.locations.length() - 1 });
+      // Book-wide page count + percentage, click-accurate (bookPages.ts) —
+      // replaces the character-location index the operator found jumped
+      // unevenly per turn. Falls back to the character-based percent below
+      // until the section-weight fetch resolves.
+      let usedPageBasedPercent = false;
+      if (chapterPage !== null && chapterTotal !== null) {
+        sectionRealPagesRef.current.set(location.start.index, chapterTotal);
+        const weights = sectionWeightRef.current;
+        if (weights) {
+          const info = computeBookPageInfo(
+            weights,
+            sectionRealPagesRef.current,
+            location.start.index,
+            chapterPage,
+          );
+          if (info) {
+            setBookPage(info);
+            setProgressPercent(Math.round((info.page / info.total) * 100));
+            usedPageBasedPercent = true;
+          }
+        }
+      }
+      if (!usedPageBasedPercent && typeof pct === "number") {
+        setProgressPercent(Math.round(pct * 100));
       }
 
       window.clearTimeout(saveTimerRef.current);
@@ -1170,6 +1324,27 @@ export function ReaderView({
         }
       }
 
+      // M19.6 "highlight across a page boundary": armed only while a real
+      // drag-selection is in progress (button down + a non-empty window
+      // selection) *and* the cursor sits in a turn zone. Re-arms itself on
+      // whatever zone the cursor is in this tick — dwellZoneRef !== zone
+      // covers both "just entered a zone" and "completeDwell just cleared
+      // it after a turn, still holding at the edge" the same way.
+      if (isPointerDownInContentRef.current && zone && !focusModeRef.current) {
+        const hasActiveSelection = Boolean(contents.window.getSelection()?.toString());
+        if (hasActiveSelection) {
+          if (dwellZoneRef.current !== zone) {
+            startDwell(zone, viewportX, viewportY);
+          } else {
+            setDwellRing((prev) => (prev && !prev.refused ? { ...prev, x: viewportX, y: viewportY } : prev));
+          }
+        } else if (dwellZoneRef.current) {
+          cancelDwell();
+        }
+      } else if (dwellZoneRef.current) {
+        cancelDwell();
+      }
+
       // M14 fullscreen: the same forwarded mousemove reveals the floating
       // top row / footer / margin rail on proximity — the reveal bands are
       // top/bottom only (never the left/right turn-zone strips above). Must
@@ -1191,6 +1366,75 @@ export function ReaderView({
       }
     }
     rendition.on("mousemove", handleContentMouseMove);
+
+    // M19.6 "highlight across a page boundary": DWELL_DURATION_MS matches
+    // the task's own "~2s" acceptance; REFUSAL_FLASH_MS is a quick,
+    // legible "no" — long enough to register, short enough not to feel
+    // like a second dwell.
+    function startDwell(zone: "prev" | "next", x: number, y: number) {
+      dwellZoneRef.current = zone;
+      dwellKeyRef.current += 1;
+      setDwellRing({ dwellKey: dwellKeyRef.current, x, y, refused: false });
+      dwellTimerRef.current = window.setTimeout(() => {
+        completeDwell(zone);
+      }, DWELL_DURATION_MS);
+    }
+
+    function completeDwell(zone: "prev" | "next") {
+      dwellTimerRef.current = undefined;
+      const displayed = displayedPageRef.current;
+      if (!displayed) {
+        cancelDwell();
+        return;
+      }
+
+      // ⚠️ Not re-derived here — decisions.md 2026-07-30 later's own
+      // diagnostic (this task's required precondition) confirmed live that
+      // rendition.next()/prev() across a section boundary destroys the
+      // selection outright (a fresh iframe document). Refuse *before*
+      // calling it, rather than calling it and discovering the selection
+      // is gone — the existing selection must stay intact.
+      const atSectionEnd = zone === "next" && displayed.page >= displayed.total;
+      const atSectionStart = zone === "prev" && displayed.page <= 1;
+      if (atSectionEnd || atSectionStart) {
+        dwellZoneRef.current = null;
+        setDwellRing((prev) => (prev ? { ...prev, refused: true } : prev));
+        window.setTimeout(() => setDwellRing(null), REFUSAL_FLASH_MS);
+        return;
+      }
+
+      // No curl/slide animation on purpose: those swap in a rasterized
+      // snapshot mid-turn, which would visually cover the very selection
+      // this gesture exists to keep continuing under the reader's cursor.
+      // A plain, immediate rendition call keeps the live DOM (and the
+      // native selection anchored to it) visible throughout.
+      const turn = zone === "next" ? renditionRef.current?.next() : renditionRef.current?.prev();
+      void turn?.then(() => {
+        // Still holding at the edge with a live selection — the very next
+        // mousemove re-arms a fresh dwell for the next page on its own
+        // (dwellZoneRef is cleared here, so that arming logic doesn't see
+        // a stale zone and skip it); no self-rescheduling timer needed.
+        dwellZoneRef.current = null;
+        setDwellRing(null);
+      });
+    }
+
+    function handleContentMouseDown() {
+      isPointerDownInContentRef.current = true;
+    }
+    rendition.on("mousedown", handleContentMouseDown);
+
+    function handleContentMouseUp() {
+      isPointerDownInContentRef.current = false;
+      cancelDwell();
+    }
+    rendition.on("mouseup", handleContentMouseUp);
+    // A drag started inside the iframe can end with the pointer released
+    // over the parent document's own chrome (margin, footer, rail) — the
+    // forwarded "mouseup" above only ever fires for a release *inside* the
+    // iframe content, so this is the same belt-and-braces window-level
+    // fallback M10's drag-to-peel and M12's scrub dial already rely on.
+    window.addEventListener("mouseup", handleContentMouseUp);
 
     // The shared shortcut registry (useShortcuts, above) only ever sees
     // window-level keydowns — epub.js's own iframe is a separate document,
@@ -1230,11 +1474,13 @@ export function ReaderView({
     book.ready
       .then(async () => {
         if (cancelled) return;
-        const [position, resourceHighlights, cachedLocations] = await Promise.all([
+        const [position, resourceHighlights, cachedLocations, sectionWeights] = await Promise.all([
           fetchPosition(resourceId),
           fetchHighlights(resourceId),
           fetchCachedLocations(resourceId),
+          fetchSectionWeights(resourceId),
         ]);
+        if (sectionWeights) sectionWeightRef.current = sectionWeights;
         if (cancelled) return;
         highlightsRef.current = resourceHighlights;
         setHighlights(resourceHighlights);
@@ -1296,6 +1542,8 @@ export function ReaderView({
       cancelled = true;
       window.clearTimeout(saveTimerRef.current);
       window.clearTimeout(redisplayTimer);
+      window.clearTimeout(dwellTimerRef.current);
+      window.removeEventListener("mouseup", handleContentMouseUp);
       resizeObserver.disconnect();
       renditionRef.current = null;
       bookRef.current = null;
@@ -1807,6 +2055,46 @@ export function ReaderView({
     ? highlights.find((h) => h.id === expandedThread.highlightId)
     : undefined;
 
+  // M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later):
+  // the drag-set override (if any) replaces the spread-mode default outright
+  // rather than adding to it — one clear number, not a fourth knob stacked
+  // on the other three (readerMargin/READER_TARGET_COLUMN_WIDTH/
+  // SPREAD_GUTTER already own their own jobs, per decisions.md 2026-07-27).
+  const spreadDefaultPaneWidth = fullscreenMode ? 1600 : spreadMode === "auto" ? 1400 : 800;
+  const effectivePaneWidth = readerPaneWidth > 0 ? readerPaneWidth : spreadDefaultPaneWidth;
+
+  // Dragging the right edge of a *centered* pane: the row grows/shrinks
+  // symmetrically, so the edge under the pointer only moves by half of any
+  // width change — doubling the pointer's own delta is what keeps the
+  // handle tracking the cursor 1:1 instead of lagging at half speed.
+  function handlePaneResizePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const startWidth = effectivePaneWidth;
+    const startX = event.clientX;
+    setPaneWidthDragging(true);
+
+    function onMove(moveEvent: PointerEvent) {
+      const delta = (moveEvent.clientX - startX) * 2;
+      const next = Math.min(
+        Math.max(Math.round(startWidth + delta), READER_PANE_WIDTH_MIN),
+        READER_PANE_WIDTH_MAX,
+      );
+      setReaderPaneWidth(next);
+    }
+    function onUp() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      setPaneWidthDragging(false);
+      setReaderPaneWidth((current) => {
+        saveReaderPaneWidth(current);
+        return current;
+      });
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
   return (
     <div
       ref={wrapperRef}
@@ -1823,10 +2111,12 @@ export function ReaderView({
       // measure, since computeReaderGap independently caps the rendered
       // column at READER_TARGET_COLUMN_WIDTH regardless of how wide the
       // stage around it is; a wider stage just means more comfortable
-      // whitespace, not wider lines.
+      // whitespace, not wider lines. M19.6 "the reading pane is resizable":
+      // effectivePaneWidth (above) overrides this outright once the reader
+      // has dragged a size — see the drag handle further down.
       style={
         {
-          "--reader-max-width": fullscreenMode ? "1600px" : spreadMode === "auto" ? "1400px" : "800px",
+          "--reader-max-width": `${effectivePaneWidth}px`,
         } as CSSProperties
       }
     >
@@ -1943,6 +2233,15 @@ export function ReaderView({
             {curl && (
               <PageCurl src={curl.src} direction={curl.direction} progress={curlProgress} />
             )}
+            {dwellRing && (
+              <DwellRing
+                key={dwellRing.dwellKey}
+                x={dwellRing.x}
+                y={dwellRing.y}
+                durationMs={DWELL_DURATION_MS}
+                refused={dwellRing.refused}
+              />
+            )}
             {!focusMode && (
               <>
                 <div
@@ -2034,6 +2333,18 @@ export function ReaderView({
               />
             )}
           </AnimatePresence>
+          {/* M19.6 "the reading pane is resizable": a single edge handle
+              (the task names one, not one per side) — dragging it resizes
+              the pane's *outer* measure symmetrically (see
+              handlePaneResizePointerDown above), with readerMargin staying
+              a proportion inside it, unchanged. Sits outside .pageClip (a
+              sibling, not a child) so it's never clipped by that element's
+              own overflow:hidden. */}
+          <div
+            className={`${styles.paneResizeHandle} ${paneWidthDragging ? styles.paneResizeHandleActive : ""}`}
+            aria-hidden="true"
+            onPointerDown={handlePaneResizePointerDown}
+          />
         </div>
         {!focusMode && (
           <div
@@ -2081,8 +2392,8 @@ export function ReaderView({
         </button>
         <PageNumberDisplay
           mode={pageNumberMode}
-          bookLocationIndex={bookLocation?.index ?? null}
-          bookLocationTotal={bookLocation?.total ?? null}
+          bookPage={bookPage?.page ?? null}
+          bookTotal={bookPage?.total ?? null}
           chapterPage={displayedPage?.page ?? null}
           chapterTotal={displayedPage?.total ?? null}
         />

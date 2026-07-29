@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
-import type { Resource, Settings, SpreadMode } from "@marginalia/shared";
+import type { ReaderPaneWidth, Resource, Settings, SpreadMode } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
 import { playAirlock } from "../app/airlockBus.js";
 import { BookCover } from "../library/BookCover.js";
@@ -37,6 +37,12 @@ export function ReaderPage() {
   // M11 settings modal while a book is already open takes effect on the
   // next open/reload, not live — a deliberate scope boundary, not a bug.
   const [spreadMode, setSpreadMode] = useState<SpreadMode | null>(null);
+  // M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later):
+  // same "resolved before ReaderView ever mounts" story as spreadMode
+  // above — the initial `--reader-max-width` needs this at first paint, not
+  // moments later, or a reader with a custom pane width sees a flash back
+  // to the spread-mode default on every reload.
+  const [readerPaneWidth, setReaderPaneWidth] = useState<ReaderPaneWidth | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
@@ -56,6 +62,7 @@ export function ReaderPage() {
     if (!id) return;
     setResource(null);
     setSpreadMode(null);
+    setReaderPaneWidth(null);
     setNotFound(false);
     fetch(`/api/resources/${id}`)
       .then(async (res) => {
@@ -68,8 +75,14 @@ export function ReaderPage() {
       .catch(() => setNotFound(true));
     fetch("/api/settings")
       .then((res) => (res.ok ? (res.json() as Promise<Settings>) : null))
-      .then((settings) => setSpreadMode(settings?.spreadMode ?? "single"))
-      .catch(() => setSpreadMode("single"));
+      .then((settings) => {
+        setSpreadMode(settings?.spreadMode ?? "single");
+        setReaderPaneWidth(settings?.readerPaneWidth ?? 0);
+      })
+      .catch(() => {
+        setSpreadMode("single");
+        setReaderPaneWidth(0);
+      });
   }, [id]);
 
   // Arrived via the scan's airlock (a heat band click) — play the "in" half
@@ -102,7 +115,7 @@ export function ReaderPage() {
     );
   }
 
-  if (!resource || !spreadMode) {
+  if (!resource || !spreadMode || readerPaneWidth === null) {
     return <div className={styles.page} />;
   }
 
@@ -154,6 +167,7 @@ export function ReaderPage() {
         initialHighlightId={initialLocationState?.jumpToHighlightId}
         initialQuestion={initialLocationState?.jumpToQuestion}
         spreadMode={spreadMode}
+        initialReaderPaneWidth={readerPaneWidth}
         appBoundsRef={appBoundsRef}
       />
       {toast && (

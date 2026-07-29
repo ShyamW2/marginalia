@@ -4,8 +4,8 @@ import styles from "./PageNumberDisplay.module.css";
 
 interface PageNumberDisplayProps {
   mode: PageNumberMode;
-  bookLocationIndex: number | null;
-  bookLocationTotal: number | null;
+  bookPage: number | null;
+  bookTotal: number | null;
   chapterPage: number | null;
   chapterTotal: number | null;
 }
@@ -19,12 +19,12 @@ interface PageNumberDisplayProps {
  */
 export function PageNumberDisplay({
   mode,
-  bookLocationIndex,
-  bookLocationTotal,
+  bookPage,
+  bookTotal,
   chapterPage,
   chapterTotal,
 }: PageNumberDisplayProps) {
-  const text = formatPageNumber(mode, bookLocationIndex, bookLocationTotal, chapterPage, chapterTotal);
+  const text = formatPageNumber(mode, bookPage, bookTotal, chapterPage, chapterTotal);
   if (!text) return null;
   return (
     <span className={styles.pageNumber} aria-live="off">

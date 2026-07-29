@@ -272,6 +272,43 @@
   right: 0;
 }
 
+/* M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later): a
+   quiet handle just *outside* .stage's own border — deliberately not at
+   right:0 the way .edgeGrabRight above is, so it never overlaps M10's
+   drag-to-peel strip (a different gesture at the page's own inner edge).
+   Invisible at rest, like .edgeGrab, reading the paper register's "quiet
+   until touched" convention; a soft accent bar appears on hover/drag so the
+   affordance is discoverable without being decoration. */
+.paneResizeHandle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -8px;
+  width: 12px;
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 7;
+}
+
+.paneResizeHandle::after {
+  content: "";
+  position: absolute;
+  top: 20%;
+  bottom: 20%;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: var(--color-accent);
+  opacity: 0;
+  transition: opacity var(--duration-standard) var(--ease-standard);
+}
+
+.paneResizeHandle:hover::after,
+.paneResizeHandleActive::after {
+  opacity: 0.5;
+}
+
 .overlay {
   position: absolute;
   inset: 0;
