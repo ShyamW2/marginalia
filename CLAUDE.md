@@ -19,6 +19,9 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/NOTES.md` — running log of spec gaps, friction, blockers (create on first use)
 - `docs/decisions.md` — decision log (ADR-lite)
 - `docs/REFACTORING.md` — why/when/how we refactor, and how success is measured — binding for M19.8
+- `docs/SHIPPING.md` — the distribution ladder (localhost → repo → desktop app → private
+  deployment → hosted → stores), what each rung costs and the gate that stops it. Nothing
+  in it is scheduled; read it before any work justified by "we'll need it when we ship."
 - `docs/OPUS.md` — how to run a **design/review** session: interrogating feedback,
   verifying premises before building on them, and writing docs an implementation
   session can execute. Read it before any session that decides rather than executes.

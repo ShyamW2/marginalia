@@ -26,6 +26,7 @@ session — your job is disciplined execution, not redesign.
 - Find the first unchecked task in TASKS.md and do exactly that task. Small, focused
   commits (`M2: restore reading position on open`), one or a few tasks per commit.
   Check the box in TASKS.md in the same commit.
+- Avoid monkey patching when writing, code with the Boy Scout Rule, and when editing let's make changes that keep the code readable and easily editable. 
 - Complete each milestone's **Verify** step for real — run the app, exercise the flow
   with a fixture EPUB — before starting the next milestone. If verification fails,
   fixing it is your current task.
