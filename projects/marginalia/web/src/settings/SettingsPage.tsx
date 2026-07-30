@@ -9,6 +9,7 @@ import { UsageDivider } from "./UsageDivider.js";
 import { ScanTab } from "./tabs/ScanTab.js";
 import { AudioTab } from "./tabs/AudioTab.js";
 import { DeskTab } from "./tabs/DeskTab.js";
+import { Button } from "../controls/Button.js";
 import styles from "./SettingsPage.module.css";
 
 type FormState = Settings;
@@ -193,14 +194,9 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
 
           {SAVES_VIA_FORM.has(activeTab) && (
             <div className={styles.actions}>
-              <button
-                type="button"
-                className={styles.primaryButton}
-                onClick={handleSave}
-                disabled={saving}
-              >
+              <Button variant="solid" onClick={handleSave} disabled={saving}>
                 {saving ? "Saving…" : "Save"}
-              </button>
+              </Button>
               {saveMessage && <span className={styles.statusText}>{saveMessage}</span>}
             </div>
           )}

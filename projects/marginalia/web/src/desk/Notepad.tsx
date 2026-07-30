@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Notepad as NotepadData, PublishResult } from "@marginalia/shared";
+import { Button } from "../controls/Button.js";
 import styles from "./Notepad.module.css";
 
 const AUTOSAVE_DELAY_MS = 800;
@@ -111,14 +112,15 @@ export function Notepad({ onToast }: NotepadProps) {
         onChange={(e) => scheduleSave(e.target.value)}
       />
       <div className={styles.footer}>
-        <button
-          type="button"
+        <Button
+          variant="outline"
+          size="sm"
           className={styles.publishButton}
           disabled={publishing || !dirty}
           onClick={handlePublish}
         >
           {publishing ? "Publishing…" : "Publish"}
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ResourceSummary } from "@marginalia/shared";
 import { BookCover } from "./BookCover.js";
 import { coverLayoutId } from "./coverLayoutId.js";
+import { Button } from "../controls/Button.js";
 import styles from "./LibraryGrid.module.css";
 
 interface LibraryGridProps {
@@ -49,14 +50,15 @@ export function LibraryGrid({ resources, publishingId, onPublish }: LibraryGridP
                 ? `${resource.highlightCount} highlight${resource.highlightCount === 1 ? "" : "s"}`
                 : "No highlights yet"}
             </span>
-            <button
-              type="button"
+            <Button
+              variant="outline"
+              size="sm"
               className={styles.publishButton}
               disabled={publishingId === resource.id}
               onClick={() => onPublish(resource.id)}
             >
               {publishingId === resource.id ? "Publishing…" : "Publish"}
-            </button>
+            </Button>
           </div>
         </div>
       ))}

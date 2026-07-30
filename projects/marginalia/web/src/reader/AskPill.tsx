@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import type { HighlightKind } from "@marginalia/shared";
 import { HIGHLIGHT_KINDS, KIND_LABELS } from "./highlightKinds.js";
+import { Button } from "../controls/Button.js";
 import styles from "./AskPill.module.css";
 
 interface AskPillProps {
@@ -48,9 +49,9 @@ export function AskPill({ left, top, onPickKind, onAsk }: AskPillProps) {
             onClick={() => onPickKind(kind)}
           />
         ))}
-        <button type="button" className={styles.askButton} onClick={onAsk}>
+        <Button variant="solid" size="sm" className={styles.askButton} onClick={onAsk}>
           Ask
-        </button>
+        </Button>
       </motion.div>
     </div>
   );

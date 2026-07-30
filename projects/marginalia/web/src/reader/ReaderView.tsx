@@ -39,6 +39,8 @@ import { useOpenSettingsToLLM } from "../settings/useOpenSettingsToLLM.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
+import { Button } from "../controls/Button.js";
+import { IconButton } from "../controls/IconButton.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
 import { hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
@@ -2285,8 +2287,9 @@ export function ReaderView({
           {focusMode ? (
             <span className={styles.focusIndicator}>Notes hidden — press F to show</span>
           ) : (
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               className={styles.annotationsButton}
               onClick={() => setShowAnnotations((prev) => !prev)}
             >
@@ -2296,7 +2299,7 @@ export function ReaderView({
                   {unanchoredIds.size}
                 </span>
               )}
-            </button>
+            </Button>
           )}
         </div>
         <div className={styles.progressWrap}>
@@ -2346,15 +2349,16 @@ export function ReaderView({
                 hasNext={hasNextChapter}
               />
               {currentSpineIndex !== null && (
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   className={styles.digestChapterButton}
                   disabled={digestingChapter}
                   onClick={handleDigestChapter}
                   title="Digest just this chapter (M17 spotlight shortcut)"
                 >
                   {digestingChapter ? "Digesting…" : digestChapterResult ?? "Digest chapter"}
-                </button>
+                </Button>
               )}
               <ProviderPickerPopover
                 role="query"
@@ -2531,15 +2535,12 @@ export function ReaderView({
         onPointerEnter={fullscreenMode ? () => setRevealBottom(true) : undefined}
         onPointerLeave={fullscreenMode ? () => setRevealBottom(false) : undefined}
       >
-        <button
-          type="button"
-          className={styles.navButton}
+        <IconButton
+          icon={<ChevronIcon direction="left" />}
+          label="Previous page"
           disabled={atStart}
-          aria-label="Previous page"
           onClick={() => turnPage("prev")}
-        >
-          <ChevronIcon direction="left" />
-        </button>
+        />
         <PageNumberDisplay
           mode={pageNumberMode}
           bookPage={bookPage?.page ?? null}
@@ -2547,15 +2548,12 @@ export function ReaderView({
           chapterPage={displayedPage?.page ?? null}
           chapterTotal={displayedPage?.total ?? null}
         />
-        <button
-          type="button"
-          className={styles.navButton}
+        <IconButton
+          icon={<ChevronIcon direction="right" />}
+          label="Next page"
           disabled={atEnd}
-          aria-label="Next page"
           onClick={() => turnPage("next")}
-        >
-          <ChevronIcon direction="right" />
-        </button>
+        />
       </div>
     </div>
   );

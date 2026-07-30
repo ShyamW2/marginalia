@@ -11,30 +11,21 @@
   overflow: hidden;
 }
 
+/* Skin comes from the shared Button kit now (M19.7) — only the joined-
+   segment divider and this toggle's own tighter sizing are left here. */
 .button {
-  background: none;
-  border: none;
-  color: var(--color-text-muted);
-  font-family: var(--font-sans);
-  font-size: 0.7rem;
+  min-height: 0;
+  border-radius: 0;
   padding: 0.2rem 0.5rem;
-  cursor: pointer;
+  font-size: 0.7rem;
 }
 .button + .button {
   border-left: 1px solid var(--color-border);
 }
-.buttonActive {
-  background: var(--color-highlight-active, var(--color-highlight));
-  color: var(--color-text);
-}
 
 .webSearchPill {
-  background: none;
-  border: 1px dashed var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-muted);
-  font-size: 0.7rem;
+  min-height: 0;
+  border-style: dashed;
   padding: 0.2rem 0.5rem;
-  opacity: 0.6;
-  cursor: not-allowed;
+  font-size: 0.7rem;
 }

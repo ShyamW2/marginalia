@@ -1,0 +1,152 @@
+/*
+ * M19.7's shared control kit. Every visual property here reads a
+ * `--control-*` token (registers.css) or an existing `--color-*` token
+ * (theme.css) — nothing is hardcoded, so the same markup renders correctly
+ * under either register and either theme (DESIGN.md "The control system").
+ */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border: var(--control-border-width) solid var(--control-border-color);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
+  color: var(--control-text);
+  font-family: var(--control-font);
+  font-weight: var(--control-font-weight);
+  cursor: pointer;
+  box-shadow: var(--control-shadow-rest);
+  transition:
+    transform var(--duration-standard) var(--ease-standard),
+    box-shadow var(--duration-standard) var(--ease-standard),
+    background-color var(--duration-standard) var(--ease-standard),
+    border-color var(--duration-standard) var(--ease-standard),
+    opacity var(--duration-standard) var(--ease-standard);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--control-bg-hover);
+  box-shadow: var(--control-shadow-hover);
+  transform: var(--control-hover-transform);
+}
+
+.button:active:not(:disabled) {
+  background: var(--control-bg-pressed);
+  box-shadow: var(--control-shadow-pressed);
+  transform: var(--control-pressed-transform);
+}
+
+.button:disabled {
+  cursor: default;
+  opacity: 0.45;
+  box-shadow: none;
+  transform: none;
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--control-shadow-rest), var(--control-focus-ring);
+}
+
+.button:active:not(:disabled):focus-visible {
+  box-shadow: var(--control-shadow-pressed), var(--control-focus-ring);
+}
+
+/* Sizes — md meets the 40px minimum hit-area bar (M11); sm is for dense
+   toggle groups (e.g. the reader's context ladder) where md would crowd. */
+.md {
+  min-height: 40px;
+  padding: 0 0.9rem;
+  font-size: 0.9rem;
+}
+
+.sm {
+  min-height: 32px;
+  padding: 0 0.65rem;
+  font-size: 0.8rem;
+}
+
+/* Icon-only: square, not pill-padded — IconButton always sets this. */
+.iconOnly.md {
+  width: 40px;
+  padding: 0;
+}
+
+.iconOnly.sm {
+  width: 32px;
+  padding: 0;
+}
+
+.iconOnly {
+  border-radius: var(--control-radius-icon);
+}
+
+/* Variants — the only place colour enters, and always via an existing
+   theme.css token, never a literal. */
+.solid {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border-color: transparent;
+}
+
+.solid:hover:not(:disabled) {
+  background: var(--color-accent);
+  filter: brightness(1.08);
+}
+
+.solid:active:not(:disabled) {
+  background: var(--color-accent);
+  filter: brightness(0.96);
+}
+
+.outline {
+  background: transparent;
+}
+
+.ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.ghost:hover:not(:disabled) {
+  box-shadow: none;
+}
+
+.danger {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+  background: transparent;
+}
+
+.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+
+/* Pressed/active (toggle buttons — theme picker, kind filter, mode switch):
+   a persistent state, distinct from the momentary :active pseudo-class
+   above. */
+.pressed {
+  background: var(--control-bg-pressed);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.pressed.solid {
+  filter: brightness(0.92);
+}
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

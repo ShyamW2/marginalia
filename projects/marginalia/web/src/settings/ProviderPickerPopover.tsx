@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { ProviderRole } from "@marginalia/shared";
 import { ProviderPicker } from "./ProviderPicker.js";
+import { IconButton } from "../controls/IconButton.js";
 import styles from "./ProviderPickerPopover.module.css";
 
 interface ProviderPickerPopoverProps {
@@ -46,19 +47,22 @@ export function ProviderPickerPopover({ role, label, onNavigateToSettings }: Pro
       }}
       onMouseLeave={scheduleClose}
     >
-      <button
-        type="button"
+      <IconButton
+        variant="outline"
+        size="sm"
         className={styles.trigger}
         aria-haspopup="true"
         aria-expanded={open}
-        aria-label={label}
+        pressed={open}
+        label={label}
         onClick={() => setOpen((prev) => !prev)}
-      >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.3" />
-          <path d="M8 5.5v3l2 1.2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
-        </svg>
-      </button>
+        icon={
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.5" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M8 5.5v3l2 1.2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+        }
+      />
       <AnimatePresence>
         {open && (
           <motion.div

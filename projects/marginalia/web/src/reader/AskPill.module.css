@@ -54,20 +54,10 @@
   background: var(--kind-slate);
 }
 
+/* Sizing/colour/focus all come from Button's own solid variant now (M19.7) —
+   only the pill's own spacing is left to override. */
 .askButton {
-  background: var(--color-accent);
-  color: var(--color-accent-text);
-  border: none;
-  border-radius: 999px;
-  padding: 0.3rem 0.75rem;
-  font-family: var(--font-sans);
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
   margin-left: 0.15rem;
-}
-
-.askButton:focus-visible {
-  outline: 2px solid var(--color-text);
-  outline-offset: 2px;
+  min-height: 0;
+  padding: 0.3rem 0.75rem;
 }

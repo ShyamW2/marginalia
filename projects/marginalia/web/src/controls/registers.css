@@ -1,0 +1,72 @@
+/*
+ * M19.7 "one control system, two registers" (DESIGN.md "The control
+ * system"; decisions.md 2026-07-30 "one control system, two registers").
+ *
+ * A register is a class-scoped layer of custom properties on top of the
+ * paper/ink axis theme.css already owns — the same mechanism the Scan
+ * already uses to go dark-native (ScanPage.module.css's `.page`), not a
+ * parallel theme system. Registers never set colour: every `--control-*`
+ * token here is shape, weight, and motion (radius, border, shadow, font,
+ * press feel) — colour keeps coming from theme.css's `--color-*` tokens, so
+ * a register stays correct under both Paper and Ink without duplicating
+ * anything.
+ *
+ * Two registers, split by material, not by room (settled decision 12):
+ * `.register-paper` — Desk, Book, Digest, Settings; warm, tactile, soft
+ * drop shadows, gentle 3D. `.register-glass` — the Scan; CRT instrument,
+ * phosphor stroke, mono readouts, no shadow (a screen doesn't cast one).
+ * `.register-quiet` (paper only) is the reader's own dial on the paper
+ * register — flatter, lower-contrast chrome, per DESIGN.md's "the reader
+ * earns its analogue feel by being still." Never a third register.
+ */
+
+.register-paper {
+  --control-bg: var(--color-bg-raised);
+  --control-bg-hover: var(--color-highlight);
+  --control-bg-pressed: var(--color-highlight-active);
+  --control-text: var(--color-text);
+  --control-text-muted: var(--color-text-muted);
+  --control-border-width: 1px;
+  --control-border-color: var(--color-border);
+  --control-radius: 10px;
+  --control-radius-icon: 999px;
+  --control-font: var(--font-sans);
+  --control-font-weight: 500;
+  --control-shadow-rest: 0 1px 2px rgba(40, 30, 15, 0.08);
+  --control-shadow-hover: 0 3px 8px rgba(40, 30, 15, 0.14);
+  --control-shadow-pressed: inset 0 1px 3px rgba(40, 30, 15, 0.18);
+  --control-hover-transform: translateY(-1px);
+  --control-pressed-transform: translateY(0) scale(0.97);
+  --control-focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+/* The reader's own quiet dial on the paper register: lower shadow/border
+   contrast, no skeuomorphic lift — the chrome should recede, not perform. */
+.register-paper.register-quiet {
+  --control-shadow-rest: none;
+  --control-shadow-hover: 0 1px 3px rgba(40, 30, 15, 0.1);
+  --control-shadow-pressed: inset 0 1px 2px rgba(40, 30, 15, 0.14);
+  --control-border-color: transparent;
+  --control-hover-transform: none;
+}
+
+.register-glass {
+  --control-bg: var(--color-bg-raised);
+  --control-bg-hover: var(--color-highlight);
+  --control-bg-pressed: var(--color-highlight-active);
+  --control-text: var(--color-text);
+  --control-text-muted: var(--color-text-muted);
+  --control-border-width: 1px;
+  --control-border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
+  --control-radius: 3px;
+  --control-radius-icon: 3px;
+  --control-font: var(--font-mono, ui-monospace, "SF Mono", "Cascadia Code", monospace);
+  --control-font-weight: 600;
+  --control-shadow-rest: none;
+  --control-shadow-hover: 0 0 0 1px var(--color-accent),
+    0 0 12px color-mix(in srgb, var(--color-accent) 55%, transparent);
+  --control-shadow-pressed: inset 0 0 8px color-mix(in srgb, var(--color-accent) 45%, transparent);
+  --control-hover-transform: none;
+  --control-pressed-transform: none;
+  --control-focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}

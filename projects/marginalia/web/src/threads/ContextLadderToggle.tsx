@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ContextLadderDepth } from "@marginalia/shared";
+import { Button } from "../controls/Button.js";
 import styles from "./ContextLadderToggle.module.css";
 
 const DEPTHS: { value: ContextLadderDepth; label: string; title: string }[] = [
@@ -61,24 +62,31 @@ export function ContextLadderToggle({ resourceId }: { resourceId: string }) {
     <div className={styles.row}>
       <div className={styles.toggle} role="group" aria-label="Context depth">
         {DEPTHS.map((d) => (
-          <button
+          <Button
             key={d.value}
-            type="button"
-            className={depth === d.value ? `${styles.button} ${styles.buttonActive}` : styles.button}
-            aria-pressed={depth === d.value}
+            variant="ghost"
+            size="sm"
+            className={styles.button}
+            pressed={depth === d.value}
             title={d.title}
             onClick={() => handleSelect(d.value)}
           >
             {d.label}
-          </button>
+          </Button>
         ))}
       </div>
       {/* M23 "web search" — present but inert per decisions.md 2026-07-28
           (later): a second cloud dependency, off by default, never silently
           on, and deliberately out of scope until M23 builds the seam. */}
-      <button type="button" className={styles.webSearchPill} disabled title="Web search — coming in a later milestone">
+      <Button
+        variant="outline"
+        size="sm"
+        className={styles.webSearchPill}
+        disabled
+        title="Web search — coming in a later milestone"
+      >
         Web search
-      </button>
+      </Button>
     </div>
   );
 }

@@ -14,6 +14,8 @@ import { formatContextUsage } from "./contextUsage.js";
 import { ContextLadderToggle } from "./ContextLadderToggle.js";
 import { ImportanceStars } from "../highlights/ImportanceStars.js";
 import { TagEditor } from "../highlights/TagEditor.js";
+import { Button } from "../controls/Button.js";
+import { IconButton } from "../controls/IconButton.js";
 import {
   fetchHighlightTags,
   updateHighlightImportance,
@@ -629,9 +631,7 @@ export function ThreadPanel({
         >
           &ldquo;{highlightExact}&rdquo;
         </button>
-        <button type="button" className={styles.closeButton} aria-label="Collapse thread" onClick={onClose}>
-          ×
-        </button>
+        <IconButton icon="×" label="Collapse thread" size="sm" className={styles.closeButton} onClick={onClose} />
       </div>
 
       <div className={styles.metaRow}>
@@ -706,9 +706,9 @@ export function ThreadPanel({
             ) : (
               <>
                 {error}{" "}
-                <button type="button" className={styles.retryButton} onClick={handleRetry}>
+                <Button variant="danger" size="sm" className={styles.retryButton} onClick={handleRetry}>
                   Retry
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -730,18 +730,19 @@ export function ThreadPanel({
           <div className={styles.composerControls}>
             <ContextLadderToggle resourceId={resourceId} />
             {isStreaming ? (
-              <button type="button" className={styles.stopButton} onClick={handleStop}>
+              <Button variant="danger" size="sm" className={styles.stopButton} onClick={handleStop}>
                 Stop
-              </button>
+              </Button>
             ) : (
-              <button
-                type="button"
+              <Button
+                variant="solid"
+                size="sm"
                 className={styles.sendButton}
                 disabled={!draft.trim()}
                 onClick={() => submit(draft)}
               >
                 {messages.length === 0 ? "Ask" : "Send"}
-              </button>
+              </Button>
             )}
           </div>
         </div>

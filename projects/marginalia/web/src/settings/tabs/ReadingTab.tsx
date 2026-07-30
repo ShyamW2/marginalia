@@ -1,4 +1,5 @@
 import type { PageNumberMode, ReaderMargin, Settings, SpreadMode } from "@marginalia/shared";
+import { Button } from "../../controls/Button.js";
 import styles from "../SettingsPage.module.css";
 
 interface ReadingTabProps {
@@ -20,19 +21,16 @@ export function ReadingTab({ form, update }: ReadingTabProps) {
               { value: "generous", label: "Generous" },
             ] satisfies { value: ReaderMargin; label: string }[]
           ).map((option) => (
-            <button
+            <Button
               key={option.value}
-              type="button"
-              className={
-                form.readerMargin === option.value
-                  ? `${styles.providerButton} ${styles.providerButtonActive}`
-                  : styles.providerButton
-              }
-              aria-pressed={form.readerMargin === option.value}
+              variant="outline"
+              size="sm"
+              className={styles.providerButton}
+              pressed={form.readerMargin === option.value}
               onClick={() => update("readerMargin", option.value)}
             >
               {option.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -45,19 +43,16 @@ export function ReadingTab({ form, update }: ReadingTabProps) {
               { value: "auto", label: "Two-page spread (wide windows)" },
             ] satisfies { value: SpreadMode; label: string }[]
           ).map((option) => (
-            <button
+            <Button
               key={option.value}
-              type="button"
-              className={
-                form.spreadMode === option.value
-                  ? `${styles.providerButton} ${styles.providerButtonActive}`
-                  : styles.providerButton
-              }
-              aria-pressed={form.spreadMode === option.value}
+              variant="outline"
+              size="sm"
+              className={styles.providerButton}
+              pressed={form.spreadMode === option.value}
               onClick={() => update("spreadMode", option.value)}
             >
               {option.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -85,19 +80,16 @@ export function ReadingTab({ form, update }: ReadingTabProps) {
               { value: "book", label: "Book-wide" },
             ] satisfies { value: PageNumberMode; label: string }[]
           ).map((option) => (
-            <button
+            <Button
               key={option.value}
-              type="button"
-              className={
-                form.pageNumberMode === option.value
-                  ? `${styles.providerButton} ${styles.providerButtonActive}`
-                  : styles.providerButton
-              }
-              aria-pressed={form.pageNumberMode === option.value}
+              variant="outline"
+              size="sm"
+              className={styles.providerButton}
+              pressed={form.pageNumberMode === option.value}
               onClick={() => update("pageNumberMode", option.value)}
             >
               {option.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>

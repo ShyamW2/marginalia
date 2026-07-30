@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { DigestStatus, ThematicStatus } from "@marginalia/shared";
+import { Button } from "../controls/Button.js";
 import styles from "./DigestPage.module.css";
 
 function revealParams(revealed: Set<number>): URLSearchParams {
@@ -216,7 +217,7 @@ export function DigestPage() {
   const thematicByIndex = new Map((thematic?.chapters ?? []).map((c) => [c.spineIndex, c]));
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} register-paper`}>
       <div className={styles.headerRow}>
         <Link to={`/scan/${id}`} className={styles.backLink}>
           ← Scan
@@ -251,22 +252,22 @@ export function DigestPage() {
               placeholder="No brief set — thematic analysis will read the book on its own terms."
             />
             <div className={styles.briefFooter}>
-              <button
-                type="button"
-                className={styles.saveButton}
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={handleSaveBrief}
                 disabled={briefSaving || briefSaved}
               >
                 {briefSaving ? "Saving…" : briefSaved ? "Saved" : "Save brief"}
-              </button>
-              <button
-                type="button"
-                className={styles.saveButton}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={handleAnalyzeThemes}
                 disabled={thematicRunning || !status.chapters.some((c) => c.digested)}
               >
                 {thematicRunning ? "Analyzing…" : "Analyze themes for digested chapters"}
-              </button>
+              </Button>
             </div>
             {thematicError && <p className={styles.pausedNotice}>Thematic analysis failed: {thematicError}</p>}
           </section>
@@ -276,9 +277,9 @@ export function DigestPage() {
               <h2 className={styles.bookHeading}>The book so far</h2>
               <p className={styles.synopsis}>{(revealBook ? status.book.full : status.book.safe)?.synopsis}</p>
               {status.book.hasMoreToReveal && !revealBook && (
-                <button type="button" className={styles.revealButton} onClick={() => setRevealBook(true)}>
+                <Button variant="outline" size="sm" style={{ borderStyle: "dashed" }} onClick={() => setRevealBook(true)}>
                   Reveal full synopsis (includes chapters past your bookmark)
-                </button>
+                </Button>
               )}
             </section>
           )}
@@ -297,9 +298,9 @@ export function DigestPage() {
                   {!c.digested && <p className={styles.mutedNote}>Not yet digested.</p>}
 
                   {c.digested && !c.revealed && (
-                    <button type="button" className={styles.revealButton} onClick={() => reveal(c.spineIndex)}>
+                    <Button variant="outline" size="sm" style={{ borderStyle: "dashed" }} onClick={() => reveal(c.spineIndex)}>
                       Reveal (past your bookmark)
-                    </button>
+                    </Button>
                   )}
 
                   {c.digested && c.revealed && (

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { SettingsPage } from "./SettingsPage.js";
+import { IconButton } from "../controls/IconButton.js";
 import styles from "./SettingsModal.module.css";
 
 const FOCUSABLE_SELECTOR =
@@ -90,7 +91,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     >
       <motion.div
         ref={panelRef}
-        className={styles.panel}
+        className={`${styles.panel} register-paper`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
@@ -101,9 +102,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         transition={{ duration: reducedMotion ? 0.001 : 0.18, ease: [0.16, 1, 0.3, 1] }}
         onClick={(event) => event.stopPropagation()}
       >
-        <button type="button" className={styles.closeButton} aria-label="Close settings" onClick={onClose}>
-          ×
-        </button>
+        <IconButton icon="×" label="Close settings" className={styles.closeButton} onClick={onClose} />
         <SettingsPage titleId="settings-modal-title" />
       </motion.div>
     </motion.div>

@@ -4,6 +4,7 @@ import type { CursorStyleChoice, Settings } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
 import { LibraryGrid } from "../library/LibraryGrid.js";
 import { useLibrary } from "../library/useLibrary.js";
+import { Button } from "../controls/Button.js";
 import { DeskCanvas } from "./DeskCanvas.js";
 import styles from "./DeskPage.module.css";
 
@@ -66,8 +67,8 @@ export function DeskPage() {
     <div
       className={
         isDragging
-          ? `${styles.page} ${mode === "desk" ? styles.deskMode : ""} ${styles.dragging}`
-          : `${styles.page} ${mode === "desk" ? styles.deskMode : ""}`
+          ? `${styles.page} register-paper ${mode === "desk" ? styles.deskMode : ""} ${styles.dragging}`
+          : `${styles.page} register-paper ${mode === "desk" ? styles.deskMode : ""}`
       }
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -91,38 +92,28 @@ export function DeskPage() {
           <h1 className={styles.heading}>{mode === "desk" ? "The Desk" : "Library"}</h1>
           <div className={styles.headerActions}>
             <div className={styles.modeToggle} role="group" aria-label="View">
-              <button
-                type="button"
-                className={
-                  mode === "desk"
-                    ? `${styles.modeButton} ${styles.modeButtonActive}`
-                    : styles.modeButton
-                }
-                aria-pressed={mode === "desk"}
+              <Button
+                size="sm"
+                variant="ghost"
+                pressed={mode === "desk"}
+                className={styles.modeButton}
                 onClick={() => setMode("desk")}
               >
                 Desk
-              </button>
-              <button
-                type="button"
-                className={
-                  mode === "list"
-                    ? `${styles.modeButton} ${styles.modeButtonActive}`
-                    : styles.modeButton
-                }
-                aria-pressed={mode === "list"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                pressed={mode === "list"}
+                className={styles.modeButton}
                 onClick={() => setMode("list")}
               >
                 List
-              </button>
+              </Button>
             </div>
-            <button
-              type="button"
-              className={styles.importButton}
-              onClick={() => fileInputRef.current?.click()}
-            >
+            <Button variant="solid" onClick={() => fileInputRef.current?.click()}>
               Import book
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -139,13 +130,14 @@ export function DeskPage() {
               ) : (
                 <span className={styles.uploadError}>
                   {upload.error}
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     className={styles.dismissButton}
                     onClick={() => dismissUpload(upload.id)}
                   >
                     Dismiss
-                  </button>
+                  </Button>
                 </span>
               )}
             </li>
@@ -171,13 +163,13 @@ export function DeskPage() {
         <div className={styles.empty}>
           <div className={styles.emptyTitle}>Your library is empty</div>
           <p>Drag an .epub here, or use the file picker, to start reading.</p>
-          <button
-            type="button"
-            className={`${styles.importButton} ${styles.emptyImport}`}
+          <Button
+            variant="solid"
+            className={styles.emptyImport}
             onClick={() => fileInputRef.current?.click()}
           >
             Choose a file
-          </button>
+          </Button>
         </div>
       )}
 

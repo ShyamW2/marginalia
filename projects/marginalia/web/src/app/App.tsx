@@ -57,7 +57,7 @@ export function App() {
   }
 
   return (
-    <div className={styles.shell}>
+    <div className={`${styles.shell} register-paper`}>
       <header className={styles.header}>
         <NavLink to="/" className={styles.brand}>
           Marginalia

@@ -7,6 +7,8 @@ import { playAirlock } from "../app/airlockBus.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { formatPublishSummary, runPublish } from "../library/publish.js";
+import { Button, buttonClassName } from "../controls/Button.js";
+import { BrainIcon, MagnifierIcon } from "../controls/icons.js";
 import { ReaderView } from "./ReaderView.js";
 import styles from "./ReaderPage.module.css";
 
@@ -132,7 +134,7 @@ export function ReaderPage() {
   }
 
   return (
-    <div className={styles.readerPage} ref={appBoundsRef}>
+    <div className={`${styles.readerPage} register-paper register-quiet`} ref={appBoundsRef}>
       <div className={styles.titleBar}>
         {/* Doorway transition (DESIGN.md): shares a layoutId with the
             library card's cover — the same element the user just clicked,
@@ -147,20 +149,31 @@ export function ReaderPage() {
         {resource.author && (
           <span className={styles.author}>{resource.author}</span>
         )}
-        <Link to={`/digest/${resource.id}`} className={styles.digestLink}>
+        <Link
+          to={`/digest/${resource.id}`}
+          className={buttonClassName({ variant: "outline", size: "sm", className: styles.digestLink })}
+        >
+          <BrainIcon size={15} />
           Digest
         </Link>
-        <button type="button" className={styles.scanButton} onClick={handleOpenScan}>
+        <Button
+          variant="outline"
+          size="sm"
+          icon={<MagnifierIcon size={15} />}
+          className={styles.scanButton}
+          onClick={handleOpenScan}
+        >
           Scan
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           className={styles.publishButton}
           disabled={publishing}
           onClick={handlePublish}
         >
           {publishing ? "Publishing…" : "Publish"}
-        </button>
+        </Button>
       </div>
       <ReaderView
         resourceId={resource.id}

@@ -2904,14 +2904,26 @@ One kit, two registers, built once and adopted everywhere. **Read the 2026-07-30
 decisions entry's "One control system" and "The slider is a gesture that already exists"
 sections first** — the register split is by *material*, not by room, and is settled.
 
-- [ ] **Tokens and registers.** A `paper` and a `glass` register expressed as CSS custom
+- [x] **Tokens and registers.** A `paper` and a `glass` register expressed as CSS custom
       properties layered on the existing theme variables — the same mechanism room
       theming already uses (DESIGN.md "Theming: no parallel theme system"). Reader, Desk,
       Digest and Settings are paper (the reader taking the quietest variant); the Scan is
       glass.
       _Acceptance: switching a surface's register changes no markup; both themes
       (paper/ink) still work under both registers; no component hardcodes a colour._
-- [ ] **`Button` / `IconButton`, built once.** Icon-only, icon+label, and label-only
+      _(verified 2026-07-30: `web/src/controls/registers.css` — two class-scoped token
+      layers, `.register-paper`/`.register-glass` (+ `.register-quiet` modifier for the
+      reader), every token shape/motion only (radius, border, shadow, font, press-feel) —
+      colour keeps coming from theme.css's existing `--color-*` tokens, so no register
+      rule ever sets one. Applied via a plain string className on each room's own root
+      (App shell, Desk, Reader, Digest, Settings modal panel = paper; reader adds
+      `register-quiet`; Scan = glass, composed onto its pre-existing `.page` dark-native
+      override). Live-verified in a real headless-Chromium pass against the Alice
+      fixture: Settings' Reading tab pill toggles render `border-radius: 999px` (paper),
+      the Desk's mode toggle renders flat `border-radius: 0px` for its joined-segment
+      look, both themes (Paper/Ink) screenshotted with all converted controls legible in
+      both. `pnpm build` clean.)_
+- [x] **`Button` / `IconButton`, built once.** Icon-only, icon+label, and label-only
       variants; one set of sizes, hit areas, focus rings, disabled and pressed states.
       Skeuomorphic in the paper register (soft drop shadow, gentle 3D), instrument-styled
       in glass. Adopt it in the reader chrome, the desk, the digest and settings in the
@@ -2920,6 +2932,36 @@ sections first** — the register split is by *material*, not by room, and is se
       _Acceptance: grep shows no remaining bespoke `<button>` styling in the surfaces
       listed; every variant is keyboard-focusable with a visible ring in both themes;
       icon-only buttons all carry accessible names._
+      _(verified 2026-07-30: `web/src/controls/Button.tsx`/`IconButton.tsx` — one
+      `Button` (label-only, icon+label) and one `IconButton` (icon-only, `label` prop is
+      a required `aria-label`), `variant: solid|outline|ghost|danger`, `size: sm|md`
+      (md = 40px, the M11 hit-area bar), `pressed` for persistent toggle state, all
+      skinned purely off `--control-*`/`--color-*` custom properties so register/theme
+      both fall out of the surrounding CSS cascade with zero component-level branching.
+      `buttonClassName()` exported for the one non-`<button>` exception (`ReaderPage`'s
+      "Digest" `Link`, which navigates rather than acting). Adopted across every bespoke
+      button found in reader chrome (nav/chapter-nav/ask-pill/annotations-overview/
+      thread-panel/digest-chapter/annotations-toggle), the desk (mode toggle, import,
+      dismiss, notepad publish, book hover-strip actions), the digest (save/analyze/
+      reveal), and settings (binder Save, the reading/desk tabs' toggle groups, the full
+      provider picker incl. its compact popover trigger, the modal close button) —
+      collapsing two real literal duplicates found along the way (`LibraryGrid`'s and
+      `Notepad`'s byte-identical `.publishButton`, and `SettingsPage`'s/`ProviderPicker`'s
+      near-identical `.primaryButton`/`.secondaryButton`/`.providerButton` families).
+      `ReaderView`'s `%` progress control and the small domain-specific swatches (highlight
+      kind dots, importance stars, tag chips, margin-rail dots) are deliberately left
+      bespoke — the first becomes the `Slider` component's first consumer (this
+      milestone's next task), the rest are colour-coded semantic pickers rather than
+      generic chrome. Found and fixed one real bug live: an absolutely-positioned title-
+      bar button centered via `transform: translateY(-50%)` fought Button's own
+      `:hover { transform: var(--control-hover-transform) }`, wiping the centering on
+      hover — fixed by centering via `top:0;bottom:0;margin:auto` instead, which doesn't
+      touch `transform` at all. Live Playwright pass (Alice fixture, both themes):
+      Settings binder, Desk hover strip, and full reader chrome screenshotted with no
+      visual regression and zero console errors; a live `getComputedStyle` check
+      confirmed the Button-kit CSS chunk's rules reliably lose to each surface's own
+      narrow overrides (radius, colour) regardless of Vite's chunk split, not just in
+      theory. 269/269 tests, `pnpm build` clean.)_
 - [ ] **`Slider`, generalising the `%` scrub.** Drag with pointer lock (cursor hidden,
       floating live readout), **click-to-type** as a text field, advisory detents with
       feedback as you pass one, and `scale: "linear" | "log2"`. `ReaderView`'s `%` dial

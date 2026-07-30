@@ -5,6 +5,7 @@ import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia
 import { playAirlock } from "../app/airlockBus.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
+import { Button, buttonClassName } from "../controls/Button.js";
 import styles from "./BookObject.module.css";
 
 // Total accumulated |wheel delta| needed to "wind the crown" all the way in.
@@ -192,8 +193,9 @@ export function BookObject({
             </span>
           </div>
           <div className={styles.infoActions}>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               className={styles.infoAction}
               onClick={(e) => {
                 e.stopPropagation();
@@ -201,16 +203,17 @@ export function BookObject({
               }}
             >
               Open scan
-            </button>
+            </Button>
             <Link
               to={`/digest/${resource.id}`}
-              className={styles.infoAction}
+              className={buttonClassName({ variant: "ghost", size: "sm", className: styles.infoAction })}
               onClick={(e) => e.stopPropagation()}
             >
               Read digest
             </Link>
-            <button
-              type="button"
+            <Button
+              variant="ghost"
+              size="sm"
               className={styles.infoAction}
               disabled={publishing}
               onClick={(e) => {
@@ -219,7 +222,7 @@ export function BookObject({
               }}
             >
               {publishing ? "Publishing…" : "Publish"}
-            </button>
+            </Button>
           </div>
         </div>
       )}

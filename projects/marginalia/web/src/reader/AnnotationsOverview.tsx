@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import type { HighlightWithThread } from "@marginalia/shared";
 import { KIND_LABELS } from "./highlightKinds.js";
+import { IconButton } from "../controls/IconButton.js";
 import styles from "./AnnotationsOverview.module.css";
 
 function truncate(text: string, max: number): string {
@@ -51,9 +52,7 @@ export function AnnotationsOverview({
         <span className={styles.title}>
           Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
         </span>
-        <button type="button" className={styles.closeButton} aria-label="Close" onClick={onClose}>
-          ×
-        </button>
+        <IconButton icon="×" label="Close" size="sm" className={styles.closeButton} onClick={onClose} />
       </div>
 
       {unanchoredCount > 0 && (
@@ -99,15 +98,13 @@ export function AnnotationsOverview({
                     <span className={styles.status}>{status}</span>
                   </span>
                 </button>
-                <button
-                  type="button"
+                <IconButton
+                  icon="×"
+                  label="Delete highlight"
+                  size="sm"
                   className={styles.deleteButton}
-                  aria-label="Delete highlight"
-                  title="Delete highlight"
                   onClick={() => onDelete(highlight)}
-                >
-                  ×
-                </button>
+                />
               </li>
             );
           })}

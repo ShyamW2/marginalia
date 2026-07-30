@@ -1,4 +1,5 @@
 import type { CursorStyleChoice, Settings } from "@marginalia/shared";
+import { Button } from "../../controls/Button.js";
 import styles from "../SettingsPage.module.css";
 
 interface DeskTabProps {
@@ -18,19 +19,16 @@ export function DeskTab({ form, update }: DeskTabProps) {
               { value: "system", label: "System" },
             ] satisfies { value: CursorStyleChoice; label: string }[]
           ).map((option) => (
-            <button
+            <Button
               key={option.value}
-              type="button"
-              className={
-                form.cursorStyle === option.value
-                  ? `${styles.providerButton} ${styles.providerButtonActive}`
-                  : styles.providerButton
-              }
-              aria-pressed={form.cursorStyle === option.value}
+              variant="outline"
+              size="sm"
+              className={styles.providerButton}
+              pressed={form.cursorStyle === option.value}
               onClick={() => update("cursorStyle", option.value)}
             >
               {option.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>

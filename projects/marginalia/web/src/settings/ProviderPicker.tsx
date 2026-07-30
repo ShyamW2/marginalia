@@ -15,6 +15,7 @@ import {
   updateProviderProfile,
 } from "./providerApi.js";
 import { emitProviderRolesSaved } from "./providerBus.js";
+import { Button } from "../controls/Button.js";
 import styles from "./ProviderPicker.module.css";
 
 const ROLE_COPY: Record<ProviderRole, { label: string; hint: string }> = {
@@ -94,19 +95,16 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
               { value: "openai-compatible", label: "OpenAI-compatible" },
             ] satisfies { value: LLMProviderId; label: string }[]
           ).map((option) => (
-            <button
+            <Button
               key={option.value}
-              type="button"
-              className={
-                draft.provider === option.value
-                  ? `${styles.toggleButton} ${styles.toggleButtonActive}`
-                  : styles.toggleButton
-              }
-              aria-pressed={draft.provider === option.value}
+              variant="outline"
+              size="sm"
+              className={styles.toggleButton}
+              pressed={draft.provider === option.value}
               onClick={() => set("provider", option.value)}
             >
               {option.label}
-            </button>
+            </Button>
           ))}
         </div>
       </div>
@@ -170,14 +168,15 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
             <label className={styles.label}>Base URL preset</label>
             <div className={styles.presetRow}>
               {BASE_URL_PRESETS.map((preset) => (
-                <button
+                <Button
                   key={preset.label}
-                  type="button"
+                  variant="outline"
+                  size="sm"
                   className={styles.presetButton}
                   onClick={() => set("openaiBaseUrl", preset.value)}
                 >
                   {preset.label}
-                </button>
+                </Button>
               ))}
             </div>
           </div>
@@ -347,9 +346,15 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
           ))}
         </select>
         {onNavigateToSettings && (
-          <button type="button" className={styles.compactLink} onClick={onNavigateToSettings}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={styles.compactLink}
+            style={{ color: "var(--color-accent)" }}
+            onClick={onNavigateToSettings}
+          >
             Settings →
-          </button>
+          </Button>
         )}
       </div>
     );
@@ -380,9 +385,9 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
             <option value={NEW_PROFILE_VALUE}>+ New profile…</option>
           </select>
           {assignment?.profile && !editing && (
-            <button type="button" className={styles.secondaryButton} onClick={openEditor}>
+            <Button variant="outline" size="sm" onClick={openEditor}>
               Edit
-            </button>
+            </Button>
           )}
         </div>
         {!assignment?.configured && !editing && (
@@ -397,30 +402,25 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
         <div className={styles.editor}>
           <ProviderFields draft={draft} onChange={setDraft} idPrefix={`${role}-${draftForProfileId.current}`} />
           <div className={styles.actions}>
-            <button
-              type="button"
-              className={styles.primaryButton}
-              onClick={handleSaveDraft}
-              disabled={saving}
-            >
+            <Button variant="solid" size="sm" onClick={handleSaveDraft} disabled={saving}>
               {saving ? "Saving…" : draftForProfileId.current === "new" ? "Create & use" : "Save"}
-            </button>
-            <button
-              type="button"
-              className={styles.secondaryButton}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleTest}
               disabled={testState.status === "testing"}
             >
               {testState.status === "testing" ? "Testing…" : "Test connection"}
-            </button>
+            </Button>
             {draftForProfileId.current !== "new" && (
-              <button type="button" className={styles.dangerButton} onClick={handleDelete}>
+              <Button variant="danger" size="sm" onClick={handleDelete}>
                 Delete profile
-              </button>
+              </Button>
             )}
-            <button type="button" className={styles.secondaryButton} onClick={() => setEditing(false)}>
+            <Button variant="outline" size="sm" onClick={() => setEditing(false)}>
               Cancel
-            </button>
+            </Button>
             {testState.status === "ok" && <span className={styles.statusSuccess}>Connected.</span>}
             {testState.status === "error" && (
               <span className={styles.statusError}>{testState.message}</span>

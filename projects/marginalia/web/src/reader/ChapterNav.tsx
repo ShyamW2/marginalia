@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { TocEntry } from "./toc.js";
 import { ChevronIcon } from "./ChevronIcon.js";
+import { IconButton } from "../controls/IconButton.js";
 import styles from "./ChapterNav.module.css";
 
 interface ChapterNavProps {
@@ -44,15 +45,13 @@ export function ChapterNav({
 
   return (
     <div className={styles.wrap}>
-      <button
-        type="button"
-        className={styles.arrowButton}
-        aria-label="Previous chapter"
+      <IconButton
+        icon={<ChevronIcon direction="left" size={14} />}
+        label="Previous chapter"
+        size="sm"
         disabled={!hasPrev}
         onClick={onPrev}
-      >
-        <ChevronIcon direction="left" size={14} />
-      </button>
+      />
       <button
         type="button"
         className={styles.label}
@@ -62,15 +61,13 @@ export function ChapterNav({
       >
         {currentChapter?.label || "Contents"}
       </button>
-      <button
-        type="button"
-        className={styles.arrowButton}
-        aria-label="Next chapter"
+      <IconButton
+        icon={<ChevronIcon direction="right" size={14} />}
+        label="Next chapter"
+        size="sm"
         disabled={!hasNext}
         onClick={onNext}
-      >
-        <ChevronIcon direction="right" size={14} />
-      </button>
+      />
       <AnimatePresence>
         {open && (
           <motion.div

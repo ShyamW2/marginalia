@@ -52,45 +52,14 @@
 /* M17 "digest this chapter" — plain, quiet, same visual weight as the
    annotations button, not a primary action. */
 .digestChapterButton {
-  background: none;
-  border: none;
-  color: var(--color-text-muted);
-  font-family: var(--font-sans);
-  font-size: 0.75rem;
-  cursor: pointer;
+  min-height: 0;
   padding: 0.15rem 0.3rem;
   white-space: nowrap;
 }
-.digestChapterButton:hover:not(:disabled) {
-  color: var(--color-text);
-}
-.digestChapterButton:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
 
 .annotationsButton {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  background: none;
-  border: none;
-  color: var(--color-text-muted);
-  font-family: var(--font-sans);
-  font-size: 0.8rem;
-  cursor: pointer;
+  min-height: 0;
   padding: 0.15rem 0.3rem;
-  border-radius: 6px;
-  transition: color var(--duration-standard) var(--ease-standard);
-}
-
-.annotationsButton:hover {
-  color: var(--color-text);
-}
-
-.annotationsButton:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
 }
 
 .focusIndicator {
@@ -325,38 +294,6 @@
   justify-content: space-between;
   width: 100%;
   max-width: var(--reader-max-width, 800px);
-}
-
-.navButton {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  color: var(--color-text-muted);
-  background: none;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background var(--duration-standard) var(--ease-standard),
-    border-color var(--duration-standard) var(--ease-standard),
-    color var(--duration-standard) var(--ease-standard);
-}
-
-.navButton:hover:not(:disabled) {
-  color: var(--color-text);
-  background: var(--color-bg-raised);
-  border-color: var(--color-border);
-}
-
-.navButton:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
-.navButton:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
 }
 
 /* M14 fullscreen reading mode (decisions.md 2026-07-27): shift+F hides the

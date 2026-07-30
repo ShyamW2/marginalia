@@ -271,7 +271,7 @@ export function ScanPage() {
 
   if (notFound) {
     return (
-      <div className={styles.page}>
+      <div className={`${styles.page} register-glass`}>
         <p>That book isn't in the library.</p>
         <button type="button" className={styles.backButton} onClick={() => navigate("/")}>
           Back to the desk
@@ -282,7 +282,7 @@ export function ScanPage() {
 
   if (!data) {
     return (
-      <div className={styles.page}>
+      <div className={`${styles.page} register-glass`}>
         <div className={styles.loading}>Loading scan…</div>
       </div>
     );
@@ -291,7 +291,7 @@ export function ScanPage() {
   const maxChapterLength = Math.max(0.0001, ...data.chapters.map((c) => c.lengthPercent));
 
   return (
-    <div className={styles.page}>
+    <div className={`${styles.page} register-glass`}>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>{data.resource.title}</h1>
