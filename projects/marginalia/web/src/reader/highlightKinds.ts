@@ -42,3 +42,22 @@ export function markStyleForKind(
     "mix-blend-mode": isDark ? "screen" : "multiply",
   };
 }
+
+/**
+ * The fill-opacity a hovered mark lifts to.
+ *
+ * M19.6 operator feedback round 4: hover used to scale the base wash by a
+ * fixed multiplier (0.22 -> 0.57 on paper), which reads as a third colour —
+ * paler than the `::selection` yellow you see while the passage is still
+ * freshly selected, and the operator asked for hover to match *that* presence.
+ * Full strength is what does it: the mark's own kind colour, undiluted, still
+ * blended (multiply on paper, screen on ink) so the glyphs stay as legible as
+ * they are at 0.22. Kind identity survives — honey hovers honey-coloured, not
+ * selection-yellow — which is the point of having kinds.
+ *
+ * Ink stops short of full: `screen` over a dark page *lightens*, so an
+ * undiluted wash there glares where multiply on paper merely deepens.
+ */
+export function hoverFillOpacity(colorScheme: "light" | "dark"): number {
+  return colorScheme === "dark" ? 0.6 : 0.95;
+}

@@ -3,6 +3,119 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-07-30 (latest) — M19.6 round 4: the real cause of the chapter-boundary skip, and three more operator-feedback fixes
+
+Picking up round 3's open blocker (NOTES.md: two live sweeps, zero reproductions) with
+four real, tested fixes — full detail and live-verification method in NOTES.md "M19.6 —
+round 4."
+
+- **The chapter-boundary page skip, real cause.** epub.js's `next()` compares
+  `container.scrollLeft + offsetWidth + layout.delta` against `scrollWidth` as an exact
+  equality on the second-to-last page of every section. The round-1 fix (pinning
+  `containerRef` to an integer width) closed off one source of sub-pixel error but not
+  the one that actually bites: `scrollLeft` itself drifts at any non-100% device-scale
+  factor or browser zoom, because Chrome snaps the stored offset to a physical pixel and
+  epub.js's own `scrollLeft += delta` accumulates that error every turn. Measured live
+  (Kafka on the Shore, 0.9 DSF): `scrollLeft` reads `1025.5555` instead of `1025`,
+  `+0.5555px` per turn, until the equality fails one page early. At DSF 1 the same run is
+  exact and nothing skips — which is exactly the operator's own "resolved when we resize
+  the tab to 100%." **Supersedes, does not contradict, the round-1 entry** (2026-07-30
+  earlier, "M19.6 operator verification": that fix's mechanism is still sound, it was
+  just treating a different symptom of the same class of bug). Fixed in
+  `web/src/reader/pageTurn.ts`: `next()`/`prev()` are taken over on the manager itself
+  (covers every caller — footer buttons, keys, turn zones, the dwell — at once) and
+  decide from a *rounded* spread index, scrolling to absolute multiples of `delta` so
+  nothing can accumulate.
+- **The book-wide page total/number moving when crossing a chapter.** Cause: the old
+  `computeBookPageInfo` re-derived its estimate ratio from *every* measured section on
+  every relocate, which moved the estimates for sections *behind* the reader too —
+  exactly the "52 → 54, then '52' recounts as 53" the operator reported. Fixed with
+  `bookPageMap` (`bookPages.ts`, rewritten): calibrate once from one real measurement,
+  then only ever borrow pages from not-yet-visited sections when a new measurement
+  disagrees with its estimate. Nothing already shown to the reader moves; the total only
+  moves when there is nothing left to borrow from, and it moves monotonically when it
+  does.
+- **The misaligned highlight overlay, cause found and fixed** (M19.6's own task closed
+  this only as "diagnosed, not confidently closed"). marks-pane SVG rects redraw only
+  from epub.js's `reframe()`, which fires only when a view's *expanded pixel width*
+  changes. A reflow that re-breaks lines without changing that width — a text-size,
+  margin, or pane-width change; a late web-font load; a section re-paginating a beat
+  after it first renders — leaves every overlay describing coordinates that no longer
+  match the text. Fixed by calling the marks-pane's own `pane.render()` directly
+  (`refreshHighlightOverlays` in `ReaderView.tsx`) after each of those triggers.
+- **Two more operator-feedback rounds, bundled in:** the hover wash now lifts to the
+  highlight's own kind colour at full strength (`hoverFillOpacity`) rather than a capped
+  multiplier of the base wash — closer to the native `::selection` presence the operator
+  compared it to, kind identity still intact since it's the kind colour, not a shared
+  yellow. The highlight-across-a-page-boundary dwell now also requires the cursor to be
+  *past the page's last word* (`pageTextEdge.ts`'s `cursorPastPageText`), not merely
+  inside the turn zone, so a normal mid-paragraph selection drag no longer trips a page
+  turn.
+
+The NOTES.md "M19.6 — the chapter-boundary page skip / book-count '+2' jump" blocker is
+resolved by this entry.
+
+## 2026-07-30 (last) — How this ships: the distribution ladder, and where it forks
+
+Design session on moving a project from localhost to something other people use. Nothing
+is scheduled by this entry; it settles the *shape* so a rung is chosen deliberately.
+Full document: `docs/SHIPPING.md` (repo-level — the ladder applies to every project under
+`projects/`).
+
+### The ladder forks; it is not one continuum
+
+Rungs 0–2 (localhost → public repo → desktop app) deliver **the product we have**. Rung 3
+(a public hosted website) does not: it removes the two things Marginalia is built on —
+the local Obsidian vault (settled decision 6 makes it a projection onto a *local
+directory*, which does not exist on a server) and the machine's own model access (the
+`claude-agent` provider authenticates as the operator's Claude subscription and would
+have to be compiled out of a hosted build, not merely hidden). It also swaps "my books on
+my disk" for "strangers' copyrighted books on my server". **Ruling: hosted Marginalia is
+a different product, not a deployment target of this codebase.** If it is ever wanted, it
+starts as a design session about that product — vault story, identity model, content
+policy decided before code moves.
+
+### Rung 2.5, the private deployment, is the rung that was missing
+
+Named separately because it is repeatedly mistaken for hosting: the same single-tenant
+app on one box, reachable from the operator's other devices over a private overlay
+network (Tailscale/WireGuard preferred over an authenticating reverse proxy). Still
+exactly one user, so none of rung 3's costs apply. It is simultaneously the gate on iPad
+drawing (2026-07-27, "Future arcs"), so it buys two parked items at once.
+
+⚠️ The landmine, recorded because it is the obvious wrong move: binding to `0.0.0.0` is
+not the fix. The API has no authentication and no CORS layer, and it can read the
+library, read *and write* the Obsidian vault path, and spend tokens. M6's loopback
+binding is load-bearing. Hence the standing rule: **exposing the server beyond loopback
+requires authentication in the same change, not a follow-up task.**
+
+### Rung 1's gate is legal and documentary, not technical
+
+Verified rather than assumed, this session: the 80-commit history has never contained
+`.env`, a SQLite file, or a key — the only key-shaped strings are `sk-ant-test`
+placeholders in `providers.test.ts` — and the only committed EPUBs are the two
+public-domain fixtures (though the specific *Metamorphosis* translation's status is
+unchecked). What is missing is a `LICENSE` (absent = all rights reserved, a decision made
+by default), a `README` that is a runbook rather than a pitch, and a third-party license
+audit. Recommendation on record: **MIT, and publish the process docs** (`CLAUDE.md`,
+`OPUS.md`, `decisions.md`) — they are the most interesting thing in the repo. Not decided.
+
+### Rung 2 is decided by the native module
+
+Electron over Tauri, because the server is Node with `better-sqlite3`: Tauri means either
+a Node sidecar (Electron's problems without its tooling) or a Rust rewrite of 24k lines
+of behaviour. ⚠️ `data/` must move to the OS per-user directory *before* packaging —
+`paths.ts` resolves it install-relative, which inside a signed bundle is read-only — and
+that move is a migration over the operator's own live library, not a rename. Keys move to
+the OS keychain in the same rung; plaintext in SQLite is defensible on your own disk and
+not in software handed to someone else.
+
+### Disagreement preserved
+
+No pushback was needed on the ask itself. The concern recorded against rung 3 is the
+one above: it converts a nearly-finished local product into an unfinished hosted one, and
+the evidence that anyone wants it is exactly what rungs 1, 2 and 2.5 exist to gather.
+
 ## 2026-07-30 (later) — M19.6 operator verification: the spread divisor bug, and book-wide pages by click not by character
 
 A manual verification pass of M19.6 by the operator, after the round above landed, found

@@ -41,7 +41,8 @@ import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
-import { markStyleForKind } from "./highlightKinds.js";
+import { hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
+import { cursorPastPageText } from "./pageTextEdge.js";
 import { capturePageSnapshot } from "./pageSnapshot.js";
 import { PageCurl } from "./PageCurl.js";
 import { DwellRing } from "./DwellRing.js";
@@ -55,11 +56,18 @@ import { ProgressPopover } from "./ProgressPopover.js";
 import { PageNumberDisplay } from "./PageNumberDisplay.js";
 import { ScrubDial, DIAL_PX_PER_PERCENT } from "./ScrubDial.js";
 import {
-  computeBookPageInfo,
-  getSpreadDivisor,
-  toSpreadAdjustedPage,
-  toSpreadAdjustedTotal,
+  buildBookPageMap,
+  lookupBookPage,
+  recordMeasuredPages,
+  type BookPageMap,
 } from "./bookPages.js";
+import {
+  chapterPageFromGeometry,
+  installTurnFix,
+  readTurnGeometry,
+  shownSectionIndex,
+  type PaginatedManager,
+} from "./pageTurn.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -83,18 +91,14 @@ const LOCATIONS_CHAR_STEP = 1600;
 const SELECTION_CONTEXT_MAX_LEN = 64;
 const HIGHLIGHT_MARK_CLASS = "marginalia-highlight";
 // M19.6 "hover emphasises without obscuring" (decisions.md 2026-07-30): the
-// bug was switching to mix-blend-mode: normal at a near-opaque fill, which
-// turns the wash into paint. The fix stays in the kind's own blend mode
-// (multiply on paper, screen on ink — markStyleForKind) and just scales its
-// existing fill-opacity up — "the same wash, more of it".
-// Raised again per operator feedback (2026-07-30 later): the first pass
-// (1.8x, capped 0.6) was judged still noticeably duller than the vivid,
-// fully-legible look of a live text selection (the native `::selection`
-// moment right before a highlight is even created) — pushed further while
-// staying in the same blend mode, verified against the same "text stays
-// comfortably readable" bar the original fix used.
-const HOVER_OPACITY_MULTIPLIER = 2.6;
-const HOVER_OPACITY_MAX = 0.85;
+// original bug was switching to mix-blend-mode: normal at a near-opaque fill,
+// which turns the wash into paint. Every pass since has stayed in the kind's
+// own blend mode (multiply on paper, screen on ink — markStyleForKind) and
+// only moved the fill-opacity: "the same wash, more of it". Two rounds of
+// scaling the base wash (1.8x, then 2.6x) were both still judged duller than
+// the live `::selection` moment right before a highlight is created, so the
+// target is now stated outright instead of derived from a multiplier — see
+// hoverFillOpacity in highlightKinds.ts.
 // Shared by click-to-turn and the M11 semicircular turn-zone hover/cursor —
 // the outer 30% of the visible page on either side.
 const TURN_ZONE_FRACTION = 0.3;
@@ -206,6 +210,46 @@ const READER_MARGIN_PX: Record<ReaderMargin, number> = {
   wide: 64, // 4rem
   generous: 96, // 6rem
 };
+
+/** epub.js ships no types for its view manager — see pageTurn.ts's own note. */
+function managerOf(rendition: Rendition | null): PaginatedManager | undefined {
+  return (rendition as unknown as { manager?: PaginatedManager } | null)?.manager;
+}
+
+/**
+ * Re-measures every highlight overlay against the text it is anchored to.
+ *
+ * M19.6 operator feedback round 4: the highlight rects are SVG in the *parent*
+ * document (marks-pane; NOTES.md M2/M3), positioned from
+ * `range.getClientRects()` at the moment the mark is drawn. marks-pane only
+ * ever redraws them from its own `Pane.render()`, and epub.js only calls that
+ * from `reframe()` — i.e. only when the view's expanded pixel size changes. So
+ * any reflow that re-breaks lines *without* changing the total expanded width
+ * leaves every overlay frozen at coordinates that no longer describe any text.
+ *
+ * Measured live, 2026-07-30 (Kafka on the Shore): nudging the iframe's body
+ * font-size, with the view's width unchanged at 2050px throughout, moved the
+ * " weigh" text from (370.55, 701.72) to (882.75, 0) while its rect stayed at
+ * (370.55, 701.72) — an overlay sitting on unrelated text one line below the
+ * passage, which is exactly what the operator photographed. A subsequent
+ * window resize did *not* repair it, because the expanded width still hadn't
+ * changed.
+ *
+ * Real triggers in this app, all of which now call this: the deferred
+ * `themes.fontSize()` once the settings fetch resolves, the gap/column-width
+ * recompute behind a margin or text-size change, and web fonts finishing
+ * loading after first paint.
+ */
+function refreshHighlightOverlays(rendition: Rendition | null): void {
+  const manager = managerOf(rendition);
+  if (!manager) return;
+  const views = manager.views as unknown as {
+    forEach?: (fn: (view: { pane?: { render(): void } }) => void) => void;
+  };
+  views.forEach?.((view) => {
+    view.pane?.render();
+  });
+}
 
 function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
   rendition.themes.register("app", {
@@ -429,6 +473,9 @@ export function ReaderView({
   // manually. Kept current via handleRelocated rather than reading
   // `rendition.currentLocation()` synchronously, which can be mid-flight.
   const currentCfiRef = useRef<string | null>(null);
+  // Same story, for the spine index — handleSectionRepaginated needs to know
+  // which section the reader is in without being a render dependency.
+  const currentSpineIndexRef = useRef<number | null>(null);
   const highlightsRef = useRef<HighlightWithThread[]>([]);
   const resolvedIdsRef = useRef<Set<string>>(new Set());
   // Tracks the CFI each highlight's mark was actually attached at, which can
@@ -566,11 +613,13 @@ export function ReaderView({
   // displayedPage does before epub.js reports its first location.
   const [bookPage, setBookPage] = useState<{ page: number; total: number } | null>(null);
   // Section-weight (lengthPercent from the Scan's own text-length data) and
-  // real, spread-adjusted page counts measured as sections are visited —
-  // see bookPages.ts. Refs, not state: read inside handleRelocated without
-  // needing to be a render dependency themselves.
+  // the page map built from it — see bookPages.ts. Refs, not state: read
+  // inside handleRelocated without needing to be a render dependency
+  // themselves. bookPageMapRef is null until the first relocate that has both
+  // weights and a measurable section; it is thrown away and rebuilt whenever
+  // the layout changes, since every page count in it is layout-specific.
   const sectionWeightRef = useRef<Map<number, number> | null>(null);
-  const sectionRealPagesRef = useRef<Map<number, number>>(new Map());
+  const bookPageMapRef = useRef<BookPageMap | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
@@ -868,7 +917,8 @@ export function ReaderView({
     setDisplayedPage(null);
     setBookPage(null);
     sectionWeightRef.current = null;
-    sectionRealPagesRef.current = new Map();
+    bookPageMapRef.current = null;
+    currentSpineIndexRef.current = null;
     setToc([]);
     setProgressPopoverOpen(false);
     setScrubPreviewPercent(null);
@@ -956,6 +1006,26 @@ export function ReaderView({
       gap: computeReaderGap(initialWidth, spreadMode, fontScaleRef.current),
     } as RenditionOptionsWithGap);
     renditionRef.current = rendition;
+
+    // M19.6 operator feedback round 4 (decisions.md 2026-07-30 later still):
+    // take over the "scroll one more page vs. advance the section" decision
+    // from epub.js, whose own comparison is an exact equality on the
+    // second-to-last page of every section and loses it to sub-pixel scroll
+    // rounding at any fractional browser zoom — the skipped last page.
+    // pageTurn.ts carries the measurements. Installed on the manager, so
+    // every caller (footer buttons, arrow keys, turn zones, the
+    // highlight-across-a-boundary dwell) is covered at once.
+    //
+    // Awaits `started`, not `renderTo`: epub.js builds the manager inside
+    // `Rendition#init`, which only runs once the book has finished opening, so
+    // `rendition.manager` is still undefined when renderTo returns (found the
+    // hard way — installing there is a silent no-op and the skip survives).
+    void rendition.started.then(() => {
+      if (cancelled) return;
+      installTurnFix(managerOf(rendition));
+      managerOf(rendition)?.on?.("resize", handleSectionRepaginated);
+    });
+
     applyTheme(rendition, themeVars);
     // M16 "reading text size": fontScaleRef is still 1 (default) here if the
     // settings fetch hasn't resolved yet — self-corrects moments later via
@@ -994,13 +1064,14 @@ export function ReaderView({
       manager.settings.gap = computeReaderGap(width, spreadMode, fontScaleRef.current);
       manager.updateLayout?.();
 
-      // M19.6 operator feedback: every already-visited section's real page
-      // count (bookPages.ts) was measured under the layout that's about to
-      // change (font size or margin) — stale the moment the gap changes.
-      // Cleared, not migrated: the debounced re-display below re-measures
-      // the current section within ~120ms, and every other section's real
-      // count gets replaced by a fresh estimate until it's revisited.
-      sectionRealPagesRef.current.clear();
+      // M19.6 operator feedback: every page count in the map (bookPages.ts)
+      // was measured under the layout that's about to change (font size or
+      // margin) — stale the moment the gap changes. Dropped, not migrated:
+      // the debounced re-display below re-measures the current section within
+      // ~120ms and rebuilds the map from it. The book total legitimately
+      // changes here; the operator changed the text size, and holding the old
+      // total would be the lie.
+      bookPageMapRef.current = null;
 
       // M16 bug fix: `updateLayout()` recomputes column geometry (confirmed
       // live via computed styles — gap/padding update correctly, instantly)
@@ -1013,7 +1084,14 @@ export function ReaderView({
       // on every intermediate tick.
       window.clearTimeout(redisplayTimer);
       redisplayTimer = window.setTimeout(() => {
-        if (currentCfiRef.current) void rendition.display(currentCfiRef.current);
+        // The new column width re-breaks lines; if the section still expands
+        // to the same pixel width, epub.js never re-renders the marks pane and
+        // every highlight overlay is left describing text that has moved. See
+        // refreshHighlightOverlays. After the re-display settles, not before.
+        const settled = currentCfiRef.current
+          ? rendition.display(currentCfiRef.current)
+          : Promise.resolve();
+        void settled.then(() => refreshHighlightOverlays(rendition));
       }, 120);
     }
     // Observes marginWrapperRef, not containerRef — containerRef's own box
@@ -1083,52 +1161,81 @@ export function ReaderView({
       }
     }
 
+    // M19.6 operator feedback round 4: the chapter page comes from the
+    // container's own geometry, rounded (pageTurn.ts), not from epub.js's
+    // `location.start.displayed`. epub.js derives that with
+    // `Math.floor(start / pageWidth)` where `start` is a difference of two
+    // getBoundingClientRect floats — zero tolerance at exactly the page
+    // boundaries it is asked about, so a negative sub-pixel error reports one
+    // page too few. Reading the geometry directly also drops the spread-divisor
+    // conversion entirely: `layout.delta` is already the width of one whole
+    // page view, spread or not.
+    //
+    // Returns whether it managed to publish a page-derived percentage, so the
+    // caller knows whether to fall back to the character-based one.
+    // Idempotent: called on every relocate, and again whenever a section
+    // re-paginates under us (see handleSectionRepaginated).
+    function publishPageNumbers(spineIndex: number): boolean {
+      const manager = managerOf(rendition);
+      if (!manager?.container) return false;
+      const chapter = chapterPageFromGeometry(readTurnGeometry(manager));
+      setDisplayedPage(chapter);
+
+      // Book-wide page count + percentage (bookPages.ts): built once from the
+      // section weights and then only refined in place, so neither the total
+      // nor a page number already shown moves as chapters are crossed.
+      const weights = sectionWeightRef.current;
+      if (!weights) return false;
+      const existing = bookPageMapRef.current;
+      bookPageMapRef.current = existing
+        ? recordMeasuredPages(existing, spineIndex, chapter.total)
+        : buildBookPageMap(weights, spineIndex, chapter.total);
+      const map = bookPageMapRef.current;
+      const info = map ? lookupBookPage(map, spineIndex, chapter.page) : null;
+      if (!info) return false;
+      setBookPage(info);
+      setProgressPercent(Math.round((info.page / info.total) * 100));
+      return true;
+    }
+
+    // A section can re-paginate a beat *after* it first renders — see
+    // reassertLanding in pageTurn.ts, which repairs the reader's *position*
+    // when that happens. This repairs the *numbers*: epub.js never re-reports
+    // the location for a re-pagination, so the footer was left describing a
+    // pagination that no longer existed ("page 7 of 7" of a section that had
+    // just become 6 pages long).
+    //
+    // Deliberately not keyed off currentSpineIndexRef: the resize fires
+    // *before* the relocate that would update it, so that guard rejected every
+    // real case (measured — the handler never once ran). The manager's own
+    // "which section am I showing" is the authoritative answer. On the next
+    // frame rather than inline, so it reads the geometry after every other
+    // listener on this event — reassertLanding's among them — has had its say.
+    function handleSectionRepaginated(section: unknown) {
+      const manager = managerOf(rendition);
+      const index = (section as { index?: number } | null | undefined)?.index;
+      if (!manager || typeof index !== "number") return;
+      if (index !== shownSectionIndex(manager)) return;
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        publishPageNumbers(index);
+        // A re-pagination re-breaks every line in the section, which is exactly
+        // when the highlight overlays go stale — and epub.js only re-renders
+        // the marks pane when the view's *pixel size* changes, which a
+        // re-pagination to the same expanded width does not do.
+        refreshHighlightOverlays(rendition);
+      });
+    }
+
     function handleRelocated(location: Location) {
       currentCfiRef.current = location.start.cfi;
+      currentSpineIndexRef.current = location.start.index;
       setAtStart(Boolean(location.atStart));
       setAtEnd(Boolean(location.atEnd));
       setCurrentSpineIndex(location.start.index);
       const pct = location.start.percentage;
 
-      // M19.6 operator feedback (decisions.md 2026-07-30 later): epub.js's
-      // own displayed.page/total are single-column indices — divide out the
-      // manager's real spread divisor so "one spread = one page" (see
-      // bookPages.ts). This is also what fixes the display reaching e.g.
-      // "page 7 of 8" one turn before the chapter actually ends — that was
-      // never a skipped page, just an un-adjusted odd column index against
-      // an always-even raw total.
-      const divisor = getSpreadDivisor(rendition);
-      const displayed = location.start.displayed;
-      let chapterPage: number | null = null;
-      let chapterTotal: number | null = null;
-      if (displayed && typeof displayed.page === "number" && typeof displayed.total === "number") {
-        chapterPage = toSpreadAdjustedPage(displayed.page, divisor);
-        chapterTotal = toSpreadAdjustedTotal(displayed.total, divisor);
-        setDisplayedPage({ page: chapterPage, total: chapterTotal });
-      }
-
-      // Book-wide page count + percentage, click-accurate (bookPages.ts) —
-      // replaces the character-location index the operator found jumped
-      // unevenly per turn. Falls back to the character-based percent below
-      // until the section-weight fetch resolves.
-      let usedPageBasedPercent = false;
-      if (chapterPage !== null && chapterTotal !== null) {
-        sectionRealPagesRef.current.set(location.start.index, chapterTotal);
-        const weights = sectionWeightRef.current;
-        if (weights) {
-          const info = computeBookPageInfo(
-            weights,
-            sectionRealPagesRef.current,
-            location.start.index,
-            chapterPage,
-          );
-          if (info) {
-            setBookPage(info);
-            setProgressPercent(Math.round((info.page / info.total) * 100));
-            usedPageBasedPercent = true;
-          }
-        }
-      }
+      const usedPageBasedPercent = publishPageNumbers(location.start.index);
       if (!usedPageBasedPercent && typeof pct === "number") {
         setProgressPercent(Math.round(pct * 100));
       }
@@ -1147,7 +1254,16 @@ export function ReaderView({
 
     function handleRendered(_section: unknown, view: unknown) {
       const contents = (view as ViewWithContents).contents;
-      if (contents) resolveHighlightsForSection(contents);
+      if (!contents) return;
+      resolveHighlightsForSection(contents);
+
+      // The section's fonts may still be loading at this point; when they
+      // land, the text re-breaks at the same expanded width and every overlay
+      // in it is silently left behind (see refreshHighlightOverlays). Awaiting
+      // the iframe document's own FontFaceSet is the one signal for that.
+      void contents.document.fonts?.ready.then(() => {
+        refreshHighlightOverlays(rendition);
+      });
     }
     rendition.on("rendered", handleRendered);
 
@@ -1310,15 +1426,16 @@ export function ReaderView({
         if (hit !== hoveredMarkElRef.current) {
           clearMarkHover();
           if (hit) {
-            // Scale the mark's own base wash up rather than replacing it —
-            // reads the group's real fill-opacity presentation attribute
-            // (markStyleForKind sets fill/fill-opacity/mix-blend-mode on the
-            // `.marginalia-highlight` group itself, not the child `<rect>`;
-            // 0.22 on paper, 0.34 on ink) rather than assuming a fixed
-            // starting point.
-            const baseOpacity = Number.parseFloat(hit.getAttribute("fill-opacity") ?? "0.22") || 0.22;
-            const boosted = Math.min(baseOpacity * HOVER_OPACITY_MULTIPLIER, HOVER_OPACITY_MAX);
-            hit.style.fillOpacity = String(boosted);
+            // Lift the mark to its kind colour at full strength — matching the
+            // presence of the `::selection` wash you see while a passage is
+            // still freshly selected, which is what the operator asked hover
+            // to look like. See hoverFillOpacity for why ink stops short.
+            // markStyleForKind puts fill/fill-opacity/mix-blend-mode on the
+            // `.marginalia-highlight` group itself, not the child `<rect>`, so
+            // this inline override on the group is what wins.
+            hit.style.fillOpacity = String(
+              hoverFillOpacity(themeVarsRef.current.colorScheme),
+            );
             hoveredMarkElRef.current = hit;
           }
         }
@@ -1330,9 +1447,26 @@ export function ReaderView({
       // whatever zone the cursor is in this tick — dwellZoneRef !== zone
       // covers both "just entered a zone" and "completeDwell just cleared
       // it after a turn, still holding at the edge" the same way.
+      // Operator feedback round 4: being *in* the turn zone is not enough. A
+      // selection dragged down the middle of a paragraph passes through the
+      // zone long before it has taken everything on the page, and the turn
+      // that followed read as a stray swipe. The gesture now also requires the
+      // cursor to be past the end of the page's text — further right than its
+      // last word, or below its last line (see cursorPastPageText).
       if (isPointerDownInContentRef.current && zone && !focusModeRef.current) {
         const hasActiveSelection = Boolean(contents.window.getSelection()?.toString());
-        if (hasActiveSelection) {
+        const pastEdge = cursorPastPageText(
+          zone,
+          contents.document,
+          { x: event.clientX, y: event.clientY },
+          {
+            left: containerRect.left - iframeRect.left,
+            right: containerRect.right - iframeRect.left,
+            top: Math.max(0, containerRect.top - iframeRect.top),
+            bottom: Math.min(iframeRect.height, containerRect.bottom - iframeRect.top),
+          },
+        );
+        if (hasActiveSelection && pastEdge) {
           if (dwellZoneRef.current !== zone) {
             startDwell(zone, viewportX, viewportY);
           } else {
@@ -1595,6 +1729,22 @@ export function ReaderView({
     renditionRef.current.themes.fontSize(`${Math.round(readerFontScale * 100)}%`);
     applyGapForWidthRef.current();
   }, [readerFontScale]);
+
+  // M19.6 operator feedback round 4: `themes.fontSize()` above patches
+  // already-rendered content in place, which re-breaks its lines. When that
+  // leaves the section's expanded width unchanged — which is most of the time,
+  // since a page either fits or it doesn't — epub.js never re-renders the
+  // marks pane, so the highlight overlays keep the coordinates they were drawn
+  // at. This includes the very first fontSize call, applied a moment after
+  // mount once the settings fetch resolves (see the mount-race note above),
+  // which is why the operator could see displaced overlays on a book they had
+  // not touched the text size of at all. rAF: after the reflow, not during it.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      refreshHighlightOverlays(renditionRef.current);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [readerFontScale, readerMargin, readerPaneWidth, spreadMode]);
 
   // M7's dip-and-recover slide — kept as the fallback under reduced motion,
   // when a curl's snapshot capture fails, and (via lowFpsRef below) once the

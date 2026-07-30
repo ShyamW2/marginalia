@@ -2525,6 +2525,14 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       `computeReaderGap` call) from the picture. 153/153 server + 71/71 web tests,
       build clean. Text-size sweep and a from-scratch human read-through are still
       worth doing if the skip resurfaces for the operator.)_
+      _(round 4, 2026-07-30 later still: the operator's repeated report of this same
+      symptom (below, "operator follow-up report, round 3") turned out to have a real,
+      different cause — sub-pixel `scrollLeft` drift at a non-100% device-scale
+      factor/browser zoom, which this fix's integer container-width pin never touched.
+      Fixed in `web/src/reader/pageTurn.ts`; full mechanism, live measurement, and
+      verification in NOTES.md "M19.6 — round 4" and decisions.md's matching entry. This
+      earlier fix's own mechanism is unchanged and still correct, just not the whole
+      story.)_
 - [x] **Diagnose, then fix, the misaligned highlight overlay.** ⚠️ **The cause is not
       established. Run the diagnostic in the 2026-07-30 decisions entry before writing a
       fix** — `rendition.getContents()[0].range(cfi).toString()` returning the intended
@@ -2550,6 +2558,15 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       and other books/sections weren't reachable from this environment. Margin was
       tested live through the real Settings UI (Normal → Wide → Normal) and restored
       to the operator's actual setting afterward, confirmed via the API.)_
+      _(round 4, 2026-07-30 later still: fixed. The diagnostic above was correct as far
+      as it went (anchors resolve fine), but never produced a stale rect to catch,
+      because it never varied the one thing that leaves one stale: marks-pane only
+      redraws from epub.js's reframe(), which only fires on an expanded-width pixel
+      change. Real trigger found: a reflow that re-breaks lines without changing that
+      width (a deferred text-size/margin/pane-width apply, a late web-font load, a
+      section re-paginating a beat after first render). Fixed with
+      refreshHighlightOverlays (ReaderView.tsx), which calls each view's pane.render()
+      directly. Full mechanism and live measurement in NOTES.md "M19.6 -- round 4.")_
 - [x] **Hover emphasises without obscuring.** The hover boost currently switches to
       `mix-blend-mode: normal` at `fill-opacity: 0.85`, which is why the ink underneath
       disappears. Stay in the kind's blend mode (multiply on paper, screen on ink) and
@@ -2569,6 +2586,13 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       per-kind delta wasn't needed — reading the real base and scaling it covers all
       four kinds and both themes with one formula. 153/153 server + 71/71 web tests,
       build clean.)_
+      _(round 4, 2026-07-30 later still: raised again. Both this fix (1.8x, capped 0.6)
+      and a mid-milestone bump (2.6x, capped 0.85) were each in turn judged still duller
+      than the vivid ::selection look the operator was actually comparing this to the
+      whole time -- stated outright this round instead of derived as a multiplier:
+      hoverFillOpacity (highlightKinds.ts) lifts a hovered mark to its own kind colour at
+      full strength on paper, 0.6 on ink (screen blend mode lightens, so ink stops short
+      of full to avoid glare). See NOTES.md "M19.6 -- round 4.")_
 - [x] **Clicking a highlight never turns the page.** `handleContentClick` consults only
       `a[href]` and live selections. Reuse the geometric mark hit-test that the mousemove
       handler already runs (marks are `pointer-events: none` by deliberate design — see
@@ -2738,6 +2762,12 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       pinned width still an exact integer, so the last-page-skip fix's own guarantee is
       undisturbed. 155/155 server + 76/76 web tests (5 new: `pageNumber.test.ts`,
       migration 019 coverage in `db.test.ts`), build clean.)_
+      _(round 4, 2026-07-30 later still: the book-wide number/total jumping when crossing
+      a chapter (round 3's "+2" report) was a bug in this task's own count math -- the
+      old ratio was re-derived from every measured section on every relocate, moving
+      estimates behind the reader too. Rewritten as bookPageMap (bookPages.ts): calibrate
+      once, then only ever borrow pages from not-yet-visited estimates -- nothing already
+      shown moves. See NOTES.md "M19.6 -- round 4.")_
 - [x] **Highlight across a page boundary.** Holding a selection drag at the page edge
       shows a filling ring at the cursor and, after ~2s, turns the page with the selection
       continuing.
@@ -2780,6 +2810,12 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       a second run at the true last page of a section confirmed the refusal leaves the spine
       index and the original selection byte-identical. 154/154 server + 71/71 web tests,
       build clean.)_
+      _(round 4, 2026-07-30 later still: being inside the turn zone at all wasn't a tight
+      enough condition -- a selection dragged down the middle of a paragraph would cross
+      the zone and trigger a turn that read as a stray swipe. cursorPastPageText
+      (pageTextEdge.ts) now also requires the cursor to be past the page's last word
+      (via caretRangeFromPoint/caretPositionFromPoint), not merely inside the zone. See
+      NOTES.md "M19.6 -- round 4.")_
 - [x] **The reading pane is resizable.** A drag handle on the pane edge, persisted.
       ⚠️ This is a fourth knob on a geometry that already has three — `readerMargin`,
       `--reader-max-width`, and the spread gutter, which `computeReaderGap` deliberately
@@ -2852,6 +2888,15 @@ depends on M19.7, so it ships first and the app gets better before it gets prett
       and tested, but this specific symptom needs the operator's exact repro conditions
       (book, spread mode, window width, display zoom/scale) to make further progress safely.
       M19.6 is otherwise whole.)_
+      _(round 4, 2026-07-30 later still: resolved. The operator's next report supplied the
+      missing variable -- a real desktop browser at 90% zoom, which neither diagnostic
+      sweep above (both effectively 100%/DSF 1) had a lever for. Real cause and fix in
+      pageTurn.ts; three further operator-feedback fixes (book-wide count stability,
+      highlight-overlay refresh, hover strength, dwell edge-detection) bundled in the same
+      pass. Live-verified via Playwright at deviceScaleFactor 0.9/1.25 against the Alice
+      fixture -- strictly +1-per-turn page numbers, zero anomalies, zero console errors.
+      269/269 tests, build clean. Full detail: NOTES.md "M19.6 -- round 4." M19.6 now has
+      no open blockers.)_
 
 ### M19.7 — The control system
 

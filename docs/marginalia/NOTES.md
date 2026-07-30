@@ -477,16 +477,14 @@ missing feature.
   -L` position). The milestone's own Verify step asks for an
   operator-position, over-the-tunnel comparison against the baseline table
   — still genuinely open.
-- **M19.6 — the chapter-boundary page skip / book-count "+2" jump the
-  operator reports is still open, unreproduced in this environment.** Two
-  separate live-diagnostic sessions (see "M19.6 — operator manual
-  verification, round 2" and "M19.6 — operator follow-up report, round 3"
-  below) swept both fixture books, the operator's own real book, both
-  spread modes, a wide range of viewport widths, real CSS zoom/DPI
-  emulation, non-default font scale/margin, keyboard/mouse/rapid-fire
-  input, and found zero anomalies each time. Needs the operator's exact
-  repro conditions (book, spread mode, window width, display zoom/scale)
-  next time it happens — see round 3's own closing paragraph.
+- ~~**M19.6 — the chapter-boundary page skip / book-count "+2" jump the
+  operator reports is still open, unreproduced in this environment.**~~
+  **Resolved — see "M19.6 — round 4" below.** The real cause was sub-pixel
+  `scrollLeft` drift at a non-100% device-scale factor/browser zoom, which
+  neither round 2's nor round 3's headless-Chromium sweep (both effectively
+  DSF 1) could ever have produced — consistent with both rounds finding zero
+  anomalies despite genuinely adversarial coverage. Fixed in
+  `web/src/reader/pageTurn.ts`.
 
 ## Session handoff — 2026-07-13 (M1 in progress, nothing committed)
 
@@ -3046,3 +3044,160 @@ scale or zoom active. Absent that, no further code change is safe to make here w
 either reproducing it or getting a report specific enough to reason about deterministically
 — speculatively touching the geometry code again risks trading a real, working fix for an
 unverified one.
+
+## M19.6 — round 4: the real cause of the chapter-boundary skip, and three more
+operator-feedback fixes — 2026-07-30 (later still)
+
+Round 3 above closed with "the fastest path forward is asking the operator for the exact
+conditions." The operator's next report supplied exactly that: reading in a real desktop
+browser at 90% zoom (not the 100%, integer-viewport-width conditions either headless
+sweep tested), plus three further UI complaints from continued reading — the hover wash
+still didn't read as strongly as the operator wanted, the boundary-crossing highlight
+dwell fired on ordinary mid-paragraph selection drags, and highlight overlays were
+visibly drifting off their text on a book whose text size had never been touched.
+
+**The page skip.** Read `epubjs@0.3.93`'s `DefaultViewManager.next()` again with "90%
+zoom" specifically in mind rather than re-running the existing sweep: its decision —
+`container.scrollLeft + container.offsetWidth + layout.delta <= container.scrollWidth` →
+scroll, else advance the section — is an *exact equality* on the second-to-last page of
+every section (`(k+1)*delta` against `n*delta`). `offsetWidth` is integer per the CSSOM
+spec, but `scrollLeft` is not: at a fractional device-scale factor, Chrome snaps the
+*stored* scroll position to the nearest physical pixel, and epub.js's own
+`scrollLeft += delta` bookkeeping accumulates that snap error on every turn rather than
+resetting it. Confirmed by direct measurement, not just reasoning — a small instrumented
+build (`Object.defineProperty` around the manager's `next`) reading real values while
+paging through Kafka on the Shore at `deviceScaleFactor: 0.9` in Playwright (the round-2
+and round-3 sweeps never varied this, since a Playwright viewport width is not the same
+knob):
+
+    spread 2 of 0..3  scrollLeft = 1025.5555555555555  expected 1025  delta = 1025
+    left = scrollLeft + offsetWidth + delta = 4101.111  scrollWidth = 4100  -> ADVANCE
+
+— the last page of the section is never rendered. At `deviceScaleFactor: 1` the identical
+run reads `left = 4100.000 vs scrollWidth = 4100` and scrolls correctly. This is why round
+1's fix (pinning `containerRef.current` to an integer pixel width) didn't close the
+report: it removes a *different* sub-pixel source (the container's own measured width)
+that happens to share a symptom, but the one that actually fires under real browser zoom
+is `scrollLeft`, which that fix never touched. It also explains why two headless-Chromium
+sweeps at DSF 1 (or CSS-zoom emulation, which does not affect `scrollLeft` snapping the
+same way real DSF does) found nothing: they were testing the one condition under which
+the bug cannot occur.
+
+Fix: `web/src/reader/pageTurn.ts` (new, 12 unit tests — `decideTurn`, `spreadIndex`,
+`spreadCount`, `chapterPageFromGeometry`, all pure functions of a `TurnGeometry`
+snapshot). `installTurnFix` replaces `manager.next`/`manager.prev` with versions that
+round `scrollLeft` to the nearest spread index first (tolerant of any sub-half-page
+error) and scroll to *absolute* multiples of `delta` rather than relative offsets, so
+nothing can accumulate turn over turn. Installed once per rendition, on the manager
+directly, so every call site — footer buttons, `←`/`→`, the semicircular turn zones, the
+highlight-across-a-boundary dwell — is covered without each needing to know about it.
+The section-advance path re-expresses epub.js's own three-line `clear → updateLayout →
+append/prepend → show` rather than delegating back to the original `next()`, because
+delegating would re-run the exact comparison this fix exists to distrust: on a
+*negative* sub-pixel error that comparison says "scroll" where the rounded decision says
+"advance," and the browser would silently clamp the scroll to where it already is — the
+turn would visibly do nothing. Verified against the installed epubjs source that this is
+safe for every case actually in play here (reflowable, horizontal, ltr, paginated).
+
+A second, related bug found while building this: a section doesn't always keep the
+pagination it's first measured with — measured live (Kafka on the Shore, section 20) a
+freshly rendered view expanded to 7 page views, then re-framed to 6 about 15ms later once
+its web fonts finished loading and the text re-broke. epub.js's `reframe()` sets the
+iframe's width to 0 on the way through, which collapses the container's scroll range and
+the browser clamps `scrollLeft` to 0 — a turn that had just landed on "the last page of
+the previous chapter" is silently dumped back at the section's start, which is the
+book-count "+2" jump seen from the *other* end. Fixed with `reassertLanding`: a
+section-crossing turn states its landing intent once and re-states it if the section
+re-paginates within a 600ms window, self-removing its listener either way.
+
+**The book-wide total/number moving on a chapter crossing.** The prior `bookPages.ts`
+recomputed its `pagesPerWeight` calibration ratio from *every* measured section on every
+relocate — so a fresh measurement anywhere moved the estimate for *every* other section,
+including ones behind the reader that had already been shown a number. Reproduced live at
+DSF 1 (so with no page-skip bug in play at all) reading forward through Kafka on the
+Shore:
+
+    turn 11  Page 34 of 246
+    turn 12  Page 36 of 255     PAGE_JUMP +2   TOTAL_MOVED +9
+
+matching the operator's own "52 → 54, then when I go back to '52' it's counted as 53" and
+"the total page count changes when entering a new chapter" — one cause behind both
+complaints. Rewritten as `bookPageMap` (`bookPages.ts`): calibrate once from one real
+measurement (`buildBookPageMap`), then `recordMeasuredPages` only ever *borrows* pages
+from not-yet-visited sections' estimates when a fresh measurement disagrees — nothing the
+reader has already been shown moves. When there's nothing left to borrow from (typically
+near the end of the book), the total moves by the leftover rather than silently lying,
+and it moves monotonically when it does. `bookPages.test.ts` rewritten alongside it (14
+tests) to cover the borrow/repay arithmetic directly, not just the old ratio-recompute
+shape.
+
+**The misaligned highlight overlay — the M19.6 diagnostic task that closed "not
+confidently closed."** Round 1's diagnostic (rects match a live-resolved range exactly,
+anchor is fine) still holds; what round 1 didn't have was a trigger that reliably left a
+*stale* rect on screen for the operator to photograph. Found here: marks-pane's SVG rects
+are drawn once from `range.getClientRects()` and only ever redrawn from epub.js's own
+`Pane.render()`, called only inside `IframeView.reframe()` — which fires only when the
+view's *expanded pixel width* changes. A reflow that re-breaks lines without changing
+that width leaves every overlay describing coordinates that no longer contain the text
+they're meant to mark. Measured live (Kafka on the Shore): nudging the iframe's body
+font-size with the view's expanded width unchanged throughout moved the " weigh" text
+from `(370.55, 701.72)` to `(882.75, 0)` while its overlay rect stayed at
+`(370.55, 701.72)` — sitting on unrelated text one line below the real passage, exactly
+what the operator's screenshot showed. A subsequent window resize did not repair it,
+because the expanded width still hadn't changed either. Fixed with
+`refreshHighlightOverlays` (`ReaderView.tsx`): walks the rendition's live views and calls
+each one's `pane.render()` directly, sidestepping the `reframe()` gate entirely. Wired to
+every real trigger found in this app: the deferred initial `themes.fontSize()` call once
+the settings fetch resolves (explains why the operator saw this on a book they had *not*
+resized text on — the very first application of the fetched font scale is itself such a
+reflow), the debounced gap/margin/pane-width re-`display()`, a section's own late
+re-pagination (`handleSectionRepaginated`, the same event `reassertLanding` above listens
+for), and the iframe document's `fonts.ready` promise for late web-font loads.
+
+**Hover still read weaker than the operator wanted.** The M19.6-original fix (this
+file's own earlier "hover emphasises without obscuring" entry, 1.8×/0.6 cap) and a
+mid-milestone bump (2.6×/0.85 cap, see the struck-through comment history in
+`ReaderView.tsx`) were each in turn judged still duller than the vivid, fully-legible
+`::selection` look right before a highlight is created — the actual bar the operator was
+holding this to the whole time, stated outright this round instead of re-derived as a
+multiplier: `hoverFillOpacity` (`highlightKinds.ts`) returns the kind's own colour at
+full strength (paper) or 0.6 (ink stops short of full — `screen` over a dark page
+*lightens*, so an undiluted wash there glares where `multiply` on paper only deepens).
+Kind identity is preserved deliberately (honey hovers honey, not a shared selection
+yellow), which a straight `::selection`-style highlight would have lost.
+
+**The boundary dwell fired on ordinary selections.** The M19.6-original dwell ring armed
+on "pointer is in the turn zone with an active selection," full stop — so a selection
+dragged down the middle of a paragraph, nowhere near the page's actual end, would cross
+into the zone and trigger a turn that read as a stray swipe rather than a deliberate
+continuation. `pageTextEdge.ts`'s `cursorPastPageText` asks the layout engine directly
+("what's the caret nearest this point?") rather than reconstructing column/line boxes:
+compares the caret nearest the cursor against the caret nearest the page's bottom-right
+(or top-left, for `prev`) corner via `caretRangeFromPoint`/`caretPositionFromPoint`: only
+past the corner counts as past the page's text. Falls back to allowing the turn when
+neither API exists, so an unsupported engine doesn't make the gesture silently
+impossible.
+
+**Live verification, this session.** Build (`tsc -b` across shared/server/web) and the
+full suite (269 tests: 12 shared + 155 server + 102 web, including the 12 new
+`pageTurn.test.ts` and the rewritten 14-case `bookPages.test.ts`) both clean. Then, since
+this round's whole premise is "a condition neither prior sweep varied," drove the
+*already-running* dev server (started independently of this session, confirmed serving
+this exact working tree) with Playwright at `deviceScaleFactor` 1, 0.9, and 1.25 against
+the Alice fixture — the one variable rounds 2–3 never had a lever for — 40/20/3 page-turn
+sweeps respectively (fewer at higher DSF only because the saved reading position started
+near the book's end): footer readouts stayed strictly `+1`-per-turn with the total only
+ever moving in the same monotonic direction the new `bookPageMap` design allows (e.g.
+`"Page 38 of 45"` → `"Page 39 of 46"` crossing into a new chapter — a `+1` page with the
+total absorbing the newly-measured section, not the old design's multi-page jump), and
+zero console/page errors at any scale factor. Read (not restored from within the
+reader — used the same before/after API-backup pattern established in round 3) Alice's
+real saved position before and after, confirmed unchanged by this pass. The other three
+fixes (hover strength, dwell edge-detection, overlay refresh) were verified by code
+inspection and the unit-test coverage named above rather than re-driven live individually
+this session — each is a small, self-contained change with a clear mechanism, and the
+combined page-turn sweep above exercises the same rendition/manager machinery
+`refreshHighlightOverlays`'s triggers hang off of without incident.
+
+M19.6 is now whole with no open blockers. Next up per TASKS.md: M19.7, the control
+system.
