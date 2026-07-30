@@ -2962,7 +2962,7 @@ sections first** — the register split is by *material*, not by room, and is se
       confirmed the Button-kit CSS chunk's rules reliably lose to each surface's own
       narrow overrides (radius, colour) regardless of Vite's chunk split, not just in
       theory. 269/269 tests, `pnpm build` clean.)_
-- [ ] **`Slider`, generalising the `%` scrub.** Drag with pointer lock (cursor hidden,
+- [x] **`Slider`, generalising the `%` scrub.** Drag with pointer lock (cursor hidden,
       floating live readout), **click-to-type** as a text field, advisory detents with
       feedback as you pass one, and `scale: "linear" | "log2"`. `ReaderView`'s `%` dial
       becomes a consumer of this component rather than staying a one-off.
@@ -2975,6 +2975,44 @@ sections first** — the register split is by *material*, not by room, and is se
       between detents is kept, not snapped; the whole component is operable with no
       pointer at all; `aria-valuetext` reads the formatted value ("16,384 tokens"), not the
       raw index._
+      _(verified 2026-07-30: `web/src/controls/sliderMath.ts` (11 unit tests) is the pure
+      position math — one internal "position space" (`p = value` for linear, `p =
+      log2(value)` for log2) so a fixed pixel distance always means one octave on a log2
+      slider regardless of where in the range it starts; `nearestDetent` takes its capture
+      window as a fraction of the detent's *own* value, tested explicitly at both the
+      bottom (2048) and top (131072) of a token range with the same fraction. `Slider.tsx`
+      is the DOM/gesture layer: the drag mechanics (pointer lock, capture-phase
+      Escape-cancel, `blur()` on release) are the reader's pre-existing `%` gesture moved
+      verbatim, not reinvented, per this task's own warning — found and fixed one real bug
+      while doing the lift: the original draft read final drag value from React state
+      (`preview`) inside `onUp`, which is stale at that point since state updates land
+      asynchronously; fixed by tracking a plain local (`liveValue`, mirroring the original
+      code's own `livePercent`) the same way the source gesture already did. Click-to-type
+      (the track becomes a text field, Enter/blur commits, rejects out-of-range) and a
+      `variant: "track" | "trigger"` split (a real track+thumb+fill for a plain numeric
+      slider; a bare button showing custom content for a control — the reader's `%` dial —
+      that already has its own rich preview visual) are new. `ReaderView`'s `%` control is
+      now a `Slider` in trigger mode (`commitOnArrow={false}`, `clickToType={false}` to
+      preserve its own already-verified M12 behavior — arrow keys preview via
+      `aria-valuetext`, Enter commits, Escape cancels, a plain click still opens
+      `ProgressPopover` — rather than force every consumer into one interaction shape); the
+      bespoke `handleProgressPointerDown`/`handleProgressKeyDown` and their
+      `SCRUB_DRAG_THRESHOLD_PX`/`clampPercent` helpers are deleted from `ReaderView.tsx`,
+      not kept alongside. Live Playwright pass against the Alice fixture (position
+      backed up via the API before, restored after): a plain click opens the popover
+      (`aria-expanded` flips true); a real drag shows the live `ScrubDial` chapter-label
+      preview and commits to a new position on release; two `ArrowRight` presses move
+      `aria-valuetext` from "28%" to "30%" without moving the book, and `Enter` then
+      commits it; `Escape` after an `ArrowRight` leaves the displayed value provably
+      unchanged (a first isolated round showed drift, traced to the book-page map's own
+      documented self-correcting estimates settling shortly after page load — two
+      immediately-following rounds were exactly stable, confirming Escape itself is a
+      clean no-op). Found and documented, but deliberately did not fix (pre-existing, out
+      of this task's scope — see NOTES.md "Spec gaps"): the drag/keyboard preview and the
+      commit path resolve through two different percent systems
+      (click-accurate `bookPageMap` vs. character-location `book.locations`), so a
+      previewed value and its settled, redisplayed percent can differ. 113/113 web tests
+      (11 new), `pnpm build` clean.)_
 - [ ] **Overlay motion: fly from the caller, morph on resize.** Overlays receive the
       invoking control's rect at open time and animate from it; resizing an open overlay
       (a settings tab change) morphs its box rather than jumping. ~240ms spring, not the

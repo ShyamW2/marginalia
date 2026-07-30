@@ -5,6 +5,24 @@ Append; don't rewrite history.
 
 ## Spec gaps
 
+- **2026-07-30 (M19.7), found while verifying the generalized `Slider`, pre-existing
+  not introduced by it:** the reader's `%` control previews and commits in two
+  different percent spaces. The drag/keyboard preview is computed by adding a
+  pixel/step delta onto `progressPercent` — which, since M19.6 round 4, is the
+  *click-accurate book-page* percent (`bookPageMap`, `Math.round(page/total*100)`).
+  The commit path (`commitScrub` → `book.locations.cfiFromPercentage()`) resolves
+  that same number as a *character-location* percent instead — a different metric
+  entirely. Live-verified: dragging/arrow-stepping to a previewed "30%" can commit
+  to a position whose own click-accurate percent reads back as "37%" once settled.
+  Directionally correct (higher previewed % always lands further into the book),
+  just not numerically exact. Pre-dates this session — `commitScrub` itself was
+  moved into `Slider`'s `onCommit` unchanged, not touched — and out of scope for
+  M19.7's own task (generalizing the *gesture*, not reconciling the two percent
+  systems `book_pages` vs `book.locations` this app already deliberately runs side
+  by side for different purposes). Fixing it properly means resolving the commit
+  through the click-accurate system instead of `cfiFromPercentage`, which is real,
+  separate scope. Worth a task of its own if the operator notices the drag landing
+  "in the wrong place."
 - **2026-07-19 (M8):** DESIGN.md's desk hover strip lists "progress" among
   the fields it shows. Real reading-progress percent only exists client-side
   (epub.js's `book.locations.generate()`, computed against a CFI) — and the

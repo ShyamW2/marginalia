@@ -41,6 +41,7 @@ import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
+import { Slider } from "../controls/Slider.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
 import { hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
@@ -125,10 +126,6 @@ function turnZoneForVisibleX(
   return null;
 }
 
-// M12 scrub dial: a pointer move past this many px (not just any move at
-// all) commits to "this is a drag" rather than "this was a click" — same
-// click-vs-drag pattern as the Desk's BookObject.
-const SCRUB_DRAG_THRESHOLD_PX = 4;
 const SCRUB_KEYBOARD_STEP_PERCENT = 1;
 
 // M14 fullscreen: how close (in px) the pointer must be to the top/bottom
@@ -138,10 +135,6 @@ const SCRUB_KEYBOARD_STEP_PERCENT = 1;
 // the M11 turn-zone vignette's own right-edge hover.
 const FULLSCREEN_REVEAL_BAND_PX = 72;
 const FULLSCREEN_RAIL_CORNER_FRACTION = 0.25;
-
-function clampPercent(value: number): number {
-  return Math.min(100, Math.max(0, value));
-}
 
 // epub.js's View typings don't expose the `contents` it renders, though it
 // exists at runtime (see managers/views/iframe.js) — narrow just that.
@@ -1899,121 +1892,17 @@ export function ReaderView({
   }
 
   /** Resolve a previewed percent to a CFI and actually move the book —
-   * shared commit path for pointer-drag release, keyboard Enter, and (were
-   * it ever wired up) any future entry point. Only ever called on commit,
-   * never per-frame while dragging (SPEC acceptance). */
+   * `Slider`'s `onCommit`, fired on pointer-drag release and keyboard Enter,
+   * never per-frame while dragging (SPEC acceptance). The drag/keyboard
+   * gesture itself now lives in the shared `Slider` component
+   * (controls/Slider.tsx, M19.7) — this is what's left that's specific to
+   * *this* control: turning a committed percent into an actual page turn. */
   function commitScrub(percent: number) {
     const book = bookRef.current;
     const rendition = renditionRef.current;
-    setScrubPreviewPercent(null);
     if (!book || !rendition) return;
     const cfi = book.locations.cfiFromPercentage(percent / 100);
     void rendition.display(cfi);
-  }
-
-  function handleProgressPointerDown(event: React.PointerEvent<HTMLButtonElement>) {
-    if (progressPercent === null) return;
-    const targetEl = event.currentTarget;
-    targetEl.setPointerCapture(event.pointerId);
-    const startX = event.clientX;
-    const startPercent = progressPercent;
-    // Captured once, not re-read at pointerup — the popover may already
-    // have closed itself (e.g. Escape) mid-gesture, and toggling off a
-    // *stale* "was open" read would just flip it back open.
-    const wasOpenAtStart = progressPopoverOpen;
-    let dragging = false;
-    let livePercent = startPercent;
-    // M14 (decisions.md 2026-07-27): at DIAL_PX_PER_PERCENT px/%, a full
-    // 0-100% sweep needs more travel than any screen position can provide in
-    // both directions — pointer lock makes travel unbounded by reporting
-    // relative `movementX` instead of an absolute `clientX`. `dx` is the
-    // single running total driven by whichever source is currently active;
-    // `lockEngaged` gates *which* source, and skips folding in movementX on
-    // the very first locked frame so the switchover has no visible jump.
-    let dx = 0;
-    let lockEngaged = false;
-
-    function onMove(moveEvent: PointerEvent) {
-      if (!dragging) {
-        if (Math.abs(moveEvent.clientX - startX) <= SCRUB_DRAG_THRESHOLD_PX) return;
-        dragging = true;
-        // A real drag always supersedes the click-popover, whether or not
-        // it happened to be open already.
-        setProgressPopoverOpen(false);
-        dx = moveEvent.clientX - startX;
-        // Can be refused (some browsers gate it behind a user gesture
-        // chain) — the absolute clientX math below stays correct either
-        // way, since it's what already ran before lock ever engages.
-        targetEl.requestPointerLock?.();
-      } else if (document.pointerLockElement === targetEl) {
-        if (lockEngaged) dx += moveEvent.movementX;
-        lockEngaged = true;
-      } else {
-        dx = moveEvent.clientX - startX;
-      }
-      livePercent = clampPercent(startPercent + dx / DIAL_PX_PER_PERCENT);
-      setScrubPreviewPercent(livePercent);
-    }
-
-    function releasePointerLock() {
-      if (document.pointerLockElement === targetEl) document.exitPointerLock?.();
-    }
-
-    function cleanup() {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("keydown", onKeyDuringDrag, true);
-      releasePointerLock();
-      // M16 bug fix: a gesture that *began* with a pointer (this handler is
-      // only ever bound to onPointerDown) must release DOM focus on both
-      // commit and cancel, or the button keeps focus and its onKeyDown below
-      // keeps stealing ←/→ for dial-stepping instead of page turns. A
-      // control focused by an actual Tab keypress never runs this pointer
-      // handler at all, so its arrow-stepping path is untouched.
-      targetEl.blur();
-    }
-
-    function onUp() {
-      cleanup();
-      if (dragging) commitScrub(livePercent);
-      // A plain click toggles the popover from whatever it was when this
-      // gesture started.
-      else setProgressPopoverOpen(!wasOpenAtStart);
-    }
-
-    function onKeyDuringDrag(keyEvent: KeyboardEvent) {
-      if (keyEvent.key !== "Escape") return;
-      keyEvent.stopPropagation();
-      dragging = false;
-      setScrubPreviewPercent(null);
-      cleanup();
-    }
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    // Capture phase: must win over the reader's window-level Escape handler
-    // (clears selection/thread) — cancelling the drag is what Escape means
-    // here, not that.
-    window.addEventListener("keydown", onKeyDuringDrag, true);
-  }
-
-  function handleProgressKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      event.stopPropagation();
-      const base = scrubPreviewPercent ?? progressPercent ?? 0;
-      const step = event.key === "ArrowRight" ? SCRUB_KEYBOARD_STEP_PERCENT : -SCRUB_KEYBOARD_STEP_PERCENT;
-      setProgressPopoverOpen(false);
-      setScrubPreviewPercent(clampPercent(base + step));
-    } else if (event.key === "Enter" && scrubPreviewPercent !== null) {
-      event.preventDefault();
-      event.stopPropagation();
-      commitScrub(scrubPreviewPercent);
-    } else if (event.key === "Escape" && scrubPreviewPercent !== null) {
-      event.preventDefault();
-      event.stopPropagation();
-      setScrubPreviewPercent(null);
-    }
   }
 
   // Stretch: drag-to-peel. Grabbing the page's edge (a thin strip, not the
@@ -2303,17 +2192,27 @@ export function ReaderView({
           )}
         </div>
         <div className={styles.progressWrap}>
-          <button
-            type="button"
+          <Slider
+            variant="trigger"
             className={styles.progress}
+            value={progressPercent ?? 0}
+            min={0}
+            max={100}
+            dragPxPerUnit={DIAL_PX_PER_PERCENT}
+            keyboardStep={SCRUB_KEYBOARD_STEP_PERCENT}
+            commitOnArrow={false}
+            clickToType={false}
             disabled={progressPercent === null}
+            ariaLabel="Reading progress"
+            formatValue={(v) => `${Math.round(v)}%`}
             aria-haspopup="true"
             aria-expanded={progressPopoverOpen}
-            onPointerDown={handleProgressPointerDown}
-            onKeyDown={handleProgressKeyDown}
+            onPreviewChange={setScrubPreviewPercent}
+            onPlainClick={() => setProgressPopoverOpen((prev) => !prev)}
+            onCommit={commitScrub}
           >
             {progressPercent !== null ? `${progressPercent}%` : ""}
-          </button>
+          </Slider>
           <AnimatePresence>
             {scrubPreviewPercent !== null ? (
               <ScrubDial
