@@ -3307,3 +3307,64 @@ nav-link entrance) confirmed the visual result looks correct and unbroken; a ful
 screenshot pass across both themes was attempted but blocked by an unrelated tool issue
 (image reads erroring) this session — worth a quick human look before calling the visual
 polish fully signed off, though nothing in the numeric verification suggests a problem.
+
+## M19.8 — the refactor: before-table, picked back up 2026-08-01
+
+Deferred 2026-07-30 "not cancelled" (TASKS.md). Picked up on operator request. Re-measured
+before touching anything, per `docs/REFACTORING.md`'s method — the 2026-07-29 numbers
+TASKS.md quotes (1,865 lines / 64 hooks) are now stale; M19.6 round 4 and all of M19.7
+landed on top of them.
+
+**Before table (2026-08-01, `git log` at `aa4b3fa`):**
+
+| Metric | 2026-07-29 (TASKS.md) | 2026-08-01 (actual, before) |
+|---|---|---|
+| `ReaderView.tsx` lines | 1,865 | **2,469** |
+| Hook calls (`useX(` total) | 64 | **57** (19 `useEffect`, 12 `useState`, 11 `useCallback`, 9 `useRef`, 6 named custom hooks) |
+| Next-largest source file | — | `shared/src/schemas.ts` 927 lines (a schema file — "fine" per REFACTORING.md), then `ThreadPanel.tsx` 801 |
+| `ReaderView.tsx` vs. next-largest *component* | 3.4× | **3.1×** (2469 / 801) |
+| Total tests | 214 (TASKS.md) | **283** (12 shared + 158 server + 113 web), all green |
+| Reader-specific unit tests | — | 38, all on already-extracted pure modules (`bookPages`14, `pageTurn`12, `pageNumber`5, `anchorResolution`7) — **zero direct coverage of `ReaderView.tsx` itself** |
+| Bundle (`pnpm build`) | M17.5: 20 files, 1072 KB raw, 322 KB gzip | **21 files, 1138 KB raw, 345 KB gzip** |
+| `ReaderPage` chunk | M17.5: 670 KB raw / 191 KB gzip | **619.53 KB raw / 179.30 KB gzip** (down, despite the file growing — other chunks absorbed M19 work) |
+| Live verification | — | See below |
+
+Hook count dropping while line count grew ~600 lines tracks with M19.7's "shortcut
+registry" work (`decisions.md` 2026-07-30): four ad-hoc window-keydown listeners collapsed
+into one `useShortcuts([...])` call, trading effects for a declarative array — fewer hooks,
+more lines, same behaviour.
+
+The file is still the clear, single outlier the 2026-07-29 measurement found — now 3.1×
+the next-largest component (was 3.4×) — so the scope call from that day (one narrow
+target, not a broad refactor) still holds.
+
+**Live-verification baseline**, ad hoc `playwright-core` install in scratchpad against the
+project's own real dev server (already running, `localhost:5173` → `:5175`, the same
+"already-cached Chromium" pattern earlier sessions used — no project dependency added),
+real data (the operator's actual "Alice's Adventures in Wonderland" with 14 existing
+highlights, not a fresh import): opened `/read/<alice-id>`, arrow-key page turns (curl
+animation played, screenshots confirm), a scene-break page rendered correctly after 3
+turns, click-zone turn (right edge) and back (left edge) both worked, a window resize to
+1000×700 and back reflowed cleanly, `Escape` cleared pending UI state. One pre-existing
+console message unrelated to the reader (`404` on an unrelated resource, matches the
+M17.5-era known gap). Screenshots saved under the scratchpad for comparison against the
+after-pass. Did not exercise the LLM-backed Ask flow this pass (no `ANTHROPIC_API_KEY` in
+this shell) — covered instead by the acceptance criterion "no user-visible change", which
+a structural-only refactor can't affect regardless.
+
+**Plan for this pass**, scoped by TASKS.md's own permission to prioritise what M20's fold
+touches and treat the rest as optional: extract (1) the pure stage-geometry functions/
+constants (`computeReaderGap`, `turnZoneForVisibleX`, the margin/spread constants) into a
+tested module — these currently have zero unit coverage despite being pure; (2) the
+page-turn/curl animation (`turnPageSlide`/`turnPageCurl`/`turnPage`/
+`handleEdgePointerDown`, the curl motion state) into its own hook — this is exactly what
+M20 operates on; (3) fullscreen chrome-reveal and the pane-resize-width drag as two more
+self-contained hooks, since both have clear inputs/outputs and no epub.js entanglement.
+The ~780-line book-lifecycle/rendition effect is **not** attempted this pass — it is
+deeply entangled with nearly every other piece of state in the component (turnPageRef,
+chapterJumpRef, applyGapForWidthRef, highlightsRef, displayedPageRef, and more, all
+threaded through refs specifically so this one effect only runs once per `resourceId`),
+and multiple NOTES.md entries above document load-bearing quirks inside it that took a
+live session each to diagnose. Splitting it safely needs its own dedicated pass with
+characterization tests written first, not a subtask of this one. Recorded here so the
+scope-cut is a choice, not a thing that quietly didn't happen.

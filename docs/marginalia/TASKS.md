@@ -3266,7 +3266,7 @@ of 113 source files are under 400 lines and the seams are real, so the broad ref
 not justified. The position-unification half is **dropped**. One target remains, because
 it is a genuine outlier *and* it is the file M20 operates on.
 
-- [ ] **Baseline the metrics before touching anything.** Record: `ReaderView.tsx` size and
+- [x] **Baseline the metrics before touching anything.** Record: `ReaderView.tsx` size and
       hook count (currently **1,865 lines**, 64 hook calls), test count (currently 214),
       bundle size and chunk count (M17.5 put this in the build output), and the current
       live-verification result for the reader. Into NOTES.md.
