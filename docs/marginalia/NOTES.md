@@ -478,6 +478,23 @@ missing feature.
 
 ## Blockers
 
+- **M19.7 — "Codex CLI as a fourth provider" needs `codex login` first,
+  which is the operator's call, not this session's.** `codex-cli 0.114.0`
+  is installed (`/snap/bin/codex`), but there is no `~/.codex/` directory at
+  all on this machine, confirming the task's own warning: the CLI has never
+  been run here. TASKS.md is explicit that confirming this is step one,
+  "or this task will be 'started' twice" — and the task's *next* step after
+  auth is to run one real call and read the actual JSONL event shape before
+  writing any provider code against it (the zod v3/v4 `extract` incident,
+  M4, is the standing reason not to guess a remembered API shape here).
+  Skipped rather than half-built: a provider written against a guessed
+  event shape, with no way to run it, would very likely need rewriting once
+  someone actually reads the real output — the exact mistake this task's
+  own warning exists to prevent. Every other M19.7 task was independent of
+  this one and is done; picking this back up costs nothing once
+  `codex login` has been run — start with one `codex exec --json` call
+  against a scratch prompt and write the real event shape here before
+  touching `server/src/llm/codexCli.ts`.
 - ~~**M17.5 — no `claude` CLI in this environment.**~~ **Resolved, was a
   wrong test.** This session initially reported `which claude` → not found
   and concluded the subscription path couldn't be verified live. The
