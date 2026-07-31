@@ -1,22 +1,41 @@
 import { useRef, useState } from "react";
-import type {
-  CreateProviderProfileBody,
-  LLMProviderId,
-  ProviderProfile,
-  ProviderRole,
-  UpdateProviderProfileBody,
+import {
+  MAX_RESPONSE_TOKENS_MAX,
+  MAX_RESPONSE_TOKENS_MIN,
+  type CreateProviderProfileBody,
+  type LLMProviderId,
+  type ProviderProfile,
+  type ProviderRole,
+  type UpdateProviderProfileBody,
 } from "@marginalia/shared";
 import { useProviderRoles } from "./useProviderRoles.js";
 import {
   createProviderProfile,
   deleteProviderProfile,
   setProviderRole,
+  setRoleMaxResponseTokens,
   testProviderProfile,
   updateProviderProfile,
 } from "./providerApi.js";
 import { emitProviderRolesSaved } from "./providerBus.js";
 import { Button } from "../controls/Button.js";
+import { Slider } from "../controls/Slider.js";
 import styles from "./ProviderPicker.module.css";
+
+function formatTokens(value: number): string {
+  return `${Math.round(value).toLocaleString()} tokens`;
+}
+
+// M19.7 "the two token sliders": context length is log2, 1024 -> 200K,
+// detenting on powers of two — generated rather than hand-listed so the top
+// of the range (200K, not itself a power of two) can't quietly fall out of
+// sync with the bottom.
+const CONTEXT_TOKENS_MIN = 1024;
+const CONTEXT_TOKENS_MAX = 200_000;
+const CONTEXT_TOKEN_DETENTS: number[] = [];
+for (let p = Math.log2(CONTEXT_TOKENS_MIN); 2 ** p <= CONTEXT_TOKENS_MAX; p++) {
+  CONTEXT_TOKEN_DETENTS.push(2 ** p);
+}
 
 const ROLE_COPY: Record<ProviderRole, { label: string; hint: string }> = {
   query: {
@@ -223,18 +242,20 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
             />
           </div>
           <div className={styles.field}>
-            <label className={styles.label} htmlFor={`${idPrefix}-openai-context-tokens`}>
-              Context tokens
-            </label>
-            <input
-              id={`${idPrefix}-openai-context-tokens`}
-              className={styles.input}
-              type="number"
-              min={1}
+            <span className={styles.label} id={`${idPrefix}-context-tokens-label`}>
+              Context length
+            </span>
+            <Slider
+              ariaLabel="Context length"
               value={draft.openaiContextTokens ?? 32768}
-              onChange={(e) =>
-                set("openaiContextTokens", Number.parseInt(e.target.value, 10) || 0)
-              }
+              min={CONTEXT_TOKENS_MIN}
+              max={CONTEXT_TOKENS_MAX}
+              scale="log2"
+              detents={CONTEXT_TOKEN_DETENTS}
+              dragPxPerUnit={64}
+              keyboardStep={2}
+              formatValue={formatTokens}
+              onCommit={(value) => set("openaiContextTokens", Math.round(value))}
             />
           </div>
         </>
@@ -275,6 +296,11 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
     }
     setEditing(false);
     await setProviderRole(role, value);
+    emitProviderRolesSaved();
+  }
+
+  async function handleMaxResponseTokensCommit(value: number) {
+    await setRoleMaxResponseTokens(role, value);
     emitProviderRolesSaved();
   }
 
@@ -396,6 +422,27 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
             will show a nudge to set one up until you do.
           </p>
         )}
+      </div>
+
+      <div className={styles.field}>
+        <span className={styles.label} id={`${role}-max-response-tokens-label`}>
+          Max response length
+        </span>
+        <Slider
+          ariaLabel={`${copy.label} max response length`}
+          value={assignment?.maxResponseTokens ?? 8192}
+          min={MAX_RESPONSE_TOKENS_MIN}
+          max={MAX_RESPONSE_TOKENS_MAX}
+          dragPxPerUnit={0.08}
+          keyboardStep={250}
+          formatValue={formatTokens}
+          onCommit={handleMaxResponseTokensCommit}
+        />
+        <p className={styles.hint}>
+          Applies to whichever profile answers this role — a subscription profile has no
+          hard ceiling to enforce (only a request made in the system prompt); a keyed or
+          local profile enforces it directly, so a low limit will visibly truncate answers.
+        </p>
       </div>
 
       {editing && draft && (

@@ -474,4 +474,24 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M19.7 "response length is per role" (decisions.md 2026-07-30 "the
+    // global overhaul"): `maxResponseTokens` moves off the flat `settings`
+    // table onto `provider_roles`, since one profile can serve both roles
+    // and a per-profile length couldn't express "same model, longer
+    // digests" — decided pre-emptively in the 2026-07-28 entry, actually
+    // built here. Backfilled from whatever the global setting already was
+    // (not the bare column default) so existing values genuinely carry
+    // over, the same COALESCE-from-settings trick migration 14 used for the
+    // provider config itself.
+    version: 20,
+    sql: `
+      ALTER TABLE provider_roles ADD COLUMN max_response_tokens INTEGER NOT NULL DEFAULT 8192;
+
+      UPDATE provider_roles
+        SET max_response_tokens = CAST(
+          COALESCE((SELECT value FROM settings WHERE key = 'max_response_tokens'), '8192') AS INTEGER
+        );
+    `,
+  },
 ];

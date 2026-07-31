@@ -3149,7 +3149,7 @@ sections first** — the register split is by *material*, not by room, and is se
       all land on the Reading divider; the Scan lands on Scan (covered live in the previous
       task's verification, same mechanism); Escape-restores-focus already covered above.
       113/113 web tests, `tsc -b` clean.)_
-- [ ] **The two token sliders.** Context length **per profile** (log2, 1024 → 200K,
+- [x] **The two token sliders.** Context length **per profile** (log2, 1024 → 200K,
       detenting on powers of two) and max response length **per role** (250 → 10000,
       linear) — query and digest separately, since one profile can serve both roles and a
       per-profile length could not express "same model, longer digests". Additive
@@ -3159,6 +3159,43 @@ sections first** — the register split is by *material*, not by room, and is se
       _Acceptance: set digest to 8000 and query to 1000 on the same profile and watch the
       ledger show the difference; existing settings survive the migration; a local model's
       context slider actually changes what `capabilities().contextTokens` returns._
+      _(verified 2026-07-31: migration 20 adds `provider_roles.max_response_tokens`
+      (default 8192) and backfills every existing row from whatever the old flat
+      `settings.max_response_tokens` value already was — a real value, not the bare column
+      default — the same COALESCE-from-`settings` trick migration 14 used for the provider
+      config itself; the old `settings` row is left in place, unread, same as migration
+      14's own leftover flat keys. `maxResponseTokens` dropped from `SettingsSchema`
+      entirely (there is no longer a global one) and moved onto
+      `ProviderRoleAssignmentSchema`; a dedicated `PUT /api/provider-roles/:role/
+      max-response-tokens` endpoint and `settings/providers.ts`'s `setRoleMaxResponseTokens`
+      keep it a role property, separate from `setProviderRole` (which still only reassigns
+      the profile) — new `providers.test.ts` coverage: fresh-db default, a migration
+      backfill from a customized global value, and query/digest holding different lengths
+      on the same profile simultaneously. `llm/provider.ts`'s `getProvider()` now reads
+      `getRoleMaxResponseTokens(db, role)` instead of the old flat setting — the three
+      other call sites that constructed a provider just to read `capabilities()`/
+      `planLimits()` (the profile `/test` endpoint, the usage-summary route) never needed a
+      response ceiling for that and now construct without one, using each provider's own
+      default rather than reading a role that isn't in scope there. Client: `ProviderPicker`
+      gets both sliders — `Slider` in `scale: "log2"` for context length (profile-scoped,
+      inside the existing profile editor/draft, saved the same way every other profile
+      field already is) and a plain linear `Slider` for max response length (role-scoped,
+      its own always-live control outside the draft, committing immediately through the
+      new endpoint — matches "one profile can serve both roles at different lengths"
+      needing no save-button gate). The old single global field is gone from `LLMTab`
+      entirely (dead code found along the way: it updated `Settings.maxResponseTokens` via
+      `update()`, but "llm" was never in `SAVES_VIA_FORM`, so that edit had no way to
+      reach the server even before this task — removing it fixes an inert control, not a
+      working one). Both providers keep saying the response length is a soft request in
+      the system prompt, unchanged, for `claude-agent`; `codex-cli` doesn't exist yet
+      (blocked task, see below), so there's nothing to say that for yet. Live Playwright
+      pass: LLM tab renders three real `role="slider"` elements with correctly formatted
+      `aria-valuetext` ("8,192 tokens", "32,768 tokens"); a real drag on the context slider
+      and `ArrowRight` on it exactly doubles the value (log2 keyboardStep=2, confirmed
+      40,693 → 81,386); `ArrowRight` on the query response-length slider committed
+      8192 → 8442 through the real API immediately (confirmed via a direct `/api/
+      provider-roles` fetch, not just the DOM), then restored to the pre-test value.
+      158/158 server tests (9 new), 113/113 web tests, both `tsc -b` clean.)_
 - [ ] **Codex CLI as a fourth provider.** `server/src/llm/codexCli.ts` behind the existing
       seam — no new call sites — spawning `codex exec --json` with `--output-schema` for
       `extract()`. **Caged, and the cage is part of the provider:** `--sandbox read-only`,

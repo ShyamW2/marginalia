@@ -8,6 +8,7 @@ import {
   getRoleProfileRaw,
   listProviderProfiles,
   setProviderRole,
+  setRoleMaxResponseTokens,
   updateProviderProfile,
 } from "./providers.js";
 import { getProvider } from "../llm/provider.js";
@@ -152,6 +153,48 @@ describe("roles resolve to independent profiles", () => {
     expect(getProvider(db, "digest", "digest")).toBeNull();
     // query role, still pointing at the configured Default profile, is unaffected.
     expect(getProvider(db, "query", "thread")).not.toBeNull();
+    db.close();
+  });
+});
+
+describe("M19.7 migration 20 — max response length becomes per-role", () => {
+  it("a fresh database has both roles at the same 8192 default the old global setting used", () => {
+    const db = createDb(":memory:");
+    const roles = getProviderRoles(db);
+    expect(roles.every((r) => r.maxResponseTokens === 8192)).toBe(true);
+    db.close();
+  });
+
+  it("carries over a customized global value into both roles, not just the bare column default", () => {
+    const db = createDb(":memory:");
+    // Simulate a pre-M19.7 database where the reader had turned this down
+    // from the 8192 default before the migration ever ran.
+    db.prepare("UPDATE provider_roles SET max_response_tokens = 8192").run();
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('max_response_tokens', '2048') ON CONFLICT(key) DO UPDATE SET value = '2048'",
+    ).run();
+    db.exec(`
+      UPDATE provider_roles
+        SET max_response_tokens = CAST(
+          COALESCE((SELECT value FROM settings WHERE key = 'max_response_tokens'), '8192') AS INTEGER
+        );
+    `);
+    const roles = getProviderRoles(db);
+    expect(roles.every((r) => r.maxResponseTokens === 2048)).toBe(true);
+    db.close();
+  });
+
+  it("query and digest can hold different response lengths on the same profile", () => {
+    const db = createDb(":memory:");
+    setRoleMaxResponseTokens(db, "query", 1000);
+    setRoleMaxResponseTokens(db, "digest", 8000);
+    const roles = getProviderRoles(db);
+    expect(roles.find((r) => r.role === "query")?.maxResponseTokens).toBe(1000);
+    expect(roles.find((r) => r.role === "digest")?.maxResponseTokens).toBe(8000);
+    // Both still resolve to the same Default profile — this is a role
+    // property, not a profile one.
+    expect(roles.find((r) => r.role === "query")?.profileId).toBe("default");
+    expect(roles.find((r) => r.role === "digest")?.profileId).toBe("default");
     db.close();
   });
 });

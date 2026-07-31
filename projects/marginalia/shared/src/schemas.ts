@@ -430,10 +430,6 @@ export const SettingsSchema = z.object({
   scanCrtIntensity: ScanCrtIntensitySchema,
   pageNumberMode: PageNumberModeSchema,
   readerPaneWidth: ReaderPaneWidthSchema,
-  // Global request ceiling, applied regardless of which profile/role serves
-  // the call — not part of a profile (SPEC: a profile is "provider id,
-  // model, key, base URL, context tokens").
-  maxResponseTokens: z.number().int().positive(),
   // M17 "pre-flight before committing": 0 = no ceiling (default) — a digest
   // run whose pre-flight estimate exceeds this many input tokens is
   // refused rather than started.
@@ -493,6 +489,19 @@ export type CreateProviderProfileBody = z.infer<typeof CreateProviderProfileBody
 export const UpdateProviderProfileBodySchema = CreateProviderProfileBodySchema.partial();
 export type UpdateProviderProfileBody = z.infer<typeof UpdateProviderProfileBodySchema>;
 
+// M19.7 "response length is per role" (decisions.md 2026-07-30 "the global
+// overhaul"): a role's max response length used to live on the flat
+// Settings bag (one value for both roles); one profile can serve both
+// roles, so a per-profile length couldn't express "same model, longer
+// digests" — it belongs to the role, not the profile.
+export const MAX_RESPONSE_TOKENS_MIN = 250;
+export const MAX_RESPONSE_TOKENS_MAX = 10_000;
+export const MaxResponseTokensSchema = z
+  .number()
+  .int()
+  .min(MAX_RESPONSE_TOKENS_MIN)
+  .max(MAX_RESPONSE_TOKENS_MAX);
+
 /** GET /api/provider-roles response: one entry per role, resolved to its
  * profile (or null — "a role with no configured profile degrades to the
  * same 'configure a provider' nudge the reader already shows"). */
@@ -501,6 +510,7 @@ export const ProviderRoleAssignmentSchema = z.object({
   profileId: z.string().nullable(),
   profile: ProviderProfileSchema.nullable(),
   configured: z.boolean(),
+  maxResponseTokens: MaxResponseTokensSchema,
 });
 export type ProviderRoleAssignment = z.infer<typeof ProviderRoleAssignmentSchema>;
 
@@ -511,6 +521,16 @@ export const SetProviderRoleBodySchema = z.object({
   profileId: z.string().nullable(),
 });
 export type SetProviderRoleBody = z.infer<typeof SetProviderRoleBodySchema>;
+
+/** PUT /api/provider-roles/:role/max-response-tokens. Both `claude-agent`
+ * and `codex-cli` can't enforce this as a hard ceiling — it's a request in
+ * the system prompt (decisions.md 2026-07-28 later) — the settings UI keeps
+ * saying so next to the field regardless of which provider the role
+ * currently points at. */
+export const SetMaxResponseTokensBodySchema = z.object({
+  maxResponseTokens: MaxResponseTokensSchema,
+});
+export type SetMaxResponseTokensBody = z.infer<typeof SetMaxResponseTokensBodySchema>;
 
 // ---------------------------------------------------------------------------
 // Usage ledger summary (M19 Usage divider — reads M17's ledger, decisions.md

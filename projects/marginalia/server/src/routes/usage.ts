@@ -11,7 +11,6 @@ import { getProviderRoles } from "../settings/providers.js";
 import { AnthropicProvider } from "../llm/anthropic.js";
 import { ClaudeAgentProvider } from "../llm/claudeAgent.js";
 import { OpenAICompatProvider } from "../llm/openaiCompat.js";
-import { getRawSettings } from "../settings/store.js";
 
 export const usageRouter: Router = Router();
 
@@ -36,7 +35,6 @@ usageRouter.get("/summary", async (_req, res) => {
   const now = Date.now();
   const todayStart = new Date(now - (now % DAY_MS)).toISOString();
   const sevenDaysAgo = new Date(now - 7 * DAY_MS).toISOString();
-  const { maxResponseTokens } = getRawSettings(db);
 
   const lastDigestRow = getLastDigestUsage(db);
 
@@ -60,21 +58,20 @@ usageRouter.get("/summary", async (_req, res) => {
       // planLimits() is only ever implemented on the claude-agent path
       // (SPEC: "an API the SDK itself marks experimental") — every other
       // provider simply has no windows to report, which the UI renders as
-      // "plan limits unavailable", never an error.
+      // "plan limits unavailable", never an error. Max response length
+      // (per-role, M19.7) never affects capabilities()/planLimits() below —
+      // this route makes no stream() call, so the providers here fall back
+      // to their own default rather than reading a role that isn't in scope.
       let windows: RolePlanLimits["windows"] = null;
       let contextTokens: number | null = null;
       try {
         if (profile.provider === "claude-agent") {
-          const provider = new ClaudeAgentProvider(profile.claudeAgentModel, maxResponseTokens);
+          const provider = new ClaudeAgentProvider(profile.claudeAgentModel);
           contextTokens = provider.capabilities().contextTokens;
           const limits = provider.planLimits ? await provider.planLimits() : null;
           windows = limits?.windows ?? null;
         } else if (profile.provider === "anthropic") {
-          const provider = new AnthropicProvider(
-            profile.anthropicApiKey,
-            profile.anthropicModel,
-            maxResponseTokens,
-          );
+          const provider = new AnthropicProvider(profile.anthropicApiKey, profile.anthropicModel);
           contextTokens = provider.capabilities().contextTokens;
         } else if (profile.provider === "openai-compatible") {
           const provider = new OpenAICompatProvider({
@@ -82,7 +79,6 @@ usageRouter.get("/summary", async (_req, res) => {
             model: profile.openaiModel,
             apiKey: profile.openaiApiKey,
             contextTokens: profile.openaiContextTokens,
-            maxResponseTokens,
           });
           contextTokens = provider.capabilities().contextTokens;
         }

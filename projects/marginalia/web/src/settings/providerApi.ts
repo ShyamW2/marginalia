@@ -61,6 +61,21 @@ export async function setProviderRole(
   return (await res.json()) as ProviderRoleAssignment;
 }
 
+/** M19.7 "the two token sliders": max response length is a role property,
+ * not a profile one — its own endpoint, separate from setProviderRole. */
+export async function setRoleMaxResponseTokens(
+  role: ProviderRole,
+  maxResponseTokens: number,
+): Promise<ProviderRoleAssignment | null> {
+  const res = await fetch(`/api/provider-roles/${role}/max-response-tokens`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ maxResponseTokens }),
+  });
+  if (!res.ok) return null;
+  return (await res.json()) as ProviderRoleAssignment;
+}
+
 export async function testProviderProfile(
   id: string,
   candidate: UpdateProviderProfileBody,

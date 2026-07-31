@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   CreateProviderProfileBodySchema,
+  SetMaxResponseTokensBodySchema,
   SetProviderRoleBodySchema,
   UpdateProviderProfileBodySchema,
   type LLMProviderId,
@@ -14,9 +15,9 @@ import {
   getProviderRoles,
   listProviderProfiles,
   setProviderRole,
+  setRoleMaxResponseTokens,
   updateProviderProfile,
 } from "../settings/providers.js";
-import { getRawSettings } from "../settings/store.js";
 import { AnthropicProvider } from "../llm/anthropic.js";
 import { ClaudeAgentProvider } from "../llm/claudeAgent.js";
 import { OpenAICompatProvider } from "../llm/openaiCompat.js";
@@ -88,21 +89,19 @@ providerProfilesRouter.post("/:id/test", async (req, res) => {
   if (candidate.anthropicApiKey === "***") candidate.anthropicApiKey = saved?.anthropicApiKey;
   if (candidate.openaiApiKey === "***") candidate.openaiApiKey = saved?.openaiApiKey;
 
-  const { maxResponseTokens } = getRawSettings(db);
-
+  // Max response length is a per-role setting (M19.7), not part of a
+  // profile — irrelevant to a one-word connection test regardless, so the
+  // providers below fall back to their own default rather than reading a
+  // role that isn't in scope here.
   let provider: LLMProvider | null = null;
   if (candidate.provider === "anthropic") {
     if (!candidate.anthropicApiKey) {
       res.json({ ok: false, error: "No Anthropic API key set." });
       return;
     }
-    provider = new AnthropicProvider(
-      candidate.anthropicApiKey,
-      candidate.anthropicModel ?? "",
-      maxResponseTokens,
-    );
+    provider = new AnthropicProvider(candidate.anthropicApiKey, candidate.anthropicModel ?? "");
   } else if (candidate.provider === "claude-agent") {
-    provider = new ClaudeAgentProvider(candidate.claudeAgentModel ?? "", maxResponseTokens);
+    provider = new ClaudeAgentProvider(candidate.claudeAgentModel ?? "");
   } else if (candidate.provider === "openai-compatible") {
     if (!candidate.openaiBaseUrl || !candidate.openaiModel) {
       res.json({ ok: false, error: "Base URL and model are required." });
@@ -113,7 +112,6 @@ providerProfilesRouter.post("/:id/test", async (req, res) => {
       model: candidate.openaiModel,
       apiKey: candidate.openaiApiKey ?? "",
       contextTokens: candidate.openaiContextTokens ?? 32768,
-      maxResponseTokens,
     });
   }
 
@@ -168,4 +166,18 @@ providerRolesRouter.put("/:role", (req, res) => {
     return;
   }
   res.json(setProviderRole(db, role, parsed.data.profileId));
+});
+
+providerRolesRouter.put("/:role/max-response-tokens", (req, res) => {
+  const role = req.params.role;
+  if (role !== "query" && role !== "digest") {
+    res.status(400).json({ error: "invalid_role" });
+    return;
+  }
+  const parsed = SetMaxResponseTokensBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  res.json(setRoleMaxResponseTokens(getDb(), role, parsed.data.maxResponseTokens));
 });

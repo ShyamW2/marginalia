@@ -196,7 +196,7 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
               style={{ transformPerspective: 800 }}
             >
               {activeTab === "reading" && <ReadingTab form={form} update={update} />}
-              {activeTab === "llm" && <LLMTab form={form} update={update} />}
+              {activeTab === "llm" && <LLMTab />}
               {activeTab === "usage" && <UsageDivider />}
               {activeTab === "scan" && <ScanTab form={form} update={update} />}
               {activeTab === "audio" && <AudioTab />}

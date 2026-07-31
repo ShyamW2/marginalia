@@ -181,11 +181,22 @@ export function getRoleProfileRaw(
   return getProviderProfileRaw(db, row.profile_id);
 }
 
+/** M19.7 "response length is per role": the only other thing
+ * llm/provider.ts's getProvider() needs from provider_roles besides the
+ * profile itself. Always returns a value — both roles' rows are created by
+ * migration 14 and never deleted, only reassigned (setProviderRole). */
+export function getRoleMaxResponseTokens(db: Database.Database, role: ProviderRole): number {
+  const row = db
+    .prepare("SELECT max_response_tokens FROM provider_roles WHERE role = ?")
+    .get(role) as { max_response_tokens: number } | undefined;
+  return row?.max_response_tokens ?? 8192;
+}
+
 export function getProviderRoles(db: Database.Database): ProviderRoleAssignment[] {
   return ROLES.map((role) => {
     const row = db
-      .prepare("SELECT profile_id FROM provider_roles WHERE role = ?")
-      .get(role) as { profile_id: string | null } | undefined;
+      .prepare("SELECT profile_id, max_response_tokens FROM provider_roles WHERE role = ?")
+      .get(role) as { profile_id: string | null; max_response_tokens: number } | undefined;
     const profileId = row?.profile_id ?? null;
     const profile = profileId ? getProviderProfile(db, profileId) : null;
     return {
@@ -193,6 +204,7 @@ export function getProviderRoles(db: Database.Database): ProviderRoleAssignment[
       profileId,
       profile,
       configured: isProfileConfigured(profile),
+      maxResponseTokens: row?.max_response_tokens ?? 8192,
     };
   });
 }
@@ -218,5 +230,20 @@ export function setProviderRole(
     `INSERT INTO provider_roles (role, profile_id) VALUES (@role, @profileId)
      ON CONFLICT(role) DO UPDATE SET profile_id = @profileId`,
   ).run({ role, profileId });
+  return getProviderRoles(db).find((r) => r.role === role)!;
+}
+
+/** PUT /api/provider-roles/:role/max-response-tokens — a role property, not
+ * a profile one (M19.7: one profile can serve both roles at different
+ * lengths, e.g. shorter query answers and longer digests). */
+export function setRoleMaxResponseTokens(
+  db: Database.Database,
+  role: ProviderRole,
+  maxResponseTokens: number,
+): ProviderRoleAssignment {
+  db.prepare("UPDATE provider_roles SET max_response_tokens = @maxResponseTokens WHERE role = @role").run({
+    role,
+    maxResponseTokens,
+  });
   return getProviderRoles(db).find((r) => r.role === role)!;
 }

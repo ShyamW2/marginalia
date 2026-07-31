@@ -19,7 +19,6 @@ const SETTINGS: Settings = {
   scanCrtIntensity: 0.6,
   pageNumberMode: "off",
   readerPaneWidth: 0,
-  maxResponseTokens: 8192,
   digestTokenBudget: 0,
 };
 
@@ -39,8 +38,8 @@ const DEFAULT_PROFILE: ProviderProfile = {
 };
 
 const ROLES: ProviderRoleAssignment[] = [
-  { role: "query", profileId: "default", profile: DEFAULT_PROFILE, configured: false },
-  { role: "digest", profileId: "default", profile: DEFAULT_PROFILE, configured: false },
+  { role: "query", profileId: "default", profile: DEFAULT_PROFILE, configured: false, maxResponseTokens: 8192 },
+  { role: "digest", profileId: "default", profile: DEFAULT_PROFILE, configured: false, maxResponseTokens: 8192 },
 ];
 
 const USAGE_SUMMARY: UsageSummary = {

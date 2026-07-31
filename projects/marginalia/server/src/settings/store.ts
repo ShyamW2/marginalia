@@ -27,9 +27,6 @@ const DEFAULTS = {
   reader_font_scale: "1",
   // M15: a tasteful default — visible bow/glow without fighting legibility.
   scan_crt_intensity: "0.6",
-  // M16: today's hardcoded THREAD_MAX_TOKENS, promoted to a setting. Global —
-  // applies regardless of which profile/role serves the call.
-  max_response_tokens: "8192",
   // M17: 0 = no ceiling — a digest run pre-flight estimate above this many
   // input tokens is refused rather than started.
   digest_token_budget: "0",
@@ -51,7 +48,6 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   reader_margin: "readerMargin",
   reader_font_scale: "readerFontScale",
   scan_crt_intensity: "scanCrtIntensity",
-  max_response_tokens: "maxResponseTokens",
   digest_token_budget: "digestTokenBudget",
   page_number_mode: "pageNumberMode",
   reader_pane_width: "readerPaneWidth",
@@ -79,7 +75,6 @@ export function getRawSettings(db: Database.Database): {
   readerMargin: ReaderMargin;
   readerFontScale: number;
   scanCrtIntensity: number;
-  maxResponseTokens: number;
   digestTokenBudget: number;
   pageNumberMode: PageNumberMode;
   readerPaneWidth: ReaderPaneWidth;
@@ -93,7 +88,6 @@ export function getRawSettings(db: Database.Database): {
     readerMargin: raw.reader_margin as ReaderMargin,
     readerFontScale: Number.parseFloat(raw.reader_font_scale),
     scanCrtIntensity: Number.parseFloat(raw.scan_crt_intensity),
-    maxResponseTokens: Number.parseInt(raw.max_response_tokens, 10),
     digestTokenBudget: Number.parseInt(raw.digest_token_budget, 10),
     pageNumberMode: raw.page_number_mode as PageNumberMode,
     readerPaneWidth: Number.parseInt(raw.reader_pane_width, 10),

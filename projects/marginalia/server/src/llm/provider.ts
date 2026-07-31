@@ -7,8 +7,7 @@
 import type { z } from "zod/v4";
 import type Database from "better-sqlite3";
 import type { ProviderRole } from "@marginalia/shared";
-import { getRawSettings } from "../settings/store.js";
-import { getRoleProfileRaw } from "../settings/providers.js";
+import { getRoleMaxResponseTokens, getRoleProfileRaw } from "../settings/providers.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { ClaudeAgentProvider } from "./claudeAgent.js";
 import { OpenAICompatProvider } from "./openaiCompat.js";
@@ -108,7 +107,7 @@ export function getProvider(
 ): LLMProvider | null {
   const profile = getRoleProfileRaw(db, role);
   if (!profile) return null;
-  const { maxResponseTokens } = getRawSettings(db);
+  const maxResponseTokens = getRoleMaxResponseTokens(db, role);
 
   function wrap(provider: LLMProvider, model: string): LLMProvider {
     return withUsageLedger(provider, db, model, operation, role, resourceId, onUsageLogged);
