@@ -3219,3 +3219,74 @@ combined page-turn sweep above exercises the same rendition/manager machinery
 
 M19.6 is now whole with no open blockers. Next up per TASKS.md: M19.7, the control
 system.
+
+## M19.7 — overlay motion: `AnimatePresence mode="wait"` hides a resize from an
+ancestor's `layout`, and cross-boundary propagation needed `LayoutGroup` — 2026-07-31
+
+Building the shared `FlyPanel` (fly from the invoking control's rect, `layout` left on
+for later resizes — decisions.md 2026-07-30 "Popups slide from where they were called")
+and wiring it into `SettingsModal` surfaced two real, non-obvious Framer Motion behaviors
+neither guessed at nor found in a skim of the docs — both confirmed by isolated repro
+before touching the real component, per OPUS.md's rule.
+
+**`AnimatePresence mode="wait"` on the settings tab-content swap silently defeated the
+outer panel's `layout` resize.** `SettingsPage.tsx`'s tab panel used `mode="wait"`
+(exiting tab plays its full exit animation, still in normal document flow, before the
+entering tab mounts). With `wait`, the outer `FlyPanel`'s own `layout` prop measured no
+size change for the tab panel's entire ~200ms exit — the swap only registers as one
+already-complete DOM mutation once the exiting element is finally removed and the new one
+mounts, which happens outside a commit `layout`'s projection system was watching for a
+gradual delta. Result: the panel snapped straight to its new height with `transform: none`
+throughout, instead of morphing. Framer's docs do call out `mode="popLayout"` for exactly
+this ("having the exiting component be removed from the flow of the document
+immediately... rather than waiting for the exiting component's exit animation to
+finish") — switching to it fixed the *inner* tab-panel's own transition immediately, and
+is very likely a straightforward win for any AnimatePresence⁠+⁠layout combination in this
+codebase going forward.
+
+**`popLayout` alone did not fix the *outer* `FlyPanel`'s morph — that needed an explicit
+`<LayoutGroup>`.** A minimal isolated repro (a bare `motion.div layout` sibling wrapping
+an `AnimatePresence mode="popLayout"` tab swap, no other app code) morphed correctly with
+no `LayoutGroup` at all — so the mechanism *can* propagate a size delta up through an
+ancestor with no special scoping. But the real `SettingsModal`/`SettingsPage` tree,
+unmodified otherwise, kept snapping (`outerTransform` stayed `"none"` for the whole
+window, height jumping straight to its final value) even after `popLayout` landed and the
+*inner* tabpanel was visibly, correctly animating its own crossfade. Progressively adding
+complexity to the repro (a backdrop `AnimatePresence` wrapper, intermediate plain divs
+matching `.page`/`.dividers`/`.pageArea`, async-loaded content matching `ProviderPicker`'s
+own `fetch`) never reproduced the real snap in isolation — every enriched repro still
+morphed cleanly. (One apparent repro along the way was a false alarm: a debug harness
+button sat under a z-index-heavier backdrop, so the click never landed and the height
+never changed at all — worth flagging since it looked exactly like a "worse" case of the
+real bug until traced.) What actually closed the gap was wrapping `SettingsModal`'s
+`FlyPanel` + its content in Motion's `<LayoutGroup>` — undocumented, in this specific
+case, as to *why* the real tree needed it and the minimal one didn't; the working theory
+is that the real tree's many other independently-registered `motion`/`layout` components
+elsewhere in the app (ProviderPicker, sliders, other popovers) share Framer's default
+global projection tree, and something about that larger tree's bookkeeping loses track of
+a projection node several plain-`div` boundaries down without an explicit group scoping
+it — but this is inference, not a traced root cause, and is written down as exactly that
+rather than dressed up as one.
+
+**Practical takeaway for the next `layout` consumer in this codebase:** don't trust a
+toy repro's success as proof a `layout` animation will hold up once wired into the real
+app — verify against the actual component tree, not just a plausible-looking stand-in.
+If a `layout` resize snaps instead of animating and the element and its resizing child
+both already have `layout` set, `<LayoutGroup>` around the pair is a cheap, low-risk next
+thing to try before assuming the feature itself is broken.
+
+Live-verified end to end via Playwright against the real dev server (both a fresh full
+restart and, separately, HMR-live edits, to rule out stale state as a factor) rather than
+by reading the code: sampled `getComputedStyle(...).transform` and
+`getBoundingClientRect()` at ~10–15ms resolution through the whole ~250ms window for (a)
+the entrance fly from two different real trigger call sites (the desk nav link and the
+reader's provider-picker "Settings →" click-through, `useOpenSettingsToLLM`) — confirmed
+genuinely different origin rects producing genuinely different mid-flight transforms, not
+a hardcoded corner; (b) reduced motion — confirmed identity transform (no movement) at
+every sampled frame, only opacity changing; (c) the settings tab-switch resize — confirmed
+a real interpolating `matrix(...)` across the whole transition, converging smoothly rather
+than snapping. 280/280 tests, `pnpm build` clean. One settled-state screenshot (Paper,
+nav-link entrance) confirmed the visual result looks correct and unbroken; a full
+screenshot pass across both themes was attempted but blocked by an unrelated tool issue
+(image reads erroring) this session — worth a quick human look before calling the visual
+polish fully signed off, though nothing in the numeric verification suggests a problem.

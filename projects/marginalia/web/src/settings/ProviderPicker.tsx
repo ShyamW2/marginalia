@@ -249,7 +249,7 @@ interface ProviderPickerProps {
    * "compact": the scan slider / reader menu icon — just the select and a
    * click-through into settings, no inline editing. */
   variant: "full" | "compact";
-  onNavigateToSettings?: () => void;
+  onNavigateToSettings?: (event: import("react").MouseEvent<HTMLButtonElement>) => void;
 }
 
 export function ProviderPicker({ role, variant, onNavigateToSettings }: ProviderPickerProps) {

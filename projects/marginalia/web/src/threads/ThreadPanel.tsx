@@ -16,6 +16,7 @@ import { ImportanceStars } from "../highlights/ImportanceStars.js";
 import { TagEditor } from "../highlights/TagEditor.js";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
+import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import {
   fetchHighlightTags,
   updateHighlightImportance,
@@ -698,7 +699,14 @@ export function ThreadPanel({
             {error === "provider_unconfigured" ? (
               <>
                 No LLM provider configured.{" "}
-                <Link to="/settings" state={{ background: location }} onClick={onClose}>
+                <Link
+                  to="/settings"
+                  state={{ background: location }}
+                  onClick={(event) => {
+                    setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
+                    onClose();
+                  }}
+                >
                   Configure one in Settings
                 </Link>
                 .
@@ -749,7 +757,14 @@ export function ThreadPanel({
       ) : (
         <div className={styles.nudge}>
           Configure an LLM provider to ask questions.{" "}
-          <Link to="/settings" state={{ background: location }} onClick={onClose}>
+          <Link
+            to="/settings"
+            state={{ background: location }}
+            onClick={(event) => {
+              setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
+              onClose();
+            }}
+          >
             Go to Settings
           </Link>
         </div>

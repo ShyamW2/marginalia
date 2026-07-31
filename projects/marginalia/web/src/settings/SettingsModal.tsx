@@ -1,7 +1,9 @@
-import { useEffect, useRef } from "react";
-import { motion, useReducedMotion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
+import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { SettingsPage } from "./SettingsPage.js";
 import { IconButton } from "../controls/IconButton.js";
+import { FlyPanel } from "../controls/FlyPanel.js";
+import { readPendingOverlayOrigin, type OverlayOrigin } from "../controls/overlayOrigin.js";
 import styles from "./SettingsModal.module.css";
 
 const FOCUSABLE_SELECTOR =
@@ -23,6 +25,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const reducedMotion = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<Element | null>(null);
+  // Read once, on mount — M19.7 "overlay motion: fly from the caller". Every
+  // settings entry point stashes its trigger's rect the instant it's
+  // clicked (setPendingOverlayOrigin); a direct/deep link leaves this null,
+  // which FlyPanel renders as a plain crossfade.
+  const [origin] = useState<OverlayOrigin | null>(() => readPendingOverlayOrigin());
 
   useEffect(() => {
     triggerRef.current = document.activeElement;
@@ -89,22 +96,24 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       transition={{ duration: reducedMotion ? 0.001 : 0.15, ease: "easeOut" }}
       onClick={onClose}
     >
-      <motion.div
-        ref={panelRef}
-        className={`${styles.panel} register-paper`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-modal-title"
-        tabIndex={-1}
-        initial={{ opacity: 0, y: reducedMotion ? 0 : 12, scale: reducedMotion ? 1 : 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: reducedMotion ? 0 : 8, scale: reducedMotion ? 1 : 0.98 }}
-        transition={{ duration: reducedMotion ? 0.001 : 0.18, ease: [0.16, 1, 0.3, 1] }}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <IconButton icon="×" label="Close settings" className={styles.closeButton} onClick={onClose} />
-        <SettingsPage titleId="settings-modal-title" />
-      </motion.div>
+      <LayoutGroup>
+        <FlyPanel
+          ref={panelRef}
+          origin={origin}
+          className={`${styles.panel} register-paper`}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="settings-modal-title"
+          tabIndex={-1}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <IconButton icon="×" label="Close settings" className={styles.closeButton} onClick={onClose} />
+          <SettingsPage titleId="settings-modal-title" />
+        </FlyPanel>
+      </LayoutGroup>
     </motion.div>
   );
 }

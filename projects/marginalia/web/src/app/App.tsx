@@ -3,6 +3,7 @@ import { AnimatePresence } from "motion/react";
 import { NavLink, Route, Routes, useLocation, useNavigate, type Location } from "react-router-dom";
 import { useTheme, type ThemeChoice } from "./useTheme.js";
 import { AirlockOverlay } from "./AirlockOverlay.js";
+import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import styles from "./App.module.css";
 
 // Code-split per room: epub.js (the reader's biggest dependency) only loads
@@ -75,6 +76,7 @@ export function App() {
           <NavLink
             to="/settings"
             state={{ background: location } satisfies NavigationState}
+            onClick={(event) => setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget))}
             className={({ isActive }) =>
               isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
             }

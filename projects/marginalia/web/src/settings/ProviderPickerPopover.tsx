@@ -11,7 +11,7 @@ interface ProviderPickerPopoverProps {
    * ("Query provider", not just "Provider") since a screen reader user has
    * no visual context for which icon this is. */
   label: string;
-  onNavigateToSettings: () => void;
+  onNavigateToSettings: (event: import("react").MouseEvent<HTMLButtonElement>) => void;
 }
 
 /**
@@ -79,9 +79,9 @@ export function ProviderPickerPopover({ role, label, onNavigateToSettings }: Pro
             <ProviderPicker
               role={role}
               variant="compact"
-              onNavigateToSettings={() => {
+              onNavigateToSettings={(event) => {
                 setOpen(false);
-                onNavigateToSettings();
+                onNavigateToSettings(event);
               }}
             />
           </motion.div>

@@ -3013,7 +3013,7 @@ sections first** — the register split is by *material*, not by room, and is se
       (click-accurate `bookPageMap` vs. character-location `book.locations`), so a
       previewed value and its settled, redisplayed percent can differ. 113/113 web tests
       (11 new), `pnpm build` clean.)_
-- [ ] **Overlay motion: fly from the caller, morph on resize.** Overlays receive the
+- [x] **Overlay motion: fly from the caller, morph on resize.** Overlays receive the
       invoking control's rect at open time and animate from it; resizing an open overlay
       (a settings tab change) morphs its box rather than jumping. ~240ms spring, not the
       500ms originally asked for — see the decisions entry for why, and for the note that
@@ -3021,6 +3021,34 @@ sections first** — the register split is by *material*, not by room, and is se
       _Acceptance: the same overlay opened from two different controls flies from two
       different places (no hardcoded corner); reduced motion renders a crossfade with no
       movement at all; nothing blocks input for more than ~400ms._
+      _(verified 2026-07-31: `web/src/controls/FlyPanel.tsx` — position/scale driven by
+      motion values set in `useLayoutEffect` (before first paint, no flash) from a rect
+      measured against `origin`, animated to identity with a ~240ms spring;
+      `web/src/controls/overlayOrigin.ts` bridges the click-time rect to the
+      route-mounted `SettingsModal` (non-destructive, staleness-gated — a "take and
+      clear" first draft broke under React 18 StrictMode's double-invoked lazy
+      initializers, see the function's own doc comment). Wired into all four real
+      trigger sites (`App.tsx`'s nav link, both of `ThreadPanel`'s "configure a
+      provider" links, `useOpenSettingsToLLM` — used by the reader and the digest
+      spotlight's provider pickers). Found and fixed two real, non-obvious Framer Motion
+      issues live rather than assumed away — full mechanism and the isolated repros that
+      separated them in NOTES.md "M19.7 — overlay motion": `SettingsPage.tsx`'s tab
+      swap needed `AnimatePresence mode="popLayout"` (not `"wait"`, which hid the resize
+      from any ancestor's `layout` tracking for its whole exit duration), and the outer
+      `FlyPanel`'s own morph additionally needed an explicit `<LayoutGroup>` around
+      `SettingsModal`'s content — a minimal repro morphed fine without one, the real
+      component tree didn't, root cause not fully traced (written down as inference, not
+      fact). Live-verified via Playwright sampling `getComputedStyle().transform`/
+      `getBoundingClientRect()` at 10–15ms resolution against the real dev server (both a
+      full restart and HMR-live, to rule out stale state): two different real trigger
+      call sites produce two genuinely different flight origins and transforms (not a
+      hardcoded corner); reduced motion holds an identity transform at every sampled
+      frame (opacity-only crossfade); the tab-switch resize shows a real interpolating
+      matrix converging smoothly rather than snapping. 280/280 tests, `pnpm build`
+      clean. One settled-state screenshot (Paper, nav-link entrance) confirmed the
+      visual result live; a full both-themes screenshot pass was attempted but blocked
+      by an unrelated tool issue this session (image reads erroring) — worth a quick
+      human look, though nothing in the numeric verification suggests a problem.)_
 - [ ] **One shortcut registry, and keycaps that cannot lie.** Replace the four ad-hoc
       window `keydown` listeners with one registry (key, scope, handler) carrying a single
       `isTyping` guard, and drive the on-screen keycap hints **from the registry** so a

@@ -164,7 +164,16 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
         </div>
 
         <div className={styles.pageArea}>
-          <AnimatePresence mode="wait" initial={false}>
+          {/* M19.7 "overlay motion": mode="popLayout" (not the previous
+              "wait") is load-bearing, not a style choice — with "wait", the
+              exiting tab stays in normal document flow for its whole exit
+              transition, which hides the real size change from the outer
+              FlyPanel's layout projection until the swap fully settles, so
+              the panel snaps to its new height instead of morphing. Proven
+              live: an isolated repro (AnimatePresence + layout, no other
+              app code involved) reproduced the snap under "wait" and fixed
+              it under "popLayout" — see NOTES.md "M19.7 — overlay motion". */}
+          <AnimatePresence mode="popLayout" initial={false}>
             <motion.div
               key={activeTab}
               role="tabpanel"
@@ -172,6 +181,14 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
               aria-labelledby={`settings-tab-${activeTab}`}
               tabIndex={0}
               className={styles.panel}
+              // This is the element whose size actually changes on a tab
+              // switch. `layout` here is what lets FlyPanel's own `layout`
+              // (several component boundaries up, in SettingsModal) notice
+              // the resize at all — Framer's projection system only
+              // propagates a size delta up through ancestors that are also
+              // opted into layout tracking; without this, the outer panel
+              // just snaps regardless of AnimatePresence mode.
+              layout={!reducedMotion}
               initial={reducedMotion ? { opacity: 1 } : { opacity: 0, rotateY: -6, x: 10 }}
               animate={{ opacity: 1, rotateY: 0, x: 0 }}
               exit={reducedMotion ? { opacity: 1 } : { opacity: 0, rotateY: 6, x: -10 }}
