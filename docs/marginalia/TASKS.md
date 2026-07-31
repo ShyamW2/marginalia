@@ -3216,11 +3216,35 @@ sections first** — the register split is by *material*, not by room, and is se
       not a crash; the sandbox flags are proven by asking it to read a file in the repo and
       confirming it cannot; usage lands in the ledger with honest provenance (`estimated`
       if the CLI reports no tokens)._
-- [ ] **Verify:** open every overlay in the app from every entry point that opens it,
+- [x] **Verify:** open every overlay in the app from every entry point that opens it,
       operate every new control with the keyboard only, and switch registers by moving
       between the desk, the reader and the scan. Both themes, reduced motion. The bar is
       the same one M19 set for settings: **judge honestly whether it is pleasant, and fix
       what feels clumsy before checking this off.**
+      _(verified 2026-07-31: scoped to everything M19.7 actually built — Codex CLI is
+      recorded as a blocked, un-started task above (see NOTES.md "Blockers"), so there is
+      no fourth-provider surface to open here. Settings opened live from every entry point
+      this milestone touches: the Desk/Reader/Scan cluster icons (each landing on its
+      contextual divider, previous task), the reader's provider-picker popover's real
+      "Settings →" link (landed on LLM), and the `s` keyboard shortcut (landed focus back
+      on the settings icon after Escape — a real bug found and fixed live in the first
+      task above). Keyboard-only: Tab from a fresh page load reaches the cluster's Settings
+      icon and Enter opens the real dialog (not just a click handler firing); the two new
+      token sliders operate fully via keyboard (Tab, Arrow, focus) with correct
+      `aria-valuetext`, covered in the previous task's own live pass. Registers: screenshotted
+      the Desk (paper) → the reader (paper, `register-quiet`) → the Scan (glass) in sequence
+      — the floating cluster stays visually paper-registered in all three by design (it
+      floats *above* whatever room it's over, the same "things in front of the glass stay
+      flat" rule the Scan's own popovers already follow), and nothing else looked
+      out of place crossing rooms. Both themes: Paper and Ink screenshotted for the Desk,
+      the reader, and the Scan — legible in all six, including the Scan's ink toggle
+      composing correctly with its own pre-existing dark-native override rather than
+      fighting it. Reduced motion: Settings opens as a plain crossfade with no
+      positional jump, confirmed via `reducedMotion: "reduce"` context. Honest read:
+      pleasant and coherent — the cluster reads as "always there, quietly," the two
+      sliders feel like real physical controls rather than number inputs, nothing felt
+      clumsy enough to fix before checking this off. 158/158 server tests, 113/113 web
+      tests, `pnpm build` clean, both before and after this pass.)_
 
 ### M19.8 — The refactor (narrowed to one target)
 
