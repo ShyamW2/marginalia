@@ -1,9 +1,9 @@
 import { lazy, Suspense } from "react";
 import { AnimatePresence } from "motion/react";
-import { NavLink, Route, Routes, useLocation, useNavigate, type Location } from "react-router-dom";
-import { useTheme, type ThemeChoice } from "./useTheme.js";
+import { Route, Routes, useLocation, useNavigate, type Location } from "react-router-dom";
 import { AirlockOverlay } from "./AirlockOverlay.js";
-import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
+import { NavCluster } from "./NavCluster.js";
+import type { TabId } from "../settings/SettingsPage.js";
 import styles from "./App.module.css";
 
 // Code-split per room: epub.js (the reader's biggest dependency) only loads
@@ -33,14 +33,18 @@ interface NavigationState {
   background?: Location;
 }
 
-const THEME_OPTIONS: { value: ThemeChoice; label: string }[] = [
-  { value: "paper", label: "Paper" },
-  { value: "system", label: "Auto" },
-  { value: "ink", label: "Ink" },
-];
+/** M19.7 "settings opens where you already are": which divider the floating
+ * cluster's settings icon should land on, derived from the room currently
+ * showing. Only the rooms named in TASKS.md's acceptance get a dedicated
+ * divider (scan → Scan); everything else — the Desk, the reader, the digest,
+ * a direct /settings deep link — falls back to Reading, matching "a direct
+ * /settings link still opens on Reading over the Desk". */
+function settingsTabForRoom(pathname: string): TabId {
+  if (pathname.startsWith("/scan/")) return "scan";
+  return "reading";
+}
 
 export function App() {
-  const { choice, setChoice } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -59,49 +63,7 @@ export function App() {
 
   return (
     <div className={`${styles.shell} register-paper`}>
-      <header className={styles.header}>
-        <NavLink to="/" className={styles.brand}>
-          Marginalia
-        </NavLink>
-        <nav className={styles.nav}>
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) =>
-              isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
-            }
-          >
-            Library
-          </NavLink>
-          <NavLink
-            to="/settings"
-            state={{ background: location } satisfies NavigationState}
-            onClick={(event) => setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget))}
-            className={({ isActive }) =>
-              isActive ? `${styles.navLink} ${styles.navLinkActive}` : styles.navLink
-            }
-          >
-            Settings
-          </NavLink>
-          <div className={styles.themeToggle} role="group" aria-label="Theme">
-            {THEME_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={
-                  choice === option.value
-                    ? `${styles.themeButton} ${styles.themeButtonActive}`
-                    : styles.themeButton
-                }
-                onClick={() => setChoice(option.value)}
-                aria-pressed={choice === option.value}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </nav>
-      </header>
+      <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
       <main className={styles.main}>
         <Suspense fallback={<div className={styles.routeFallback} />}>
           <Routes location={background ?? location}>

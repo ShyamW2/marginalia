@@ -12,7 +12,9 @@ describe("App", () => {
     );
     // Routes are code-split (React.lazy) — chunk resolution is async even
     // when instant, so the route's content can't be asserted synchronously.
-    expect(screen.getByText("Marginalia")).toBeTruthy();
+    // The floating nav cluster (M19.7) is App-level, not code-split, so it's
+    // there immediately.
+    expect(screen.getByRole("link", { name: "Library" })).toBeTruthy();
     expect(await screen.findByText("Your library is empty")).toBeTruthy();
   });
 

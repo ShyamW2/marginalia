@@ -38,6 +38,14 @@
   --shadow-panel: 0 8px 24px rgba(40, 30, 15, 0.12);
   --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
   --duration-standard: 180ms;
+
+  /* M19.7 "the nav bar becomes a floating cluster": the cluster's own
+   * measured footprint (library + settings + 3 theme icon buttons, gaps and
+   * padding — NavCluster.module.css), reserved by any room chrome that
+   * shares the top-right corner (ReaderPage's title bar, the Scan's header
+   * row) so the two can never overlap or drift out of sync with each
+   * other. */
+  --nav-cluster-reserve: 17rem;
 }
 
 :root[data-theme="ink"] {

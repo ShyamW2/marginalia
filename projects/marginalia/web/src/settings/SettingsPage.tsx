@@ -14,7 +14,7 @@ import styles from "./SettingsPage.module.css";
 
 type FormState = Settings;
 
-type TabId = "reading" | "llm" | "usage" | "scan" | "audio" | "desk";
+export type TabId = "reading" | "llm" | "usage" | "scan" | "audio" | "desk";
 
 /** The book/binder shell (TASKS.md M19: "tabbed dividers down the side").
  * Reading/Scan/Desk are still one shared Settings form + Save button, same

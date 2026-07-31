@@ -1,0 +1,42 @@
+/* M19.7 "keycaps that cannot lie": a playful 3D key graphic, tucked behind
+   its icon and revealed on proximity (hover/focus of the wrapping anchor) —
+   the charm, never the only path (a screen reader never needs it; the
+   underlying control keeps its own accessible name regardless). */
+
+.anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.keycap {
+  position: absolute;
+  bottom: -5px;
+  right: -5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 9px/1 var(--font-mono, ui-monospace, "SF Mono", "Cascadia Code", monospace);
+  text-transform: uppercase;
+  background: var(--control-bg, var(--color-bg-raised));
+  color: var(--control-text-muted, var(--color-text-muted));
+  border: 1px solid var(--control-border-color, var(--color-border));
+  border-radius: 4px;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  opacity: 0;
+  transform: translateY(2px) scale(0.85);
+  pointer-events: none;
+  transition:
+    opacity var(--duration-standard) var(--ease-standard),
+    transform var(--duration-standard) var(--ease-standard);
+}
+
+.anchor:hover .keycap,
+.anchor:focus-within .keycap {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}

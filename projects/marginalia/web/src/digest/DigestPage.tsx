@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import type { DigestStatus, ThematicStatus } from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
+import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
+import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import styles from "./DigestPage.module.css";
 
 function revealParams(revealed: Set<number>): URLSearchParams {
@@ -152,31 +154,8 @@ export function DigestPage() {
   // M19.6 "`r` opens the reader" (decisions.md 2026-07-30 later): "the book
   // currently in focus" is unambiguous here — the book this digest is for —
   // so `r` is just a keyboard shortcut for the existing "← Book" link below.
-  // Its own window-level listener with its own isTyping guard, matching
-  // every other room's shortcut convention today (this is meant to move
-  // into M19.7's shared registry unchanged once that registry exists, per
-  // TASKS.md's own note — not to invent a new pattern ahead of it).
-  useEffect(() => {
-    function handleKeydown(event: KeyboardEvent) {
-      if (!id) return;
-      const target = event.target as HTMLElement | null;
-      const isTyping =
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.isContentEditable;
-      if (
-        event.key.toLowerCase() === "r" &&
-        !isTyping &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.altKey
-      ) {
-        navigate(`/read/${id}`);
-      }
-    }
-    window.addEventListener("keydown", handleKeydown);
-    return () => window.removeEventListener("keydown", handleKeydown);
-  }, [id, navigate]);
+  // Moved into the M19.7 shared registry (useShortcuts).
+  useShortcuts([{ key: SHORTCUT_KEYS.reader, handler: () => id && navigate(`/read/${id}`) }]);
 
   function reveal(spineIndex: number) {
     setRevealed((prev) => new Set(prev).add(spineIndex));

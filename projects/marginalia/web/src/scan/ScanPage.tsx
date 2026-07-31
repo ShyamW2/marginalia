@@ -5,6 +5,8 @@ import type { HighlightImportance, HighlightKind, ScanData, ScanHighlight } from
 import { playAirlock } from "../app/airlockBus.js";
 import { updateHighlightImportance, updateHighlightTags } from "../highlights/highlightMeta.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
+import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
+import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { DigestSpotlight } from "./DigestSpotlight.js";
 import { HeatStrip } from "./HeatStrip.js";
 import { RevisitQueue } from "./RevisitQueue.js";
@@ -147,34 +149,16 @@ export function ScanPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    function handleKeydown(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      const isTyping = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
-      if (event.key === "Escape" && !isTyping) void handleBackToBook();
-      // M19.6 "`r` opens the reader" (decisions.md 2026-07-30 later): "the
-      // book currently in focus" has an unambiguous answer on the Scan —
-      // whichever book this instrument is over — so this reuses
-      // handleBackToBook verbatim (same airlock, same target) rather than a
-      // second navigation path. Written as its own window-level listener
-      // with its own isTyping guard, matching every other room's shortcut
-      // convention today (TASKS.md's own note: this is meant to move into
-      // M19.7's shared registry without its behavior changing, once that
-      // registry exists — not to invent a new pattern ahead of it).
-      if (
-        event.key.toLowerCase() === "r" &&
-        !isTyping &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.altKey
-      ) {
-        void handleBackToBook();
-      }
-    }
-    window.addEventListener("keydown", handleKeydown);
-    return () => window.removeEventListener("keydown", handleKeydown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, reducedMotion]);
+  // M19.6 "`r` opens the reader" (decisions.md 2026-07-30 later): "the book
+  // currently in focus" has an unambiguous answer on the Scan — whichever
+  // book this instrument is over — so this reuses handleBackToBook verbatim
+  // (same airlock, same target) rather than a second navigation path. Moved
+  // into the M19.7 shared registry (useShortcuts) — this was the last of the
+  // four ad-hoc window keydown listeners it replaces.
+  useShortcuts([
+    { key: SHORTCUT_KEYS.escape, handler: () => void handleBackToBook() },
+    { key: SHORTCUT_KEYS.reader, handler: () => void handleBackToBook() },
+  ]);
 
   async function handleBackToBook() {
     if (!id) return;

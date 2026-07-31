@@ -1,0 +1,30 @@
+.cluster {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.libraryLink {
+  text-decoration: none;
+}
+
+.themeGroup {
+  display: flex;
+  gap: 0.15rem;
+  padding-left: 0.3rem;
+  margin-left: 0.15rem;
+  border-left: 1px solid var(--color-border);
+}
+
+/* The App-shell placement: fixed, top-right, above every room. */
+.floating {
+  position: fixed;
+  top: 0.85rem;
+  right: 1rem;
+  z-index: 40;
+}

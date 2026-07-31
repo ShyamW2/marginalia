@@ -65,15 +65,17 @@
   min-height: 0;
 }
 
+/* M19.7: shifted left by --nav-cluster-reserve so the floating nav cluster
+   (App.tsx, top-right of every room) never overlaps these. */
 .publishButton {
-  right: 1rem;
+  right: calc(1rem + var(--nav-cluster-reserve));
 }
 
 .scanButton {
-  right: 7.25rem;
+  right: calc(7.25rem + var(--nav-cluster-reserve));
 }
 
 .digestLink {
-  right: 13rem;
+  right: calc(13rem + var(--nav-cluster-reserve));
   text-decoration: none;
 }

@@ -31,6 +31,10 @@
   justify-content: space-between;
   gap: 1rem;
   margin-bottom: 1.5rem;
+  /* M19.7: room for the floating nav cluster (App.tsx, top-right of every
+     room) -- without it, headerActions' own flush-right edge sits directly
+     underneath the cluster. */
+  padding-right: var(--nav-cluster-reserve);
 }
 
 .title {

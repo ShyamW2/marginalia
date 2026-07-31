@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
 import type { DigestStatus, ScanChapter } from "@marginalia/shared";
 import { ProviderPicker } from "../settings/ProviderPicker.js";
-import { useOpenSettingsToLLM } from "../settings/useOpenSettingsToLLM.js";
+import { useOpenSettings } from "../settings/useOpenSettings.js";
 import {
   beamFromChapterRange,
   beamHalfWidthFromDrag,
@@ -78,7 +78,7 @@ interface DigestSpotlightProps {
  * kept in sync with them in both directions, never the only way in.
  */
 export function DigestSpotlight({ resourceId, chapters, onClose, warpGeometry, warpWrapperRef }: DigestSpotlightProps) {
-  const openSettingsToLLM = useOpenSettingsToLLM();
+  const openSettingsToLLM = useOpenSettings("llm");
   const [status, setStatus] = useState<DigestStatus | null>(null);
   const [startIdx, setStartIdx] = useState(0);
   const [endIdx, setEndIdx] = useState(Math.max(0, chapters.length - 1));

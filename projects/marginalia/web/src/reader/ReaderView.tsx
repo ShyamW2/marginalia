@@ -35,8 +35,9 @@ import {
 import { emitSettingsSaved, onSettingsSaved } from "../settings/settingsBus.js";
 import { onProviderRolesSaved } from "../settings/providerBus.js";
 import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
-import { useOpenSettingsToLLM } from "../settings/useOpenSettingsToLLM.js";
+import { useOpenSettings } from "../settings/useOpenSettings.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
+import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { Button } from "../controls/Button.js";
@@ -58,6 +59,7 @@ import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
 import { PageNumberDisplay } from "./PageNumberDisplay.js";
 import { ScrubDial, DIAL_PX_PER_PERCENT } from "./ScrubDial.js";
+import { NavCluster } from "../app/NavCluster.js";
 import {
   buildBookPageMap,
   lookupBookPage,
@@ -439,7 +441,7 @@ export function ReaderView({
   initialReaderPaneWidth,
   appBoundsRef,
 }: ReaderViewProps) {
-  const openSettingsToLLM = useOpenSettingsToLLM();
+  const openSettingsToLLM = useOpenSettings("llm");
   const containerRef = useRef<HTMLDivElement>(null);
   // M19.6 "the skipped last page of a chapter": the element epub.js measures
   // as `container` (containerRef itself) must be an *integer* pixel width —
@@ -735,13 +737,13 @@ export function ReaderView({
   }, []);
 
   useShortcuts([
-    { key: "ArrowLeft", handler: handleArrowLeftShortcut },
-    { key: "ArrowRight", handler: handleArrowRightShortcut },
-    { key: "[", handler: handleChapterPrevShortcut },
-    { key: "]", handler: handleChapterNextShortcut },
-    { key: "Escape", handler: handleEscapeShortcut },
-    { key: "f", shift: false, handler: handleFocusModeShortcut },
-    { key: "f", shift: true, handler: toggleFullscreen },
+    { key: SHORTCUT_KEYS.prevPage, handler: handleArrowLeftShortcut },
+    { key: SHORTCUT_KEYS.nextPage, handler: handleArrowRightShortcut },
+    { key: SHORTCUT_KEYS.prevChapter, handler: handleChapterPrevShortcut },
+    { key: SHORTCUT_KEYS.nextChapter, handler: handleChapterNextShortcut },
+    { key: SHORTCUT_KEYS.escape, handler: handleEscapeShortcut },
+    { key: SHORTCUT_KEYS.focusMode, shift: false, handler: handleFocusModeShortcut },
+    { key: SHORTCUT_KEYS.fullscreen, shift: true, handler: toggleFullscreen },
   ]);
 
   // M11 semicircular turn zones: which edge (if any) the pointer is
@@ -2266,6 +2268,14 @@ export function ReaderView({
               />
             </>
           )}
+          {/* M19.7 "the nav bar becomes a floating cluster": outside
+              fullscreen, App.tsx's own top-right instance already covers the
+              reader. In real Fullscreen API fullscreen, anything outside
+              `wrapperRef`'s subtree is not rendered at all, so that instance
+              becomes invisible — this un-floated copy lives inside the
+              reader's own chrome instead, joining the same proximity-reveal
+              (topRow/revealTop) as everything else in this row. */}
+          {fullscreenMode && <NavCluster settingsTab="reading" floating={false} />}
         </div>
       </div>
 

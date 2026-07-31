@@ -3049,7 +3049,7 @@ sections first** — the register split is by *material*, not by room, and is se
       visual result live; a full both-themes screenshot pass was attempted but blocked
       by an unrelated tool issue this session (image reads erroring) — worth a quick
       human look, though nothing in the numeric verification suggests a problem.)_
-- [ ] **One shortcut registry, and keycaps that cannot lie.** Replace the four ad-hoc
+- [x] **One shortcut registry, and keycaps that cannot lie.** Replace the four ad-hoc
       window `keydown` listeners with one registry (key, scope, handler) carrying a single
       `isTyping` guard, and drive the on-screen keycap hints **from the registry** so a
       rebinding can never leave a stale hint behind. Keycaps are the playful 3D key
@@ -3061,7 +3061,29 @@ sections first** — the register split is by *material*, not by room, and is se
       before, including inside text fields; the hint next to an icon is derived, not
       written; a screen reader user can reach every function the keycaps advertise without
       using one._
-- [ ] **The nav bar becomes a floating cluster.** Remove the `Marginalia` header, the
+      _(verified 2026-07-31: `web/src/shortcuts/keys.ts` is the single source of truth —
+      one named constant per binding, imported by both the `useShortcuts` registration and
+      the `KeyCap` hint, so the two cannot drift (the "derived, not written" bar) without a
+      second, literal source to keep in sync existing anywhere. Migrated the last three of
+      the four ad-hoc listeners the M19.6 pre-work commit didn't get to — `ScanPage`,
+      `DigestPage`, `SettingsModal` — onto the shared registry; `SettingsModal` keeps a
+      second, un-migrated listener for Tab's focus trap on purpose, since it needs to
+      query the panel's live focusable set on every press rather than fire a fixed-key
+      handler, and dropped its old capture-phase flag, no longer needed now that Escape
+      goes through the registry's own scope stack (most-recently-mounted wins). `q` (Scan
+      — M20.5) is declared in keys.ts but not yet wired to a handler, since M20.5 hasn't
+      shipped — building "q opens the scan" now would be inventing that milestone's
+      feature ahead of it; the constant exists so its future binding and hint both read
+      from here on day one. `KeyCapAnchor` (`web/src/shortcuts/KeyCap.tsx`) is scoped to
+      the one icon TASKS.md actually names a keycap for — the cluster's settings icon —
+      not the library/theme icons `s`/`r`/`q` have no binding to lend them (see the next
+      task's note on this exact point). Live Playwright pass: pressing `s` from the Desk
+      opens Settings (dialog role appears) and focus lands back on the settings icon after
+      Escape closes it (a real bug this session found and fixed live — the keyboard path
+      had nothing to focus first, so the modal's own focus-restore had nothing to restore
+      to); Escape on the Scan navigates back to the reader via the same `handleBackToBook`
+      the removed listener used. 113/113 web tests, `tsc -b` clean.)_
+- [x] **The nav bar becomes a floating cluster.** Remove the `Marginalia` header, the
       Library and Settings links, and the Paper/Auto/Ink group from `App.tsx`; replace with
       a top-right floating cluster of icon buttons — library, settings, theme — present in
       every room, each with its proximity-revealed keycap.
@@ -3071,6 +3093,35 @@ sections first** — the register split is by *material*, not by room, and is se
       _Acceptance: every function the removed header offered is still reachable, including
       by keyboard and screen reader; the cluster never covers text in the reader; theme
       switching still persists._
+      _(verified 2026-07-31: `web/src/app/NavCluster.tsx` — library (a real `<Link>`, not a
+      button+navigate, so right-click/ctrl-click still work), settings, and a three-way
+      paper/system/ink icon group, all built on the existing `IconButton`/`buttonClassName`
+      kit so register/theme fall out for free. SPEC-GAP against this task's own "each with
+      its proximity-revealed keycap": only the settings icon actually gets one — library
+      and theme have no registry binding to derive a truthful hint from (the previous
+      task's "derived, not written" acceptance would be violated by a keycap advertising a
+      key that does nothing), and the task's own enumeration of the registry's contents
+      names only `s`, not a library or theme key. Outside the reader's fullscreen, one
+      instance renders fixed top-right in `App.tsx`, above `<Routes>`, covering every room
+      including Settings-over-background — confirmed live for the Desk, the reader, the
+      Scan, and Settings. In the reader's fullscreen, real Fullscreen API removes anything
+      outside the fullscreened element from rendering at all, so that instance is
+      necessarily invisible there — `ReaderView.tsx` mounts a second, un-floated instance
+      inside its own `topRow`, joining the exact `revealTop`/`fullscreenFloating` proximity
+      group M14 already built, confirmed live (a real `Shift+F` → hover the top edge →
+      screenshot). Found and fixed two real collisions live, not hypothetical: the fixed
+      cluster sat directly on top of the reader's title-bar Digest/Scan/Publish buttons and
+      the Scan's own header actions (Digest…/Read digest/← Book) — both share the same
+      top-right corner the cluster now claims. Fixed with one shared `--nav-cluster-reserve`
+      custom property (`theme.css`), sized to the cluster's actual measured footprint (not
+      guessed — the first attempt at 9.5rem was still short, measured via
+      `getBoundingClientRect()` and corrected to 17rem), consumed by both
+      `ReaderPage.module.css` and `ScanPage.module.css` so the two can't drift apart from
+      each other independently. The Digest page's own header sits in a narrow centered
+      column nowhere near the cluster's corner — checked live, no fix needed there. Theme
+      switching confirmed to persist (localStorage + `document.documentElement` write,
+      unchanged from the removed header's version, just relocated). 113/113 web tests,
+      `tsc -b` clean.)_
 - [ ] **Settings as a card, opening where you already are.** The binder becomes a paper
       card that flies from the settings icon over the current room (the routing already
       does this — `App.tsx`'s background-location pattern). Opening it is **context-aware**:

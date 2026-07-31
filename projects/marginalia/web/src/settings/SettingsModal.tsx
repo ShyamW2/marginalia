@@ -4,6 +4,8 @@ import { SettingsPage } from "./SettingsPage.js";
 import { IconButton } from "../controls/IconButton.js";
 import { FlyPanel } from "../controls/FlyPanel.js";
 import { readPendingOverlayOrigin, type OverlayOrigin } from "../controls/overlayOrigin.js";
+import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
+import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import styles from "./SettingsModal.module.css";
 
 const FOCUSABLE_SELECTOR =
@@ -49,13 +51,15 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     };
   }, []);
 
+  // Escape goes through the shared registry (useShortcuts below) —
+  // `allowWhileTyping` since a field inside the binder can be focused when
+  // the reader wants out. Tab's focus trap stays its own listener: it needs
+  // to query the panel's live focusable set on every press, which isn't a
+  // fixed-key binding the registry models.
+  useShortcuts([{ key: SHORTCUT_KEYS.escape, handler: onClose, allowWhileTyping: true }]);
+
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
       if (event.key !== "Tab") return;
 
       const panel = panelRef.current;
@@ -80,12 +84,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         first.focus();
       }
     }
-    // Capture phase: this must win over ReaderView's own window-level
-    // Escape handler (closes the thread panel / clears a selection), since
-    // the modal is visually on top and should absorb the keypress first.
-    window.addEventListener("keydown", handleKeydown, true);
-    return () => window.removeEventListener("keydown", handleKeydown, true);
-  }, [onClose]);
+    window.addEventListener("keydown", handleKeydown);
+    return () => window.removeEventListener("keydown", handleKeydown);
+  }, []);
 
   return (
     <motion.div
