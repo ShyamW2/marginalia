@@ -3122,7 +3122,7 @@ sections first** — the register split is by *material*, not by room, and is se
       switching confirmed to persist (localStorage + `document.documentElement` write,
       unchanged from the removed header's version, just relocated). 113/113 web tests,
       `tsc -b` clean.)_
-- [ ] **Settings as a card, opening where you already are.** The binder becomes a paper
+- [x] **Settings as a card, opening where you already are.** The binder becomes a paper
       card that flies from the settings icon over the current room (the routing already
       does this — `App.tsx`'s background-location pattern). Opening it is **context-aware**:
       from the reader → Reading, the scan → Scan, audio → Audio, an LLM picker → LLM. The
@@ -3131,6 +3131,24 @@ sections first** — the register split is by *material*, not by room, and is se
       _Acceptance: opening settings from each room lands on that room's divider; a direct
       `/settings` link still opens on Reading over the Desk; Escape still restores focus to
       the control that opened it._
+      _(verified 2026-07-31: generalized the reader/digest-spotlight-only
+      `useOpenSettingsToLLM` into `useOpenSettings(tab)` (`web/src/settings/
+      useOpenSettings.ts`) — same click-time overlay-origin capture, now parameterized by
+      divider instead of hardcoding "llm"; the two existing call sites became
+      `useOpenSettings("llm")` verbatim, no behavior change there. `NavCluster`'s settings
+      icon is the new caller this task actually extends the mechanism to:
+      `App.tsx`'s `settingsTabForRoom()` derives the divider from
+      `background?.pathname ?? location.pathname` (the *underlying* room, correct whether
+      or not the modal is already open) — `/scan/:id` → "scan", everything else (Desk, the
+      reader, the digest, a direct `/settings` hit) → "reading", matching the acceptance's
+      explicit "a direct /settings link still opens on Reading over the Desk" line. SPEC-GAP:
+      "audio → Audio" has no live call site yet — M21's audio transport controls, the
+      only plausible trigger, haven't shipped; nothing to wire without inventing that
+      milestone's UI ahead of it. Live Playwright pass: clicking the settings icon from the
+      Desk, from the reader, and a direct `/settings` navigation (Desk visible behind it)
+      all land on the Reading divider; the Scan lands on Scan (covered live in the previous
+      task's verification, same mechanism); Escape-restores-focus already covered above.
+      113/113 web tests, `tsc -b` clean.)_
 - [ ] **The two token sliders.** Context length **per profile** (log2, 1024 → 200K,
       detenting on powers of two) and max response length **per role** (250 → 10000,
       linear) — query and digest separately, since one profile can serve both roles and a
