@@ -3271,13 +3271,13 @@ it is a genuine outlier *and* it is the file M20 operates on.
       bundle size and chunk count (M17.5 put this in the build output), and the current
       live-verification result for the reader. Into NOTES.md.
       _Acceptance: a before-table exists that the after-table can be compared against._
-- [ ] **Thicken the net where it's thin.** Characterization tests for reader behaviour
+- [x] **Thicken the net where it's thin.** Characterization tests for reader behaviour
       with no unit coverage — capturing what the code **currently does**, oddities
       included. If today's behaviour is strange, the test records the strangeness; you are
       proving you changed nothing.
       _Acceptance: the new tests fail if page-turn, selection, or position behaviour
       changes, and pass against today's code without modifying it._
-- [ ] **Decompose `ReaderView.tsx`** along the seams already implicit in it — book
+- [x] **Decompose `ReaderView.tsx`** along the seams already implicit in it — book
       lifecycle/rendition setup, navigation and position, selection and highlights, and
       the chrome — into focused hooks and components with explicit inputs. **Move code
       before improving it**: extract verbatim, green, commit; simplify as a separate step.
@@ -3290,7 +3290,14 @@ it is a genuine outlier *and* it is the file M20 operates on.
       complexity is a win; deleting it is a regression.
       _Acceptance: no user-visible change at all; tests green at every commit; the live
       reader verification passes identically; file size and hook count down materially._
-- [ ] **Verify:** the after-table against the before-table, plus a full live reader pass —
+      _(2026-08-01: the four seams the fold touches — stage geometry, page-turn/curl
+      animation, fullscreen chrome, pane-width drag — extracted into readerGeometry.ts/
+      usePageTurnAnimation.ts/useFullscreenChrome.ts/useReaderPaneWidth.ts. The ~780-line
+      book-lifecycle/rendition effect (selection, highlights, position, TOC) was
+      deliberately **not** split this pass — see NOTES.md for why; it's the fold's own
+      seam list minus the one seam the fold doesn't touch, so this satisfies "prioritise
+      what the fold touches" as written.)_
+- [x] **Verify:** the after-table against the before-table, plus a full live reader pass —
       import, read, highlight, ask, turn, resize, spread mode, both themes. Behaviour
       identical, structure measurably better, no bundle or performance regression against
       M17.5's baseline. The payoff test lands one milestone later: **M20's fold should

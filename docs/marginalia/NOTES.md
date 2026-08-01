@@ -3368,3 +3368,99 @@ and multiple NOTES.md entries above document load-bearing quirks inside it that 
 live session each to diagnose. Splitting it safely needs its own dedicated pass with
 characterization tests written first, not a subtask of this one. Recorded here so the
 scope-cut is a choice, not a thing that quietly didn't happen.
+
+## M19.8 — the refactor: after-table and verification, 2026-08-01
+
+Four extractions landed, one per commit, each: moved verbatim, typechecked, `pnpm test`
+green, `pnpm build` clean, then live-verified against the real dev server before the next
+one started (per REFACTORING.md's "small, reversible steps" — never more than one step
+red).
+
+1. **`readerGeometry.ts`** — `computeReaderGap`, `turnZoneForVisibleX`, and the margin/
+   spread constants. Pure functions with zero prior unit coverage; 10 characterization
+   tests added alongside the move (combining "thicken the net" with "decompose" for this
+   piece specifically — the function only became testable in isolation once it had its
+   own module, and writing the test in the same commit as the move is still "move before
+   improve": the test asserts what the code already did, nothing about the code changed).
+2. **`usePageTurnAnimation.ts`** — the M7 slide, the M10 snapshot curl, and the drag-to-
+   peel gesture (`handleEdgePointerDown`). The exact seam M20 operates on. Owns
+   `curlProgress`/`curl`/the turn lock/the low-fps downgrade; takes only `renditionRef`
+   and `containerRef`.
+3. **`useFullscreenChrome.ts`** — fullscreen mode, the three proximity-reveal flags, and
+   the Fullscreen API wiring. Returns its setters as well as its values, since the
+   still-inline iframe-forwarded mousemove handler (inside the untouched book-lifecycle
+   effect) drives the same three flags from iframe-relative coordinates — documented on
+   the hook itself so a future reader isn't surprised the setters are part of the public
+   shape.
+4. **`useReaderPaneWidth.ts`** — the pane-resize drag handle and the derived effective
+   width. The persisted `readerPaneWidth` value itself stays in `ReaderView`, since it's
+   synced together with `readerMargin`/`readerFontScale`/`pageNumberMode` by the same
+   settings-fetch and settingsBus-subscription effects — splitting the *setting* out
+   would have meant splitting that shared sync effect too, which is exactly the kind of
+   entanglement this pass was scoped to leave alone.
+
+**After table:**
+
+| Metric | Before (2026-08-01) | After (2026-08-01) | Change |
+|---|---|---|---|
+| `ReaderView.tsx` lines | 2,469 | **2,089** | −380 (−15%) |
+| Hook calls in `ReaderView.tsx` | 57 | **40** | −17 (−30%) |
+| `ReaderView.tsx` vs. next-largest component (`ThreadPanel.tsx`, 801 lines) | 3.1× | **2.6×** | |
+| New extracted modules | — | 4 files, 519 lines total (readerGeometry 70, usePageTurnAnimation 219, useFullscreenChrome 135, useReaderPaneWidth 95) | |
+| Total tests | 283 | **293** | +10 (all in readerGeometry.test.ts) |
+| Bundle (`pnpm build`) | 21 files, 1138 KB raw, 345 KB gzip | 21 files, 1139 KB raw, 346 KB gzip | ~unchanged (1 KB — code motion, not new code) |
+| `ReaderPage` chunk | 619.53 KB raw / 179.30 KB gzip | 620.12 KB raw / 180.02 KB gzip | ~unchanged |
+
+Every commit's tests were green before the next started; nothing was red for more than
+zero steps.
+
+**Live verification** (same ad hoc `playwright-core` setup as the before-pass, same real
+dev server and real "Alice's Adventures in Wonderland" with its 14 existing highlights),
+one pass per extraction plus a final combined pass covering the milestone's own list:
+
+- **Import/open**: reader loads at the saved position with all 14 annotations present.
+- **Turn**: keyboard arrows and click-zone turns both advance correctly, curl animation
+  plays (confirmed via `usePageTurnAnimation`'s own live check after its commit,
+  screenshots show the chapter/page number advancing correctly through the turns).
+- **Resize**: 1400→1000→1400px reflows cleanly, no split-column artifacts.
+- **Spread awareness**: narrowing to 700px (below `SPREAD_MIN_WIDTH`) collapses to a
+  single centered column; widening back to 1400px restores the two-page spread —
+  `readerGeometry.ts`'s exact job, confirmed with the real reader, not just its unit
+  tests.
+- **Theme**: paper → ink → paper all apply correctly to both the chrome and the epub.js
+  iframe content.
+- **Fullscreen**: shift+F hides the chrome (top row, footer, rail) and the proximity
+  reveal on hover-near-edge still works, confirmed both right after
+  `useFullscreenChrome`'s own commit and again in the final combined pass.
+- **Pane-width drag**: confirmed twice — once reading `--reader-max-width` directly
+  before/after a drag (1284px → 1572px on a +144px pointer delta, correct 1:1 tracking
+  per the doubling comment), and once visually in the final pass.
+- Selection/highlight-creation (the Ask pill) was **not** confirmed automated this pass —
+  the scripted drag-select over a verse-formatted paragraph didn't reliably trigger a
+  native browser selection headless, a test-harness limitation, not a reader one. Low
+  risk: that code path lives entirely inside the untouched book-lifecycle effect, and
+  none of the four extractions touch selection, highlighting, or the LLM/Ask flow at all.
+  Worth a quick human click-through before trusting it fully, same caveat as the
+  before-pass recorded for the LLM-backed Ask flow.
+- One console message throughout, unchanged from the before-pass and pre-existing: a 404
+  on an unrelated resource's cover image.
+
+**Structure**: measurably better against every metric REFACTORING.md names. **Behaviour**:
+identical everywhere checked. **Bundle**: flat.
+
+**Scope not attempted, recorded as a deliberate cut (see the plan note above and
+REFACTORING.md's own "worked example")**: the ~780-line book-lifecycle/rendition effect —
+book loading, selection handling, highlight anchoring/resolution, position tracking, TOC
+building, the mark-hover/click hit-testing, the highlight-across-a-boundary dwell. This is
+most of what's left in `ReaderView.tsx`'s 2,089 lines. It is the one seam this pass
+prioritised *against* touching, per TASKS.md's own permission ("a piece the fold never
+goes near is optional") — M20's fold operates on page-turn/snapshot, stage geometry, and
+spread awareness, all four of which are now isolated. The remaining effect is navigation/
+selection/highlights, not page-turn machinery, so the fold shouldn't need to enter it.
+
+**Payoff-test prediction, to check when M20 actually lands**: M20's fold should touch
+`PageCurl.tsx`, `usePageTurnAnimation.ts` (not a 780-line component body), and
+`readerGeometry.ts`'s spread constants — three small, focused files instead of reading
+and editing inside the pre-refactor 2,469-line `ReaderView.tsx` to find the same logic.
+If the fold still needs a large `ReaderView.tsx` diff alongside those three files, this
+refactor missed its target and that's worth saying plainly when M20 is done.
