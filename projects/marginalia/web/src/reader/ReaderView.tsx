@@ -25,7 +25,7 @@ import {
   type SpreadMode,
   type ThreadSummary,
 } from "@marginalia/shared";
-import { emitSettingsSaved, onSettingsSaved } from "../settings/settingsBus.js";
+import { onSettingsSaved } from "../settings/settingsBus.js";
 import { onProviderRolesSaved } from "../settings/providerBus.js";
 import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
 import { useOpenSettings } from "../settings/useOpenSettings.js";
@@ -79,6 +79,7 @@ import {
   FULLSCREEN_REVEAL_BAND_PX,
   useFullscreenChrome,
 } from "./useFullscreenChrome.js";
+import { useReaderPaneWidth } from "./useReaderPaneWidth.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -115,10 +116,6 @@ const HIGHLIGHT_MARK_CLASS = "marginalia-highlight";
 // second dwell.
 const DWELL_DURATION_MS = 2000;
 const REFUSAL_FLASH_MS = 260;
-// M19.6 "the reading pane is resizable": clamps for the drag-set override —
-// wide enough to be pointless below, tall-screen-friendly above.
-const READER_PANE_WIDTH_MIN = 480;
-const READER_PANE_WIDTH_MAX = 1800;
 
 const SCRUB_KEYBOARD_STEP_PERCENT = 1;
 
@@ -254,30 +251,6 @@ function saveCachedLocations(resourceId: string, locations: string): void {
   }).catch(() => {
     // best-effort — worst case this book regenerates locations next open
   });
-}
-
-// M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later):
-// same direct-PUT-from-the-reader pattern ThreadPanel's own size/offset
-// persistence uses, rather than routing through the Settings modal — the
-// drag handle lives in the reading surface, not a form. Broadcasts via the
-// settingsBus (settings/settingsBus.ts) on success so any other mounted
-// consumer of readerPaneWidth (there is none today, but readerMargin/
-// readerFontScale already establish "settings changes are always live") is
-// never silently out of sync.
-function saveReaderPaneWidth(width: number): void {
-  fetch("/api/settings", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ readerPaneWidth: width }),
-  })
-    .then((res) => (res.ok ? (res.json() as Promise<Settings>) : null))
-    .then((settings) => {
-      if (settings) emitSettingsSaved(settings);
-    })
-    .catch(() => {
-      // best-effort — worst case this reverts to the spread-mode default
-      // next open
-    });
 }
 
 // M19.6 operator feedback (decisions.md 2026-07-30 later): bookPages.ts's
@@ -526,7 +499,6 @@ export function ReaderView({
   const [readerPaneWidth, setReaderPaneWidth] = useState<ReaderPaneWidth>(
     initialReaderPaneWidth,
   );
-  const [paneWidthDragging, setPaneWidthDragging] = useState(false);
   // M19.6 operator feedback (decisions.md 2026-07-30 later): replaces the
   // character-location-based book-wide count with bookPages.ts's
   // click-accurate, spread-adjusted one. Null until the section-weight
@@ -566,6 +538,8 @@ export function ReaderView({
     setRevealBottom,
     setRevealRail,
   } = useFullscreenChrome();
+  const { effectivePaneWidth, paneWidthDragging, handlePaneResizePointerDown } =
+    useReaderPaneWidth(readerPaneWidth, setReaderPaneWidth, spreadMode, fullscreenMode);
 
   // M19.7: the reader's shortcuts, as discrete handlers the shared registry
   // (useShortcuts) can dispatch by key — replacing the single monolithic
@@ -1783,46 +1757,6 @@ export function ReaderView({
   const expandedHighlight = expandedThread
     ? highlights.find((h) => h.id === expandedThread.highlightId)
     : undefined;
-
-  // M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later):
-  // the drag-set override (if any) replaces the spread-mode default outright
-  // rather than adding to it — one clear number, not a fourth knob stacked
-  // on the other three (readerMargin/READER_TARGET_COLUMN_WIDTH/
-  // SPREAD_GUTTER already own their own jobs, per decisions.md 2026-07-27).
-  const spreadDefaultPaneWidth = fullscreenMode ? 1600 : spreadMode === "auto" ? 1400 : 800;
-  const effectivePaneWidth = readerPaneWidth > 0 ? readerPaneWidth : spreadDefaultPaneWidth;
-
-  // Dragging the right edge of a *centered* pane: the row grows/shrinks
-  // symmetrically, so the edge under the pointer only moves by half of any
-  // width change — doubling the pointer's own delta is what keeps the
-  // handle tracking the cursor 1:1 instead of lagging at half speed.
-  function handlePaneResizePointerDown(event: React.PointerEvent<HTMLDivElement>) {
-    event.stopPropagation();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    const startWidth = effectivePaneWidth;
-    const startX = event.clientX;
-    setPaneWidthDragging(true);
-
-    function onMove(moveEvent: PointerEvent) {
-      const delta = (moveEvent.clientX - startX) * 2;
-      const next = Math.min(
-        Math.max(Math.round(startWidth + delta), READER_PANE_WIDTH_MIN),
-        READER_PANE_WIDTH_MAX,
-      );
-      setReaderPaneWidth(next);
-    }
-    function onUp() {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      setPaneWidthDragging(false);
-      setReaderPaneWidth((current) => {
-        saveReaderPaneWidth(current);
-        return current;
-      });
-    }
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-  }
 
   return (
     <div
