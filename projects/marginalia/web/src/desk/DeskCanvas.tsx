@@ -104,7 +104,7 @@ export function DeskCanvas({
   return (
     <motion.div
       ref={containerRef}
-      className={styles.surface}
+      className={cursorStyle === "system" ? `${styles.surface} ${styles.systemCursor}` : styles.surface}
       style={{ rotateX, rotateY, "--desk-content-height": `${contentHeight}px` } as CSSProperties}
       onPointerMove={onPointerMove}
       onPointerLeave={onPointerLeave}

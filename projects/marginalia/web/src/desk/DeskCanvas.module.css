@@ -12,6 +12,14 @@
   position: relative;
   min-height: max(calc(100vh - 200px), var(--desk-content-height, 640px));
   border-radius: 16px;
+  /* M20.7 "per-room cursors" (DESIGN.md "Cursor system"): the desk's own
+     identity cursor, ambient over the whole surface — a book's own more
+     specific `cursor: grab`/`pointer` rule (BookObject.module.css) already
+     wins over this by CSS specificity regardless, so there's no fight
+     there; form controls in the notepad win the same way via their own UA
+     default. `.systemCursor` (applied from DeskCanvas.tsx) reverts to the
+     platform default when the setting is "system". */
+  cursor: grab;
   background:
     radial-gradient(circle at 15% 10%, rgba(255, 255, 255, 0.05), transparent 40%),
     repeating-linear-gradient(
@@ -46,6 +54,10 @@
   mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='140'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018 0.28' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)'/%3E%3C/svg%3E");
   background-size: 500px 140px;
+}
+
+.systemCursor {
+  cursor: default;
 }
 
 .tiltLayer {

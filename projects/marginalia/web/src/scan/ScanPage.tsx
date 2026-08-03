@@ -1,7 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useLocation, useNavigate, type Location } from "react-router-dom";
 import { useReducedMotion } from "motion/react";
-import type { HighlightImportance, HighlightKind, ScanData, ScanHighlight } from "@marginalia/shared";
+import type {
+  CursorStyleChoice,
+  HighlightImportance,
+  HighlightKind,
+  ScanData,
+  ScanHighlight,
+} from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { updateHighlightImportance, updateHighlightTags } from "../highlights/highlightMeta.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
@@ -16,14 +22,20 @@ import { VhsOverlay } from "./VhsOverlay.js";
 import { computeWarpGeometry } from "./warp.js";
 import styles from "./ScanPage.module.css";
 
-async function fetchScanCrtIntensity(): Promise<number> {
+async function fetchScanCursorSettings(): Promise<{
+  crtIntensity: number;
+  cursorStyle: CursorStyleChoice;
+}> {
   try {
     const res = await fetch("/api/settings");
-    if (!res.ok) return 0.6;
-    const settings = (await res.json()) as { scanCrtIntensity: number };
-    return settings.scanCrtIntensity;
+    if (!res.ok) return { crtIntensity: 0.6, cursorStyle: "custom" };
+    const settings = (await res.json()) as {
+      scanCrtIntensity: number;
+      cursorStyle: CursorStyleChoice;
+    };
+    return { crtIntensity: settings.scanCrtIntensity, cursorStyle: settings.cursorStyle };
   } catch {
-    return 0.6;
+    return { crtIntensity: 0.6, cursorStyle: "custom" };
   }
 }
 
@@ -75,6 +87,7 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
   const [filterTheme, setFilterTheme] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [crtIntensity, setCrtIntensity] = useState(0.6);
+  const [cursorStyle, setCursorStyle] = useState<CursorStyleChoice>("custom");
   const [spotlightOpen, setSpotlightOpen] = useState(false);
   // M19.5 "the semantic scan: two layers" (decisions.md 2026-07-29 later):
   // Mine (highlights) and Book (chapter themes) show independently — "Filter
@@ -94,8 +107,14 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
   );
 
   useEffect(() => {
-    fetchScanCrtIntensity().then(setCrtIntensity);
-    return onSettingsSaved((settings) => setCrtIntensity(settings.scanCrtIntensity));
+    fetchScanCursorSettings().then(({ crtIntensity, cursorStyle }) => {
+      setCrtIntensity(crtIntensity);
+      setCursorStyle(cursorStyle);
+    });
+    return onSettingsSaved((settings) => {
+      setCrtIntensity(settings.scanCrtIntensity);
+      setCursorStyle(settings.cursorStyle);
+    });
   }, []);
 
   // M18 "one filter, one wrapper" (decisions.md 2026-07-28/2026-07-29): the
@@ -243,9 +262,13 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
     return set;
   }, [data, filterKind, filterTag, filterTheme, searchText, filtersActive]);
 
+  const pageClassName = `${styles.page} register-glass${
+    cursorStyle === "system" ? ` ${styles.systemCursor}` : ""
+  }`;
+
   if (notFound) {
     return (
-      <div className={`${styles.page} register-glass`}>
+      <div className={pageClassName}>
         <p>That book isn't in the library.</p>
         <button type="button" className={styles.backButton} onClick={onClose}>
           Close
@@ -256,7 +279,7 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
 
   if (!data) {
     return (
-      <div className={`${styles.page} register-glass`}>
+      <div className={pageClassName}>
         <div className={styles.loading}>Loading scan…</div>
       </div>
     );
@@ -265,7 +288,7 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
   const maxChapterLength = Math.max(0.0001, ...data.chapters.map((c) => c.lengthPercent));
 
   return (
-    <div className={`${styles.page} register-glass`}>
+    <div className={pageClassName}>
       <div className={styles.headerRow}>
         <div>
           <h1 className={styles.title}>{data.resource.title}</h1>

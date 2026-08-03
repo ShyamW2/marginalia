@@ -20,6 +20,11 @@
   height: 100%;
   overflow-y: auto;
   background: var(--color-bg);
+  /* M20.7 "per-room cursors" (DESIGN.md "reticle crosshair in the scan"):
+     ambient over the glass; buttons/controls keep their own more specific
+     cursor rule regardless. `.systemCursor` reverts to the platform
+     default. */
+  cursor: crosshair;
   color: var(--color-text);
   /* M15 "the scan fills the glass" (decisions.md 2026-07-20): no page-like
      max-width/centering — the strip and readouts grow to the viewport.
@@ -103,6 +108,10 @@
   64% {
     transform: translateX(-2px);
   }
+}
+
+.systemCursor {
+  cursor: default;
 }
 
 .backButton {

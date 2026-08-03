@@ -425,7 +425,7 @@ provider pickers.
       _Acceptance: opening a book from the desk lands on the saved position with no flash of
       an unstyled or wrong page; interrupting mid-animation leaves the app in a coherent
       state, never half-transitioned._
-- [ ] **Per-room cursors, including the reader's.** DESIGN.md already specifies the cursor
+- [x] **Per-room cursors, including the reader's.** DESIGN.md already specifies the cursor
       system and the `cursorStyle` setting already exists — this builds it: hand/grab on the
       desk, a fine nib or pen in the reader, reticle in the scan, selectable in settings with
       a "system" opt-out.

@@ -15,7 +15,7 @@ export function DeskTab({ form, update }: DeskTabProps) {
         <div className={styles.providerToggle} role="group" aria-label="Cursor style">
           {(
             [
-              { value: "custom", label: "Custom (grab/grabbing)" },
+              { value: "custom", label: "Custom (grab · nib · reticle)" },
               { value: "system", label: "System" },
             ] satisfies { value: CursorStyleChoice; label: string }[]
           ).map((option) => (

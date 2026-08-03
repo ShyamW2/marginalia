@@ -12,6 +12,7 @@ import { AnimatePresence, motion } from "motion/react";
 import {
   UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
   type CreateHighlightBody,
+  type CursorStyleChoice,
   type HighlightImportance,
   type HighlightKind,
   type HighlightWithThread,
@@ -597,6 +598,15 @@ export function ReaderView({
   useEffect(() => {
     focusModeRef.current = focusMode;
   }, [focusMode]);
+  // M20.7 "per-room cursors": same live-via-settingsBus/ref story as
+  // focusMode above — read inside handleContentMouseMove, which is defined
+  // once per book-loading effect run and would otherwise close over a
+  // stale value.
+  const [cursorStyle, setCursorStyle] = useState<CursorStyleChoice>("custom");
+  const cursorStyleRef = useRef(cursorStyle);
+  useEffect(() => {
+    cursorStyleRef.current = cursorStyle;
+  }, [cursorStyle]);
 
   const {
     wrapperRef,
@@ -788,6 +798,7 @@ export function ReaderView({
       setPageNumberMode(settings.pageNumberMode);
       setReaderPaneWidth(settings.readerPaneWidth);
       setPageTransition(settings.pageTransition);
+      setCursorStyle(settings.cursorStyle);
     });
     fetchQueryRoleConfigured().then(setProviderConfigured);
   }, []);
@@ -799,6 +810,7 @@ export function ReaderView({
       setPageNumberMode(settings.pageNumberMode);
       setReaderPaneWidth(settings.readerPaneWidth);
       setPageTransition(settings.pageTransition);
+      setCursorStyle(settings.cursorStyle);
     });
   }, []);
 
@@ -1308,9 +1320,27 @@ export function ReaderView({
         ? null
         : turnZoneForVisibleX(visibleX, containerRect.width);
 
+      // M20.7 "per-room cursors" — precedence, written down per the
+      // TASKS.md warning: (1) a turn zone always wins, regardless of the
+      // cursorStyle setting — it's a functional gesture affordance, not
+      // room decor, and DESIGN.md's Room 2 notes are explicit that this
+      // room otherwise stays still; (2) failing that, cursorStyle "custom"
+      // shows the reader's own accent — a fine nib, i.e. an explicit
+      // `text` cursor — but only while a selection actually exists in this
+      // section, per DESIGN.md ("Cursor may switch to a fine I-beam/nib
+      // during selection, nothing more"); (3) otherwise the inline style is
+      // cleared so the iframe's native default applies untouched, which is
+      // also exactly what "system" gets everywhere in this room.
+      const hasSelection = Boolean(contents.window.getSelection()?.toString());
       lastContentsWithCursorRef.current = contents;
       contents.document.body.style.cursor =
-        zone === "prev" ? "w-resize" : zone === "next" ? "e-resize" : "";
+        zone === "prev"
+          ? "w-resize"
+          : zone === "next"
+            ? "e-resize"
+            : cursorStyleRef.current === "custom" && hasSelection
+              ? "text"
+              : "";
       setTurnZoneHover((prev) => (prev === zone ? prev : zone));
 
       // M16 "highlights pop on hover": marks-pane's SVG overlay is
