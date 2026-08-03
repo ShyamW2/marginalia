@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { clampPan, fractionToView, MAX_ZOOM, MIN_ZOOM, panByViewFraction, zoomIn, zoomOut } from "./zoom.js";
+import {
+  clampPan,
+  fractionToView,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  panByViewFraction,
+  zoomAtViewPosition,
+  zoomIn,
+  zoomOut,
+} from "./zoom.js";
 
 describe("clampPan", () => {
   it("clamps to 0 at zoom 1 (the whole domain is always visible)", () => {
@@ -53,6 +62,34 @@ describe("panByViewFraction", () => {
   it("stays within bounds when panning past the edge", () => {
     const result = panByViewFraction({ zoom: 4, pan: 0.7 }, 1);
     expect(result.pan).toBeCloseTo(0.75, 5); // clamp for zoom 4 is 1 - 0.25
+  });
+});
+
+describe("zoomAtViewPosition", () => {
+  it("keeps the domain fraction under the given view position fixed after zooming", () => {
+    const state = { zoom: 2, pan: 0.1 };
+    const viewPosition = 0.3; // some point under the cursor, not the center
+    const domainBefore = viewPosition / state.zoom + state.pan;
+    const result = zoomAtViewPosition(state, 1.6, viewPosition);
+    const domainAfter = viewPosition / result.zoom + result.pan;
+    expect(domainAfter).toBeCloseTo(domainBefore, 5);
+  });
+
+  it("is what zoomIn/zoomOut are built on (view position 0.5)", () => {
+    const state = { zoom: 1.5, pan: 0.2 };
+    const stepFactor = zoomIn(state).zoom / state.zoom;
+    expect(zoomAtViewPosition(state, stepFactor, 0.5)).toEqual(zoomIn(state));
+    expect(zoomAtViewPosition(state, 1 / stepFactor, 0.5)).toEqual(zoomOut(state));
+  });
+
+  it("clamps the zoomed-in factor to MAX_ZOOM", () => {
+    const result = zoomAtViewPosition({ zoom: MAX_ZOOM, pan: 0 }, 10, 0.5);
+    expect(result.zoom).toBe(MAX_ZOOM);
+  });
+
+  it("snaps cleanly to (MIN_ZOOM, 0) rather than leaving float residue", () => {
+    const result = zoomAtViewPosition({ zoom: MIN_ZOOM * 1.01, pan: 0.02 }, 1 / 10, 0.5);
+    expect(result).toEqual({ zoom: MIN_ZOOM, pan: 0 });
   });
 });
 

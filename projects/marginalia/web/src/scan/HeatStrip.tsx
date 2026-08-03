@@ -7,7 +7,14 @@ import { phosphorHue } from "./scanPalette.js";
 import { drawHeatField, type HeatColorMode, type HeatPoint } from "./heatField.js";
 import { chapterLabelText, thinLabels } from "./chapterAxis.js";
 import { warpPoint, type WarpGeometry } from "./warp.js";
-import { fractionToView, panByViewFraction, zoomIn, zoomOut, type ZoomState } from "./zoom.js";
+import {
+  fractionToView,
+  panByViewFraction,
+  zoomAtViewPosition,
+  zoomIn,
+  zoomOut,
+  type ZoomState,
+} from "./zoom.js";
 import styles from "./HeatStrip.module.css";
 
 const MIN_BAND_HEIGHT = 16;
@@ -151,6 +158,27 @@ export function HeatStrip({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // M20.5 "scroll-to-zoom": a native, non-passive listener — React's onWheel
+  // is registered passive (browser perf default for wheel/touch), so a
+  // preventDefault() there is silently ignored and the popup's own
+  // scrollable `.page` (ScanPage.module.css) scrolls underneath the zoom
+  // gesture instead of the strip zooming in place. `factor` is continuous
+  // (not a fixed step) so a trackpad's many small deltaY events feel like
+  // one smooth zoom rather than a staircase.
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+    function handleWheel(event: WheelEvent) {
+      event.preventDefault();
+      const rect = el!.getBoundingClientRect();
+      const viewPosition = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0.5;
+      const factor = Math.exp(-event.deltaY * 0.0015);
+      setZoomState((z) => zoomAtViewPosition(z, factor, viewPosition));
+    }
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => el.removeEventListener("wheel", handleWheel);
+  }, []);
+
   /** Raw (unwarped) local point -> warped local point, in strip-relative px. */
   function warpLocal(xLocal: number, yLocal: number): { x: number; y: number } {
     if (warpGeometry.maxPull === 0) return { x: xLocal, y: yLocal };
@@ -168,14 +196,24 @@ export function HeatStrip({
     [chapters, stripSize.width, showChapterNames],
   );
 
+  // M20.5 "zoom becomes a domain transform": xFraction is the *view*
+  // fraction (fractionToView, zoom.ts), not the raw book position — the
+  // canvas is redrawn at the zoomed domain instead of being CSS-stretched,
+  // so the field stays sharp at any zoom level rather than smearing into a
+  // blurry bitmap (decisions.md 2026-07-30 "the scan's zoom becomes a
+  // domain transform everywhere").
   const heatPoints = useMemo<HeatPoint[]>(
     () =>
       positioned.map((h) => {
         const lit = litIds === null || litIds.has(h.id);
         const base = 0.28 + threadDepth(h) * 0.72;
-        return { xFraction: h.positionPercent, weight: lit ? base : base * 0.22, kind: h.kind };
+        return {
+          xFraction: fractionToView(h.positionPercent, zoomState),
+          weight: lit ? base : base * 0.22,
+          kind: h.kind,
+        };
       }),
-    [positioned, litIds],
+    [positioned, litIds, zoomState],
   );
 
   useEffect(() => {
@@ -202,12 +240,12 @@ export function HeatStrip({
 
   return (
     <div className={styles.strip} ref={stripRef}>
-      <div
-        className={styles.zoomContent}
-        style={{
-          transform: `scaleX(${zoomState.zoom}) translateX(${-zoomState.pan * stripSize.width}px)`,
-        }}
-      >
+      {/* M20.5: no CSS transform here anymore — the old `scaleX`/`translateX`
+          stretched the tick labels' glyphs along with the canvas bitmap
+          (decisions.md 2026-07-30). Every child now positions itself in raw
+          px through `fractionToView()`, exactly like the book/highlight
+          bands below already did. */}
+      <div className={styles.zoomContent}>
         <div className={styles.graphicsLayer}>
           <canvas
             ref={canvasRef}
@@ -220,7 +258,7 @@ export function HeatStrip({
               <div
                 key={chapter.spineIndex}
                 className={styles.tick}
-                style={{ left: `${chapter.startPercent * 100}%` }}
+                style={{ left: fractionToView(chapter.startPercent, zoomState) * stripSize.width }}
               />
             ) : null,
           )}
@@ -231,7 +269,7 @@ export function HeatStrip({
             <div
               key={chapter.spineIndex}
               className={styles.tickLabel}
-              style={{ left: `${chapter.startPercent * 100}%` }}
+              style={{ left: fractionToView(chapter.startPercent, zoomState) * stripSize.width }}
               title={chapter.title ? `${chapter.title} · ${Math.round(chapter.startPercent * 100)}%` : undefined}
             >
               {chapterLabelText(chapter, showChapterNames)}
@@ -260,10 +298,15 @@ export function HeatStrip({
             {showChapterNames ? "Names" : "№"}
           </button>
         )}
+        {/* M20.5 "wheel-over-the-strip zooms about the cursor... with the
+            existing buttons kept and enlarged as the keyboard/pointer-free
+            path": these four are the only way to zoom/pan without a wheel
+            or a pointer drag, so they get a bigger hit target than the
+            other toggles in this row. */}
         <div className={styles.zoomControls} role="group" aria-label="Zoom the strip">
           <button
             type="button"
-            className={styles.chapterModeToggle}
+            className={`${styles.chapterModeToggle} ${styles.zoomButton}`}
             aria-label="Pan left"
             disabled={zoomState.pan <= 0}
             onClick={() => setZoomState((z) => panByViewFraction(z, -0.5))}
@@ -272,7 +315,7 @@ export function HeatStrip({
           </button>
           <button
             type="button"
-            className={styles.chapterModeToggle}
+            className={`${styles.chapterModeToggle} ${styles.zoomButton}`}
             aria-label="Zoom out"
             disabled={zoomState.zoom <= 1}
             onClick={() => setZoomState((z) => zoomOut(z))}
@@ -281,7 +324,7 @@ export function HeatStrip({
           </button>
           <button
             type="button"
-            className={styles.chapterModeToggle}
+            className={`${styles.chapterModeToggle} ${styles.zoomButton}`}
             aria-label="Zoom in"
             onClick={() => setZoomState((z) => zoomIn(z))}
           >
@@ -289,7 +332,7 @@ export function HeatStrip({
           </button>
           <button
             type="button"
-            className={styles.chapterModeToggle}
+            className={`${styles.chapterModeToggle} ${styles.zoomButton}`}
             aria-label="Pan right"
             disabled={zoomState.pan >= 1 - viewWidthFraction - 1e-9}
             onClick={() => setZoomState((z) => panByViewFraction(z, 0.5))}

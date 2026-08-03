@@ -21,21 +21,32 @@ export function clampPan(pan: number, zoom: number): number {
   return Math.min(maxPan, Math.max(0, pan));
 }
 
+/**
+ * Zooms to `state.zoom * factor`, keeping whichever domain fraction
+ * currently sits at `viewPosition` (0-1, same space `fractionToView`
+ * returns) fixed at that same view position — the general form both the
+ * zoom buttons and M20.5's wheel-to-zoom are built on. `viewPosition: 0.5`
+ * (the view's center) is what the buttons use; wheel-to-zoom passes the
+ * cursor's own position instead, so the point under it doesn't jump.
+ */
+export function zoomAtViewPosition(state: ZoomState, factor: number, viewPosition: number): ZoomState {
+  const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, state.zoom * factor));
+  if (zoom <= MIN_ZOOM) return { zoom: MIN_ZOOM, pan: 0 };
+  const domainFraction = viewPosition / state.zoom + state.pan;
+  const pan = domainFraction - viewPosition / zoom;
+  return { zoom, pan: clampPan(pan, zoom) };
+}
+
 /** Zooms in one step, keeping the center of the current view fixed. */
 export function zoomIn(state: ZoomState): ZoomState {
-  const zoom = Math.min(MAX_ZOOM, state.zoom * ZOOM_STEP);
-  const center = state.pan + 0.5 / state.zoom;
-  return { zoom, pan: clampPan(center - 0.5 / zoom, zoom) };
+  return zoomAtViewPosition(state, ZOOM_STEP, 0.5);
 }
 
 /** Zooms out one step, keeping the center of the current view fixed;
  * snaps cleanly to (1, 0) rather than leaving float residue near the
  * bottom of the range. */
 export function zoomOut(state: ZoomState): ZoomState {
-  const zoom = Math.max(MIN_ZOOM, state.zoom / ZOOM_STEP);
-  if (zoom <= MIN_ZOOM) return { zoom: MIN_ZOOM, pan: 0 };
-  const center = state.pan + 0.5 / state.zoom;
-  return { zoom, pan: clampPan(center - 0.5 / zoom, zoom) };
+  return zoomAtViewPosition(state, 1 / ZOOM_STEP, 0.5);
 }
 
 /** Pans by a fraction of the *current view's* width (not the whole domain)

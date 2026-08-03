@@ -329,7 +329,7 @@ belongs to a register and nothing gets a bespoke one again.
       _Acceptance: at maximum intensity every readout is still legible and clicking a band
       near a **corner** (not the centre) still selects that band — verified with
       `elementFromPoint`, per the M18 note, not bounding-box math._
-- [ ] **Rebuild zoom as a domain transform, and add scroll-to-zoom.** Delete the CSS
+- [x] **Rebuild zoom as a domain transform, and add scroll-to-zoom.** Delete the CSS
       `scaleX` on `.zoomContent` — it is what stretches the axis text and the heat bitmap.
       Labels position through `fractionToView()` like the book bands already do, and the
       heat canvas is redrawn at the zoomed domain. Then wheel-over-the-strip zooms about

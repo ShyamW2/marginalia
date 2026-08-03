@@ -22,18 +22,17 @@
   cursor: default;
 }
 
-/* M18 "tighter bleed and a zoom" (decisions.md 2026-07-28): the viewport
-   transform (HeatStrip.tsx sets `scaleX`/`translateX` from zoom.ts's
-   state) — everything positional about the book (canvas, ticks, chapter
-   labels) lives inside it and pans/zooms together. The invisible
-   hit-target bands deliberately do *not* live in here: they're positioned
-   by JS through the identical zoom math (`fractionToView`) composed with
-   the barrel warp, not through this CSS transform, so their focus/hover/
-   click behaviour never has to fight a transformed ancestor. */
+/* M18 "tighter bleed and a zoom" (decisions.md 2026-07-28), rebuilt M20.5
+   "the scan's zoom becomes a domain transform everywhere" (decisions.md
+   2026-07-30): no CSS transform lives here anymore — a `scaleX` stretched
+   the canvas bitmap and the tick labels' glyphs along with it, which is
+   exactly the "sharp when zoomed in" bug this rebuild fixes. Every child
+   (the canvas, ticks, labels) instead positions itself in raw px through
+   `fractionToView()` (zoom.ts), the same math the invisible hit-target
+   bands below already used — one zoom mechanism, not two. */
 .zoomContent {
   position: absolute;
   inset: 0;
-  transform-origin: 0 0;
 }
 
 /* Groups the canvas/baseline/ticks so they clip to the strip's rounded
@@ -94,6 +93,15 @@
 .chapterModeToggle:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+/* M20.5 "the existing buttons kept and enlarged as the keyboard/pointer-free
+   path": the zoom/pan quartet is the only way to zoom without a wheel or a
+   pointer drag, so it gets a bigger hit target than the other row toggles. */
+.zoomButton {
+  padding: 0.3rem 0.85rem;
+  font-size: 0.95rem;
+  min-width: 2.1rem;
 }
 
 .baseline {
