@@ -8,6 +8,7 @@ import { KeyCapAnchor } from "../shortcuts/KeyCap.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import type { TabId } from "../settings/SettingsPage.js";
+import { TasksTray } from "../jobs/TasksTray.js";
 import { useTheme, type ThemeChoice } from "./useTheme.js";
 import styles from "./NavCluster.module.css";
 
@@ -75,6 +76,7 @@ export function NavCluster({ settingsTab, floating = true, className }: NavClust
       >
         <LibraryIcon />
       </Link>
+      <TasksTray />
       <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.settings}>
         <IconButton
           ref={settingsButtonRef}

@@ -75,6 +75,30 @@ export function GearIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** M20.6 "the tasks tray": a browser-downloads-style tray icon — an inbox
+ * with a down-arrow, for the persistent "running/recently finished work"
+ * button in the nav cluster. */
+export function TrayIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 13.5v4A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5v-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 4v9.2m0 0 3.2-3.2M12 13.2 8.8 10"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function SunIcon({ size = 16 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">

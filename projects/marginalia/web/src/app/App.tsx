@@ -2,6 +2,8 @@ import { lazy, Suspense } from "react";
 import { AnimatePresence } from "motion/react";
 import { Route, Routes, matchPath, useLocation, useNavigate, type Location } from "react-router-dom";
 import { NavCluster } from "./NavCluster.js";
+import { JobsProvider } from "../jobs/JobsContext.js";
+import { JobToastStack } from "../jobs/JobToastStack.js";
 import type { TabId } from "../settings/SettingsPage.js";
 import styles from "./App.module.css";
 
@@ -111,9 +113,10 @@ export function App() {
   }
 
   return (
-    <div className={`${styles.shell} register-paper`}>
-      <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
-      <main className={styles.main}>
+    <JobsProvider>
+      <div className={`${styles.shell} register-paper`}>
+        <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
+        <main className={styles.main}>
         <Suspense fallback={<div className={styles.routeFallback} />}>
           <Routes location={roomLocation(location)}>
             <Route path="/" element={<DeskPage />} />
@@ -148,7 +151,9 @@ export function App() {
             </Suspense>
           )}
         </AnimatePresence>
-      </main>
-    </div>
+        </main>
+        <JobToastStack />
+      </div>
+    </JobsProvider>
   );
 }
