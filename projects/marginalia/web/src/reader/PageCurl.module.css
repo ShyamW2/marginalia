@@ -1,44 +1,25 @@
+/* M20: the wrap is positioned to the turning leaf's own rect via inline
+   style (left/width/height) — the whole card in single-page mode, one half
+   of it in spread mode. `top: 0` is enough since a leaf never sits below
+   the card's own top edge.
+
+   Those coordinates are **`.pageClip`'s** (this element's offset parent),
+   which is why the leaf rect handed down must be measured from `.pageClip`
+   too. Until 2026-08-02 it was measured from `.epubContainer` — one reader
+   margin inside `.pageClip` — so the canvas was drawn a margin up-and-left
+   of the content it depicted, and two margins short in each dimension. With
+   a transparent snapshot that was invisible; with a real one it is a strip
+   of duplicated page text down the leaf's inner edge. */
 .wrap {
   position: absolute;
-  inset: 0;
-  perspective: 1400px;
+  top: 0;
   overflow: hidden;
   pointer-events: none;
   z-index: 5;
 }
 
-.leaf {
-  position: absolute;
-  inset: 0;
+.canvas {
+  display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
-  will-change: transform, opacity;
-  backface-visibility: hidden;
-}
-
-/* A moving shade plane synced to the same rotation as the leaf, standing in
-   for the light catching a curling sheet of paper — a soft dark gradient
-   from the turning edge, never a hard line. */
-.shade {
-  position: absolute;
-  inset: 0;
-  will-change: transform, opacity;
-  backface-visibility: hidden;
-}
-
-.shadeNext {
-  background: linear-gradient(
-    to left,
-    rgba(0, 0, 0, 0.45),
-    rgba(0, 0, 0, 0) 45%
-  );
-}
-
-.shadePrev {
-  background: linear-gradient(
-    to right,
-    rgba(0, 0, 0, 0.45),
-    rgba(0, 0, 0, 0) 45%
-  );
 }

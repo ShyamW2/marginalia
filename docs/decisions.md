@@ -3,7 +3,560 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
-## 2026-07-30 (latest) — M19.6 round 4: the real cause of the chapter-boundary skip, and three more operator-feedback fixes
+## 2026-08-03 (sign-off, latest) — The curl is signed off, and the back of the sheet stops being a mirror
+
+Operator verification of the shipped curl on the Mac, which is the item TASKS.md has carried
+since 2026-08-01. **Verdict: it passes.** Curl happens on every turn (so the guard latch is
+genuinely fixed), the dark theme reads as a lifted sheet, the mirrored text is on the sheet,
+the margin band is right, and it does not get stuck. M20's remaining refinements are parked.
+
+Two things came back that are not "yes":
+
+- **"Stutter is less bad"** — better, not gone. That is consistent with the measurement rather
+  than a surprise: the peak frame of a real drag was measured at 27.8ms at dpr 2 against a
+  33ms threshold (step 4 entry), so a Mac at dpr 2 is close to the line and residual stutter
+  is the expected symptom. **This is the second independent reason to move the low-fps guard
+  from the median to the p90**: today the guard reads that same turn as 1.1ms and cannot
+  notice what the operator can see.
+- **The back of the sheet should show the real other side of the leaf**, not a mirrored copy
+  of the front. This overturns part of 2026-07-20 and is the entry below.
+
+### The back of the sheet is the leaf's other side
+
+2026-07-20 ruled the back face "visibly the mirrored page" — the front, mirrored, dimmed, with
+`SHOW_THROUGH` ghosting. That was always a knowing fake, and it survived because mirrored
+prose is unreadable so nobody could tell it was the wrong text. The operator can tell.
+
+- **The ask is physically exact and is adopted as stated.** A leaf is one sheet with two
+  sides. In a spread showing 10|11 the right leaf's front is 11 and its back is **12**; the
+  left leaf's front is 10 and its back is **9**. So: right leaf curling → the page *after*;
+  left leaf curling → the page *before*. That is the rule.
+- **The bitmap already exists on screen, which is what makes this affordable.** Since
+  2026-08-02 the drag advances the rendition *at grab time*, so by the time the sheet lifts
+  the live DOM is already showing the destination spread — and page 12 is its left leaf.
+  The back of the sheet is therefore the **post-advance card**: its left half for a `next`
+  turn, its right half for a `prev`, the whole card in single-page mode. No hidden rendition,
+  no second epub.js instance, no rendering a page that is not on screen.
+- **This does not touch the fold's geometry at all**, and that is worth stating because it
+  sets the size of the job. The tail is still drawn with `alpha = -1`; a real book's back page
+  *is* mirror-reversed when you fold the sheet toward you, so the mirroring stays correct and
+  only the bitmap being sampled changes. `pageFold.ts`'s model, its tests and `computeFold`
+  are all untouched. This is a capture-and-sampling change.
+- **It is independent of the WebGL work and can be pulled forward.** Over-the-spine changes
+  the sheet's *shape*; this changes what is printed on it. Parked with the rest by the
+  operator's call, and recorded here as separable so that call stays available.
+- ⚠️ **The open question, named rather than guessed:** the second capture costs ~22ms
+  (measured, §5) and it must land *before the back is first visible*. It cannot block the
+  grab. Either the fold paints the old mirror until the real back arrives — a designed
+  transitional state, and probably invisible because the back is not exposed until the roll
+  has real arc — or the capture is raced against the first frame that exposes back-facing
+  pixels. **Do not decide this from the armchair; instrument which frame first shows a
+  back-facing pixel and measure whether 22ms beats it.**
+- ⚠️ **Every back-of-sheet constant was tuned against a mirror and will need re-judging in
+  the harness**: `SHOW_THROUGH` (0.20), `backOfSheet`'s lift, and `sheenScale`. With real
+  content on the back, the physically honest result is the back's own text at full strength
+  *plus* the front's mirrored ghost showing through — which is more information on that
+  surface than it has ever had, and could easily read as noise. The harness is where that is
+  settled, not the app.
+
+## 2026-08-03 (step 4) — Over the spine needs a cone, a cone needs a mesh: WebGL is permitted, and the fold's cost has never been read correctly
+
+M20 step 4's design session. The question is DESIGN.md's own rule — "no three.js/WebGL until
+a named effect needs it", named for the curl on 2026-07-20 and discharged the same day
+("the 2D fold discharges it"). The operator's ask (d), the page curling *over the spine* onto
+the facing leaf, is the effect that tests it. Full measurements in NOTES.md "M20 step 4 — the
+gate"; the geometric argument is PAGE_CURL.md §2c/§2d and now §4.
+
+**The gate came first, and it moved the argument rather than settling it.** Every performance
+claim about the fold in this repo came from a software rasterizer with no GPU. The RTX 3060 in
+this box is reachable from a headless Chromium without a display server, so that gap is now
+closed — and it closed in an unexpected place.
+
+- **The GPU makes no measurable difference to the 2D fold, and a 290x difference to WebGL.**
+  `drawPageFold` at §7's own configuration (760x1000, dpr 2): **14.7ms on the RTX 3060, 14.5ms
+  on SwiftShader.** The same textured-mesh draw: **0.013ms on the GPU, 3.809ms on SwiftShader.**
+  ⚠️ The honest reading is narrower than it looks: headless Chromium composites in software
+  (`gpu_compositing: disabled_software`, and no flag moves it), so the canvas was probably
+  CPU-rastered in both columns. **The gate is closed for WebGL and still open for canvas 2D.**
+  A GPU-composited canvas on the operator's Mac could beat this table by an unknown factor.
+  That is the one measurement this milestone still wants and it is two minutes on the Mac.
+- **§7's 15ms reproduces exactly, so nothing has regressed** — and the cost is *superlinear in
+  pixels* (760x1000 → 1200x1600 is 2.5x the area and 7x the time, 14.7ms → 108.7ms). The fold
+  is already at its budget on today's leaf sizes and gets worse on a larger display, which is
+  the opposite of the direction "2D is cheap" assumed.
+- **The performance argument for a mesh is therefore not the argument, and never was.** It is
+  not dead either — see the guard below — but the ruling rests on geometry, and it would rest
+  on geometry even if the fold cost nothing.
+
+### The fold is not ~1ms. The guard has been reading its own dead tail.
+
+The 2026-08-03 (later still) entry replaced a guard that measured the display with one that
+measures the median cost of one `drawPageFold` call. It measures the fold; it still does not
+measure the reader.
+
+- **`SWEEP_OVERSHOOT` is 2.2, so about half of a click/keyboard turn's frames happen after the
+  sheet has left the leaf**, drawing one degenerate band for ~0ms. Instrumented on a real
+  keyboard turn (spread leaf 649x771, dpr 2): eleven of twenty-five drawn frames cost nothing,
+  the median is 0.9ms — precisely what the guard reported — and **the frame the reader is
+  looking at costs 27.8ms.**
+- **A real drag, held out at a large fold, reports 7.4ms median over 104 frames** at the same
+  size and dpr. So the guard reads the same fold as **7x cheaper when turned by key than when
+  dragged**, and 25x cheaper than its own worst frame. Most turns are keys and clicks, so the
+  guard is calibrated on the cheap case.
+- **"The fold sits ~40x under the threshold" is void**, the same way that entry voided every
+  claim before it. Against a 33ms threshold the shipped rolled sheet has roughly **1.2x of
+  headroom at its peak frame** at dpr 2, not 40x.
+- **The guard moves from the median to the p90 of drawn frames**, keeping the ≥12-sample floor
+  and the 33ms threshold. p90 on the curve above is 12.6ms: high enough to see the peak, still
+  robust to the one frame a GC lands on, still unlatched by a two-frame flick. The threshold's
+  meaning becomes "one frame in ten eats a whole 30fps frame", which is what a reader
+  experiences as a stutter — the median's meaning ("the typical frame") was never that.
+
+### Over the spine is a cone, and a cone is not expressible in the shipped model
+
+This is the ruling, and it is a proof rather than a preference — PAGE_CURL.md §2d has carried
+it as "believed to" since 2026-08-01 and it can be settled from the model's own stated premise.
+
+- **A sheet bound at the spine and pulled by its outer corner deforms as a cone with its apex
+  on the spine.** Paper is inextensible, so the deformed sheet is developable — a cylinder, a
+  cone, or a tangent developable. The spine edge stays flat and undisturbed while the outer
+  corner lifts, so the amount of lift must fall to zero at the spine; a cylinder's rulings are
+  parallel and lift uniformly, which would tear the sheet off its binding. The rulings must
+  therefore fan from a point on the spine. That is a cone. It is also what the 2010
+  reverse-engineering of iBooks (wdnuon) reads Apple's effect as, arrived at from the other end.
+- **The shipped model cannot represent a cone, by construction.** PAGE_CURL.md §1: the
+  deformation depends on `w`, the signed distance from the crease, and *only* on `w` — which is
+  exactly why "every band of constant `w` stays a straight line parallel to the crease" and each
+  band paints as one `drawImage` under one affine. A cone's rulings fan; they are not parallel;
+  there is no `w`. **The property that makes the roll fast in canvas 2D is the same property
+  that makes the hinge impossible in it.** This is not a tuning gap and no amount of arc,
+  easing or shadow closes it.
+- **The roll is the cone's far-field limit, which is why this costs no architecture.** Push the
+  apex to infinity and the fan becomes parallel and the cone becomes the cylinder — the
+  2026-08-01 roll — which at zero arc becomes the 2026-07-20 bisector. Each amendment has kept
+  its predecessor as a degenerate case, and this one does too. Practically: a dog-ear pinch far
+  from the spine is *already* nearly right today, and it is the large fold near the gutter that
+  is wrong.
+- **Ruling: DESIGN.md's "no WebGL until a named effect needs it" is amended, not deleted.** The
+  named effect that discharges it is **over the spine (§2d)** — proven above to be outside the
+  2D model rather than merely expensive in it. The rule survives with its bar intact: the next
+  candidate still has to be named, and still has to be shown impossible rather than awkward.
+
+### Which asks need the mesh — separately, because they are not one problem
+
+- **(d) over the spine needs it**, per the proof above. This is what the operator asked for.
+- **(c) text squeezing into the curl needs it too, and for a second, independent reason.** §2c's
+  occlusion theorem is about *projection*: under an orthographic view the tail always covers the
+  band the roll leaves showing, whatever the sheet's shape. A cone alone does not fix that — a
+  perspective camera does. A mesh renderer gets both at once, which is why they look like one
+  item, but they are two: a cone under orthographic projection buys (d) and not (c).
+- **Do not bundle them, and do (d) first.** (d) is the ask on record and it is the one with a
+  shipped ruling to overturn. (c) is a refinement whose acceptance criteria nobody has written.
+- **Canvas 2D mesh: ruled out, on the numbers already in hand.** ~800 `clip`+`drawImage` pairs
+  per frame at 20x20, when 15 bands per frame already cost 27.8ms at the peak. It is not close.
+- **The 60-line middle option (perspective on the tail and roll only) is deliberately *not*
+  taken**, and this reverses the standing "worth pricing first". It buys a few pixels of
+  see-under-the-lifted-edge (§2c prices the band and it is small), it does not buy (d) at all,
+  and it spends them inside a painter this entry schedules for retirement. Sixty lines added to
+  something being replaced is sixty lines of merge conflict. If WebGL is abandoned later, this
+  option comes back unharmed — nothing here forecloses it.
+
+### The amendment to 2026-07-20, explicitly
+
+2026-07-20 ruled that **spread mode peels the near leaf only**: the fold canvas is sized and
+positioned to one half of the stage. It is enforced by `nearLeafRect` and pinned by five tests
+in `readerGeometry.test.ts`, and it is a shipped M20 acceptance criterion ("the left page stays
+flat and undisturbed"). Over-the-spine overturns it. Per CLAUDE.md, deliberately:
+
+- **Replaced by: the fold canvas is stage-wide; the turning leaf is still exactly one half of
+  the card.** Those were one statement and become two. `nearLeafRect`'s job changes from *where
+  to draw* to *which half of the snapshot is the turning leaf* — `leafSourceRect` already
+  separates the two concerns, so the change is small and its tests keep their meaning.
+- **"The far leaf stays flat and undisturbed" is retired as an acceptance criterion**, not
+  quietly failed. It is replaced by: the far leaf is live DOM beneath a transparent canvas, and
+  it receives the turning sheet's shadow. The shadow is drawn by the renderer over the live
+  page; it is **not** composited into the snapshot, which stays exactly what §5 built.
+- **Single-page mode keeps one model with spread, and §2d's last bullet is answered rather than
+  accepted.** §2d worried that "single-page mode has no spine, so the two modes stop sharing one
+  model". It has one: a single page is still bound, it merely has no facing leaf to land on.
+  **The rule that unifies them: the spine is the edge opposite the grab.** In spread that is the
+  gutter; in single-page it is the card's other edge; in both the cone's apex sits on it. What
+  differs between the modes is only what is underneath the sheet, which is not the model's
+  business. One geometry, one test suite, both modes.
+
+### What happens to the 2D renderer
+
+It cannot simply be deleted — it is what a failed capture and a slow machine fall back to, and
+`pageFold.ts` is the only executable description of the model. But the two halves of it have
+different fates and conflating them is how this gets decided wrongly.
+
+- **The geometry module lives and grows the cone.** `pageFold.ts`'s pure half stays pure and
+  testable with the renderer swapped underneath (§4 says to insist on this up front, and a
+  shader that hides the model inside itself is the failure mode). Every property in
+  `pageFold.test.ts` survives **as the degenerate case** — apex at infinity — exactly as the
+  bisector survived into the roll. Anchor-under-pointer, full coverage by progress 1,
+  right-handed orthonormal peel/crease: all still true, now with an apex-distance parameter that
+  the old tests pin at infinity. ⚠️ One test changes meaning and must be rewritten rather than
+  deleted: **"keeps an edge peel's crease parallel to the spine"** is false under a hinge, where
+  the crease converges on the apex. Its replacement is that it stays parallel *in the far-field
+  limit*, which is what it was always really asserting.
+- **The 2D painter (`drawPageFold`) does not become a permanent second fold renderer.** Two
+  painters for one effect, differing visibly by construction (the roll is "the honest 2D
+  ceiling" — it is *supposed* to look different), maintained forever, for a rung nobody has seen
+  fire. **The ladder terminates at the slide**: no WebGL, context lost, or failed capture → the
+  card slide, which is already built, already the low-fps rung, and already what the setting's
+  ceiling means.
+- **`drawPageFold` is retired when the WebGL renderer has been signed off on the operator's own
+  machine, and not before.** Until then it is the renderer, and after the swap it is the safety
+  net for exactly one milestone. That is a condition, not a "someday" — someday is how a second
+  renderer becomes permanent by drift.
+- **The ceiling stays checkable, unchanged.** `pageTransition: "slide"` is tested before
+  everything else, and a WebGL canvas is still a canvas, so
+  `document.querySelectorAll("canvas").length === 0` through a whole turn keeps working as the
+  cheap proof. Keep it that way.
+- **A lost WebGL context is a designed state, not a crash.** It degrades to the slide like any
+  other failed renderer and it goes through the gesture's existing single exit — the `finally`,
+  the deadline on every await, the pointer-capture watchdog, the turn lock's maximum lifetime.
+  §9 exists because those were absent once; a new renderer does not get to reintroduce the gap.
+
+### Sequencing, and the disagreement preserved
+
+The ruling above approves the work; it does not schedule it in front of two cheaper things.
+
+- **Operator sign-off on the roll comes first.** It has been open since 2026-08-01 and it is the
+  one thing here that cannot be measured: does the shipped sheet read as paper on the Mac, and
+  does the turn stay smooth. Building a third renderer before the second one has been looked at
+  by the person it is for is out of order, and the answer could change the brief.
+- **The Mac's canvas-2D number comes with it**, since the gate could not close that column. If
+  a GPU-composited canvas turns out to be several times faster than this table, the p90 guard's
+  calibration changes — though the geometry does not, which is the point of resting the ruling
+  on geometry.
+- **The concern on record, since nobody raised it against the ask:** this is the reader's
+  *third* turn renderer (dip, slide, fold) becoming a fourth, in an app whose first discipline
+  is "reading comes first". The mesh is approved because the effect is named, proven
+  unreachable in 2D, and measured free — not because the curl has been under-invested in. If
+  the operator would rather have (d) than another pass on anything else, that is their call and
+  this entry is the yes.
+
+## 2026-08-03 (later still) — The low-fps guard was measuring the display, not the fold
+
+*Superseded in part by the step 4 entry above: the replacement guard described here measures
+the fold but reads its own dead tail, so the "~40x under it" figure in the third bullet is an
+artifact. The diagnosis of the original bug stands unchanged.*
+
+Operator bug against the transition setting: "with Curl selected it curls for the first
+page, then slides the remainder of the time." The only one-way switch anywhere in the turn
+path is the M10 low-fps guard, and it was tripping on almost every reader's first turn.
+
+- **The guard was testing the mean frame *interval* over the fold canvas's whole mount.**
+  Two things wrong with that, and the second is the fatal one. First, the window starts at
+  mount, which in `turnPageCurl` is *before* `await rendition.next()` — so however long
+  epub.js takes to lay out a new section counts against the fold, which is drawing nothing
+  for all of it. Second, and this is the measurement that should have been noticed years
+  ago: **a healthy 60fps frame interval is 16.7ms and the threshold was 33ms**, i.e. the
+  test had exactly one doubling of headroom over the display's own refresh cadence.
+  Measured on a clean turn in this environment: mean frame interval **16.6ms** while the
+  fold's actual drawing cost **0.7ms**. The guard was reading vsync. Any hitch inside one
+  mount — a section layout, first-turn web fonts, a moment of throttling, a 30Hz external
+  display — crosses the line, and the latch never clears for the session. The first turn
+  of a session is the slowest one there is, which is exactly the reported symptom.
+- **The guard now measures the median cost of one `drawPageFold` call**, which is the unit
+  PAGE_CURL.md §7 is already written in and is a property of the fold rather than of the
+  main thread. Median, not mean, because a downgrade that never clears must not be decided
+  by the one frame a GC landed on; and never on fewer than 12 drawn frames, so a two-frame
+  flick cannot latch it.
+- **The threshold stays 33ms and now means something**: one whole 30fps frame spent
+  drawing the fold and nothing else. Measured here at dpr 1 the fold sits ~40x under it.
+- **The reported number is traced in dev builds.** This bug was invisible because nothing
+  ever said which rung of the ladder a turn took. One `console.debug` per fold, with the
+  median and the sample count, is what turns "the curl stopped happening" from a mystery
+  into a reading — and PAGE_CURL.md §7 already warned that an operator report of exactly
+  that phrase is "probably the guard, not a bug". It was the guard, and the guard was wrong.
+
+*Worth stating plainly: the slide setting did not cause this. It made a four-month-old
+latent bug visible, because the downgrade now goes to a full page slide instead of M7's
+6px dip, which nobody would notice.*
+
+## 2026-08-03 (later) — The slide, as built: five calls the ruling left open
+
+The transition setting shipped. Everything in the entry below held as written; these are
+the decisions taken *inside* it, recorded because four of the five are things a later
+session would otherwise re-derive or quietly undo.
+
+- **In spread mode the whole stage slides, both leaves together — v1, and stated as
+  such.** The alternative (clip to the near leaf, so one page slides over the other while
+  its neighbour holds) is the more book-like motion and is also a different specification:
+  the departing snapshot would have to be split at the spine, the far leaf would need to
+  stay live while the near one is a bitmap, and the two modes would stop sharing one
+  renderer. That is the same shape of cost as PAGE_CURL.md §2d, for a smaller payoff.
+  Whole-stage reads correctly — the incoming spread arrives over the departing one — and
+  it is one transform. Revisit with the spine work, not before.
+- **The slide mounts no canvas, and that is a design constraint rather than an
+  accident.** "Slide means never curl" is worth being able to *check* —
+  `document.querySelectorAll("canvas").length === 0` through a whole turn — and it stays
+  checkable only if the departing card is not itself a canvas. It does not need to be:
+  `pageSnapshot` already returns a PNG data URL, and the only thing `cardSnapshot`'s
+  canvas adds is a band of one flat colour around it, which is a CSS background. So the
+  slide takes the same capture one step earlier, decodes it, and paints it as an `<img>`
+  over `resolveCardPaper`'s value — one canvas, one full-card blit and one decode cheaper
+  than the curl's path, not more expensive.
+- **The ladder's low-fps rung now means the *card* slide, and M7's dip becomes the floor.**
+  "Low fps → slide" was written when "slide" meant the dip; now that it names a real
+  transition, the guard resolves to it. The dip stays as what a *failed capture* degrades
+  to (it needs no bitmap) and as reduced motion's instant step. The guard is about the
+  fold's per-frame canvas cost, which the slide does not have — and a machine that trips
+  it has, by construction, already paid for one capture and survived.
+- **The slide steps the rendition back *after* its spring-back animation — the opposite of
+  the curl, for the same reason.** The fold paints nothing once the pointer is back on its
+  anchor, so its step back has to beat the animation or the un-turned-to page shows
+  full-screen (2026-08-02). The slide's snapshot covers the whole card at progress 0, so
+  there is nothing to see through: the page falls closed first and epub.js can take as
+  long as it likes behind it. A slow step then costs a moment longer on a still page
+  instead of a page stalled mid-slide.
+- **The sliding page needs a drawn leading edge.** Both pages are the same paper colour by
+  construction, so without one the slide reads as text being wiped away rather than as a
+  sheet moving over another. Found in the first mid-drag screenshot, where the only sign
+  of the boundary was the departing page's glyphs being cut in half. A gradient carries it
+  on paper and sepia; a hairline in `--color-border` is what carries it in ink, the same
+  lesson `sheenScale` records for the fold.
+
+*Not decided, still: the slide's spring-back and commit reuse the curl's 0.16s/0.18s
+settle durations unexamined. They are right for a fold that is nearly closed already and
+merely defensible for a page with half a card left to travel.*
+
+## 2026-08-03 — A page turn may never get stuck, and the transition becomes a reading setting
+
+Operator report against the shipped curl: (1) a drag that doesn't go far enough sometimes
+leaves the curl frozen mid-peel instead of springing back, (2) when that happens the
+reader stops responding to the cursor and only a click clears it, and (3) a request for a
+plain slide as an alternative to the curl. The first two are one bug wearing two faces;
+the third is a real setting. All three go into M20 step 3, ahead of the WebGL work.
+
+- **The gesture has no failure path, and that is the whole bug class.**
+  `handleGrabPointerDown`'s release handler unmounts the fold and releases the turn lock
+  as its *last two statements*, after a series of unguarded `await`s (the capture, an
+  `animate`, and — since 2026-08-02 — `rendition.prev()`/`next()`). If any of them
+  rejects or never settles, neither statement runs: the canvas stays mounted showing a
+  half-peeled page, and `turnLockRef` stays `true`, which makes every later turn a no-op.
+  That is exactly the reported pair. **Ruling: a turn gesture gets exactly one exit, it
+  runs in a `finally`, and it is reachable without the release event.**
+- **Losing pointer capture mid-drag is unrecoverable, and it is reachable.** Reproduced in
+  the live app: remove the grab surface while the pointer is down (which React does
+  whenever a re-pagination flips `status` to `loading`), and the pointer is then over the
+  sandboxed epub.js iframe — the page stops receiving pointer input entirely, the release
+  never reaches the `window` listener the gesture is waiting on, and the driver blocks on
+  the next move. The stale listener is still armed, so the *next* click anywhere finally
+  fires it and everything unfreezes: the operator's "you have to click to undo", exactly.
+  So: **the grab surface may not unmount while a gesture is live**, and
+  `lostpointercapture` is a release like any other.
+- **The recovery animates.** A watchdog that snaps the page back would trade a frozen
+  reader for a flicker. A fold that has gone quiet springs back through the same
+  animation a real release uses, so the reader sees the page fall closed.
+- **The turn lock gets a maximum lifetime.** A lock held longer than the longest legal
+  turn is a bug, not a state; it clears itself. This is the belt to the `finally`'s
+  braces, and it is what makes the reader recoverable even from a failure nobody
+  predicted.
+- **The step back on spring-back goes by CFI, not by `prev()`.** 2026-08-02 stepped back
+  blind. Recording the location at grab time and displaying it back cannot strand the
+  reader on the wrong page if epub.js's own step disagrees at a section boundary.
+*(The four gesture items were applied the same day; the transition setting is the
+remaining work. Every await on the way out of a drag is now raced against a deadline —
+a `finally` alone does not help against a promise that never settles, which is the
+failure the deadlines exist for.)*
+
+- **The page transition becomes a reading setting: `pageTransition` = `curl | slide`.**
+  The slide has existed since M7 as the *fallback*; this promotes it to a choice.
+  Reasons to say yes: the curl is a strong effect to be stuck with, it is the most
+  expensive thing the reader does per turn, and "reading comes first" means the reader
+  who finds it fussy should be able to turn it off without turning off animation
+  altogether (which is what reduced motion is for, and is a different request).
+- **The setting is a ceiling, not a mode switch.** The existing ladder — reduced motion →
+  instant, low-fps → slide, failed capture → slide — still runs underneath it. `curl`
+  means "curl if this machine and this capture can"; `slide` means "never curl". Nothing
+  in the ladder is allowed to promote a turn *up* to the curl.
+- **Slide means the next page slides over the departing one**, not the departing page
+  sliding away — and it reuses everything step 2 built: the same card capture, the same
+  advance-at-grab, with the departing card held static underneath while the live stage
+  translates in over it. The drag follows the pointer and commits or springs back on the
+  same threshold as the curl, so the two transitions are the same gesture with a
+  different renderer.
+- **Not decided here, deliberately:** whether the slide's direction should follow the
+  book's reading direction (RTL books). Out of scope until a RTL book is in the library.
+
+## 2026-08-02 (later) — The turning sheet is the paper card, and the peel opens onto the next page
+
+The pass after the capture rewrite, and mostly the two things that entry named as
+left open. Nothing here changes the fold's *model* — `pageFold.ts`'s geometry is
+untouched except for where the sheet is held.
+
+- **The fold canvas was misregistered by one reader margin, and now is not.** `PageCurl`'s
+  wrap is positioned inside `.pageClip` but was sized and offset from `containerRef`,
+  which sits one `--reader-margin` further in. Every rect the fold works in is now
+  measured from the card (`.pageClip`) instead: `nearLeafRect` takes the card's box, and
+  the spread decision keeps taking the *content* width, because that is the only width
+  epub.js ever sees and a margin can straddle the threshold.
+- **The turning leaf is the paper card, not the text column** — the operator's ask, and
+  what makes it read as folding a page rather than peeling a rectangle pasted onto one.
+  The extra area is flat paper, so the card bitmap is the page snapshot composited into a
+  larger canvas over the card's own background colour (`cardSnapshot.ts`). Nothing
+  re-serializes the app's CSS: the one hard-to-capture element is still the iframe, and
+  the band around it is one colour.
+- **In spread mode the card splits down the middle**, not at the text columns' edges.
+  Each leaf then carries its own outer margin and half the spine gutter, which is where a
+  real spine is, and the two halves tile the card exactly.
+- **That bitmap goes to `PageCurl` as a canvas, not a data URL.** It is drawn, never
+  transported; a PNG encode plus a decode per page turn is real time on the interaction
+  path for nothing.
+- **The margin band's colour is read off the card element, not sampled from the bitmap.**
+  Measured: `samplePaperColor` (an 8x8 downscale, per-channel median) returns
+  rgb(228,225,218) on a page of prose against the card's real rgb(250,247,240), because
+  downscaling averages ink into every tile. That is fine for the *back of the sheet*,
+  which only wants "roughly what colour is this paper", and visibly wrong for a band
+  sitting next to the real thing. One computed background value, walked up from the card
+  to the element that actually paints it, is exact in every theme.
+- **The drag advances the rendition at grab time and steps back on spring-back.** Until
+  now `handleGrabPointerDown` advanced only on commit, so the opening revealed a
+  pixel-identical copy of the page being peeled. It now does what `turnPageCurl` has
+  always done for a click turn. The step-back happens *before* the spring-back animation,
+  not after: the fold paints nothing once the pointer reaches its anchor, so a step-back
+  that outlives the animation shows the wrong page full-screen for however long epub.js
+  takes, while stepping back first costs only a shrinking opening briefly showing the
+  page it is returning to, under the roll's own shadow.
+- **Grabbing the middle of an edge peels the edge, not the nearest corner.** The fold now
+  has an *anchor* — a corner (the dog-ear pinch) or the middle of an edge — and the
+  geometry does not distinguish them, because the model only ever asks the anchor for a
+  point. An edge peel keeps its crease parallel to the spine by pinning the fold
+  pointer's `y` to the anchor's, which makes `peelDir` horizontal; the cursor still
+  roams, and drag progress still follows the real cursor. The middle third of each edge
+  is the edge; the rest is still the nearer corner.
+- **Deliberately not here, and still the reason the fork resolves to WebGL:** folding
+  over the spine onto the facing leaf, and pinning the spine edge so the gutter-side
+  corners cannot curl away. Both are conical deformations (PAGE_CURL.md §2d, §4).
+- **A measurement caveat worth keeping**, because the last entry's headline number does
+  not reproduce without it: `pageSnapshot` caps its capture at `MAX_CAPTURE_SCALE` 1.5,
+  so on a 2x display the fold blits a 1.5x bitmap onto a 2x canvas and *cannot* be pixel
+  identical to the live DOM. "0 differing pixels" is a dpr-1 statement. At dpr 1 the
+  fold's flat region reproduces the departing page exactly — 0 differing pixels, mean
+  delta 0.00008, on the whole unpeeled half of the turning leaf — which is the honest
+  form of the registration test.
+
+## 2026-08-02 — The page snapshot stops being a screenshot: html2canvas is retired
+
+Three passes of M20 were verified against a bitmap that was never there. The cause is
+mechanical and was measured, not inferred: `capturePageSnapshot` used html2canvas with
+`foreignObjectRendering: true`, which serializes the captured subtree into an SVG
+`<foreignObject>` and paints it through an `<img>` — and **an SVG rendered as an image
+cannot host a nested browsing context**. That is SVG's "secure static mode", a spec rule,
+so the epub.js iframe (which is the entire page) contributed exactly zero pixels in every
+browser on every platform. 2026-08-01 recorded this as a *headless* limitation and hoped
+it might not reproduce on real hardware. It reproduces everywhere, necessarily, and the
+operator's own screenshots show it: a translucent grey wedge with the page text fully
+legible through it and no mirrored glyphs anywhere.
+
+- **The snapshot is now built, not screenshotted.** The iframe's document is same-origin
+  (`sandbox="allow-same-origin"`, `srcdoc`), so instead of photographing the iframe we
+  reach through it and serialize its own `documentElement` into the `foreignObject`. No
+  nested browsing context, and the browser's own layout engine does the work — columns,
+  line breaks, the reading theme and the fonts all come out right because none of them
+  are being re-implemented. **Verified by pixel diff against a screenshot of the same
+  rect: 0 differing pixels, mean channel delta 0.** Capture takes ~22ms.
+- **Three things it has to carry, each of which failed silently first.** epub.js serves
+  the section CSS from `blob:` URLs that an SVG image will not load, so the rules are
+  dumped inline; `url()` assets (images, `@font-face`) are refetched as `data:` URIs,
+  because a fallback font re-breaks every line and makes the snapshot disagree with the
+  page at the exact moment the fold starts; and the visible window is translated by
+  `-scrollLeft`, since a paginated section is laid out many viewports wide.
+- **The subtlest one, worth the sentence it takes to state.** epub.js paginates by giving
+  `body` a viewport width, columns, and `overflow: auto hidden`, which only works because
+  a *root* element's body propagates its overflow to the viewport and is then treated as
+  `visible`. A copied `<html>`/`<body>` inside a `foreignObject` is not the root, so it
+  clips for real: the snapshot looked right on page 1 and came back blank on every other
+  page. One `html,body{overflow:visible !important}` fixes it. Measured 0% ink vs 11%.
+- **The highlight overlays need their own rasterization pass.** A `<style>` inside a
+  `foreignObject` is not scoped to it — CSS in an SVG document is document-wide — so the
+  book's own stylesheet reaches marks-pane's `<svg>` and kills it (measured: 0% wash in
+  one document, 6.35% in two, screen 6.35%; paint order and z-index ruled out first).
+  They also have to go through a `foreignObject` rather than a bare `<g transform>`,
+  because marks-pane sizes itself with a *CSS* width that means nothing in SVG context.
+- **The result must be a `data:` URL, never a `blob:` one.** Measured: an SVG loaded from
+  a blob URL taints the canvas, so `samplePaperColor`'s `getImageData` and the final
+  `toDataURL` both throw `SecurityError`. This is not an optimization to undo later.
+- **html2canvas is removed from the dependency list**, this being its only call site.
+- **What this does *not* fix, and is not trying to.** The fold canvas is still
+  misregistered by one reader margin and the drag still never advances the page, so the
+  peel still reveals a copy of the page being peeled. Both are real, both are named in
+  PAGE_CURL.md §2, and both belong to the next pass — not smuggled in here.
+- **Eager capture was scoped out on measurement, not forgotten.** It was in the plan to
+  remove a 700ms budget from the interaction path; the new path costs ~22ms, which does
+  not justify a cache with three staleness paths (relocate, resize, re-pagination).
+  Revisit only if a real drag on real hardware feels late.
+
+The consequence worth stating plainly: **every earlier "verified live" report on M20
+should be read as verifying the geometry and nothing about the pixels.** The rolled sheet
+had never been seen with a page in it until now.
+
+## 2026-08-01 — The curl is a *roll*, not a fold: amending the 2026-07-20 geometry
+
+Operator verdict on M20 as shipped: "it looks nothing like how I'd like it to look,"
+against Apple Books screenshots. The premise checked out — the flat fold is genuinely
+wrong, and wrong in a way that was decided here, not mis-implemented. **This entry
+amends the 2026-07-20 ruling** ("the curl is a fold, not a hinge": crease about the
+perpendicular bisector of corner→pointer, mirror, dim). The bisector was right about
+what the *hinge* got wrong and wrong about what replaces it.
+
+- **Paper does not crease when you peel it; it rolls.** A perpendicular-bisector fold is
+  a sheet of paper folded flat — a napkin, with a hard crease and a razor edge where it
+  meets the page. Every real page curl, Apple's included, has a *rounded leading edge*
+  with the sheet's own thickness of shading across it. That single difference is most of
+  the gap the operator was pointing at, and no amount of tuning the dim and the shadow
+  closes it.
+- **The replacement, and it is still not a mesh.** The sheet is flat, then wraps a roll
+  through a half turn, then flat again upside down. Working in the fold frame, a page
+  point's only relevant coordinate is its signed distance from the crease, so the whole
+  deformation is *a shift along one axis as a function of one scalar* — every band of
+  constant distance stays a straight line parallel to the crease, and paints as one
+  `drawImage` under one affine transform. The flat page and the tail, which are almost
+  all the pixels and all the readable text, stay single undistorted blits. The roll's
+  curvature ramps rather than being constant (`ROLL_EASE`), because a constant radius
+  reads as an inflated tube.
+- **The bisector survives as the degenerate case.** At zero arc length the crease lands
+  back on the midpoint of corner→pointer and the sheet is a plain mirror image — the
+  2026-07-20 model exactly. It is pinned by a test. This is why the amendment costs no
+  architecture: the old model was a special case of the new one all along.
+- **DESIGN.md's "no WebGL until a named effect needs it" still holds**, and now on
+  firmer ground than in July: the rolled sheet is closed-form 2D, measured, and shipping.
+- **What we are deliberately not matching, and why it is worth writing down.** In Apple
+  Books you can see the page's own text squeeze and bend *into* the curl. We cannot, and
+  it is not a tuning failure: under an orthographic view the tail always covers that
+  band, because the tail projects from the roll's far end back across the crease. It
+  takes a real perspective camera to lift the tail's near edge clear of it — Apple's is
+  a 3D scene, and the reverse-engineering of iBooks' original effect (wdnuon, 2010)
+  reads it as a *conical* deformation, which is a per-vertex mesh warp. That is a WebGL
+  conversation, and if it is ever worth having it should be had on its own, not smuggled
+  in under "make the curl nicer." The rolled sheet is the honest 2D ceiling.
+- **Two canvases, not one.** The back of the sheet is a *material* — paper wash plus its
+  own lighting — and those have to land on back-facing pixels only. Compositing them
+  straight onto the visible canvas washes the front-facing half of the roll too, since
+  the two overlap by construction. The scratch layer is not an optimization and should
+  not be optimized away.
+- **The fold asks the bitmap what colour paper is.** It reads the page background back
+  out of the snapshot rather than being told the reading theme, so it works in any
+  theme without knowing which one is on. Dark themes then need the *inverse* treatment,
+  not the same one at lower contrast: a near-black flap over a near-black page with a
+  black shadow between them is invisible, so the back of the sheet lifts toward grey and
+  the roll's leading edge is drawn with a sheen rather than a crease. NOTES.md 2026-08-01
+  has the numbers.
+- **Budget, restated with measurements.** The 2026-07-20 budget (one canvas, redraw only
+  while a fold is live) stands, with the layer as the stated exception. The roll costs
+  real time and it is worth knowing where: the per-band `drawImage` calls dominate
+  everything else combined, so the band count is chosen per frame from the roll's size on
+  screen, and every `source-atop` pass fills its own bounding box rather than the canvas.
+  Those two changes took a measured 39ms/frame to 15ms in a software rasterizer. The M10
+  low-fps downgrade to the slide is unchanged and is now doing more work: the rolled
+  sheet is ~2.6x the flat fold, so a machine near the line will fall back where it
+  previously did not. That is the correct failure and the reason the guard exists.
+
+## 2026-07-30 — M19.6 round 4: the real cause of the chapter-boundary skip, and three more operator-feedback fixes
 
 Picking up round 3's open blocker (NOTES.md: two live sweeps, zero reproductions) with
 four real, tested fixes — full detail and live-verification method in NOTES.md "M19.6 —

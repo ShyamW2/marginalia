@@ -380,6 +380,16 @@ export type CursorStyleChoice = z.infer<typeof CursorStyleSchema>;
 export const SpreadModeSchema = z.enum(["single", "auto"]);
 export type SpreadMode = z.infer<typeof SpreadModeSchema>;
 
+/** M20 step 3 "the reader picks the transition" (decisions.md 2026-08-03):
+ * how a page turn animates. **A ceiling, not a mode switch** — the existing
+ * fallback ladder (reduced motion → instant, low fps → slide, failed capture
+ * → slide) still runs underneath, so "curl" means "curl if this machine and
+ * this capture can" and "slide" means "never curl". Nothing may promote a
+ * turn *up* to the curl. Defaults to "slide": the curl is the strong,
+ * expensive effect, and reading comes first. */
+export const PageTransitionSchema = z.enum(["curl", "slide"]);
+export type PageTransition = z.infer<typeof PageTransitionSchema>;
+
 /** M14 "customisable page margins" (decisions.md 2026-07-27): the outer
  * padding around the rendered page, independent of the spread gutter. */
 export const ReaderMarginSchema = z.enum(["narrow", "normal", "wide", "generous"]);
@@ -425,6 +435,7 @@ export const SettingsSchema = z.object({
   cursorStyle: CursorStyleSchema,
   cursorTrailEnabled: z.boolean(),
   spreadMode: SpreadModeSchema,
+  pageTransition: PageTransitionSchema,
   readerMargin: ReaderMarginSchema,
   readerFontScale: ReaderFontScaleSchema,
   scanCrtIntensity: ScanCrtIntensitySchema,

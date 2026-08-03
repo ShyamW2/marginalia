@@ -1,4 +1,10 @@
-import type { PageNumberMode, ReaderMargin, Settings, SpreadMode } from "@marginalia/shared";
+import type {
+  PageNumberMode,
+  PageTransition,
+  ReaderMargin,
+  Settings,
+  SpreadMode,
+} from "@marginalia/shared";
 import { Button } from "../../controls/Button.js";
 import styles from "../SettingsPage.module.css";
 
@@ -50,6 +56,32 @@ export function ReadingTab({ form, update }: ReadingTabProps) {
               className={styles.providerButton}
               pressed={form.spreadMode === option.value}
               onClick={() => update("spreadMode", option.value)}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      {/* M20 step 3 (decisions.md 2026-08-03): a ceiling, not a mode switch —
+          "Curl" means "curl if this machine and this capture can", and the
+          reduced-motion/low-fps/failed-capture ladder still runs underneath
+          both choices. */}
+      <div className={styles.field}>
+        <label className={styles.label}>Page turn</label>
+        <div className={styles.providerToggle} role="group" aria-label="Page turn">
+          {(
+            [
+              { value: "curl", label: "Curl" },
+              { value: "slide", label: "Slide" },
+            ] satisfies { value: PageTransition; label: string }[]
+          ).map((option) => (
+            <Button
+              key={option.value}
+              variant="outline"
+              size="sm"
+              className={styles.providerButton}
+              pressed={form.pageTransition === option.value}
+              onClick={() => update("pageTransition", option.value)}
             >
               {option.label}
             </Button>

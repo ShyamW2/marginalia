@@ -69,6 +69,7 @@ describe("schemas smoke test", () => {
       cursorStyle: "custom",
       cursorTrailEnabled: true,
       spreadMode: "single",
+      pageTransition: "slide",
       readerMargin: "normal",
       readerFontScale: 1,
       scanCrtIntensity: 0.6,

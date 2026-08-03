@@ -1,0 +1,29 @@
+/* M20 step 3 "the slide is a drag": the **departing** card, held still while
+   the live stage translates in over it. Positioned to `.pageClip` — the card
+   — exactly as PageCurl's wrap is, and for the same reason: this element's
+   offset parent is `.pageClip`, so every rect handed to it must be measured
+   from `.pageClip` too (PAGE_CURL.md, the 2026-08-02 registration fix).
+
+   Unlike the curl, nothing here is redrawn. The snapshot is one decoded
+   <img>, and the margin band around it is this element's own background —
+   the card's computed paper colour (`resolveCardPaper`), the same value
+   `cardSnapshot.ts` fills its canvas with. That composite is why the slide
+   needs no canvas at all: `pageSnapshot` already hands back a PNG data URL,
+   and the only thing the canvas step added was painting a border of one flat
+   colour around it, which CSS does for free. */
+.wrap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+
+/* Sized and offset inline from the CardLayout, in the card's own CSS px —
+   the bitmap's natural size is that times the capture scale (up to
+   MAX_CAPTURE_SCALE), so the browser downscales it exactly as the fold's
+   canvas blit does. */
+.snapshot {
+  position: absolute;
+  display: block;
+}

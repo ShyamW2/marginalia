@@ -68,3 +68,40 @@ export function turnZoneForVisibleX(
   if (visibleX > containerWidth * (1 - TURN_ZONE_FRACTION)) return "next";
   return null;
 }
+
+export interface LeafRect {
+  x: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * M20 "spread-aware": in two-page mode the fold must peel the **near leaf
+ * only**, not the whole stage (decisions.md 2026-07-20 — "leaf-relative").
+ * Mirrors the same `spreadMode`/`SPREAD_MIN_WIDTH` decision epub.js's own
+ * layout makes (see `computeReaderGap` above) so the leaf split agrees with
+ * whatever epub.js actually rendered at this width, without reading it back
+ * — hence `contentWidth`, which is the element epub.js renders into
+ * (`.epubContainer`) and the only width that decision may be made on.
+ *
+ * **The leaf is the paper card, not the text column** (2026-08-02, step 2):
+ * `cardWidth`/`cardHeight` are `.pageClip`'s box — the whole sheet, reader
+ * margin included — so the margin folds with the page instead of the sheet
+ * reading as a rectangle pasted inside it. In card space the spread splits
+ * exactly down the middle: each leaf carries its own outer margin and half
+ * the spine gutter, and `cardWidth / 2` lands on the gutter's centre line
+ * because the two margins are equal (`.marginWrapper`'s padding).
+ */
+export function nearLeafRect(
+  cardWidth: number,
+  cardHeight: number,
+  contentWidth: number,
+  spreadMode: SpreadMode,
+  direction: "prev" | "next",
+): LeafRect {
+  if (spreadMode === "auto" && contentWidth >= SPREAD_MIN_WIDTH) {
+    const leafWidth = cardWidth / 2;
+    return { x: direction === "next" ? leafWidth : 0, width: leafWidth, height: cardHeight };
+  }
+  return { x: 0, width: cardWidth, height: cardHeight };
+}

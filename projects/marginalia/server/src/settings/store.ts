@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type {
   CursorStyleChoice,
   PageNumberMode,
+  PageTransition,
   ReaderMargin,
   ReaderPaneWidth,
   Settings,
@@ -20,6 +21,11 @@ const DEFAULTS = {
   // (today's behavior, unchanged until a reader opts in) is the boring
   // choice.
   spread_mode: "single" as SpreadMode,
+  // M20 step 3 (decisions.md 2026-08-03): the plain slide is the default —
+  // the curl is the strongest, most expensive thing the reader does, and a
+  // reader who wants it opts in. Unlike the settings above, this one is *not*
+  // "today's behavior unchanged": the curl shipped as the only transition.
+  page_transition: "slide" as PageTransition,
   // M14: "normal" matches the pre-M14 fixed edge padding — unchanged until a
   // reader opts into something wider or narrower.
   reader_margin: "normal" as ReaderMargin,
@@ -45,6 +51,7 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   cursor_style: "cursorStyle",
   cursor_trail_enabled: "cursorTrailEnabled",
   spread_mode: "spreadMode",
+  page_transition: "pageTransition",
   reader_margin: "readerMargin",
   reader_font_scale: "readerFontScale",
   scan_crt_intensity: "scanCrtIntensity",
@@ -72,6 +79,7 @@ export function getRawSettings(db: Database.Database): {
   cursorStyle: CursorStyleChoice;
   cursorTrailEnabled: boolean;
   spreadMode: SpreadMode;
+  pageTransition: PageTransition;
   readerMargin: ReaderMargin;
   readerFontScale: number;
   scanCrtIntensity: number;
@@ -85,6 +93,7 @@ export function getRawSettings(db: Database.Database): {
     cursorStyle: raw.cursor_style as CursorStyleChoice,
     cursorTrailEnabled: raw.cursor_trail_enabled === "true",
     spreadMode: raw.spread_mode as SpreadMode,
+    pageTransition: raw.page_transition as PageTransition,
     readerMargin: raw.reader_margin as ReaderMargin,
     readerFontScale: Number.parseFloat(raw.reader_font_scale),
     scanCrtIntensity: Number.parseFloat(raw.scan_crt_intensity),

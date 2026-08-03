@@ -16,6 +16,7 @@ import {
   type HighlightKind,
   type HighlightWithThread,
   type PageNumberMode,
+  type PageTransition,
   type ProviderRoleAssignment,
   type ReaderFontScale,
   type ReaderMargin,
@@ -41,6 +42,7 @@ import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js
 import { hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
 import { cursorPastPageText } from "./pageTextEdge.js";
 import { PageCurl } from "./PageCurl.js";
+import { PageSlide } from "./PageSlide.js";
 import { DwellRing } from "./DwellRing.js";
 import { AskPill } from "./AskPill.js";
 import { MarginRail } from "./MarginRail.js";
@@ -361,6 +363,12 @@ export function ReaderView({
   // M14: the reader's stage — the thread panel's drag is constrained to it,
   // and a stale panel offset gets clamped back into its bounds on reopen.
   const stageRef = useRef<HTMLDivElement>(null);
+  // M20 (2026-08-02): the paper card — .pageClip's own box, which is what
+  // the fold canvas is positioned inside and therefore the only rect its
+  // geometry may be measured from. containerRef is the text column, one
+  // reader margin further in; measuring the fold from *that* is what drew
+  // the canvas a margin off its own content.
+  const pageClipRef = useRef<HTMLDivElement>(null);
   const renditionRef = useRef<Rendition | null>(null);
   // M12 scrub dial / chapter nav need direct book access (locations,
   // navigation, spine) outside the load effect's own closure.
@@ -399,8 +407,30 @@ export function ReaderView({
   // ownership transfers to the next co-owner if the owner is deleted.
   const cfiOwnersRef = useRef<Map<string, string[]>>(new Map());
   const themeVars = useEpubThemeVars();
-  const { stageControls, stageReducedMotion, curl, curlProgress, turnPage, handleEdgePointerDown } =
-    usePageTurnAnimation(renditionRef, containerRef);
+  // M20 step 3 (decisions.md 2026-08-03): unlike spreadMode, which is a prop
+  // because epub.js needs it at `renderTo` time, the transition is read at
+  // *turn* time — so it is local state seeded from the settings fetch and
+  // kept current through settingsBus, exactly like readerMargin. Flipping it
+  // takes effect on the next page turn, with no reload and no remount.
+  const [pageTransition, setPageTransition] = useState<PageTransition>("slide");
+  const {
+    stageControls,
+    stageReducedMotion,
+    curl,
+    slide,
+    gestureActive,
+    getFoldPointer,
+    handleDrawCost,
+    turnPage,
+    handleGrabPointerDown,
+  } = usePageTurnAnimation({
+    renditionRef,
+    containerRef,
+    cardRef: pageClipRef,
+    stageRef: marginWrapperRef,
+    spreadMode,
+    pageTransition,
+  });
   // The book-loading effect's internal handlers (keydown, click-to-turn)
   // close over `rendition` directly and don't re-run per-render, so they
   // reach the current turnPage through this ref rather than a stale closure.
@@ -715,6 +745,7 @@ export function ReaderView({
       setReaderFontScale(settings.readerFontScale);
       setPageNumberMode(settings.pageNumberMode);
       setReaderPaneWidth(settings.readerPaneWidth);
+      setPageTransition(settings.pageTransition);
     });
     fetchQueryRoleConfigured().then(setProviderConfigured);
   }, []);
@@ -725,6 +756,7 @@ export function ReaderView({
       setReaderFontScale(settings.readerFontScale);
       setPageNumberMode(settings.pageNumberMode);
       setReaderPaneWidth(settings.readerPaneWidth);
+      setPageTransition(settings.pageTransition);
     });
   }, []);
 
@@ -1901,10 +1933,17 @@ export function ReaderView({
 
       <div className={styles.readerRow}>
         <div className={styles.stage} ref={stageRef} onPointerLeave={handleStagePointerLeave}>
-          <div className={styles.pageClip}>
+          <div className={styles.pageClip} ref={pageClipRef}>
+            {/* M20 step 3 "the next page slides over": while a slide is
+                live this is the *incoming* page — it gets a stacking context
+                above the departing card below it and its own opaque paper, so
+                translating it covers the still snapshot instead of blending
+                with it. The transform itself is written straight to this node
+                by usePageTurnAnimation; a transform per pointermove must not
+                cost a React render. */}
             <div
               ref={marginWrapperRef}
-              className={styles.marginWrapper}
+              className={`${styles.marginWrapper} ${slide ? styles.marginWrapperSliding : ""}`}
               style={{ "--reader-margin": `${READER_MARGIN_PX[readerMargin]}px` } as CSSProperties}
             >
               <motion.div
@@ -1913,8 +1952,20 @@ export function ReaderView({
                 animate={stageControls}
               />
             </div>
+            {slide && (
+              <PageSlide image={slide.image} layout={slide.layout} paper={slide.paper} />
+            )}
             {curl && (
-              <PageCurl src={curl.src} direction={curl.direction} progress={curlProgress} />
+              <PageCurl
+                image={curl.image}
+                anchor={curl.anchor}
+                leafX={curl.leafX}
+                stageWidth={curl.stageWidth}
+                leafWidth={curl.leafWidth}
+                leafHeight={curl.leafHeight}
+                getPointer={getFoldPointer}
+                onDrawCost={handleDrawCost}
+              />
             )}
             {dwellRing && (
               <DwellRing
@@ -1941,17 +1992,32 @@ export function ReaderView({
                 />
               </>
             )}
-            {status === "ready" && !stageReducedMotion && (
+            {/* M20 "grab anywhere in the outer band": the old 18px edgeGrab
+                strips are retired — the M11 semicircular zone shape
+                (turnZoneVignette above) becomes the grab surface itself,
+                just with pointer-events enabled and a real onPointerDown,
+                so the fold anchors to whichever corner is nearest the grab
+                point instead of always the same edge-centred hinge. It
+                stays an ellipse hugging the very edge (not the full 30%
+                click-turn zone) so the rest of the band is still free for
+                text selection. */}
+            {/* `|| gestureActive`: the element holding the pointer capture
+                may not unmount while a drag is live. If it does — which a
+                re-pagination mid-drag would do by flipping `status` to
+                loading — capture is released to the sandboxed epub.js
+                iframe, the page stops receiving pointer input, and the
+                gesture never hears that it ended (PAGE_CURL.md §9). */}
+            {(status === "ready" || gestureActive) && !stageReducedMotion && (
               <>
                 <div
-                  className={`${styles.edgeGrab} ${styles.edgeGrabLeft}`}
+                  className={`${styles.turnGrabSurface} ${styles.turnGrabSurfaceLeft}`}
                   aria-hidden="true"
-                  onPointerDown={(event) => handleEdgePointerDown("prev", event)}
+                  onPointerDown={(event) => handleGrabPointerDown("prev", event)}
                 />
                 <div
-                  className={`${styles.edgeGrab} ${styles.edgeGrabRight}`}
+                  className={`${styles.turnGrabSurface} ${styles.turnGrabSurfaceRight}`}
                   aria-hidden="true"
-                  onPointerDown={(event) => handleEdgePointerDown("next", event)}
+                  onPointerDown={(event) => handleGrabPointerDown("next", event)}
                 />
               </>
             )}

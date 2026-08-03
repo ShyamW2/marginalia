@@ -347,8 +347,15 @@ collapses all of the above to crossfades (M7 already requires this).
 - No effect that costs reading comfort — the reader stays still, fast, and paper-like.
 - No aesthetic without a job: glow encodes heat, folds encode state, trails encode
   motion — decoration that encodes nothing gets cut.
-- No three.js/WebGL until a named effect needs it (candidate: the M10 page curl —
-  discharged in canvas 2D, so the rule still holds; see decisions.md 2026-07-20).
+- No three.js/WebGL until a named effect needs it. **Discharged once, 2026-08-03 (M20 step
+  4): the page curl folding *over the spine*.** The rule is amended, not repealed — the bar
+  is that an effect must be *named* and shown **geometrically impossible** in 2D, not merely
+  awkward or slow. It was met by proof: a sheet hinged at its binding deforms as a cone, and
+  `pageFold.ts`'s model is built on a premise (the deformation depends only on distance from
+  the crease) that cannot express one. See decisions.md 2026-07-20 → 2026-08-01 →
+  2026-08-03 (step 4), and PAGE_CURL.md §2d/§4. Raw WebGL, no three.js; the fallback ladder
+  terminates at the slide, and the reader still never sees a canvas under `pageTransition:
+  slide`.
 - No sound in v1.5. Revisit only after the rooms exist. *(Audio arrives in M21–M22 as
   speech — the book read aloud. Sound **design** — clicks, page rustle, ambience — is
   still parked and is a separate question.)*

@@ -15,7 +15,16 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/DESIGN.md` — aesthetic & interaction blueprint (two rooms + four
   instruments; the control system) — binding for M7+
 - `docs/marginalia/AUDIO.md` — audio/TTS subsystem spec (engine seam, casting, cache) — **binding for M21+**
+- `docs/marginalia/PAGE_CURL.md` — the page curl (M20): the shipped model, its invariants,
+  the geometry of what it *cannot* do in 2D, and how the page snapshot is built (§5 — four
+  of its lines exist because of failures that render a plausible but wrong bitmap). Read
+  before touching `pageFold.ts` or `pageSnapshot.ts`.
 - `docs/marginalia/SONNET_PROMPT.md` — kickoff prompt + operator notes for implementation sessions
+- `docs/marginalia/M20_STEP4_PROMPT.md` — the kickoff prompt that ran the over-the-spine /
+  WebGL design session on 2026-08-03. **Spent** — its question is answered (decisions.md
+  2026-08-03 step 4) and the work it opened is now TASKS.md **M25**, parked. Kept as the
+  worked example of a design session that opens with a measurement gate; that gate found
+  that the fold's own guard had been misreading it twice over.
 - `docs/marginalia/NOTES.md` — running log of spec gaps, friction, blockers (create on first use)
 - `docs/decisions.md` — decision log (ADR-lite)
 - `docs/REFACTORING.md` — why/when/how we refactor, and how success is measured — binding for M19.8
