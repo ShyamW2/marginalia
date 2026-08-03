@@ -49,7 +49,8 @@
    now (M19.7) — only the title bar's own absolute layout is left here. */
 .publishButton,
 .scanButton,
-.digestLink {
+.digestLink,
+.digestProviderPopover {
   /* Vertical centering via auto margins on a full-height absolute box,
      deliberately not `top: 50%; transform: translateY(-50%)` — Button's own
      hover rule sets `transform` (M19.7), which would fight and win a
@@ -76,4 +77,11 @@
 .digestLink {
   right: calc(13rem + var(--nav-cluster-reserve));
   text-decoration: none;
+}
+
+/* M20.5 "the reader's digest button gets the treatment": sits just left of
+   the Digest button itself — clear of its own span, not overlapping it
+   (caught live: 15.5rem still landed underneath "Digest"'s label). */
+.digestProviderPopover {
+  right: calc(19.5rem + var(--nav-cluster-reserve));
 }

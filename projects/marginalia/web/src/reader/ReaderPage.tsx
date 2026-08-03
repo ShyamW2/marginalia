@@ -9,6 +9,8 @@ import { formatPublishSummary, runPublish } from "../library/publish.js";
 import { Button } from "../controls/Button.js";
 import { BrainIcon, MagnifierIcon } from "../controls/icons.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
+import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
+import { useOpenSettings } from "../settings/useOpenSettings.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { ReaderView } from "./ReaderView.js";
@@ -50,6 +52,7 @@ export function ReaderPage() {
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const reducedMotion = Boolean(useReducedMotion());
+  const openSettingsToLLM = useOpenSettings("llm");
   // Captured once, lazily, at mount — not read live from `location` on every
   // render. ReaderView only mounts once `resource` finishes its async fetch
   // below; a live read would see `null` by the time that happens, because
@@ -178,6 +181,18 @@ export function ReaderPage() {
         >
           Digest
         </Button>
+        {/* M20.5 "the reader's digest button gets the treatment": a second
+            mount of the same ProviderPickerPopover the query role already
+            uses (ReaderView's top row), scoped to "digest" — reachable by
+            keyboard/click, not just hover, and reflects immediately in
+            Settings and on the Scan since all three read the same
+            provider-role store. */}
+        <ProviderPickerPopover
+          role="digest"
+          label="Digest provider"
+          onNavigateToSettings={openSettingsToLLM}
+          className={styles.digestProviderPopover}
+        />
         <Button
           ref={scanButtonRef}
           variant="outline"

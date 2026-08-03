@@ -12,6 +12,9 @@ interface ProviderPickerPopoverProps {
    * no visual context for which icon this is. */
   label: string;
   onNavigateToSettings: (event: import("react").MouseEvent<HTMLButtonElement>) => void;
+  /** Positioning only — a second mount in a room with its own layout (the
+   * reader's absolutely-positioned title bar) needs to place this itself. */
+  className?: string;
 }
 
 /**
@@ -21,7 +24,7 @@ interface ProviderPickerPopoverProps {
  * (touch, keyboard) — nothing here assumes hover exists, it's just a
  * convenience on top of click.
  */
-export function ProviderPickerPopover({ role, label, onNavigateToSettings }: ProviderPickerPopoverProps) {
+export function ProviderPickerPopover({ role, label, onNavigateToSettings, className }: ProviderPickerPopoverProps) {
   const [open, setOpen] = useState(false);
   const reducedMotion = useReducedMotion();
   const closeTimer = useRef<number | null>(null);
@@ -40,7 +43,7 @@ export function ProviderPickerPopover({ role, label, onNavigateToSettings }: Pro
 
   return (
     <div
-      className={styles.wrap}
+      className={[styles.wrap, className].filter(Boolean).join(" ")}
       onMouseEnter={() => {
         cancelClose();
         setOpen(true);

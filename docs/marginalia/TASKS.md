@@ -358,7 +358,7 @@ belongs to a register and nothing gets a bespoke one again.
       than the wrong one alone. Spoiler gating on titles (M19.5) is unchanged.
       _Acceptance: the same section shows the same `S` number in the digest, the scan axis,
       the range dials and the reader's chapter nav; no surface anywhere shows `spineIndex`._
-- [ ] **The reader's digest button gets the treatment.** M19.7's icon button, with the
+- [x] **The reader's digest button gets the treatment.** M19.7's icon button, with the
       **existing** `ProviderPickerPopover` mounted on it for the `digest` role on hover
       (the query-role picker is already mounted in the reader top row — this is a second
       mount of a built component, not a new picker).
