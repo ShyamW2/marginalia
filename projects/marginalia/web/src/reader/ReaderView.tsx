@@ -26,6 +26,8 @@ import {
   type SpreadMode,
   type ThreadSummary,
 } from "@marginalia/shared";
+import { useJobs } from "../jobs/JobsContext.js";
+import { startJobRequest } from "../jobs/jobsApi.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
 import { onProviderRolesSaved } from "../settings/providerBus.js";
 import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
@@ -491,8 +493,23 @@ export function ReaderView({
   // M17 "digest this chapter" (decisions.md 2026-07-28 later): the
   // spotlight's reader-side shortcut — same POST the scan's spotlight uses,
   // scoped to just the current chapter, without visiting the scan.
-  const [digestingChapter, setDigestingChapter] = useState(false);
+  // M20.6: this now starts a job (the tray/toast own the actual progress
+  // and cancel UI) — the id tracked here is only for this button's own
+  // transient "Digesting…"/"Digested ✓" label.
+  const [digestChapterJobId, setDigestChapterJobId] = useState<string | null>(null);
   const [digestChapterResult, setDigestChapterResult] = useState<string | null>(null);
+  const { registerStarted, jobs } = useJobs();
+
+  useEffect(() => {
+    if (!digestChapterJobId) return;
+    const job = jobs.find((j) => j.id === digestChapterJobId);
+    if (!job || job.status === "running") return;
+    setDigestChapterResult(
+      job.status === "completed" ? "Digested ✓" : job.status === "cancelled" ? "Cancelled" : "Digest failed",
+    );
+    setDigestChapterJobId(null);
+    window.setTimeout(() => setDigestChapterResult(null), 4000);
+  }, [jobs, digestChapterJobId]);
   // M12: table of contents (flattened, spine+percent resolved once
   // book.locations has generated) and the scrub-dial/popover UI state for
   // the progress readout.
@@ -1661,20 +1678,17 @@ export function ReaderView({
   }
 
   async function handleDigestChapter() {
-    if (currentSpineIndex === null || digestingChapter) return;
-    setDigestingChapter(true);
+    if (currentSpineIndex === null || digestChapterJobId) return;
     setDigestChapterResult(null);
-    try {
-      const res = await fetch(`/api/resources/${resourceId}/digest`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spineStart: currentSpineIndex, spineEnd: currentSpineIndex }),
-      });
-      setDigestChapterResult(res.ok ? "Digested ✓" : "Digest failed");
-    } catch {
+    const result = await startJobRequest(`/api/resources/${resourceId}/digest`, {
+      spineStart: currentSpineIndex,
+      spineEnd: currentSpineIndex,
+    });
+    if ("jobId" in result) {
+      setDigestChapterJobId(result.jobId);
+      registerStarted({ id: result.jobId, kind: "digest", resourceId, resourceTitle: null });
+    } else {
       setDigestChapterResult("Digest failed");
-    } finally {
-      setDigestingChapter(false);
       window.setTimeout(() => setDigestChapterResult(null), 4000);
     }
   }
@@ -1930,11 +1944,11 @@ export function ReaderView({
                   variant="ghost"
                   size="sm"
                   className={styles.digestChapterButton}
-                  disabled={digestingChapter}
+                  disabled={digestChapterJobId !== null}
                   onClick={handleDigestChapter}
                   title="Digest just this chapter (M17 spotlight shortcut)"
                 >
-                  {digestingChapter ? "Digesting…" : digestChapterResult ?? "Digest chapter"}
+                  {digestChapterJobId ? "Digesting…" : digestChapterResult ?? "Digest chapter"}
                 </Button>
               )}
               <ProviderPickerPopover

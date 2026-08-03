@@ -5,6 +5,8 @@ import { Button } from "../controls/Button.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
+import { useJobs } from "../jobs/JobsContext.js";
+import { startJobRequest } from "../jobs/jobsApi.js";
 import styles from "./DigestPage.module.css";
 
 function revealParams(revealed: Set<number>): URLSearchParams {
@@ -51,27 +53,6 @@ async function saveBrief(resourceId: string, text: string): Promise<boolean> {
     return res.ok;
   } catch {
     return false;
-  }
-}
-
-async function startThematicRun(
-  resourceId: string,
-  spineStart: number,
-  spineEnd: number,
-): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const res = await fetch(`/api/resources/${resourceId}/thematic`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spineStart, spineEnd }),
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return { ok: false, error: body.error };
-    }
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : "network_error" };
   }
 }
 
@@ -122,8 +103,15 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const [briefDraft, setBriefDraft] = useState("");
   const [briefSaving, setBriefSaving] = useState(false);
   const [briefSaved, setBriefSaved] = useState(true);
-  const [thematicRunning, setThematicRunning] = useState(false);
+  // M20.6: both the thematic re-run and the theme-tagging pass are jobs now
+  // — the tray/toast own the actual progress and cancel UI; the ids tracked
+  // here are only so this page knows when to refetch and show its own
+  // (much smaller) success/failure note.
+  const [thematicJobId, setThematicJobId] = useState<string | null>(null);
   const [thematicError, setThematicError] = useState<string | null>(null);
+  const [taggingJobId, setTaggingJobId] = useState<string | null>(null);
+  const [taggingError, setTaggingError] = useState<string | null>(null);
+  const { registerStarted, jobs } = useJobs();
 
   function load() {
     if (!id) return;
@@ -175,18 +163,58 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     if (ok) load();
   }
 
+  // Watches our own thematic/theme-tagging job through to completion —
+  // real cancellation and the running-work indicator live in the tray now;
+  // this just decides when to refetch and clears the tracked id.
+  useEffect(() => {
+    if (thematicJobId) {
+      const job = jobs.find((j) => j.id === thematicJobId);
+      if (job && job.status !== "running") {
+        setThematicJobId(null);
+        if (job.status === "failed") setThematicError(job.error ?? "thematic_digest_failed");
+        load();
+      }
+    }
+    if (taggingJobId) {
+      const job = jobs.find((j) => j.id === taggingJobId);
+      if (job && job.status !== "running") {
+        setTaggingJobId(null);
+        if (job.status === "failed") setTaggingError(job.error ?? "theme_tagging_failed");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs, thematicJobId, taggingJobId]);
+
   async function handleAnalyzeThemes() {
-    if (!id || !status) return;
+    if (!id || !status || thematicJobId) return;
     const digestedChapters = status.chapters.filter((c) => c.digested);
     if (digestedChapters.length === 0) return;
-    setThematicRunning(true);
     setThematicError(null);
     const spineStart = digestedChapters[0].spineIndex;
     const spineEnd = digestedChapters[digestedChapters.length - 1].spineIndex;
-    const result = await startThematicRun(id, spineStart, spineEnd);
-    setThematicRunning(false);
-    if (result.ok) load();
-    else setThematicError(result.error ?? "thematic_digest_failed");
+    const result = await startJobRequest(`/api/resources/${id}/thematic`, { spineStart, spineEnd });
+    if ("jobId" in result) {
+      setThematicJobId(result.jobId);
+      registerStarted({ id: result.jobId, kind: "thematic", resourceId: id, resourceTitle: null });
+    } else {
+      setThematicError(result.error);
+    }
+  }
+
+  // "Tag highlights" — the Mine layer's theme signal for the scan
+  // (decisions.md 2026-07-29 later); previously had no UI trigger at all
+  // (SPEC-GAP, NOTES.md). The digest page is where the thematic vocabulary
+  // this tags against lives, so it's the natural place for the button.
+  async function handleTagThemes() {
+    if (!id || taggingJobId) return;
+    setTaggingError(null);
+    const result = await startJobRequest(`/api/resources/${id}/theme-tagging`, undefined);
+    if ("jobId" in result) {
+      setTaggingJobId(result.jobId);
+      registerStarted({ id: result.jobId, kind: "theme-tagging", resourceId: id, resourceTitle: null });
+    } else {
+      setTaggingError(result.error);
+    }
   }
 
   async function handleQuestionClick(spineIndex: number, text: string, quote: string) {
@@ -257,12 +285,16 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                 variant="outline"
                 size="sm"
                 onClick={handleAnalyzeThemes}
-                disabled={thematicRunning || !status.chapters.some((c) => c.digested)}
+                disabled={thematicJobId !== null || !status.chapters.some((c) => c.digested)}
               >
-                {thematicRunning ? "Analyzing…" : "Analyze themes for digested chapters"}
+                {thematicJobId ? "Analyzing…" : "Analyze themes for digested chapters"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleTagThemes} disabled={taggingJobId !== null}>
+                {taggingJobId ? "Tagging…" : "Tag highlights with themes"}
               </Button>
             </div>
             {thematicError && <p className={styles.pausedNotice}>Thematic analysis failed: {thematicError}</p>}
+            {taggingError && <p className={styles.pausedNotice}>Theme tagging failed: {taggingError}</p>}
           </section>
 
           {status.book && (status.book.safe || status.book.full) && (

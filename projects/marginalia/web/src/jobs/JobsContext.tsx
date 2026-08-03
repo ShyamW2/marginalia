@@ -1,6 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Job } from "@marginalia/shared";
+import type { Job, JobKind } from "@marginalia/shared";
 import { fetchJobs, requestCancelJob, subscribeJobEvents } from "./jobsApi.js";
+
+/** What a call site already knows the moment `startJobRequest` returns an
+ * id — enough to render a stub in the tray/toast immediately, before the
+ * first real SSE snapshot arrives a moment later. */
+export interface StartedJobInfo {
+  id: string;
+  kind: JobKind;
+  resourceId: string | null;
+  resourceTitle: string | null;
+}
 
 interface JobsContextValue {
   /** Newest first — the shape both the tray and the toast stack want. */
@@ -13,7 +23,7 @@ interface JobsContextValue {
   /** Called by whatever UI just started a job (POST returned a jobId) — adds
    * it to the registry's local mirror, subscribes to its progress, and pops
    * a dismissible toast for it. */
-  registerStarted: (job: Job) => void;
+  registerStarted: (info: StartedJobInfo) => void;
   /** Ids currently shown as a toast. Dismissing (see `dismissToast`) only
    * removes it from this set — never touches the job itself. */
   toastIds: string[];
@@ -84,10 +94,24 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   );
 
   const registerStarted = useCallback(
-    (job: Job) => {
-      upsert(job);
-      ensureSubscribed(job.id);
-      setToastIds((prev) => new Set(prev).add(job.id));
+    (info: StartedJobInfo) => {
+      // A stub, immediately overwritten by the real snapshot the SSE
+      // subscription sends the instant it connects (jobsApi.subscribeJobEvents)
+      // — this just avoids a visible gap between "the POST returned" and
+      // "the first progress event arrived".
+      upsert({
+        id: info.id,
+        kind: info.kind,
+        resourceId: info.resourceId,
+        resourceTitle: info.resourceTitle,
+        status: "running",
+        progress: { current: 0, total: 0, message: null },
+        error: null,
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+      });
+      ensureSubscribed(info.id);
+      setToastIds((prev) => new Set(prev).add(info.id));
     },
     [upsert, ensureSubscribed],
   );

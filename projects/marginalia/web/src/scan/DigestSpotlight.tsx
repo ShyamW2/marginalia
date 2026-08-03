@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import type { DigestStatus, ScanChapter } from "@marginalia/shared";
 import { ProviderPicker } from "../settings/ProviderPicker.js";
 import { useOpenSettings } from "../settings/useOpenSettings.js";
+import { useJobs } from "../jobs/JobsContext.js";
+import { startJobRequest } from "../jobs/jobsApi.js";
 import { ChapterDial } from "./ChapterDial.js";
 import styles from "./DigestSpotlight.module.css";
 
@@ -12,30 +14,6 @@ async function fetchDigestStatus(resourceId: string): Promise<DigestStatus | nul
     return (await res.json()) as DigestStatus;
   } catch {
     return null;
-  }
-}
-
-async function startDigest(
-  resourceId: string,
-  spineStart: number,
-  spineEnd: number,
-  signal: AbortSignal,
-): Promise<{ status: DigestStatus | null; error: string | null }> {
-  try {
-    const res = await fetch(`/api/resources/${resourceId}/digest`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spineStart, spineEnd }),
-      signal,
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      return { status: null, error: body.error ?? "digest_failed" };
-    }
-    return { status: (await res.json()) as DigestStatus, error: null };
-  } catch (err) {
-    if (signal.aborted) return { status: null, error: null };
-    return { status: null, error: err instanceof Error ? err.message : "network_error" };
   }
 }
 
@@ -70,10 +48,14 @@ export function DigestSpotlight({ resourceId, chapters, onClose }: DigestSpotlig
   const [status, setStatus] = useState<DigestStatus | null>(null);
   const [startIdx, setStartIdxRaw] = useState(0);
   const [endIdx, setEndIdxRaw] = useState(Math.max(0, chapters.length - 1));
-  const [running, setRunning] = useState(false);
+  // M20.6: a running digest is now a job — the tray/toast own its actual
+  // progress and cancel UI; this component just tracks its own id long
+  // enough to know when to refetch the digest status and re-enable itself.
+  const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
-  const abortRef = useRef<AbortController | null>(null);
+  const { registerStarted, cancel: cancelJob, jobs } = useJobs();
+  const running = jobId !== null;
 
   // Just the timeline's own width now — it drives the "is this tile wide
   // enough to fit a number" check below; the torch's warp-aware fraction
@@ -127,16 +109,29 @@ export function DigestSpotlight({ resourceId, chapters, onClose }: DigestSpotlig
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [now]);
 
+  // Watches "our" job through to completion — a real cancel (via the tray,
+  // or handleCancel below) is what actually stops the work now; this just
+  // reacts to the outcome by refetching the digest status.
+  useEffect(() => {
+    if (!jobId) return;
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job || job.status === "running") return;
+    setJobId(null);
+    if (job.status === "failed") setError(job.error ?? "digest_failed");
+    if (job.status === "completed" || job.status === "failed") {
+      fetchDigestStatus(resourceId).then(setStatus);
+    }
+  }, [jobs, jobId, resourceId]);
+
   async function runDigest(spineStart: number, spineEnd: number) {
-    setRunning(true);
     setError(null);
-    const controller = new AbortController();
-    abortRef.current = controller;
-    const result = await startDigest(resourceId, spineStart, spineEnd, controller.signal);
-    abortRef.current = null;
-    setRunning(false);
-    if (result.status) setStatus(result.status);
-    else if (result.error) setError(result.error);
+    const result = await startJobRequest(`/api/resources/${resourceId}/digest`, { spineStart, spineEnd });
+    if ("jobId" in result) {
+      setJobId(result.jobId);
+      registerStarted({ id: result.jobId, kind: "digest", resourceId, resourceTitle: null });
+    } else {
+      setError(result.error);
+    }
   }
 
   function handleStart() {
@@ -145,12 +140,10 @@ export function DigestSpotlight({ resourceId, chapters, onClose }: DigestSpotlig
   }
 
   function handleCancel() {
-    // Stops the client from waiting on the response — the server has no
-    // cancellation seam for an in-flight extract() call (SPEC-GAP, see
-    // NOTES.md "M17"), so the current chapter's call may still complete
-    // server-side; this just stops the UI from hanging on it.
-    abortRef.current?.abort();
-    setRunning(false);
+    // A real cancel now (M20.6) — the job registry aborts the in-flight
+    // provider call and the loop stops before the next chapter, rather than
+    // just abandoning the client's wait on it.
+    if (jobId) cancelJob(jobId);
   }
 
   const coveredCount = status?.chapters.filter((c) => c.digested).length ?? 0;
@@ -277,7 +270,7 @@ export function DigestSpotlight({ resourceId, chapters, onClose }: DigestSpotlig
         </label>
         {running ? (
           <button type="button" className={styles.cancelButton} onClick={handleCancel}>
-            Stop waiting…
+            Cancel
           </button>
         ) : (
           <button type="button" className={styles.digestButton} onClick={handleStart}>

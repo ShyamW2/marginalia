@@ -391,7 +391,7 @@ provider pickers.
       stop** (ledger rows stop appearing / the provider process exits) rather than the
       request merely returning; completed chapters are kept and no half-written chapter
       exists; a client that disconnects without cancelling does not kill the job._
-- [ ] **The tasks tray.** A dismissible progress popup per running job, and a persistent
+- [x] **The tasks tray.** A dismissible progress popup per running job, and a persistent
       tray button (browser-downloads-style) listing running and recently finished work with
       per-job cancel.
       ⚠️ **Dismissing a popup must never cancel the job.** They are different verbs, and
@@ -399,7 +399,7 @@ provider pickers.
       _Acceptance: dismiss the popup, navigate to another room, and the tray still shows
       the job advancing; cancel from the tray and it stops; a job that finishes while the
       tray is closed is visible in it afterwards._
-- [ ] **Every long operation goes through it.** Chapter digest (reader), range digest
+- [x] **Every long operation goes through it.** Chapter digest (reader), range digest
       (scan), thematic re-run, theme tagging. No surface keeps a bespoke blocking spinner.
       _Acceptance: each of the four can be started, watched, and cancelled from the tray;
       starting one from the reader and cancelling it from the scan works._
