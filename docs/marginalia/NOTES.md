@@ -4134,3 +4134,48 @@ The original trigger of the stuck curl (TASKS.md M20 step 3, item 1) was **not**
 held drags and roughly thirty keyboard turns across two browsers, single-page and spread, at
 dpr 1 and 2 — every one sprang back or committed correctly and every gesture ended. That is
 more evidence that the structural fixes hold and still not the trace the task asks for.
+
+## M20.5 — full verify pass, and a real tap-through bug found live — 2026-08-03
+
+Ran TASKS.md's verify step for real (chromium-cli-style headless driving, not eyeballing):
+opened the Scan and Digest as popups from the Desk and from the Reader, a deep link straight
+at `/scan/:id` and `/digest/:id` (falls back to the Desk, as designed), a hard refresh on
+`/scan/:id`, the digest range dials (drag, keyboard arrows, and the FROM/TO selects racing
+each other for self-correction), wheel-zoom and the enlarged zoom buttons, a click-through
+from a heat band into the reader, both themes, `prefers-reduced-motion`, and CRT intensity 0
+and 1.
+
+**Found live, not by inspection:** clicking "Open scan" or "Read digest" in a book's Desk
+hover info-strip fired *two* navigations, not one — the button's own handler and
+`BookObject`'s outer `onTap` (`open()` → `/read/:id`) — because Framer Motion's tap gesture is
+driven by `pointerdown`/`pointerup`, which both fire *before* a nested button's `click` event.
+The button's own `stopPropagation()` runs too late to matter against a gesture system that
+already decided the tap belongs to the parent. Whichever `navigate()` call happened to run
+second silently won, so "Open scan" and "Read digest" from the Desk actually opened the
+reader instead, discarding the intended navigation with no error.
+
+This was **masked for "Open scan" by accident**, not by design: the pre-M20.5 `openedRef`
+guard set `openedRef.current = true` as a side effect *before* `open()` got a chance to check
+it, which happened to block the race — not because anyone reasoned about pointerdown-vs-click
+ordering, but because the mutex's "first write wins" shape coincidentally absorbed it. Removing
+that guard (needed so Scan/Digest, as overlays now, can be re-opened without unmounting
+`BookObject`) exposed the race directly. "Read digest" was a plain `<Link>` before this
+milestone and never touched `openedRef` at all, so it was very likely broken by the same race
+before M20.5 too — TASKS.md's earlier Desk verify passes apparently never hovered a book and
+clicked all the way through to a nested action button while checking the resulting URL.
+
+**Fixed at the actual source**, not by re-adding the old mutex: `onTap` now inspects its own
+`event.target` and bails if it's inside a `<button>`, scoping "tap the cover to open the book"
+to the cover itself rather than depending on execution order between two gesture systems that
+don't know about each other. Cheap to check, doesn't reintroduce a permanently-latched guard,
+and generalises to any future nested button in the info strip without a per-button opt-out.
+
+**Playwright-vs-pointer-lock note for whoever automates this again:** CDP-synthesized
+`mousemove` after a `mousedown` *does* successfully engage `requestPointerLock()` in headless
+Chromium, but the resulting `movementX`/`movementY` on subsequent synthetic events reads as
+near-zero — a drag that visibly updates the live preview mid-gesture can still commit to a
+value close to where it started. Not a product bug: confirmed via `document.pointerLockElement`
+and cross-checked against the identical drag performed through the `<select>` path instead,
+which isn't pointer-lock-dependent and settles on the expected value. Keyboard (arrow-step) and
+click-to-type verification isn't affected and is the more reliable path for a headless check
+of any `Slider`/`ChapterDial`-family control.

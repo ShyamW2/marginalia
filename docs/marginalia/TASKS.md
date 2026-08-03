@@ -365,7 +365,7 @@ belongs to a register and nothing gets a bespoke one again.
       _Acceptance: the digest role can be changed from the reader and the change is
       immediately reflected in settings and on the scan; the popover is reachable by
       keyboard and does not assume hover exists._
-- [ ] **Verify:** open the scan and the digest as popups from every room that can open
+- [x] **Verify:** open the scan and the digest as popups from every room that can open
       them, run a real digest range from the dials, zoom and pan the strip with wheel and
       buttons, and jump into the reader from a band. Both themes, reduced motion, and at
       CRT intensity 0 and 1.
