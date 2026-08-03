@@ -408,7 +408,7 @@ provider pickers.
 
 ### M20.7 — The desk and the opening
 
-- [ ] **A desk you'd want to work at.** Wood grain on the surface, a paper-textured
+- [x] **A desk you'd want to work at.** Wood grain on the surface, a paper-textured
       notepad, and a desk that is **taller** — `DeskCanvas.module.css` pins
       `min-height: 640px`, which is why it sprawls sideways and never goes down the page.
       Size it to the viewport with room to scroll.

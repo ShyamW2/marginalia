@@ -1,9 +1,26 @@
+/* M20.7 "a desk that is taller": was a flat 640px regardless of window
+   size, which read as a short wide shelf that "sprawled sideways" instead
+   of going down the page. `200px` is the page chrome above this element
+   (DeskPage.module.css's 3rem top/bottom padding + the header row), so on
+   a tall window the desk now fills the space below it. `--desk-content-
+   height` (set inline by DeskCanvas.tsx from the actual shelf coordinates)
+   takes over once enough books are arranged to need more room than the
+   viewport gives — books are absolutely positioned, so without this the
+   surface would silently clip rows under `overflow: hidden` rather than
+   grow and let the page scroll. */
 .surface {
   position: relative;
-  min-height: 640px;
+  min-height: max(calc(100vh - 200px), var(--desk-content-height, 640px));
   border-radius: 16px;
   background:
     radial-gradient(circle at 15% 10%, rgba(255, 255, 255, 0.05), transparent 40%),
+    repeating-linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-accent) 6%, var(--color-bg)) 0px,
+      color-mix(in srgb, var(--color-accent) 6%, var(--color-bg)) 3px,
+      var(--color-bg) 3px,
+      var(--color-bg) 96px
+    ),
     var(--color-bg);
   border: 1px solid var(--color-border);
   overflow: hidden;
@@ -11,9 +28,28 @@
   perspective: 1200px;
 }
 
+/* Wood grain: an anisotropic feTurbulence tile (low x frequency, high y)
+   stretched into long fibers rather than the isotropic paper-grain
+   ThreadPanel.module.css uses — inlined as a data URI so it costs no
+   network request and never blocks first paint. `overlay` blend (same
+   reasoning as ThreadPanel.module.css's `.grain`) keeps it reading as
+   texture in both Paper and Ink instead of vanishing into `multiply`'s
+   near-black no-op against the ink surface. `z-index: -1` keeps it behind
+   `.tiltLayer`'s books within `.surface`'s own stacking context (the
+   `perspective`/`transform-style` above already creates one). */
+.grain {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.16;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='500' height='140'%3E%3Cfilter id='w'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.018 0.28' numOctaves='3' seed='7' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23w)'/%3E%3C/svg%3E");
+  background-size: 500px 140px;
+}
+
 .tiltLayer {
   position: relative;
   width: 100%;
-  height: 100%;
-  min-height: 640px;
+  min-height: max(calc(100vh - 200px), var(--desk-content-height, 640px));
 }

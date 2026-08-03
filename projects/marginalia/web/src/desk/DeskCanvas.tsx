@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { motion } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
 import { BookObject } from "./BookObject.js";
@@ -7,6 +7,13 @@ import { CursorTrail } from "./CursorTrail.js";
 import { useDeskParallax } from "./useDeskParallax.js";
 import { defaultShelfState } from "./shelfDefaults.js";
 import styles from "./DeskCanvas.module.css";
+
+// BookCover.module.css fixes the cover at 168px wide, 2:3 — a book's own
+// footprint, independent of where it's dragged.
+const BOOK_CARD_HEIGHT = 168 * 1.5;
+// Room below the lowest book for its hover info strip plus a margin that
+// echoes shelfDefaults.ts's own 32px edge padding.
+const CONTENT_BOTTOM_PADDING = 160;
 
 interface DeskCanvasProps {
   resources: ResourceSummary[];
@@ -38,6 +45,20 @@ export function DeskCanvas({
   const [positions, setPositions] = useState<Record<string, ShelfState>>({});
   const zCounter = useRef(0);
   const { rotateX, rotateY, onPointerMove, onPointerLeave } = useDeskParallax(!reducedMotion);
+
+  // Books are absolutely positioned, so they never contribute to the
+  // surface's natural height — without this, arranging enough books to
+  // fill more than a viewport's worth of rows would silently clip under
+  // the surface's `overflow: hidden` instead of growing so the page can
+  // scroll to them (TASKS.md M20.7 "size it to the viewport with room to
+  // scroll"). Fed to DeskCanvas.module.css as `--desk-content-height`.
+  const contentHeight = useMemo(() => {
+    const maxBottom = Object.values(positions).reduce(
+      (max, position) => Math.max(max, position.y + BOOK_CARD_HEIGHT),
+      0,
+    );
+    return maxBottom + CONTENT_BOTTOM_PADDING;
+  }, [positions]);
 
   useEffect(() => {
     setPositions((prev) => {
@@ -84,10 +105,11 @@ export function DeskCanvas({
     <motion.div
       ref={containerRef}
       className={styles.surface}
-      style={{ rotateX, rotateY }}
+      style={{ rotateX, rotateY, "--desk-content-height": `${contentHeight}px` } as CSSProperties}
       onPointerMove={onPointerMove}
       onPointerLeave={onPointerLeave}
     >
+      <div className={styles.grain} aria-hidden="true" />
       <div className={styles.tiltLayer}>
         {resources.map((resource) => {
           const position = positions[resource.id];

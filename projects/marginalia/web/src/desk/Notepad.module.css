@@ -3,7 +3,20 @@
   top: 32px;
   right: 32px;
   width: 260px;
-  background: var(--color-bg-raised);
+  /* M20.7 "a paper-textured notepad": a feTurbulence tile blended with the
+     pad's own color via `background-blend-mode` — one background layer, no
+     extra DOM node or stacking-context bookkeeping against the desk's own
+     z-ordered books. Inlined as a data URI so it costs no network request.
+     `multiply` rather than ThreadPanel.module.css's `overlay`: this pad's
+     base is literally `#ffffff` in Paper, where `overlay` is a no-op by
+     definition (it only redistributes values *around* a base, and has no
+     room to move at pure white) — `multiply` reliably darkens regardless
+     of base. The `feComponentTransfer` compresses the noise toward
+     165–255 first, so that darkening reads as faint fiber shadow, not
+     speckle. */
+  background-color: var(--color-bg-raised);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='p'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch' result='n'/%3E%3CfeComponentTransfer in='n'%3E%3CfeFuncR type='linear' slope='0.35' intercept='0.65'/%3E%3CfeFuncG type='linear' slope='0.35' intercept='0.65'/%3E%3CfeFuncB type='linear' slope='0.35' intercept='0.65'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23p)'/%3E%3C/svg%3E");
+  background-blend-mode: multiply;
   border: 1px solid var(--color-border);
   border-radius: 4px 4px 10px 10px;
   box-shadow: 0 6px 18px rgba(40, 30, 15, 0.16);
