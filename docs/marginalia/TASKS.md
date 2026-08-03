@@ -338,7 +338,7 @@ belongs to a register and nothing gets a bespoke one again.
       _Acceptance: axis labels are pixel-identical in shape at every zoom level; the heat
       field is sharp when zoomed in, not stretched; wheel-zoom keeps the domain point under
       the cursor fixed; zooming does not scroll the page behind the popup._
-- [ ] **The digest range picker becomes analog dials.** Replace the torch with FROM/TO
+- [x] **The digest range picker becomes analog dials.** Replace the torch with FROM/TO
       dials in the scan's glass register — click-drag hides the cursor and scrolls a
       vertical chapter list past a needle, with the section label beneath, built on M19.7's
       `Slider` gesture rather than a second bespoke one.

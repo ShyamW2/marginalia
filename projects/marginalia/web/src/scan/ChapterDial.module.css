@@ -1,0 +1,79 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.label {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.dial {
+  position: relative;
+  width: 84px;
+  height: 78px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg);
+  cursor: ns-resize;
+  /* Fades the top/bottom rows toward transparent — the reel reads as
+     continuing past the viewport rather than getting clipped mid-row. */
+  mask-image: linear-gradient(to bottom, transparent 0%, black 28%, black 72%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 28%, black 72%, transparent 100%);
+}
+
+.dial:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.dial[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.reel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+
+.reelRow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.needle {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  top: 50%;
+  height: 26px;
+  transform: translateY(-50%);
+  border-top: 1px solid var(--color-accent);
+  border-bottom: 1px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  pointer-events: none;
+}
+
+.sectionLabel {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  max-width: 120px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

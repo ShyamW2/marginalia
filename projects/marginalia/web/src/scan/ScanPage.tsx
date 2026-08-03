@@ -292,13 +292,7 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
         style={warpActive ? { filter: `url(#${warpFilterId})` } : undefined}
       >
         {spotlightOpen && (
-          <DigestSpotlight
-            resourceId={id}
-            chapters={data.chapters}
-            onClose={() => setSpotlightOpen(false)}
-            warpGeometry={warpGeometry}
-            warpWrapperRef={warpWrapperRef}
-          />
+          <DigestSpotlight resourceId={id} chapters={data.chapters} onClose={() => setSpotlightOpen(false)} />
         )}
 
         <div className={styles.readouts}>

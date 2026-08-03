@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
-import { clampValue, dragToValue, type SliderScale } from "./sliderMath.js";
+import { startDragGesture } from "./dragGesture.js";
+import { clampValue, type SliderScale } from "./sliderMath.js";
 import styles from "./Slider.module.css";
-
-const DRAG_THRESHOLD_PX = 4;
 
 export interface SliderProps {
   value: number;
@@ -132,83 +131,26 @@ export function Slider({
 
   function handlePointerDown(event: ReactPointerEvent<HTMLElement>) {
     if (disabled || editing) return;
-    const targetEl = event.currentTarget;
-    targetEl.setPointerCapture(event.pointerId);
-    const startX = event.clientX;
-    const startValue = value;
-    let dragging = false;
-    let dx = 0;
-    let lockEngaged = false;
-    // React state (`preview`) updates asynchronously, so `onUp` below —
-    // defined once, in this same closure, before any of those updates have
-    // landed — cannot read it for the final commit value without seeing a
-    // stale one from before the drag started. A plain local, mirroring the
-    // original ReaderView gesture's `livePercent`, is what `onUp` actually
-    // reads.
-    let liveValue = startValue;
-
-    function onMove(moveEvent: globalThis.PointerEvent) {
-      if (!dragging) {
-        if (Math.abs(moveEvent.clientX - startX) <= DRAG_THRESHOLD_PX) return;
-        dragging = true;
-        dx = moveEvent.clientX - startX;
-        // Optional-chained: pointer lock can be refused by the browser —
-        // the absolute-clientX math below stays correct either way, since
-        // it's what already ran before lock ever has a chance to engage.
-        targetEl.requestPointerLock?.();
-      } else if (document.pointerLockElement === targetEl) {
-        if (lockEngaged) dx += moveEvent.movementX;
-        lockEngaged = true;
-      } else {
-        dx = moveEvent.clientX - startX;
-      }
-      liveValue = dragToValue(startValue, dx, dragPxPerUnit, scale, min, max, detents, captureFraction);
-      setPreviewAndClampToCommit(liveValue);
-    }
-
-    function releasePointerLock() {
-      if (document.pointerLockElement === targetEl) document.exitPointerLock?.();
-    }
-
-    function cleanup() {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("keydown", onKeyDuringDrag, true);
-      releasePointerLock();
-      // A gesture that began with a pointer must release DOM focus on both
-      // commit and cancel, or the element keeps focus and its own onKeyDown
-      // keeps eating arrow keys meant for something else (M16, moved here
-      // verbatim with the rest of this gesture per decisions.md 2026-07-30).
-      targetEl.blur();
-    }
-
-    function onUp() {
-      const wasDragging = dragging;
-      cleanup();
-      if (wasDragging) {
+    startDragGesture(event, {
+      startValue: value,
+      min,
+      max,
+      scale,
+      detents,
+      captureFraction,
+      dragPxPerUnit,
+      axis: "x",
+      onPreview: setPreviewAndClampToCommit,
+      onCommit: (next) => {
         setPreview(null);
-        onCommit(liveValue);
-      } else if (clickToType) {
-        startEditing();
-      } else {
-        onPlainClick?.();
-      }
-    }
-
-    function onKeyDuringDrag(keyEvent: globalThis.KeyboardEvent) {
-      if (keyEvent.key !== "Escape") return;
-      keyEvent.stopPropagation();
-      dragging = false;
-      setPreview(null);
-      cleanup();
-    }
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    // Capture phase: must win over a room's own window-level Escape handler
-    // (e.g. the reader clears a selection/thread on Escape) — cancelling
-    // the drag is what Escape means while one is in flight.
-    window.addEventListener("keydown", onKeyDuringDrag, true);
+        onCommit(next);
+      },
+      onClick: () => {
+        if (clickToType) startEditing();
+        else onPlainClick?.();
+      },
+      onCancel: () => setPreview(null),
+    });
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
