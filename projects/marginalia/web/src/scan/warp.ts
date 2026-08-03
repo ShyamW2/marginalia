@@ -38,8 +38,12 @@ export interface WarpGeometry {
 }
 
 /** feDisplacementMap `scale` the filter uses is `2 * MAX_PULL_PX` (its dx/dy
- * range is +/-scale/2), so this is the single knob for "how strong". */
-export const MAX_PULL_PX = 22;
+ * range is +/-scale/2), so this is the single knob for "how strong". Raised
+ * from 22 (M20.5, TASKS.md "barrel distortion scales further with CRT
+ * intensity") — the larger base type (ScanPage.module.css et al.) buys back
+ * the legibility this costs; M18's rule that intensity 0 is exactly zero
+ * displacement is unchanged, this only moves what intensity 1 means. */
+export const MAX_PULL_PX = 34;
 /** Radius (as a fraction of the half-diagonal) at which displacement caps. */
 const SATURATION_FRACTION = 0.75;
 

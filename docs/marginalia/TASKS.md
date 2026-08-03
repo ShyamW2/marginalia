@@ -320,7 +320,7 @@ belongs to a register and nothing gets a bespoke one again.
       edge of comfortable.
       _Acceptance: `q` types "q" in a text field; the scan's smallest readout passes
       contrast and is legible at the popup's default size, warped, at full CRT intensity._
-- [ ] **Barrel distortion scales further with CRT intensity.** Raise `MAX_PULL_PX` in
+- [x] **Barrel distortion scales further with CRT intensity.** Raise `MAX_PULL_PX` in
       `warp.ts` — the single knob, by design, and everything that must land where it looks
       (heat bands, hit targets, the torch's successor) already derives from it.
       ⚠️ M18's legibility bound is **not** repealed: contrast still passes, and intensity 0
