@@ -349,7 +349,7 @@ belongs to a register and nothing gets a bespoke one again.
       _Acceptance: dialling FROM past TO is impossible or self-correcting, never a silent
       invalid range; a change made in the numeric boxes moves the dials and vice versa; the
       whole range can be set without a pointer._
-- [ ] **The Digest becomes a popup too, with honest labels.** `/digest/:id` renders over the
+- [x] **The Digest becomes a popup too, with honest labels.** `/digest/:id` renders over the
       current room with an expand-to-fullscreen control, same routing pattern. Every chapter
       is labelled **`S<n> · <title>`** — the number is the section ordinal the code already
       computes, and calling it a chapter is what produced "Chapter 5" for the real Chapter 1.

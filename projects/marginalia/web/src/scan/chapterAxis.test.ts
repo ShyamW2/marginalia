@@ -7,16 +7,16 @@ function chapter(spineIndex: number, startPercent: number, title: string | null 
 }
 
 describe("chapterLabelText", () => {
-  it("shows the number when names are off, even if a title exists", () => {
-    expect(chapterLabelText(chapter(2, 0.2, "The Awakening"), false)).toBe("3");
+  it("shows the S-prefixed number when names are off, even if a title exists", () => {
+    expect(chapterLabelText(chapter(2, 0.2, "The Awakening"), false)).toBe("S3");
   });
 
   it("shows the title when names are on and one exists", () => {
     expect(chapterLabelText(chapter(2, 0.2, "The Awakening"), true)).toBe("The Awakening");
   });
 
-  it("falls back to the number when names are on but this chapter has none", () => {
-    expect(chapterLabelText(chapter(2, 0.2, null), true)).toBe("3");
+  it("falls back to the S-prefixed number when names are on but this chapter has none", () => {
+    expect(chapterLabelText(chapter(2, 0.2, null), true)).toBe("S3");
   });
 });
 

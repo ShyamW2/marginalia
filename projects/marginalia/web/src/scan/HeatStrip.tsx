@@ -371,7 +371,7 @@ export function HeatStrip({
               type="button"
               className={lit ? `${styles.bookBand} ${styles.bookBandLit}` : styles.bookBand}
               style={{ left, width }}
-              aria-label={`Chapter ${chapter.chapterNumber} book themes: ${bc.themes.join(", ") || "none"} — open chapter`}
+              aria-label={`Section S${chapter.chapterNumber} book themes: ${bc.themes.join(", ") || "none"} — open chapter`}
               onClick={() => onOpenChapter(bc.spineIndex)}
             />
           );

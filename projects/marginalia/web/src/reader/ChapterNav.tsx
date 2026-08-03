@@ -11,11 +11,26 @@ interface ChapterNavProps {
   /** Deduped one-per-spine-index list — governs prev/next and the label. */
   chapterStops: TocEntry[];
   currentChapter: TocEntry | null;
+  /** spineIndex -> the scan/digest's section ordinal (M20.5, TASKS.md
+   * "S<n> is the only number that appears in any UI") — null until
+   * ReaderView's own fetch resolves, in which case entries show their plain
+   * title/label with no number rather than blocking on it. */
+  chapterNumbers: Map<number, number> | null;
   onSelect: (entry: TocEntry) => void;
   onPrev: () => void;
   onNext: () => void;
   hasPrev: boolean;
   hasNext: boolean;
+}
+
+/** "S<n> · title", falling back to just the title/label when there's no
+ * chapter-number mapping yet (or this entry's spineIndex isn't in it) — the
+ * same section must show the same S number here as it does in the digest,
+ * the scan axis, and the range dials (TASKS.md M20.5 acceptance). */
+function withSectionNumber(entry: TocEntry, chapterNumbers: Map<number, number> | null): string {
+  const label = entry.label || "(untitled)";
+  const n = entry.spineIndex !== null ? chapterNumbers?.get(entry.spineIndex) : undefined;
+  return n !== undefined ? `S${n} · ${label}` : label;
 }
 
 /**
@@ -29,6 +44,7 @@ export function ChapterNav({
   toc,
   chapterStops,
   currentChapter,
+  chapterNumbers,
   onSelect,
   onPrev,
   onNext,
@@ -59,7 +75,7 @@ export function ChapterNav({
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}
       >
-        {currentChapter?.label || "Contents"}
+        {currentChapter ? withSectionNumber(currentChapter, chapterNumbers) : "Contents"}
       </button>
       <IconButton
         icon={<ChevronIcon direction="right" size={14} />}
@@ -97,7 +113,7 @@ export function ChapterNav({
                   style={{ paddingLeft: `${0.5 + entry.depth * 0.9}rem` }}
                   onClick={() => handleSelect(entry)}
                 >
-                  {entry.label || "(untitled)"}
+                  {withSectionNumber(entry, chapterNumbers)}
                 </button>
               ))
             )}

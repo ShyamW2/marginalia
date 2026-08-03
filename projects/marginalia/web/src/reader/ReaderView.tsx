@@ -255,20 +255,35 @@ function saveCachedLocations(resourceId: string, locations: string): void {
   });
 }
 
+interface ChapterMeta {
+  /** Per-section "how much text does this hold" weight — see below. */
+  weights: Map<number, number>;
+  /** spineIndex -> the scan/digest's section ordinal ("S<n>", TASKS.md
+   * M20.5 "S<n> is the only number that appears in any UI") — the reader's
+   * own chapter nav needs this so the same section shows the same number
+   * there as it does in the digest, the scan axis, and the range dials. */
+  chapterNumbers: Map<number, number>;
+}
+
 // M19.6 operator feedback (decisions.md 2026-07-30 later): bookPages.ts's
 // estimate for not-yet-visited sections needs a cheap per-section "how much
 // text does this hold" weight. The Scan (annotations/scan.ts) already
-// computes exactly this from the same immutable, server-cached
-// `resource_text` extraction — reused rather than duplicated, at the cost
-// of fetching a payload that also carries highlights/themes this reader
-// doesn't need.
-async function fetchSectionWeights(resourceId: string): Promise<Map<number, number> | null> {
+// computes exactly this — and the section-ordinal numbering M20.5 needs —
+// from the same immutable, server-cached `resource_text` extraction, reused
+// rather than duplicated (twice over, now) at the cost of fetching a
+// payload that also carries highlights/themes this reader doesn't need.
+async function fetchChapterMeta(resourceId: string): Promise<ChapterMeta | null> {
   try {
     const res = await fetch(`/api/resources/${resourceId}/scan`);
     if (!res.ok) return null;
-    const data = (await res.json()) as { chapters?: { spineIndex: number; lengthPercent: number }[] };
+    const data = (await res.json()) as {
+      chapters?: { spineIndex: number; lengthPercent: number; chapterNumber: number }[];
+    };
     if (!data.chapters || data.chapters.length === 0) return null;
-    return new Map(data.chapters.map((c) => [c.spineIndex, c.lengthPercent]));
+    return {
+      weights: new Map(data.chapters.map((c) => [c.spineIndex, c.lengthPercent])),
+      chapterNumbers: new Map(data.chapters.map((c) => [c.spineIndex, c.chapterNumber])),
+    };
   } catch {
     return null;
   }
@@ -543,6 +558,10 @@ export function ReaderView({
   // the layout changes, since every page count in it is layout-specific.
   const sectionWeightRef = useRef<Map<number, number> | null>(null);
   const bookPageMapRef = useRef<BookPageMap | null>(null);
+  // M20.5 "S<n> is the only number that appears in any UI": real state, not
+  // a ref like sectionWeightRef above — ChapterNav needs to re-render once
+  // this resolves, not just read it inside an event-handler closure.
+  const [chapterNumbers, setChapterNumbers] = useState<Map<number, number> | null>(null);
   const [showAnnotations, setShowAnnotations] = useState(false);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
@@ -778,6 +797,7 @@ export function ReaderView({
     bookPageMapRef.current = null;
     currentSpineIndexRef.current = null;
     setToc([]);
+    setChapterNumbers(null);
     setProgressPopoverOpen(false);
     setScrubPreviewPercent(null);
     setHighlights([]);
@@ -1466,13 +1486,16 @@ export function ReaderView({
     book.ready
       .then(async () => {
         if (cancelled) return;
-        const [position, resourceHighlights, cachedLocations, sectionWeights] = await Promise.all([
+        const [position, resourceHighlights, cachedLocations, chapterMeta] = await Promise.all([
           fetchPosition(resourceId),
           fetchHighlights(resourceId),
           fetchCachedLocations(resourceId),
-          fetchSectionWeights(resourceId),
+          fetchChapterMeta(resourceId),
         ]);
-        if (sectionWeights) sectionWeightRef.current = sectionWeights;
+        if (chapterMeta) {
+          sectionWeightRef.current = chapterMeta.weights;
+          setChapterNumbers(chapterMeta.chapterNumbers);
+        }
         if (cancelled) return;
         highlightsRef.current = resourceHighlights;
         setHighlights(resourceHighlights);
@@ -1895,6 +1918,7 @@ export function ReaderView({
                 toc={toc}
                 chapterStops={chapterStopsList}
                 currentChapter={activeChapter}
+                chapterNumbers={chapterNumbers}
                 onSelect={handleTocSelect}
                 onPrev={() => jumpToChapter("prev")}
                 onNext={() => jumpToChapter("next")}

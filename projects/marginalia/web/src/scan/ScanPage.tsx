@@ -1,7 +1,8 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useLocation, useNavigate, type Location } from "react-router-dom";
 import { useReducedMotion } from "motion/react";
 import type { HighlightImportance, HighlightKind, ScanData, ScanHighlight } from "@marginalia/shared";
+import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { updateHighlightImportance, updateHighlightTags } from "../highlights/highlightMeta.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
@@ -63,6 +64,7 @@ interface ScanPageProps {
  * opened this session.
  */
 export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
+  const location = useLocation();
   const navigate = useNavigate();
   const reducedMotion = Boolean(useReducedMotion());
 
@@ -148,6 +150,16 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
 
   function handleOpenReader() {
     navigate(`/read/${id}`);
+  }
+
+  // M20.5 "the Digest becomes a popup too": swaps to the Digest instrument
+  // over the *same* background room rather than stacking Digest-over-Scan
+  // — peer instruments, not nested ones (mirrors DigestPage's identical
+  // "← Scan" swap in the other direction).
+  function handleOpenDigest(event: MouseEvent<HTMLElement>) {
+    const background = (location.state as { background?: Location } | null)?.background ?? location;
+    setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
+    navigate(`/digest/${id}`, { state: { background } });
   }
 
   function handleOpenHighlight(highlight: ScanHighlight) {
@@ -270,9 +282,9 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
           >
             Digest…
           </button>
-          <Link to={`/digest/${id}`} className={styles.backButton}>
+          <button type="button" className={styles.backButton} onClick={handleOpenDigest}>
             Read digest
-          </Link>
+          </button>
           <button type="button" className={styles.backButton} onClick={handleOpenReader}>
             ← Book
           </button>

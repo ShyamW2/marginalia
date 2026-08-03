@@ -1,11 +1,11 @@
 import { useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
-import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { motion, useMotionValue, type PanInfo } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
-import { Button, buttonClassName } from "../controls/Button.js";
+import { Button } from "../controls/Button.js";
 import styles from "./BookObject.module.css";
 
 // Total accumulated |wheel delta| needed to "wind the crown" all the way in.
@@ -69,15 +69,25 @@ export function BookObject({
     navigate(`/read/${resource.id}`);
   }
 
+  // Unlike `open()` below, these don't gate on `openedRef`: opening the
+  // reader unmounts this whole BookObject (a real room change), so a
+  // permanently-latched guard never gets in its own way. The Scan/Digest
+  // overlays leave the Desk (and this component) mounted underneath, so the
+  // same guard would permanently block re-opening either one after the
+  // first click — caught live going "open scan, close it, open scan again."
   function openScan(event: MouseEvent<HTMLElement>) {
-    if (openedRef.current) return;
-    openedRef.current = true;
     // M20.5 "the Scan becomes a popup": flies in from the button that opened
     // it (the same `background`-location pattern Settings already uses),
     // not the old Book<->Scan airlock — there's no longer a room to travel
     // to (decisions.md 2026-07-30).
     setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
     navigate(`/scan/${resource.id}`, { state: { background: location } });
+  }
+
+  // M20.5 "the Digest becomes a popup too": the same pattern as openScan.
+  function openDigest(event: MouseEvent<HTMLElement>) {
+    setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
+    navigate(`/digest/${resource.id}`, { state: { background: location } });
   }
 
   function handleDragStart() {
@@ -209,13 +219,17 @@ export function BookObject({
             >
               Open scan
             </Button>
-            <Link
-              to={`/digest/${resource.id}`}
-              className={buttonClassName({ variant: "ghost", size: "sm", className: styles.infoAction })}
-              onClick={(e) => e.stopPropagation()}
+            <Button
+              variant="ghost"
+              size="sm"
+              className={styles.infoAction}
+              onClick={(e) => {
+                e.stopPropagation();
+                openDigest(e);
+              }}
             >
               Read digest
-            </Link>
+            </Button>
             <Button
               variant="ghost"
               size="sm"

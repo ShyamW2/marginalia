@@ -46,9 +46,7 @@
 }
 
 /* Skin (colour/border/radius/focus) all comes from the shared Button kit
-   now (M19.7) — only the title bar's own absolute layout is left here.
-   `.digestLink` is an `<a>`/`<Link>` (it navigates), so it wears the same
-   classes via buttonClassName() rather than the Button component itself. */
+   now (M19.7) — only the title bar's own absolute layout is left here. */
 .publishButton,
 .scanButton,
 .digestLink {

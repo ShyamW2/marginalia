@@ -6,7 +6,7 @@ import { Toast } from "../app/Toast.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { formatPublishSummary, runPublish } from "../library/publish.js";
-import { Button, buttonClassName } from "../controls/Button.js";
+import { Button } from "../controls/Button.js";
 import { BrainIcon, MagnifierIcon } from "../controls/icons.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
@@ -103,6 +103,15 @@ export function ReaderPage() {
     openScanFrom(event.currentTarget);
   }
 
+  // M20.5 "the Digest becomes a popup too": the exact same background-
+  // location pattern as the Scan above, now that Digest is a second
+  // instrument rather than a plain routed page.
+  function handleOpenDigest(event: MouseEvent<HTMLElement>) {
+    if (!id) return;
+    setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
+    navigate(`/digest/${id}`, { state: { background: location } });
+  }
+
   // M20.5 "`q` opens the scan for the book in focus": unambiguous here — the
   // book this reader has open — through the M19.7 shared registry. Focuses
   // the Scan button first (there's no click target for a keyboard trigger),
@@ -160,13 +169,15 @@ export function ReaderPage() {
         {resource.author && (
           <span className={styles.author}>{resource.author}</span>
         )}
-        <Link
-          to={`/digest/${resource.id}`}
-          className={buttonClassName({ variant: "outline", size: "sm", className: styles.digestLink })}
+        <Button
+          variant="outline"
+          size="sm"
+          icon={<BrainIcon size={15} />}
+          className={styles.digestLink}
+          onClick={handleOpenDigest}
         >
-          <BrainIcon size={15} />
           Digest
-        </Link>
+        </Button>
         <Button
           ref={scanButtonRef}
           variant="outline"

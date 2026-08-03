@@ -17,8 +17,8 @@ const ReaderPage = lazy(() =>
 const ScanOverlay = lazy(() =>
   import("../scan/ScanOverlay.js").then((m) => ({ default: m.ScanOverlay })),
 );
-const DigestPage = lazy(() =>
-  import("../digest/DigestPage.js").then((m) => ({ default: m.DigestPage })),
+const DigestOverlay = lazy(() =>
+  import("../digest/DigestOverlay.js").then((m) => ({ default: m.DigestOverlay })),
 );
 const SettingsModal = lazy(() =>
   import("../settings/SettingsModal.js").then((m) => ({ default: m.SettingsModal })),
@@ -34,7 +34,18 @@ interface NavigationState {
 }
 
 function isOverlayPath(pathname: string): boolean {
-  return pathname === "/settings" || pathname.startsWith("/scan/");
+  return pathname === "/settings" || pathname.startsWith("/scan/") || pathname.startsWith("/digest/");
+}
+
+/** Whether `prefix` (e.g. "/scan/") is open — either directly (`location`)
+ * or one level further back behind another open overlay (`background`) —
+ * and if so, the pathname it's open at. Shared by the Scan and Digest
+ * checks below so a Settings-on-top-of-either case doesn't need writing
+ * out twice. */
+function findOverlayPathname(location: Location, background: Location | undefined, prefix: string): string | null {
+  if (location.pathname.startsWith(prefix)) return location.pathname;
+  if (background?.pathname.startsWith(prefix)) return background.pathname;
+  return null;
 }
 
 /** The chrome cluster's gear icon stays mounted above every overlay, so
@@ -77,14 +88,12 @@ export function App() {
   // pattern Settings already uses").
   const background = (location.state as NavigationState | null)?.background;
   const settingsOpen = location.pathname === "/settings";
-  // The Scan overlay is open either directly, or one level further back
-  // behind an open Settings — both render the same ScanOverlay underneath.
-  const scanPathname = location.pathname.startsWith("/scan/")
-    ? location.pathname
-    : background?.pathname.startsWith("/scan/")
-      ? background.pathname
-      : null;
+  // The Scan/Digest overlays are open either directly, or one level further
+  // back behind an open Settings — both render the same overlay underneath.
+  const scanPathname = findOverlayPathname(location, background, "/scan/");
+  const digestPathname = findOverlayPathname(location, background, "/digest/");
   const scanId = scanPathname ? matchPath("/scan/:id", scanPathname)?.params.id ?? null : null;
+  const digestId = digestPathname ? matchPath("/digest/:id", digestPathname)?.params.id ?? null : null;
 
   function closeSettings() {
     if (background) navigate(-1);
@@ -92,6 +101,11 @@ export function App() {
   }
 
   function closeScan() {
+    if (background) navigate(-1);
+    else navigate("/");
+  }
+
+  function closeDigest() {
     if (background) navigate(-1);
     else navigate("/");
   }
@@ -104,19 +118,26 @@ export function App() {
           <Routes location={roomLocation(location)}>
             <Route path="/" element={<DeskPage />} />
             <Route path="/read/:id" element={<ReaderPage />} />
-            <Route path="/digest/:id" element={<DigestPage />} />
             {/* Deep link / hard refresh straight at an overlay path has no
                 background room to fall back on — the Desk stands in, per
                 TASKS.md ("/settings ... renders the desk with the modal
                 open"). */}
             <Route path="/settings" element={<DeskPage />} />
             <Route path="/scan/:id" element={<DeskPage />} />
+            <Route path="/digest/:id" element={<DeskPage />} />
           </Routes>
         </Suspense>
         <AnimatePresence>
           {scanId && (
             <Suspense key="scan-overlay-suspense" fallback={null}>
               <ScanOverlay key="scan-overlay" resourceId={scanId} onClose={closeScan} />
+            </Suspense>
+          )}
+        </AnimatePresence>
+        <AnimatePresence>
+          {digestId && (
+            <Suspense key="digest-overlay-suspense" fallback={null}>
+              <DigestOverlay key="digest-overlay" resourceId={digestId} onClose={closeDigest} />
             </Suspense>
           )}
         </AnimatePresence>

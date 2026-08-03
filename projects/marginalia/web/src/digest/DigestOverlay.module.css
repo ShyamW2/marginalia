@@ -1,0 +1,47 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(30, 24, 16, 0.35);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  padding: 4vh 4vw;
+}
+
+.panel {
+  position: relative;
+  width: min(880px, 100%);
+  height: min(760px, 100%);
+  outline: none;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--color-bg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+}
+
+.panel.expanded {
+  width: min(1400px, 92vw);
+  height: 92vh;
+}
+
+.chrome {
+  position: absolute;
+  top: 0.9rem;
+  right: 0.9rem;
+  z-index: 2;
+  display: flex;
+  gap: 0.4rem;
+}
+
+/* Expanded, the panel's own top-right corner sits close enough to the
+   viewport's that App.tsx's floating nav cluster (fixed top:0.85rem,
+   right:1rem) would otherwise land right on top of these two buttons —
+   caught live, not by inspection. Only the expanded state needs this: the
+   default panel size has enough backdrop margin to clear the cluster on
+   its own. */
+.panel.expanded .chrome {
+  top: 3.4rem;
+}

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState, type MouseEvent } from "react";
+import { Link, useLocation, useNavigate, type Location } from "react-router-dom";
 import type { DigestStatus, ThematicStatus } from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
+import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import styles from "./DigestPage.module.css";
@@ -106,8 +107,12 @@ function formatRange(startPercent: number, lengthPercent: number): string {
  * markdown export (still generated server-side for the vault/CLI) isn't
  * the right shape for per-item reveal controls or a clickable question.
  */
-export function DigestPage() {
-  const { id } = useParams<{ id: string }>();
+interface DigestPageProps {
+  resourceId: string;
+}
+
+export function DigestPage({ resourceId: id }: DigestPageProps) {
+  const location = useLocation();
   const navigate = useNavigate();
   const [status, setStatus] = useState<DigestStatus | null>(null);
   const [thematic, setThematic] = useState<ThematicStatus | null>(null);
@@ -153,8 +158,8 @@ export function DigestPage() {
 
   // M19.6 "`r` opens the reader" (decisions.md 2026-07-30 later): "the book
   // currently in focus" is unambiguous here — the book this digest is for —
-  // so `r` is just a keyboard shortcut for the existing "← Book" link below.
-  // Moved into the M19.7 shared registry (useShortcuts).
+  // so `r` is just a keyboard shortcut for the existing "Open book" link
+  // below. Moved into the M19.7 shared registry (useShortcuts).
   useShortcuts([{ key: SHORTCUT_KEYS.reader, handler: () => id && navigate(`/read/${id}`) }]);
 
   function reveal(spineIndex: number) {
@@ -191,16 +196,25 @@ export function DigestPage() {
     navigate(`/read/${id}`, { state: { jumpToHighlightId: highlight.id, jumpToQuestion: text } });
   }
 
-  if (!id) return null;
+  // M20.5 "the Digest becomes a popup too": swaps to the Scan instrument
+  // over the *same* background room rather than stacking Digest-over-Scan
+  // — Scan and Digest are peer instruments, not nested ones. Reuses the
+  // background this Digest itself was opened with (falling back to this
+  // own location for a direct/deep link, exactly like a fresh open would).
+  function handleOpenScan(event: MouseEvent<HTMLElement>) {
+    const background = (location.state as { background?: Location } | null)?.background ?? location;
+    setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
+    navigate(`/scan/${id}`, { state: { background } });
+  }
 
   const thematicByIndex = new Map((thematic?.chapters ?? []).map((c) => [c.spineIndex, c]));
 
   return (
     <div className={`${styles.page} register-paper`}>
       <div className={styles.headerRow}>
-        <Link to={`/scan/${id}`} className={styles.backLink}>
+        <button type="button" className={styles.backLink} onClick={handleOpenScan}>
           ← Scan
-        </Link>
+        </button>
         <Link to={`/read/${id}`} className={styles.backLink}>
           Open book
         </Link>
@@ -266,7 +280,7 @@ export function DigestPage() {
           <div className={styles.chapterList}>
             {status.chapters.map((c) => {
               const t = thematicByIndex.get(c.spineIndex);
-              const chapterLabel = `Chapter ${c.chapterNumber} · ${formatRange(c.startPercent, c.lengthPercent)}`;
+              const chapterLabel = `S${c.chapterNumber} · ${formatRange(c.startPercent, c.lengthPercent)}`;
               return (
                 <article key={c.spineIndex} className={styles.chapterCard}>
                   <h3 className={styles.chapterTitle}>
