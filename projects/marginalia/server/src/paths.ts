@@ -16,9 +16,17 @@ export const DB_PATH = path.join(DATA_DIR, "marginalia.sqlite");
 // regenerated read-only view of chapter_digests/book_digests, same pattern
 // as the vault compiler (settled decision 6: never parsed back).
 export const DIGEST_DIR = path.join(DATA_DIR, "digests");
+// M21 (AUDIO.md): first-run TTS model weights. Per-machine like the rest of
+// `data/` — never committed, never bundled.
+export const MODELS_DIR = path.join(DATA_DIR, "models");
+// M21 (AUDIO.md): the rendered-audio cache, content-addressed by
+// resource/cast hash/spine index — safe to delete at any time.
+export const AUDIO_DIR = path.join(DATA_DIR, "audio");
 
 /** Creates the runtime data directories if they don't already exist. */
 export function ensureDataDirs(): void {
   fs.mkdirSync(LIBRARY_DIR, { recursive: true });
   fs.mkdirSync(DIGEST_DIR, { recursive: true });
+  fs.mkdirSync(MODELS_DIR, { recursive: true });
+  fs.mkdirSync(AUDIO_DIR, { recursive: true });
 }

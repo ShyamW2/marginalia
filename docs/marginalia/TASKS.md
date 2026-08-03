@@ -444,7 +444,7 @@ provider pickers.
 the way SPEC.md is for the core. The vertical-slice rule applies: a book you can listen
 to in one voice, with the page following along, before any casting exists.
 
-- [ ] **The `TTSEngine` seam + Kokoro implementation.** `server/src/audio/engine.ts`
+- [x] **The `TTSEngine` seam + Kokoro implementation.** `server/src/audio/engine.ts`
       exactly per AUDIO.md's interface — nothing engine-specific escapes it — plus
       `kokoro.ts` using `kokoro-js` (ONNX, Node; **no Python sidecar**). Model weights
       download on first use into `data/models/` with streamed progress and a designed
@@ -456,14 +456,14 @@ to in one voice, with the page following along, before any casting exists.
       a missing/corrupt model surfaces `model_unavailable` as a designed state, never a
       crash; unit tests cover the registry and error mapping (synthesis itself is
       exercised live, not in unit tests)._
-- [ ] **Sentence segmentation.** `server/src/audio/segment.ts` per AUDIO.md: operates on
+- [x] **Sentence segmentation.** `server/src/audio/segment.ts` per AUDIO.md: operates on
       `resource_text` per spine index and returns char offsets **into that exact
       string** (the same coordinate system `annotations/position.ts` already uses).
       `Intl.Segmenter` with the book-specific fixes — abbreviations, initials, and
       ellipses must not split; short sentences merge; over-long ones split at a clause.
       _Acceptance: unit tests per AUDIO.md's list, including the offset round-trip
       (`text.slice(charStart, charEnd) === segment.text`) on real fixture chapters._
-- [ ] **Render pipeline + cache.** Section renderer writing
+- [x] **Render pipeline + cache.** Section renderer writing
       `data/audio/<resourceId>/<castHash>/<spineIndex>/` plus its manifest, keyed by the
       cast hash so nothing stale can ever be served; chapter-ahead scheduling (render the
       current section, keep one ahead warm), cancellable, with the SSE progress endpoint.

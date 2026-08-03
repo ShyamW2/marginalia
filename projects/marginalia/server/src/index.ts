@@ -14,6 +14,7 @@ import { digestRouter } from "./routes/digest.js";
 import { providerProfilesRouter, providerRolesRouter } from "./routes/providerProfiles.js";
 import { usageRouter } from "./routes/usage.js";
 import { jobsRouter } from "./routes/jobs.js";
+import { audioRouter, ttsRouter } from "./routes/audio.js";
 
 const PORT = Number(process.env.PORT ?? 5175);
 
@@ -54,6 +55,8 @@ app.use("/api/usage", usageRouter);
 app.use("/api/threads", threadsRouter);
 app.use("/api/notepad", notepadRouter);
 app.use("/api/jobs", jobsRouter);
+app.use("/api/resources", audioRouter);
+app.use("/api/audio", ttsRouter);
 
 // Serve the built web app in production. In dev, Vite serves the web app on
 // its own port and proxies /api here — this branch is a no-op then.

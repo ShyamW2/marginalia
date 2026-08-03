@@ -21,6 +21,10 @@ const SETTINGS: Settings = {
   pageNumberMode: "off",
   readerPaneWidth: 0,
   digestTokenBudget: 0,
+  ttsEngine: "kokoro",
+  ttsModelPath: "",
+  audioDefaultVoice: "af_heart",
+  audioAutoTurnPages: true,
 };
 
 const DEFAULT_PROFILE: ProviderProfile = {

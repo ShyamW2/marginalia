@@ -426,6 +426,21 @@ export type PageNumberMode = z.infer<typeof PageNumberModeSchema>;
 export const ReaderPaneWidthSchema = z.number().int().min(0).max(1800);
 export type ReaderPaneWidth = z.infer<typeof ReaderPaneWidthSchema>;
 
+/** M21 (AUDIO.md "Settings additions"): only "kokoro" exists today — the
+ * type still names it rather than inlining `z.string()`, the same reason
+ * `TTSEngine.id` is a literal in the seam itself, so a second engine later
+ * is a widened enum, not a shape change. */
+export const TTSEngineIdSchema = z.enum(["kokoro"]);
+export type TTSEngineId = z.infer<typeof TTSEngineIdSchema>;
+
+export const AudioSettingsSchema = z.object({
+  ttsEngine: TTSEngineIdSchema,
+  ttsModelPath: z.string(),
+  audioDefaultVoice: z.string(),
+  audioAutoTurnPages: z.boolean(),
+});
+export type AudioSettings = z.infer<typeof AudioSettingsSchema>;
+
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset.
  * M19 (decisions.md 2026-07-29 later): provider configuration moved out of
  * this flat bag into provider *profiles* + *roles* (below) — this schema now
@@ -445,7 +460,7 @@ export const SettingsSchema = z.object({
   // run whose pre-flight estimate exceeds this many input tokens is
   // refused rather than started.
   digestTokenBudget: z.number().int().nonnegative(),
-});
+}).merge(AudioSettingsSchema);
 export type Settings = z.infer<typeof SettingsSchema>;
 
 /**
@@ -936,7 +951,9 @@ export type UpdateContextLadderBody = z.infer<typeof UpdateContextLadderBodySche
 // once rather than per-feature.
 // ---------------------------------------------------------------------------
 
-export const JobKindSchema = z.enum(["digest", "thematic", "theme-tagging"]);
+// M21 adds "audio-render" (rendering one spine section's sentence audio);
+// M22 will add "cast-scan".
+export const JobKindSchema = z.enum(["digest", "thematic", "theme-tagging", "audio-render"]);
 export type JobKind = z.infer<typeof JobKindSchema>;
 
 export const JobStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
@@ -975,6 +992,83 @@ export type Job = z.infer<typeof JobSchema>;
  * the caller finds out how it's going through the job registry endpoints. */
 export const StartJobResponseSchema = z.object({ jobId: z.string() });
 export type StartJobResponse = z.infer<typeof StartJobResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// M21 — Audio I (AUDIO.md is binding for M21/M22). Section rendering reuses
+// the M20.6 job registry above (kind "audio-render") instead of a bespoke
+// SSE endpoint — AUDIO.md's HTTP table was written before the job registry
+// existed; TASKS.md's M20.6 entry says as much ("placed before M21 on
+// purpose ... AUDIO.md already specs an SSE progress endpoint").
+// ---------------------------------------------------------------------------
+
+export const VoiceGenderSchema = z.enum(["female", "male", "neutral"]);
+export type VoiceGender = z.infer<typeof VoiceGenderSchema>;
+
+export const VoiceSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  gender: VoiceGenderSchema,
+  accent: z.string().optional(),
+});
+export type Voice = z.infer<typeof VoiceSchema>;
+
+export const VoiceModeSchema = z.enum(["single", "multi"]);
+export type VoiceMode = z.infer<typeof VoiceModeSchema>;
+
+/** GET /api/resources/:id/audio */
+export const AudioStateSchema = z.object({
+  narratorVoice: z.string(),
+  voiceMode: VoiceModeSchema,
+  speed: z.number().min(0.5).max(2),
+  castScannedAt: z.string().nullable(),
+  /** Which spine sections already have a fully rendered, non-stale cache
+   * for the *current* cast hash — the player uses this to skip the
+   * render-then-play round trip on a re-open. */
+  cachedSpineIndices: z.array(z.number().int().nonnegative()),
+});
+export type AudioState = z.infer<typeof AudioStateSchema>;
+
+/** PUT /api/resources/:id/audio — partial update. */
+export const UpdateAudioStateBodySchema = z.object({
+  narratorVoice: z.string().optional(),
+  voiceMode: VoiceModeSchema.optional(),
+  speed: z.number().min(0.5).max(2).optional(),
+});
+export type UpdateAudioStateBody = z.infer<typeof UpdateAudioStateBodySchema>;
+
+/** One row of a rendered section's manifest — GET .../audio/sections/:n/manifest. */
+export const AudioSegmentSchema = z.object({
+  n: z.number().int().nonnegative(),
+  charStart: z.number().int().nonnegative(),
+  charEnd: z.number().int().nonnegative(),
+  durationMs: z.number().nonnegative(),
+  voiceId: z.string(),
+  speakerId: z.string().nullable(),
+  text: z.string(),
+});
+export type AudioSegment = z.infer<typeof AudioSegmentSchema>;
+
+export const AudioSectionManifestSchema = z.object({
+  spineIndex: z.number().int().nonnegative(),
+  castHash: z.string(),
+  segments: z.array(AudioSegmentSchema),
+});
+export type AudioSectionManifest = z.infer<typeof AudioSectionManifestSchema>;
+
+/** POST /api/resources/:id/audio/sections/:spineIndex response when the
+ * section is already cached under the current cast hash — an immediate,
+ * job-free no-op (AUDIO.md: "No-op if cached"). Otherwise the route starts
+ * an "audio-render" job and responds 202 with StartJobResponseSchema. */
+export const AudioSectionCachedResponseSchema = z.object({ cached: z.literal(true) });
+export type AudioSectionCachedResponse = z.infer<typeof AudioSectionCachedResponseSchema>;
+
+/** POST /api/audio/test-voice — the audio equivalent of a provider's "Test
+ * connection". `text` is optional; the server has its own default sentence. */
+export const TestVoiceBodySchema = z.object({
+  voiceId: z.string().min(1),
+  text: z.string().min(1).optional(),
+});
+export type TestVoiceBody = z.infer<typeof TestVoiceBodySchema>;
 
 // ---------------------------------------------------------------------------
 // Generic error envelope

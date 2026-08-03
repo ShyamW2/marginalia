@@ -1,0 +1,263 @@
+import { Router } from "express";
+import {
+  AudioSectionManifestSchema,
+  AudioStateSchema,
+  TestVoiceBodySchema,
+  UpdateAudioStateBodySchema,
+  type AudioState,
+} from "@marginalia/shared";
+import { getDb } from "../db.js";
+import { getResourceById, getResourceTextSections } from "../library/store.js";
+import { getRawSettings } from "../settings/store.js";
+import { getEngine } from "../audio/registry.js";
+import { TTSError } from "../audio/engine.js";
+import { getAudioState, updateAudioState } from "../audio/state.js";
+import {
+  computeCastHash,
+  deleteResourceAudioCache,
+  getSectionManifest,
+  getSegmentFilePath,
+  isSectionCached,
+  listCachedSpineIndices,
+  renderSection,
+} from "../audio/render.js";
+import { startJob } from "../jobs/registry.js";
+
+/** `GET /api/audio/*`, `POST /api/audio/test-voice` — engine-level, not
+ * scoped to a resource. */
+export const ttsRouter: Router = Router();
+
+/** `/api/resources/:id/audio*` — one listening state + rendered cache per book. */
+export const audioRouter: Router = Router();
+
+function ttsErrorStatus(code: TTSError["code"]): number {
+  switch (code) {
+    case "unsupported_voice":
+      return 400;
+    case "model_unavailable":
+    case "model_download_failed":
+      return 503;
+    case "synthesis_failed":
+    default:
+      return 500;
+  }
+}
+
+ttsRouter.get("/voices", async (req, res) => {
+  const engine = getEngine(getDb());
+  try {
+    res.json(await engine.voices());
+  } catch (err) {
+    if (err instanceof TTSError) {
+      res.status(ttsErrorStatus(err.code)).json({ error: err.code });
+      return;
+    }
+    throw err;
+  }
+});
+
+/** The audio equivalent of a provider's "Test connection" (AUDIO.md task 1):
+ * synthesizes one short sentence and returns it as playable WAV bytes —
+ * never encoded, since this is a one-off, not cached. */
+ttsRouter.post("/test-voice", async (req, res) => {
+  const parsed = TestVoiceBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const engine = getEngine(getDb());
+  try {
+    const result = await engine.synthesize({
+      text: parsed.data.text ?? "This is what this voice sounds like.",
+      voiceId: parsed.data.voiceId,
+    });
+    res.setHeader("Content-Type", "audio/wav");
+    res.send(Buffer.from(result.audio));
+  } catch (err) {
+    if (err instanceof TTSError) {
+      res.status(ttsErrorStatus(err.code)).json({ error: err.code });
+      return;
+    }
+    throw err;
+  }
+});
+
+function buildAudioState(resourceId: string): AudioState {
+  const db = getDb();
+  const row = getAudioState(db, resourceId);
+  const { audioDefaultVoice, ttsEngine } = getRawSettings(db);
+  const narratorVoice = row.narratorVoice || audioDefaultVoice;
+  const castHash = computeCastHash(ttsEngine, narratorVoice);
+  const spineIndices = getResourceTextSections(db, resourceId).map((s) => s.spineIndex);
+  return {
+    narratorVoice,
+    voiceMode: row.voiceMode,
+    speed: row.speed,
+    castScannedAt: row.castScannedAt,
+    cachedSpineIndices: listCachedSpineIndices(resourceId, castHash, spineIndices),
+  };
+}
+
+audioRouter.get("/:id/audio", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  res.json(AudioStateSchema.parse(buildAudioState(resource.id)));
+});
+
+audioRouter.put("/:id/audio", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const parsed = UpdateAudioStateBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  updateAudioState(db, resource.id, parsed.data);
+  res.json(AudioStateSchema.parse(buildAudioState(resource.id)));
+});
+
+audioRouter.delete("/:id/audio", async (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  await deleteResourceAudioCache(resource.id);
+  res.status(204).end();
+});
+
+function parseSpineIndex(raw: string): number | null {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 ? n : null;
+}
+
+type SectionContextResult =
+  | { ok: false; status: number; body: { error: string } }
+  | {
+      ok: true;
+      resource: NonNullable<ReturnType<typeof getResourceById>>;
+      spineIndex: number;
+      section: ReturnType<typeof getResourceTextSections>[number];
+      narratorVoice: string;
+      speed: number;
+      castHash: string;
+    };
+
+/** Resolves the resource, section, and the narrator voice + cast hash this
+ * request should act under — the same three lookups every section route
+ * needs before it can do anything. */
+function resolveSectionContext(resourceId: string, spineIndexRaw: string): SectionContextResult {
+  const db = getDb();
+  const resource = getResourceById(db, resourceId);
+  if (!resource) return { ok: false, status: 404, body: { error: "resource_not_found" } };
+  const spineIndex = parseSpineIndex(spineIndexRaw);
+  if (spineIndex === null) return { ok: false, status: 400, body: { error: "invalid_spine_index" } };
+  const section = getResourceTextSections(db, resource.id).find((s) => s.spineIndex === spineIndex);
+  if (!section) return { ok: false, status: 404, body: { error: "section_not_found" } };
+
+  const { audioDefaultVoice, ttsEngine } = getRawSettings(db);
+  const audioState = getAudioState(db, resource.id);
+  const narratorVoice = audioState.narratorVoice || audioDefaultVoice;
+  const castHash = computeCastHash(ttsEngine, narratorVoice);
+  return { ok: true, resource, spineIndex, section, narratorVoice, speed: audioState.speed, castHash };
+}
+
+/**
+ * Ensures one spine section is rendered. AUDIO.md specs this as its own SSE
+ * endpoint; it now goes through the M20.6 job registry instead (TASKS.md
+ * M20.6: "placed before M21 on purpose ... AUDIO.md already specs an SSE
+ * progress endpoint" — the job registry *is* that endpoint, generalized).
+ * A cache hit responds immediately with no job at all.
+ */
+audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
+  const ctx = resolveSectionContext(req.params.id, req.params.spineIndex);
+  if (!ctx.ok) {
+    res.status(ctx.status).json(ctx.body);
+    return;
+  }
+  const { resource, spineIndex, section, narratorVoice, speed, castHash } = ctx;
+
+  if (isSectionCached(resource.id, castHash, spineIndex)) {
+    res.json({ cached: true });
+    return;
+  }
+
+  const engine = getEngine(getDb());
+  const job = startJob("audio-render", resource.id, resource.title, async (signal, reportProgress) => {
+    try {
+      await renderSection(
+        engine,
+        resource.id,
+        spineIndex,
+        section.text,
+        castHash,
+        narratorVoice,
+        speed,
+        signal,
+        (current, total, message) => reportProgress({ current, total, message: message ?? null }),
+      );
+    } catch (err) {
+      if (err instanceof TTSError) {
+        // eslint-disable-next-line no-console
+        console.error(`[audio-render] ${err.code}: ${err.message}`);
+      } else if (!(err instanceof DOMException && err.name === "AbortError")) {
+        // eslint-disable-next-line no-console
+        console.error("[audio-render]", err);
+      }
+      throw err;
+    }
+  });
+  res.status(202).json({ jobId: job.id });
+});
+
+audioRouter.get("/:id/audio/sections/:spineIndex/manifest", (req, res) => {
+  const ctx = resolveSectionContext(req.params.id, req.params.spineIndex);
+  if (!ctx.ok) {
+    res.status(ctx.status).json(ctx.body);
+    return;
+  }
+  const manifest = getSectionManifest(ctx.resource.id, ctx.castHash, ctx.spineIndex);
+  if (!manifest) {
+    res.status(404).json({ error: "not_rendered" });
+    return;
+  }
+  res.json(
+    AudioSectionManifestSchema.parse({
+      spineIndex: manifest.spineIndex,
+      castHash: manifest.castHash,
+      segments: manifest.segments.map(({ ext: _ext, ...seg }) => seg),
+    }),
+  );
+});
+
+audioRouter.get("/:id/audio/sections/:spineIndex/:n", (req, res) => {
+  const ctx = resolveSectionContext(req.params.id, req.params.spineIndex);
+  if (!ctx.ok) {
+    res.status(ctx.status).json(ctx.body);
+    return;
+  }
+  const n = Number(req.params.n);
+  if (!Number.isInteger(n) || n < 0) {
+    res.status(400).json({ error: "invalid_segment" });
+    return;
+  }
+  const file = getSegmentFilePath(ctx.resource.id, ctx.castHash, ctx.spineIndex, n);
+  if (!file) {
+    res.status(404).json({ error: "segment_not_found" });
+    return;
+  }
+  res.type(file.ext === "opus" ? "audio/ogg" : "audio/wav");
+  // `res.sendFile` (via the `send` module) already implements Range/206 —
+  // exactly what the player's sequential `<audio>` segments need, and
+  // AUDIO.md's HTTP table asks for ("Range-supporting static file serve").
+  res.sendFile(file.path);
+});

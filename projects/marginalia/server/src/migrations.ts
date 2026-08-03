@@ -494,4 +494,20 @@ export const MIGRATIONS: Migration[] = [
         );
     `,
   },
+  {
+    // M21 (AUDIO.md "Data model"): per-resource listening state. `book_cast`
+    // is not created here — it belongs to M22 (multi-voice), and this
+    // migration only builds what M21's single-voice slice actually uses.
+    version: 21,
+    sql: `
+      CREATE TABLE audio_state (
+        resource_id     TEXT PRIMARY KEY REFERENCES resources(id),
+        narrator_voice  TEXT NOT NULL DEFAULT '',
+        voice_mode      TEXT NOT NULL DEFAULT 'single' CHECK (voice_mode IN ('single','multi')),
+        speed           REAL NOT NULL DEFAULT 1.0,
+        cast_scanned_at TEXT,
+        updated_at      TEXT NOT NULL
+      );
+    `,
+  },
 ];

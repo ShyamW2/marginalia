@@ -8,7 +8,9 @@ import type {
   Settings,
   SettingsUpdate,
   SpreadMode,
+  TTSEngineId,
 } from "@marginalia/shared";
+import { MODELS_DIR } from "../paths.js";
 
 // M19 (docs/decisions.md 2026-07-29 later): provider config lives in
 // provider_profiles/provider_roles now (see settings/providers.ts) — this
@@ -42,6 +44,16 @@ const DEFAULTS = {
   // M19.6 "the reading pane is resizable": 0 = unset, use the spread-mode
   // default (same "0 = no override" convention as digest_token_budget).
   reader_pane_width: "0",
+  // M21 (AUDIO.md "Settings additions"): "kokoro" is the only engine so far.
+  tts_engine: "kokoro" as TTSEngineId,
+  // Empty = unset, meaning "use MODELS_DIR" (paths.ts) — same "empty string
+  // is the boring default" convention vault_path already uses, not a real
+  // path sentinel a caller needs to special-case.
+  tts_model_path: "",
+  // af_heart is Kokoro's own top-graded American-female voice — a sensible
+  // default so single-voice listening works with zero setup (AUDIO.md).
+  audio_default_voice: "af_heart",
+  audio_auto_turn_pages: "true",
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -58,6 +70,10 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   digest_token_budget: "digestTokenBudget",
   page_number_mode: "pageNumberMode",
   reader_pane_width: "readerPaneWidth",
+  tts_engine: "ttsEngine",
+  tts_model_path: "ttsModelPath",
+  audio_default_voice: "audioDefaultVoice",
+  audio_auto_turn_pages: "audioAutoTurnPages",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -86,6 +102,10 @@ export function getRawSettings(db: Database.Database): {
   digestTokenBudget: number;
   pageNumberMode: PageNumberMode;
   readerPaneWidth: ReaderPaneWidth;
+  ttsEngine: TTSEngineId;
+  ttsModelPath: string;
+  audioDefaultVoice: string;
+  audioAutoTurnPages: boolean;
 } {
   const raw = readRaw(db);
   return {
@@ -100,6 +120,10 @@ export function getRawSettings(db: Database.Database): {
     digestTokenBudget: Number.parseInt(raw.digest_token_budget, 10),
     pageNumberMode: raw.page_number_mode as PageNumberMode,
     readerPaneWidth: Number.parseInt(raw.reader_pane_width, 10),
+    ttsEngine: raw.tts_engine as TTSEngineId,
+    ttsModelPath: raw.tts_model_path || MODELS_DIR,
+    audioDefaultVoice: raw.audio_default_voice,
+    audioAutoTurnPages: raw.audio_auto_turn_pages === "true",
   };
 }
 

@@ -30,7 +30,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "desk", label: "Desk" },
 ];
 
-const SAVES_VIA_FORM: ReadonlySet<TabId> = new Set(["reading", "scan", "desk"]);
+const SAVES_VIA_FORM: ReadonlySet<TabId> = new Set(["reading", "scan", "desk", "audio"]);
 
 async function fetchSettings(): Promise<Settings | null> {
   try {
@@ -199,7 +199,7 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
               {activeTab === "llm" && <LLMTab />}
               {activeTab === "usage" && <UsageDivider />}
               {activeTab === "scan" && <ScanTab form={form} update={update} />}
-              {activeTab === "audio" && <AudioTab />}
+              {activeTab === "audio" && <AudioTab form={form} update={update} />}
               {activeTab === "desk" && (
                 <DeskTab
                   form={form}

@@ -4218,3 +4218,45 @@ below Settings) — the minimal change that makes the one persistent cluster liv
 claim, rather than duplicating tray/settings entry points per overlay. A real screenshot
 diff (cropped to the corner) was what caught this; `element.click()` via CDP succeeds
 regardless of what's visually on top, so a script-only check would have passed silently wrong.
+
+## M21 — Audio I, tasks 1–3 (server side) — 2026-08-04
+
+**AUDIO.md's SSE table is superseded by the M20.6 job registry, deliberately** (this is
+exactly the reason TASKS.md placed M20.6 "before M21 on purpose"). `POST
+/api/resources/:id/audio/sections/:spineIndex` and (M22) `/cast/scan` now respond `202
+{jobId}` and stream progress via `GET /api/jobs/:id/events` like every other long operation,
+not a bespoke SSE stream. A cache hit still short-circuits to an immediate `{cached: true}`
+with no job at all, per AUDIO.md's own "No-op if cached."
+
+**SPEC-GAP: Kokoro dtype is `q8`.** AUDIO.md doesn't name a quantization; `q8` is the
+boring middle choice (smaller/faster than `fp32`, no perceptible quality loss noticed in
+live listening on the fixture chapters). Revisit if a listener ever flags audio quality.
+
+**SPEC-GAP: `@huggingface/transformers` is pinned to the exact version `kokoro-js` already
+depends on (3.8.1 today), not just a satisfying range.** `env.cacheDir` (which points the
+model download at `data/models/`) is a property on that package's singleton `env` object —
+if pnpm ever resolved two different copies (a direct dependency on a newer major, say), the
+copy the app configures and the copy `KokoroTTS.from_pretrained` actually loads through would
+silently be two different module instances, and the model would re-download into, or read
+from, the wrong place. Bump this only in lockstep with `kokoro-js`'s own dependency.
+
+**SPEC-GAP: partial-render resume.** `renderSection` always (re)synthesizes every sentence in
+a section when invoked — it does not attempt to resume a *partially* rendered section left
+behind by a prior cancellation (the manifest, which is the cache's idempotency ledger, is only
+written once all sentences succeed). AUDIO.md's acceptance bar is "rendering a chapter twice
+does no synthesis the second time" (true, via the manifest-existence fast path in the route)
+and "navigating away aborts in-flight synthesis" (true) — resuming a half-finished render
+without redoing work was never asked for. Worth revisiting if chapters get long enough that a
+cancelled 90%-done render becoming a from-scratch retry is a real cost.
+
+**Live-verified against the operator's real library**, not just the fixtures (read-only reads
+of `data/marginalia.sqlite` confirmed which resources already existed; only new rows/files
+were added, nothing existing was touched): rendered *Alice's Adventures in Wonderland*'s
+front-matter section (32 sentences) end to end through the real HTTP API with the dev server
+actually running — `ffmpeg` on this machine encoded every segment to real Ogg/Opus, a
+segment's reported `durationMs` (4700) matched `ffprobe`'s measured duration (4706.5ms, well
+inside the ~5% bar), the second render request came back `{cached: true}` with no job at all,
+`cachedSpineIndices` reflected it, `DELETE .../audio` actually removed the cache, and
+`/api/audio/test-voice` returned playable WAV for a good voice id and `{error:
+"unsupported_voice"}` (400) for a bad one. Reset the touched `audio_state` row back to its
+defaults afterward so the operator's real book isn't left in a test-modified state.
