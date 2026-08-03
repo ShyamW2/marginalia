@@ -130,6 +130,7 @@ async function extractChapterPart(
   partText: string,
   partIndex: number,
   partCount: number,
+  signal?: AbortSignal,
 ): Promise<ChapterPart> {
   const header = author ? `${title} by ${author}` : title;
   const partSuffix = partCount > 1 ? ` (part ${partIndex + 1} of ${partCount})` : "";
@@ -137,6 +138,7 @@ async function extractChapterPart(
     instructions: CHAPTER_PART_INSTRUCTIONS,
     input: `${header}\n\n${chapterLabel}${partSuffix}:\n\n${partText}`,
     schema: ChapterPartSchema,
+    signal,
   });
 }
 
@@ -144,6 +146,7 @@ async function mergeChapterParts(
   provider: LLMProvider,
   chapterLabel: string,
   parts: ChapterPart[],
+  signal?: AbortSignal,
 ): Promise<ChapterPart> {
   const input = parts
     .map(
@@ -155,6 +158,7 @@ async function mergeChapterParts(
     instructions: CHAPTER_MERGE_INSTRUCTIONS,
     input: `${chapterLabel} — ${parts.length} parts to merge:\n\n${input}`,
     schema: ChapterPartSchema,
+    signal,
   });
 }
 
@@ -172,6 +176,7 @@ async function digestChapter(
   author: string | null,
   chapterLabel: string,
   text: string,
+  signal?: AbortSignal,
 ): Promise<ChapterPart | null> {
   const budgetChars = contextTokens * MAP_BUDGET_FRACTION * CHARS_PER_TOKEN;
 
@@ -180,10 +185,10 @@ async function digestChapter(
     const parts: ChapterPart[] = [];
     for (let i = 0; i < chunks.length; i++) {
       parts.push(
-        await extractChapterPart(provider, title, author, chapterLabel, chunks[i], i, chunks.length),
+        await extractChapterPart(provider, title, author, chapterLabel, chunks[i], i, chunks.length, signal),
       );
     }
-    return chunks.length === 1 ? parts[0] : mergeChapterParts(provider, chapterLabel, parts);
+    return chunks.length === 1 ? parts[0] : mergeChapterParts(provider, chapterLabel, parts, signal);
   }
 
   try {
@@ -204,6 +209,7 @@ async function reduceBatch(
   title: string,
   author: string | null,
   chapters: { spineIndex: number; summary: string; themes: string[]; characters: string[] }[],
+  signal?: AbortSignal,
 ): Promise<BookReduce> {
   const header = author ? `${title} by ${author}` : title;
   const input = chapters
@@ -216,6 +222,7 @@ async function reduceBatch(
     instructions: BOOK_REDUCE_INSTRUCTIONS,
     input: `${header}\n\n${input}`,
     schema: BookReduceSchema,
+    signal,
   });
 }
 
@@ -231,12 +238,13 @@ export async function reduceBookDigest(
   title: string,
   author: string | null,
   chapters: { spineIndex: number; summary: string; themes: string[]; characters: string[] }[],
+  signal?: AbortSignal,
 ): Promise<BookReduce> {
   const budgetChars = contextTokens * MAP_BUDGET_FRACTION * CHARS_PER_TOKEN;
   const totalChars = chapters.reduce((sum, c) => sum + c.summary.length, 0);
 
   if (chapters.length <= 1 || totalChars <= budgetChars) {
-    return reduceBatch(provider, title, author, chapters);
+    return reduceBatch(provider, title, author, chapters, signal);
   }
 
   const batches: (typeof chapters)[] = [];
@@ -256,7 +264,7 @@ export async function reduceBookDigest(
 
   const intermediate: typeof chapters = [];
   for (const batch of batches) {
-    const result = await reduceBatch(provider, title, author, batch);
+    const result = await reduceBatch(provider, title, author, batch, signal);
     intermediate.push({
       spineIndex: batch[0].spineIndex,
       summary: result.synopsis,
@@ -264,7 +272,7 @@ export async function reduceBookDigest(
       characters: result.cast.map((c) => c.name),
     });
   }
-  return reduceBookDigest(provider, contextTokens, title, author, intermediate);
+  return reduceBookDigest(provider, contextTokens, title, author, intermediate, signal);
 }
 
 export interface DigestPreflight {
@@ -311,6 +319,12 @@ export async function runDigest(
   sections: ResourceTextSection[],
   spineStart: number,
   spineEnd: number,
+  /** M20.6 job registry: aborts the in-flight `extract()` call and stops the
+   * loop from starting the next chapter. Already-committed chapters (and the
+   * source-hash cache) are what makes a cancelled-then-resumed run free of
+   * duplicate work, not a cursor. */
+  signal?: AbortSignal,
+  onProgress?: (current: number, total: number, message: string | null) => void,
 ): Promise<DigestRun> {
   const contextTokens = provider.capabilities().contextTokens;
   const priorRun = getDigestRun(db, resource.id);
@@ -339,7 +353,18 @@ export async function runDigest(
     .filter((s) => !covered.has(s.spineIndex))
     .sort((a, b) => a.spineIndex - b.spineIndex);
 
+  // +1 for the final reduce step, so the progress bar doesn't sit at 100%
+  // while the (sometimes slower, whole-book) reduce call is still running.
+  const total = pending.length + 1;
+  let current = 0;
+  onProgress?.(current, total, null);
+
   for (const section of pending) {
+    // Cooperative stop between chapters — the in-flight call itself is what
+    // `signal` passed to digestChapter() actually aborts; this is what keeps
+    // a cancelled run from starting one more chapter after that.
+    if (signal?.aborted) return persistRun("failed", null, "Cancelled");
+
     const chapterLabel = sectionLabel(section.spineIndex, resource.metadata.chapterTitles);
     try {
       const part = await digestChapter(
@@ -349,9 +374,12 @@ export async function runDigest(
         resource.author,
         chapterLabel,
         section.text,
+        signal,
       );
       if (part === null) {
         failedSpineIndices.add(section.spineIndex);
+        current++;
+        onProgress?.(current, total, chapterLabel);
         continue;
       }
       putChapterDigest(db, {
@@ -364,6 +392,8 @@ export async function runDigest(
         sourceHash: hashText(section.text),
       });
       failedSpineIndices.delete(section.spineIndex);
+      current++;
+      onProgress?.(current, total, chapterLabel);
     } catch (err) {
       if (err instanceof LLMError && err.code === "rate_limit") {
         const resumesAt = new Date(
@@ -371,7 +401,7 @@ export async function runDigest(
         ).toISOString();
         return persistRun("paused_rate_limit", resumesAt, err.message);
       }
-      persistRun("failed", null, err instanceof Error ? err.message : String(err));
+      persistRun("failed", null, signal?.aborted ? "Cancelled" : err instanceof Error ? err.message : String(err));
       throw err;
     }
   }
@@ -385,6 +415,7 @@ export async function runDigest(
         resource.title,
         resource.author,
         allChapters,
+        signal,
       );
       putBookDigest(db, {
         resourceId: resource.id,
@@ -399,11 +430,12 @@ export async function runDigest(
         ).toISOString();
         return persistRun("paused_rate_limit", resumesAt, err.message);
       }
-      persistRun("failed", null, err instanceof Error ? err.message : String(err));
+      persistRun("failed", null, signal?.aborted ? "Cancelled" : err instanceof Error ? err.message : String(err));
       throw err;
     }
   }
 
+  onProgress?.(total, total, null);
   return persistRun("completed", null, null);
 }
 

@@ -229,6 +229,77 @@ describe("runDigest", () => {
     expect(getChapterDigest(db, resource.id, 1)).toBeDefined();
     db.close();
   });
+
+  // M20.6 "the job registry" — cancellation must actually stop the work,
+  // not just abandon the caller's wait on it (decisions.md 2026-07-30):
+  // already-committed chapters stay, and no half-written chapter appears.
+  it("cancelling between chapters stops the run before the next chapter is ever attempted", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text." },
+      { spineIndex: 1, href: "b", text: "Chapter two text." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const controller = new AbortController();
+    const provider = makeProvider((req) => {
+      if (req.input.includes("Chapter one")) {
+        // Simulates the cancel button being pressed right after this call
+        // lands — chapter 1 still gets committed; chapter 2 must never be
+        // attempted at all.
+        controller.abort();
+        return { summary: "Ch1", themes: [], characters: [] };
+      }
+      throw new Error("chapter two must never be attempted once cancelled");
+    });
+
+    const run = await runDigest(db, provider, resource, sections, 0, 1, controller.signal);
+    expect(run.status).toBe("failed");
+    expect(run.lastError).toBe("Cancelled");
+    expect(getChapterDigest(db, resource.id, 0)).toBeDefined();
+    expect(getChapterDigest(db, resource.id, 1)).toBeUndefined();
+    db.close();
+  });
+
+  it("cancelling mid-call aborts the in-flight extract() itself, not just the next one queued behind it", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text." },
+      { spineIndex: 1, href: "b", text: "Chapter two text." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const controller = new AbortController();
+    const provider: LLMProvider = {
+      id: "openai-compatible",
+      capabilities: () => ({ contextTokens: 100_000, supportsCaching: false }),
+      async *stream() {
+        yield { text: "" };
+      },
+      async extract<T>(req: LLMExtractRequest<unknown>): Promise<T> {
+        if (req.input.includes("Chapter one")) {
+          return { summary: "Ch1", themes: [], characters: [] } as T;
+        }
+        // Simulates a real provider whose in-flight call actually observes
+        // the AbortSignal (the seam threaded through anthropic.ts/
+        // openaiCompat.ts/claudeAgent.ts) and rejects instead of resolving.
+        controller.abort();
+        throw new Error("aborted mid-call");
+      },
+    };
+
+    await expect(runDigest(db, provider, resource, sections, 0, 1, controller.signal)).rejects.toThrow();
+    expect(getChapterDigest(db, resource.id, 0)).toBeDefined();
+    expect(getChapterDigest(db, resource.id, 1)).toBeUndefined();
+    const storedRun = getDigestRun(db, resource.id);
+    expect(storedRun?.status).toBe("failed");
+    expect(storedRun?.lastError).toBe("Cancelled");
+    db.close();
+  });
 });
 
 describe("maybeRefreshBookDigestSnapshot", () => {

@@ -91,6 +91,7 @@ async function extractThematicPart(
   partText: string,
   partIndex: number,
   partCount: number,
+  signal?: AbortSignal,
 ): Promise<ThematicPart> {
   const header = author ? `${title} by ${author}` : title;
   const partSuffix = partCount > 1 ? ` (part ${partIndex + 1} of ${partCount})` : "";
@@ -98,6 +99,7 @@ async function extractThematicPart(
     instructions: thematicInstructions(briefText),
     input: `${header}\n\n${chapterLabel}${partSuffix}:\n\n${partText}`,
     schema: ThematicPartSchema,
+    signal,
   });
 }
 
@@ -105,6 +107,7 @@ async function mergeThematicParts(
   provider: LLMProvider,
   chapterLabel: string,
   parts: ThematicPart[],
+  signal?: AbortSignal,
 ): Promise<ThematicPart> {
   const input = parts
     .map(
@@ -117,6 +120,7 @@ async function mergeThematicParts(
     instructions: THEMATIC_MERGE_INSTRUCTIONS,
     input: `${chapterLabel} — ${parts.length} parts to merge:\n\n${input}`,
     schema: ThematicPartSchema,
+    signal,
   });
 }
 
@@ -133,6 +137,7 @@ async function digestChapterThematic(
   author: string | null,
   chapterLabel: string,
   text: string,
+  signal?: AbortSignal,
 ): Promise<ThematicPart | null> {
   const budgetChars = contextTokens * MAP_BUDGET_FRACTION * CHARS_PER_TOKEN;
 
@@ -150,10 +155,11 @@ async function digestChapterThematic(
           chunks[i],
           i,
           chunks.length,
+          signal,
         ),
       );
     }
-    return chunks.length === 1 ? parts[0] : mergeThematicParts(provider, chapterLabel, parts);
+    return chunks.length === 1 ? parts[0] : mergeThematicParts(provider, chapterLabel, parts, signal);
   }
 
   try {
@@ -185,6 +191,8 @@ export async function runThematicDigest(
   sections: ResourceTextSection[],
   spineStart: number,
   spineEnd: number,
+  signal?: AbortSignal,
+  onProgress?: (current: number, total: number, message: string | null) => void,
 ): Promise<ThematicRun> {
   const contextTokens = provider.capabilities().contextTokens;
   const brief = getBrief(db, resource.id);
@@ -224,7 +232,13 @@ export async function runThematicDigest(
     .filter((s) => !coveredUnderBrief.has(s.spineIndex))
     .sort((a, b) => a.spineIndex - b.spineIndex);
 
+  const total = Math.max(pending.length, 1);
+  let current = 0;
+  onProgress?.(current, total, null);
+
   for (const section of pending) {
+    if (signal?.aborted) return persistRun("failed", null, "Cancelled");
+
     const chapterLabel = sectionLabel(section.spineIndex, resource.metadata.chapterTitles);
     try {
       const part = await digestChapterThematic(
@@ -235,9 +249,12 @@ export async function runThematicDigest(
         resource.author,
         chapterLabel,
         section.text,
+        signal,
       );
       if (part === null) {
         failedSpineIndices.add(section.spineIndex);
+        current++;
+        onProgress?.(current, total, chapterLabel);
         continue;
       }
       putThematicDigest(db, {
@@ -250,6 +267,8 @@ export async function runThematicDigest(
         questions: part.questions,
       });
       failedSpineIndices.delete(section.spineIndex);
+      current++;
+      onProgress?.(current, total, chapterLabel);
     } catch (err) {
       if (err instanceof LLMError && err.code === "rate_limit") {
         const resumesAt = new Date(
@@ -257,10 +276,11 @@ export async function runThematicDigest(
         ).toISOString();
         return persistRun("paused_rate_limit", resumesAt, err.message);
       }
-      persistRun("failed", null, err instanceof Error ? err.message : String(err));
+      persistRun("failed", null, signal?.aborted ? "Cancelled" : err instanceof Error ? err.message : String(err));
       throw err;
     }
   }
 
+  onProgress?.(total, total, null);
   return persistRun("completed", null, null);
 }

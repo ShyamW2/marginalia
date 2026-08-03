@@ -166,4 +166,47 @@ describe("runThemeTagging", () => {
     expect(calls).toBe(0);
     db.close();
   });
+
+  it("cancelling stops before the next highlight, leaving already-tagged ones tagged", async () => {
+    const db = createDb(":memory:");
+    seedResource(db, "res-1");
+    putThematicDigest(db, {
+      resourceId: "res-1",
+      spineIndex: 0,
+      briefHash: "b",
+      briefText: "",
+      analysis: "a",
+      themes: ["autonomy"],
+      questions: [],
+    });
+    const first = createHighlight(db, {
+      resourceId: "res-1",
+      exact: "first passage",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose",
+    });
+    const second = createHighlight(db, {
+      resourceId: "res-1",
+      exact: "second passage",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/4)",
+      spineIndex: 0,
+      kind: "rose",
+    });
+
+    const controller = new AbortController();
+    const provider = makeProvider(() => {
+      controller.abort();
+      return { themes: ["autonomy"] };
+    });
+    const tagged = await runThemeTagging(db, provider, "res-1", controller.signal);
+    expect(tagged).toBe(1);
+    const untagged = [first, second].filter((h) => listThemesForHighlight(db, h.id).length === 0);
+    expect(untagged).toHaveLength(1);
+    db.close();
+  });
 });

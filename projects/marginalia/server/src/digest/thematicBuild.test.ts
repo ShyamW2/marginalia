@@ -190,4 +190,31 @@ describe("runThematicDigest", () => {
     expect(stored?.status).toBe("paused_rate_limit");
     db.close();
   });
+
+  it("cancelling stops the run before the next chapter is attempted, keeping committed chapters", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text." },
+      { spineIndex: 1, href: "b", text: "Chapter two text." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const controller = new AbortController();
+    const provider = makeProvider((req) => {
+      if (req.input.includes("Chapter one")) {
+        controller.abort();
+        return { analysis: "Ch1 analysis", themes: [], questions: [] };
+      }
+      throw new Error("chapter two must never be attempted once cancelled");
+    });
+
+    const run = await runThematicDigest(db, provider, resource, sections, 0, 1, controller.signal);
+    expect(run.status).toBe("failed");
+    expect(run.lastError).toBe("Cancelled");
+    expect(getThematicDigest(db, resource.id, 0)).toBeDefined();
+    expect(getThematicDigest(db, resource.id, 1)).toBeUndefined();
+    db.close();
+  });
 });

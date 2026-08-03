@@ -929,6 +929,54 @@ export const UpdateContextLadderBodySchema = z.object({
 export type UpdateContextLadderBody = z.infer<typeof UpdateContextLadderBodySchema>;
 
 // ---------------------------------------------------------------------------
+// M20.6 — the job registry (decisions.md 2026-07-30 "Background work is a
+// job model, not a popup"). One shape for every long-running server
+// operation (chapter/range digest, thematic re-run, theme tagging), so the
+// tasks tray, the SSE progress stream, and the cancel endpoint are all built
+// once rather than per-feature.
+// ---------------------------------------------------------------------------
+
+export const JobKindSchema = z.enum(["digest", "thematic", "theme-tagging"]);
+export type JobKind = z.infer<typeof JobKindSchema>;
+
+export const JobStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
+export type JobStatus = z.infer<typeof JobStatusSchema>;
+
+export const JobProgressSchema = z.object({
+  current: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  /** A short human label for the current step ("S5 · The Storm"), null
+   * before the first step of work has started. */
+  message: z.string().nullable(),
+});
+export type JobProgress = z.infer<typeof JobProgressSchema>;
+
+/** GET /api/jobs, GET /api/jobs/:id, and the /events SSE stream all send
+ * this same shape — a reconnecting client and a first-load client see
+ * identical data. */
+export const JobSchema = z.object({
+  id: z.string(),
+  kind: JobKindSchema,
+  resourceId: z.string().nullable(),
+  /** Denormalized at job-start time so the tray can show "Digest — Middlemarch"
+   * without a join back to a resource that (in principle) could be deleted
+   * while the job is still finishing up. */
+  resourceTitle: z.string().nullable(),
+  status: JobStatusSchema,
+  progress: JobProgressSchema,
+  error: z.string().nullable(),
+  startedAt: z.string(),
+  finishedAt: z.string().nullable(),
+});
+export type Job = z.infer<typeof JobSchema>;
+
+/** POST /api/resources/:id/digest, /thematic, /theme-tagging all respond
+ * 202 with just this — the run itself now happens in the background, and
+ * the caller finds out how it's going through the job registry endpoints. */
+export const StartJobResponseSchema = z.object({ jobId: z.string() });
+export type StartJobResponse = z.infer<typeof StartJobResponseSchema>;
+
+// ---------------------------------------------------------------------------
 // Generic error envelope
 // ---------------------------------------------------------------------------
 

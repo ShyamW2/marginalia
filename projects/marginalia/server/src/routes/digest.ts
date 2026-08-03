@@ -13,7 +13,7 @@ import {
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { getReadingPosition, getResourceById, getResourceTextSections } from "../library/store.js";
-import { getProvider, LLMError, type LLMErrorCode } from "../llm/provider.js";
+import { getProvider, LLMError } from "../llm/provider.js";
 import { sectionLabel } from "../llm/context.js";
 import { getRawSettings } from "../settings/store.js";
 import { estimateDigestRun, maybeRefreshBookDigestSnapshot, runDigest } from "../digest/build.js";
@@ -41,18 +41,9 @@ import {
   setContextLadderDepth,
 } from "../digest/ladder.js";
 import { createHighlight, findHighlightByExact } from "../annotations/highlights.js";
+import { startJob } from "../jobs/registry.js";
 
 export const digestRouter: Router = Router();
-
-const ERROR_STATUS: Record<LLMErrorCode, number> = {
-  auth: 401,
-  rate_limit: 429,
-  context_too_large: 413,
-  extract_parse_failed: 502,
-  network: 502,
-  refused: 502,
-  unknown: 502,
-};
 
 /** `?reveal=0,3,5` — spine indices the reader has explicitly revealed this
  * session (client-tracked; never persisted server-side — "revealing is
@@ -266,21 +257,29 @@ digestRouter.post("/:id/digest", async (req, res) => {
     }
   }
 
-  try {
-    await runDigest(db, provider, resource, sections, spineStart, spineEnd);
-    writeDigestMarkdown(db, resource);
-    res.json(DigestStatusSchema.parse(buildDigestStatus(db, resource.id, new Set(), false)));
-  } catch (err) {
-    if (err instanceof LLMError) {
-      // eslint-disable-next-line no-console
-      console.error(`[digest] ${err.code}: ${err.message}`);
-      res.status(ERROR_STATUS[err.code]).json({ error: err.code });
-      return;
+  // M20.6 "the job registry": this used to await the whole run before
+  // responding — one blocking request with no id, no progress and no real
+  // cancellation. It now starts a job and returns immediately; the tasks
+  // tray watches it via GET /api/jobs/:id/events and the client re-fetches
+  // this same GET /:id/digest for the actual content once the job completes.
+  const job = startJob("digest", resource.id, resource.title, async (signal, reportProgress) => {
+    try {
+      await runDigest(db, provider, resource, sections, spineStart, spineEnd, signal, (current, total, message) =>
+        reportProgress({ current, total, message }),
+      );
+      writeDigestMarkdown(db, resource);
+    } catch (err) {
+      if (err instanceof LLMError) {
+        // eslint-disable-next-line no-console
+        console.error(`[digest] ${err.code}: ${err.message}`);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error("[digest]", err);
+      }
+      throw err;
     }
-    // eslint-disable-next-line no-console
-    console.error("[digest]", err);
-    res.status(500).json({ error: "digest_failed" });
-  }
+  });
+  res.status(202).json({ jobId: job.id });
 });
 
 digestRouter.get("/:id/context-ladder", (req, res) => {
@@ -431,20 +430,23 @@ digestRouter.post("/:id/thematic", async (req, res) => {
   }
 
   const sections = getResourceTextSections(db, resource.id);
-  try {
-    await runThematicDigest(db, provider, resource, sections, spineStart, spineEnd);
-    res.json(ThematicStatusSchema.parse(buildThematicStatus(db, resource.id, new Set())));
-  } catch (err) {
-    if (err instanceof LLMError) {
-      // eslint-disable-next-line no-console
-      console.error(`[thematic] ${err.code}: ${err.message}`);
-      res.status(ERROR_STATUS[err.code]).json({ error: err.code });
-      return;
+  const job = startJob("thematic", resource.id, resource.title, async (signal, reportProgress) => {
+    try {
+      await runThematicDigest(db, provider, resource, sections, spineStart, spineEnd, signal, (current, total, message) =>
+        reportProgress({ current, total, message }),
+      );
+    } catch (err) {
+      if (err instanceof LLMError) {
+        // eslint-disable-next-line no-console
+        console.error(`[thematic] ${err.code}: ${err.message}`);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error("[thematic]", err);
+      }
+      throw err;
     }
-    // eslint-disable-next-line no-console
-    console.error("[thematic]", err);
-    res.status(500).json({ error: "thematic_digest_failed" });
-  }
+  });
+  res.status(202).json({ jobId: job.id });
 });
 
 /**
@@ -519,18 +521,21 @@ digestRouter.post("/:id/theme-tagging", async (req, res) => {
     return;
   }
 
-  try {
-    const tagged = await runThemeTagging(db, provider, resource.id);
-    res.json({ tagged });
-  } catch (err) {
-    if (err instanceof LLMError) {
-      // eslint-disable-next-line no-console
-      console.error(`[theme-tagging] ${err.code}: ${err.message}`);
-      res.status(ERROR_STATUS[err.code]).json({ error: err.code });
-      return;
+  const job = startJob("theme-tagging", resource.id, resource.title, async (signal, reportProgress) => {
+    try {
+      await runThemeTagging(db, provider, resource.id, signal, (current, total, message) =>
+        reportProgress({ current, total, message }),
+      );
+    } catch (err) {
+      if (err instanceof LLMError) {
+        // eslint-disable-next-line no-console
+        console.error(`[theme-tagging] ${err.code}: ${err.message}`);
+      } else {
+        // eslint-disable-next-line no-console
+        console.error("[theme-tagging]", err);
+      }
+      throw err;
     }
-    // eslint-disable-next-line no-console
-    console.error("[theme-tagging]", err);
-    res.status(500).json({ error: "theme_tagging_failed" });
-  }
+  });
+  res.status(202).json({ jobId: job.id });
 });

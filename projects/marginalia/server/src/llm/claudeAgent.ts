@@ -171,7 +171,7 @@ export class ClaudeAgentProvider implements LLMProvider {
       const q = query({
         prompt: req.input,
         options: {
-          ...this.baseOptions(),
+          ...this.baseOptions(req.signal),
           systemPrompt: req.instructions,
           // No tools, but leave headroom for the harness's internal
           // structured-output retry turns.

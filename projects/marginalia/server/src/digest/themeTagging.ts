@@ -42,12 +42,14 @@ export async function tagHighlightThemes(
   highlight: Highlight,
   threadText: string,
   vocabulary: string[],
+  signal?: AbortSignal,
 ): Promise<string[]> {
   if (vocabulary.length === 0) return [];
   const result = await provider.extract({
     instructions: instructions(vocabulary),
     input: buildTaggingInput(highlight, threadText),
     schema: TagSchema,
+    signal,
   });
   const allowed = new Set(vocabulary);
   return result.themes.filter((t) => allowed.has(t));
@@ -72,13 +74,18 @@ export async function runThemeTagging(
   db: Database.Database,
   provider: LLMProvider,
   resourceId: string,
+  signal?: AbortSignal,
+  onProgress?: (current: number, total: number, message: string | null) => void,
 ): Promise<number> {
   const vocabulary = listThemeVocabulary(db, resourceId);
   if (vocabulary.length === 0) return 0;
 
   const untaggedIds = listUntaggedHighlightIds(db, resourceId);
+  const total = Math.max(untaggedIds.length, 1);
   let tagged = 0;
+  onProgress?.(0, total, null);
   for (const id of untaggedIds) {
+    if (signal?.aborted) break;
     const highlight = getHighlightById(db, id);
     if (!highlight) continue;
     const thread = getThreadByHighlightId(db, id);
@@ -87,9 +94,10 @@ export async function runThemeTagging(
           .map((m) => `${m.role}: ${m.content}`)
           .join("\n")
       : "";
-    const themes = await tagHighlightThemes(provider, highlight, threadText, vocabulary);
+    const themes = await tagHighlightThemes(provider, highlight, threadText, vocabulary, signal);
     setThemesForHighlight(db, id, themes);
     tagged++;
+    onProgress?.(tagged, total, `Tagged ${tagged} of ${untaggedIds.length}`);
   }
   return tagged;
 }

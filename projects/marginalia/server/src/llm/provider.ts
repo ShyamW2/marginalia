@@ -45,6 +45,10 @@ export interface LLMExtractRequest<T> {
   instructions: string;
   input: string;
   schema: z.ZodType<T>;
+  /** M20.6 job registry: threaded through so a cancelled digest/thematic/
+   * theme-tagging job actually stops the in-flight call, not just the next
+   * one queued behind it. */
+  signal?: AbortSignal;
 }
 
 /** Token/cost counts for the most recent call on a provider instance. */

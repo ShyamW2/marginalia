@@ -380,7 +380,7 @@ audio rendering and the cast scan are the same shape, and AUDIO.md already specs
 progress endpoint. Building this twice is exactly the duplication M19 removed for
 provider pickers.
 
-- [ ] **The job registry.** One server-side registry — id, kind, resource, status,
+- [x] **The job registry.** One server-side registry — id, kind, resource, status,
       progress, started/finished — with an `AbortController` per job, an SSE progress
       stream, and a real cancel endpoint. The `LLMProvider` seam already accepts an
       `AbortSignal`; threading it through the digest loop is the actual work.

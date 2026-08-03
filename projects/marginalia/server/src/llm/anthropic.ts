@@ -119,15 +119,18 @@ export class AnthropicProvider implements LLMProvider {
 
   async extract<T>(req: LLMExtractRequest<T>): Promise<T> {
     try {
-      const message = await this.client.messages.parse({
-        model: this.model,
-        max_tokens: EXTRACT_MAX_TOKENS,
-        system: req.instructions,
-        messages: [{ role: "user", content: req.input }],
-        output_config: {
-          format: zodOutputFormat(req.schema),
+      const message = await this.client.messages.parse(
+        {
+          model: this.model,
+          max_tokens: EXTRACT_MAX_TOKENS,
+          system: req.instructions,
+          messages: [{ role: "user", content: req.input }],
+          output_config: {
+            format: zodOutputFormat(req.schema),
+          },
         },
-      });
+        { signal: req.signal },
+      );
 
       this.lastUsage = {
         inputTokens: message.usage.input_tokens,

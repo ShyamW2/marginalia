@@ -197,6 +197,7 @@ export class OpenAICompatProvider implements LLMProvider {
       response = await fetch(this.url(), {
         method: "POST",
         headers: this.headers(),
+        signal: req.signal,
         body: JSON.stringify({
           model: this.config.model,
           response_format: { type: "json_object" },
