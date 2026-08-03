@@ -4179,3 +4179,42 @@ and cross-checked against the identical drag performed through the `<select>` pa
 which isn't pointer-lock-dependent and settles on the expected value. Keyboard (arrow-step) and
 click-to-type verification isn't affected and is the more reliable path for a headless check
 of any `Slider`/`ChapterDial`-family control.
+
+## M20.6 — the job registry, and a pre-existing chrome-cluster stacking bug found live — 2026-08-03
+
+Built the job registry (id/kind/status/progress, `AbortController` per job, SSE progress
+stream, real cancel), threaded `AbortSignal` through `LLMExtractRequest` and all three
+providers' `extract()` (previously only `stream()` had it), and wired chapter/range digest,
+the thematic re-run, and theme tagging through it. Rewired `DigestSpotlight`'s cancel button
+away from the old client-side abandon-and-hope (its own comment said as much) to a real
+`POST /api/jobs/:id/cancel`. Theme tagging had no UI trigger at all before this (SPEC-GAP);
+added one on the digest page next to the thematic re-run.
+
+**Verified live**, not just by unit test, per TASKS.md's acceptance: an isolated copy of the
+whole workspace (same filesystem as the real one — `/tmp` is a separate tmpfs here and
+silently breaks `pnpm`'s relative symlinks and `rsync --link-dest` hardlinks; a same-device
+`cp -al` is what actually preserves them) with its own fresh `data/`, a real fixture EPUB, and
+a ~30-line mock OpenAI-compatible `/chat/completions` server standing in for the LLM (its
+response satisfies every schema `extract()` calls with at once — the schemas aren't strict, so
+one fixed JSON blob covers digest/thematic/theme-tagging without knowing which one is asking).
+Drove it with a small raw-CDP script (`ws` isn't needed — Node 24's global `WebSocket` talks to
+Chrome's devtools socket directly) against a headless Chromium already present at
+`~/.cache/ms-playwright/chromium-1234` — confirmed real cancellation (chapters already
+committed stay committed, the rest are never attempted, `run.lastError` reads "Cancelled"),
+two jobs running concurrently and cancelled independently, and — the specific thing a mock
+can't fake — a full page reload mid-run followed by the tray still showing the same job
+advancing, because it re-fetches `GET /api/jobs` from the registry on mount rather than
+trusting anything client-side.
+
+**Found live, not by inspection:** the tray (and, it turns out, the nav cluster's pre-existing
+gear icon) rendered correctly on the Desk but was completely invisible — present in the DOM,
+clickable via a script, unreachable to an actual pointer — whenever the Scan or Digest overlay
+was open. `ScanOverlay`/`DigestOverlay` set `z-index: 900`; `NavCluster`'s `.floating` was
+`z-index: 40`, despite its own comment claiming it "stays mounted above every overlay."
+`SettingsModal` is `1000`, which is why Settings-over-Scan already appeared to work — but only
+via each overlay's own embedded "Settings →" link, never via the outer gear icon, which was
+exactly as covered as the tray. Fixed by raising `.floating` to `950` (above both overlays,
+below Settings) — the minimal change that makes the one persistent cluster live up to its own
+claim, rather than duplicating tray/settings entry points per overlay. A real screenshot
+diff (cropped to the corner) was what caught this; `element.click()` via CDP succeeds
+regardless of what's visually on top, so a script-only check would have passed silently wrong.

@@ -21,10 +21,20 @@
   border-left: 1px solid var(--color-border);
 }
 
-/* The App-shell placement: fixed, top-right, above every room. */
+/* The App-shell placement: fixed, top-right, above every room.
+ *
+ * M20.6: raised above the Scan/Digest overlays (z-index 900 —
+ * ScanOverlay.module.css / DigestOverlay.module.css) and kept below
+ * Settings (1000), which already assumed this cluster stayed on top (see
+ * this file's own "stays mounted above every overlay" comment) but the
+ * overlays' z-index actually outranked it — the gear icon itself was
+ * covered the same way the tasks tray was found to be, live, verifying
+ * M20.6. Each overlay's own embedded controls (its ProviderPickerPopover,
+ * its "Settings ->" link) still work as before; this just makes the one
+ * persistent cluster reachable everywhere it claims to be. */
 .floating {
   position: fixed;
   top: 0.85rem;
   right: 1rem;
-  z-index: 40;
+  z-index: 950;
 }

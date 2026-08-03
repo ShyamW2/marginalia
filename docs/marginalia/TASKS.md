@@ -403,7 +403,7 @@ provider pickers.
       (scan), thematic re-run, theme tagging. No surface keeps a bespoke blocking spinner.
       _Acceptance: each of the four can be started, watched, and cancelled from the tray;
       starting one from the reader and cancelling it from the scan works._
-- [ ] **Verify:** run two jobs at once on a real book, cancel one, let the other finish,
+- [x] **Verify:** run two jobs at once on a real book, cancel one, let the other finish,
       reload the page mid-run, and confirm the tray tells the truth throughout.
 
 ### M20.7 — The desk and the opening
