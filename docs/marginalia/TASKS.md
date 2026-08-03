@@ -435,7 +435,7 @@ provider pickers.
       _Acceptance: the cursor changes at every room boundary and reverts on "system"; the
       turn zones still show their directional cursor; nothing leaks a cursor into a
       neighbouring surface after the pointer leaves._
-- [ ] **Verify:** open three different books from the desk, drag them around, write in the
+- [x] **Verify:** open three different books from the desk, drag them around, write in the
       notepad, and go desk → reader → scan → desk in one pass. Both themes, reduced motion.
 
 ### M21 — Audio I: one voice, end to end

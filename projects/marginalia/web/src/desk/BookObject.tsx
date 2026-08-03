@@ -157,6 +157,18 @@ export function BookObject({
       drag={!reducedMotion}
       dragMomentum={false}
       dragElastic={0.12}
+      // M20.7 verify (found live): a real drag followed by an immediate,
+      // stationary click left `dragDistance.current` at the previous drag's
+      // large value — `onTap` fires on pointerdown/pointerup without ever
+      // reaching `handleDragStart` (Framer only calls that once movement
+      // clears its own drag-recognition threshold), so the stale value
+      // silently failed `< DRAG_CLICK_THRESHOLD` and swallowed the open.
+      // Resetting on every pointerdown, not just once a drag is recognized,
+      // means each new gesture is measured from zero regardless of which
+      // way it resolves.
+      onPointerDown={() => {
+        dragDistance.current = 0;
+      }}
       onDragStart={handleDragStart}
       onDrag={handleDrag}
       onDragEnd={handleDragEnd}
