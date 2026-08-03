@@ -153,7 +153,16 @@ export function BookObject({
       onDragStart={handleDragStart}
       onDrag={handleDrag}
       onDragEnd={handleDragEnd}
-      onTap={() => {
+      onTap={(event) => {
+        // Framer Motion's tap gesture is driven by pointerdown/pointerup,
+        // which fire *before* a nested button's click event — so a nested
+        // button's own `stopPropagation()` (Open scan, Read digest,
+        // Publish) can't prevent this from also firing (caught live: both
+        // navigations fired, and whichever `navigate()` ran second won).
+        // Checking the tap's own target for a nested button is what
+        // actually scopes this to "the cover itself was tapped."
+        const target = event.target;
+        if (target instanceof Element && target.closest("button")) return;
         if (dragDistance.current < DRAG_CLICK_THRESHOLD) open();
       }}
       onPointerEnter={() => setIsHovering(true)}
