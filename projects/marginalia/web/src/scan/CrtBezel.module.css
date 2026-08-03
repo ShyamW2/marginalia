@@ -1,0 +1,60 @@
+/*
+ * M20.5 "the Scan becomes a popup in a CRT television": the chassis around
+ * the instrument. A sibling of the filtered wrapper inside `.screen` — never
+ * a child of it — so the frame itself never bows under the barrel warp
+ * (decisions.md 2026-07-30: "a bending television reads as broken"). Kept
+ * slim on purpose: the panel needs the room more than the frame does.
+ */
+.chassis {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px;
+  padding: 10px;
+  background: linear-gradient(155deg, #2a2f36 0%, #14171b 55%, #1c2024 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 24px 60px rgba(0, 0, 0, 0.5),
+    0 4px 14px rgba(0, 0, 0, 0.35);
+  max-height: 100%;
+  min-height: 0;
+}
+
+.ledRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.4rem 0.5rem;
+  flex-shrink: 0;
+}
+
+.led {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--crt-led-color, #5ec8ff);
+  box-shadow: 0 0 5px 1px var(--crt-led-color, #5ec8ff);
+}
+
+.chassisLabel {
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.32);
+}
+
+.screen {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6) inset;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .led {
+    box-shadow: none;
+  }
+}

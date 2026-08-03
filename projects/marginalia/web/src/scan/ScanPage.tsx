@@ -1,8 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useReducedMotion } from "motion/react";
 import type { HighlightImportance, HighlightKind, ScanData, ScanHighlight } from "@marginalia/shared";
-import { playAirlock } from "../app/airlockBus.js";
 import { updateHighlightImportance, updateHighlightTags } from "../highlights/highlightMeta.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
@@ -27,10 +26,6 @@ async function fetchScanCrtIntensity(): Promise<number> {
   }
 }
 
-interface ScanLocationState {
-  viaAirlock?: boolean;
-}
-
 function relativeLastRead(iso: string | null): string {
   if (!iso) return "never opened";
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
@@ -52,6 +47,14 @@ async function fetchScanData(resourceId: string): Promise<ScanData | null> {
   }
 }
 
+interface ScanPageProps {
+  resourceId: string;
+  /** M20.5 "the Scan becomes a popup" (decisions.md 2026-07-30): closes the
+   * overlay, revealing whatever room was behind it — wired to Escape below
+   * and to ScanOverlay's own × button, exactly like SettingsModal's onClose. */
+  onClose: () => void;
+}
+
 /**
  * The Scan (M9, DESIGN.md Room 3): the book laid flat as data. Loads
  * without touching epub.js — every position is server-computed
@@ -59,17 +62,9 @@ async function fetchScanData(resourceId: string): Promise<ScanData | null> {
  * uses, so the strip renders instantly even for a book that's never been
  * opened this session.
  */
-export function ScanPage() {
-  const { id } = useParams<{ id: string }>();
-  const location = useLocation();
+export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
   const navigate = useNavigate();
   const reducedMotion = Boolean(useReducedMotion());
-  // Captured once, lazily, at mount rather than read live from `location` —
-  // see ReaderPage.tsx for why a live read is unsafe once anything in this
-  // component gates its first real render behind an async fetch.
-  const [initialLocationState] = useState<ScanLocationState | null>(
-    () => location.state as ScanLocationState | null,
-  );
 
   const [data, setData] = useState<ScanData | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -140,36 +135,23 @@ export function ScanPage() {
     });
   }, [id]);
 
-  // Arrived via an airlock (Desk's "Open scan" or the reader's "Scan"
-  // button) — play the "in" half once, matching ReaderPage's mirror of this.
-  useEffect(() => {
-    if (!initialLocationState?.viaAirlock) return;
-    void playAirlock("in", reducedMotion ? 0 : 360);
-    navigate(location.pathname, { replace: true, state: null });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // M19.6 "`r` opens the reader" (decisions.md 2026-07-30 later): "the book
-  // currently in focus" has an unambiguous answer on the Scan — whichever
-  // book this instrument is over — so this reuses handleBackToBook verbatim
-  // (same airlock, same target) rather than a second navigation path. Moved
-  // into the M19.7 shared registry (useShortcuts) — this was the last of the
-  // four ad-hoc window keydown listeners it replaces.
+  // M20.5 "Scan and Digest stop being rooms" (decisions.md 2026-07-30): Escape
+  // now closes the instrument (back to whatever room was behind it) rather
+  // than forcing a jump into the reader — the same meaning it has everywhere
+  // else an overlay is open (SettingsModal). `r` keeps its own, distinct
+  // meaning: "open the reader for this book," unconditionally, matching
+  // DigestPage's identical binding.
   useShortcuts([
-    { key: SHORTCUT_KEYS.escape, handler: () => void handleBackToBook() },
-    { key: SHORTCUT_KEYS.reader, handler: () => void handleBackToBook() },
+    { key: SHORTCUT_KEYS.escape, handler: onClose },
+    { key: SHORTCUT_KEYS.reader, handler: () => handleOpenReader() },
   ]);
 
-  async function handleBackToBook() {
-    if (!id) return;
-    await playAirlock("out", reducedMotion ? 0 : 360);
-    navigate(`/read/${id}`, { state: { viaAirlock: true } });
+  function handleOpenReader() {
+    navigate(`/read/${id}`);
   }
 
-  async function handleOpenHighlight(highlight: ScanHighlight) {
-    if (!id) return;
-    await playAirlock("out", reducedMotion ? 0 : 360);
-    navigate(`/read/${id}`, { state: { jumpToHighlightId: highlight.id, viaAirlock: true } });
+  function handleOpenHighlight(highlight: ScanHighlight) {
+    navigate(`/read/${id}`, { state: { jumpToHighlightId: highlight.id } });
   }
 
   /**
@@ -180,7 +162,6 @@ export function ScanPage() {
    * `chapterStartAnchor`), so this needs no new anchoring machinery.
    */
   async function handleOpenChapter(spineIndex: number) {
-    if (!id) return;
     try {
       const res = await fetch(`/api/resources/${id}/chapter-anchor`, {
         method: "POST",
@@ -189,8 +170,7 @@ export function ScanPage() {
       });
       if (!res.ok) return;
       const highlight = (await res.json()) as { id: string };
-      await playAirlock("out", reducedMotion ? 0 : 360);
-      navigate(`/read/${id}`, { state: { jumpToHighlightId: highlight.id, viaAirlock: true } });
+      navigate(`/read/${id}`, { state: { jumpToHighlightId: highlight.id } });
     } catch {
       // best-effort — a failed anchor just means the click does nothing
     }
@@ -251,14 +231,12 @@ export function ScanPage() {
     return set;
   }, [data, filterKind, filterTag, filterTheme, searchText, filtersActive]);
 
-  if (!id) return null;
-
   if (notFound) {
     return (
       <div className={`${styles.page} register-glass`}>
         <p>That book isn't in the library.</p>
-        <button type="button" className={styles.backButton} onClick={() => navigate("/")}>
-          Back to the desk
+        <button type="button" className={styles.backButton} onClick={onClose}>
+          Close
         </button>
       </div>
     );
@@ -295,7 +273,7 @@ export function ScanPage() {
           <Link to={`/digest/${id}`} className={styles.backButton}>
             Read digest
           </Link>
-          <button type="button" className={styles.backButton} onClick={handleBackToBook}>
+          <button type="button" className={styles.backButton} onClick={handleOpenReader}>
             ← Book
           </button>
         </div>

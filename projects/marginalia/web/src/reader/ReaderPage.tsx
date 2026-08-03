@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type { ReaderPaneWidth, Resource, Settings, SpreadMode } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
-import { playAirlock } from "../app/airlockBus.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { formatPublishSummary, runPublish } from "../library/publish.js";
 import { Button, buttonClassName } from "../controls/Button.js";
 import { BrainIcon, MagnifierIcon } from "../controls/icons.js";
+import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
+import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
+import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { ReaderView } from "./ReaderView.js";
 import styles from "./ReaderPage.module.css";
 
@@ -17,7 +19,6 @@ interface ReaderLocationState {
   /** M19.5: a posed question's text, arriving from the digest page — seeds
    * the jumped-to thread's draft, pre-filled. */
   jumpToQuestion?: string;
-  viaAirlock?: boolean;
 }
 
 export function ReaderPage() {
@@ -59,6 +60,7 @@ export function ReaderPage() {
   const [initialLocationState] = useState<ReaderLocationState | null>(
     () => location.state as ReaderLocationState | null,
   );
+  const scanButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -87,24 +89,33 @@ export function ReaderPage() {
       });
   }, [id]);
 
-  // Arrived via the scan's airlock (a heat band click) — play the "in" half
-  // (scanlines fading back out to reveal the book) once, then clear the flag
-  // so a plain reload of this URL doesn't replay it.
-  useEffect(() => {
-    if (!initialLocationState?.viaAirlock) return;
-    void playAirlock("in", reducedMotion ? 0 : 360);
-    navigate(location.pathname, { replace: true, state: null });
-    // Runs once per mount by design — re-checking on every location.state
-    // change would replay the "in" animation on unrelated in-page
-    // navigations.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function handleOpenScan() {
+  function openScanFrom(el: Element) {
     if (!id) return;
-    await playAirlock("out", reducedMotion ? 0 : 360);
-    navigate(`/scan/${id}`, { state: { viaAirlock: true } });
+    // M20.5 "the Scan becomes a popup": flies in from the control that
+    // opened it — the same background-location pattern Settings already
+    // uses, not the old Book<->Scan airlock (decisions.md 2026-07-30:
+    // there's no longer a room to travel to).
+    setPendingOverlayOrigin(captureOverlayOrigin(el));
+    navigate(`/scan/${id}`, { state: { background: location } });
   }
+
+  function handleOpenScan(event: MouseEvent<HTMLElement>) {
+    openScanFrom(event.currentTarget);
+  }
+
+  // M20.5 "`q` opens the scan for the book in focus": unambiguous here — the
+  // book this reader has open — through the M19.7 shared registry. Focuses
+  // the Scan button first (there's no click target for a keyboard trigger),
+  // matching NavCluster's identical "s" -> settings pattern.
+  useShortcuts([
+    {
+      key: SHORTCUT_KEYS.scan,
+      handler: () => {
+        scanButtonRef.current?.focus();
+        if (scanButtonRef.current) openScanFrom(scanButtonRef.current);
+      },
+    },
+  ]);
 
   if (!id) return null;
 
@@ -157,6 +168,7 @@ export function ReaderPage() {
           Digest
         </Link>
         <Button
+          ref={scanButtonRef}
           variant="outline"
           size="sm"
           icon={<MagnifierIcon size={15} />}

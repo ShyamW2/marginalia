@@ -75,7 +75,7 @@
   border-radius: 999px;
   padding: 0.2rem 0.6rem;
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.65rem;
+  font-size: 0.75rem;
   letter-spacing: 0.04em;
   cursor: pointer;
 }
@@ -119,7 +119,7 @@
   bottom: 4px;
   transform: translateX(-50%);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.6rem;
+  font-size: 0.7rem;
   color: var(--color-text-muted);
   white-space: nowrap;
 }
@@ -228,14 +228,14 @@
 }
 
 .readoutQuote {
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   line-height: 1.4;
   color: var(--color-text);
   margin-bottom: 0.35rem;
 }
 
 .readoutLine {
-  font-size: 0.68rem;
+  font-size: 0.78rem;
   line-height: 1.4;
   color: var(--color-text-muted);
   margin-bottom: 0.5rem;

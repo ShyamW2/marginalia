@@ -1,8 +1,8 @@
-import { useRef, useState, type KeyboardEvent, type WheelEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { motion, useMotionValue, type PanInfo } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
-import { playAirlock } from "../app/airlockBus.js";
+import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { Button, buttonClassName } from "../controls/Button.js";
@@ -53,6 +53,7 @@ export function BookObject({
   publishing,
 }: BookObjectProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const x = useMotionValue(position.x);
   const y = useMotionValue(position.y);
   const [zOrder, setZOrder] = useState(position.zOrder);
@@ -68,11 +69,15 @@ export function BookObject({
     navigate(`/read/${resource.id}`);
   }
 
-  async function openScan() {
+  function openScan(event: MouseEvent<HTMLElement>) {
     if (openedRef.current) return;
     openedRef.current = true;
-    await playAirlock("out", reducedMotion ? 0 : 360);
-    navigate(`/scan/${resource.id}`, { state: { viaAirlock: true } });
+    // M20.5 "the Scan becomes a popup": flies in from the button that opened
+    // it (the same `background`-location pattern Settings already uses),
+    // not the old Book<->Scan airlock — there's no longer a room to travel
+    // to (decisions.md 2026-07-30).
+    setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
+    navigate(`/scan/${resource.id}`, { state: { background: location } });
   }
 
   function handleDragStart() {
@@ -199,7 +204,7 @@ export function BookObject({
               className={styles.infoAction}
               onClick={(e) => {
                 e.stopPropagation();
-                void openScan();
+                openScan(e);
               }}
             >
               Open scan

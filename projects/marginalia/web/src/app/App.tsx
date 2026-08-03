@@ -1,7 +1,6 @@
 import { lazy, Suspense } from "react";
 import { AnimatePresence } from "motion/react";
-import { Route, Routes, useLocation, useNavigate, type Location } from "react-router-dom";
-import { AirlockOverlay } from "./AirlockOverlay.js";
+import { Route, Routes, matchPath, useLocation, useNavigate, type Location } from "react-router-dom";
 import { NavCluster } from "./NavCluster.js";
 import type { TabId } from "../settings/SettingsPage.js";
 import styles from "./App.module.css";
@@ -15,8 +14,8 @@ const DeskPage = lazy(() =>
 const ReaderPage = lazy(() =>
   import("../reader/ReaderPage.js").then((m) => ({ default: m.ReaderPage })),
 );
-const ScanPage = lazy(() =>
-  import("../scan/ScanPage.js").then((m) => ({ default: m.ScanPage })),
+const ScanOverlay = lazy(() =>
+  import("../scan/ScanOverlay.js").then((m) => ({ default: m.ScanOverlay })),
 );
 const DigestPage = lazy(() =>
   import("../digest/DigestPage.js").then((m) => ({ default: m.DigestPage })),
@@ -26,11 +25,32 @@ const SettingsModal = lazy(() =>
 );
 
 interface NavigationState {
-  /** Set when navigating to /settings from within another room (M11: settings
-   * is a modal, not a route) — the room to keep mounted and visible behind
-   * the overlay. Absent on a direct/deep link to /settings, which falls back
-   * to rendering the Desk underneath, per TASKS.md. */
+  /** Set when navigating to an overlay path (/settings, /scan/:id) from
+   * within another room or instrument (M11: settings is a modal, not a
+   * route; M20.5 extends the same pattern to the Scan) — the location to
+   * keep mounted and visible behind the overlay. Absent on a direct/deep
+   * link, which falls back to rendering the Desk underneath, per TASKS.md. */
   background?: Location;
+}
+
+function isOverlayPath(pathname: string): boolean {
+  return pathname === "/settings" || pathname.startsWith("/scan/");
+}
+
+/** The chrome cluster's gear icon stays mounted above every overlay, so
+ * Settings can open from inside the Scan (Settings-over-Scan-over-room).
+ * Walks past however many overlay locations are chained through
+ * `background` to find the real room underneath, so <Routes> always
+ * renders that room rather than losing it the moment a second overlay
+ * opens on top of the first. */
+function roomLocation(location: Location): Location {
+  let current = location;
+  while (isOverlayPath(current.pathname)) {
+    const background = (current.state as NavigationState | null)?.background;
+    if (!background) return current;
+    current = background;
+  }
+  return current;
 }
 
 /** M19.7 "settings opens where you already are": which divider the floating
@@ -52,11 +72,26 @@ export function App() {
   // route): when settings is opened from within another room, that room's
   // location travels along as nav state so <Routes> below keeps rendering
   // it — the URL genuinely becomes /settings (a real, bookmarkable,
-  // back-button-able entry) while the room underneath never unmounts.
+  // back-button-able entry) while the room underneath never unmounts. M20.5
+  // reuses it verbatim for the Scan (decisions.md 2026-07-30 "the exact
+  // pattern Settings already uses").
   const background = (location.state as NavigationState | null)?.background;
   const settingsOpen = location.pathname === "/settings";
+  // The Scan overlay is open either directly, or one level further back
+  // behind an open Settings — both render the same ScanOverlay underneath.
+  const scanPathname = location.pathname.startsWith("/scan/")
+    ? location.pathname
+    : background?.pathname.startsWith("/scan/")
+      ? background.pathname
+      : null;
+  const scanId = scanPathname ? matchPath("/scan/:id", scanPathname)?.params.id ?? null : null;
 
   function closeSettings() {
+    if (background) navigate(-1);
+    else navigate("/");
+  }
+
+  function closeScan() {
     if (background) navigate(-1);
     else navigate("/");
   }
@@ -66,18 +101,25 @@ export function App() {
       <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
       <main className={styles.main}>
         <Suspense fallback={<div className={styles.routeFallback} />}>
-          <Routes location={background ?? location}>
+          <Routes location={roomLocation(location)}>
             <Route path="/" element={<DeskPage />} />
             <Route path="/read/:id" element={<ReaderPage />} />
-            <Route path="/scan/:id" element={<ScanPage />} />
             <Route path="/digest/:id" element={<DigestPage />} />
-            {/* Deep link / hard refresh straight at /settings has no
+            {/* Deep link / hard refresh straight at an overlay path has no
                 background room to fall back on — the Desk stands in, per
                 TASKS.md ("/settings ... renders the desk with the modal
                 open"). */}
             <Route path="/settings" element={<DeskPage />} />
+            <Route path="/scan/:id" element={<DeskPage />} />
           </Routes>
         </Suspense>
+        <AnimatePresence>
+          {scanId && (
+            <Suspense key="scan-overlay-suspense" fallback={null}>
+              <ScanOverlay key="scan-overlay" resourceId={scanId} onClose={closeScan} />
+            </Suspense>
+          )}
+        </AnimatePresence>
         <AnimatePresence>
           {settingsOpen && (
             <Suspense fallback={null}>
@@ -86,7 +128,6 @@ export function App() {
           )}
         </AnimatePresence>
       </main>
-      <AirlockOverlay />
     </div>
   );
 }

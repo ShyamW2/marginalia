@@ -12,7 +12,7 @@
   border-radius: 8px;
   background: var(--color-bg-raised);
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 0.92rem;
 }
 
 .header {
@@ -33,7 +33,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--color-accent);
-  font-size: 0.85rem;
+  font-size: 0.95rem;
 }
 
 .closeButton {
@@ -82,7 +82,7 @@
   bottom: 3px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.62rem;
+  font-size: 0.72rem;
   color: var(--color-bg);
   opacity: 0.75;
   white-space: nowrap;
@@ -109,21 +109,21 @@
 
 .coverageLabel {
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   margin-bottom: 0.6rem;
 }
 
 .synopsis {
   color: var(--color-text);
   font-family: system-ui, sans-serif;
-  font-size: 0.85rem;
+  font-size: 0.95rem;
   line-height: 1.5;
   margin: 0 0 0.75rem;
 }
 
 .pausedNotice {
   color: var(--color-danger);
-  font-size: 0.78rem;
+  font-size: 0.88rem;
   margin-bottom: 0.6rem;
 }
 
@@ -136,7 +136,7 @@
   border-radius: 5px;
   padding: 0.3rem 0.7rem;
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: 0.85rem;
   cursor: pointer;
 }
 
@@ -158,7 +158,7 @@
   flex-direction: column;
   gap: 0.25rem;
   color: var(--color-text-muted);
-  font-size: 0.72rem;
+  font-size: 0.82rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
@@ -170,6 +170,6 @@
   border-radius: 5px;
   padding: 0.3rem 0.4rem;
   font-family: system-ui, sans-serif;
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   max-width: 16rem;
 }

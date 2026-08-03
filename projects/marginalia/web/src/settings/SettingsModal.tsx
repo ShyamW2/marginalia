@@ -1,15 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { LayoutGroup, motion, useReducedMotion } from "motion/react";
 import { SettingsPage } from "./SettingsPage.js";
 import { IconButton } from "../controls/IconButton.js";
 import { FlyPanel } from "../controls/FlyPanel.js";
 import { readPendingOverlayOrigin, type OverlayOrigin } from "../controls/overlayOrigin.js";
-import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
-import { useShortcuts } from "../shortcuts/useShortcuts.js";
+import { useDialogA11y } from "../controls/useDialogA11y.js";
 import styles from "./SettingsModal.module.css";
-
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -26,67 +22,13 @@ interface SettingsModalProps {
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const reducedMotion = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
-  const triggerRef = useRef<Element | null>(null);
   // Read once, on mount — M19.7 "overlay motion: fly from the caller". Every
   // settings entry point stashes its trigger's rect the instant it's
   // clicked (setPendingOverlayOrigin); a direct/deep link leaves this null,
   // which FlyPanel renders as a plain crossfade.
   const [origin] = useState<OverlayOrigin | null>(() => readPendingOverlayOrigin());
 
-  useEffect(() => {
-    triggerRef.current = document.activeElement;
-    // Move focus into the dialog itself first — a specific field grabbing
-    // focus (e.g. the first text input) would be more polished, but the
-    // panel is the boring, always-correct target regardless of which
-    // provider's fields happen to be showing.
-    panelRef.current?.focus();
-
-    return () => {
-      // Escape "returns focus to the control that opened it" (acceptance) —
-      // works the same way for a click, since click always leaves the
-      // trigger focused right before this effect captured it.
-      if (triggerRef.current instanceof HTMLElement) {
-        triggerRef.current.focus();
-      }
-    };
-  }, []);
-
-  // Escape goes through the shared registry (useShortcuts below) —
-  // `allowWhileTyping` since a field inside the binder can be focused when
-  // the reader wants out. Tab's focus trap stays its own listener: it needs
-  // to query the panel's live focusable set on every press, which isn't a
-  // fixed-key binding the registry models.
-  useShortcuts([{ key: SHORTCUT_KEYS.escape, handler: onClose, allowWhileTyping: true }]);
-
-  useEffect(() => {
-    function handleKeydown(event: KeyboardEvent) {
-      if (event.key !== "Tab") return;
-
-      const panel = panelRef.current;
-      if (!panel) return;
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-      if (focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
-
-      if (event.shiftKey && active === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      } else if (!panel.contains(active)) {
-        // Focus escaped the panel entirely (e.g. programmatic blur) — pull
-        // it back in rather than letting Tab continue into the page behind.
-        event.preventDefault();
-        first.focus();
-      }
-    }
-    window.addEventListener("keydown", handleKeydown);
-    return () => window.removeEventListener("keydown", handleKeydown);
-  }, []);
+  useDialogA11y(panelRef, onClose);
 
   return (
     <motion.div
