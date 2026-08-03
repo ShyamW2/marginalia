@@ -62,10 +62,17 @@ export function BookObject({
   const [crownProgress, setCrownProgress] = useState(0);
   const dragDistance = useRef(0);
   const openedRef = useRef(false);
+  const coverRef = useRef<HTMLDivElement>(null);
 
   function open() {
     if (openedRef.current) return;
     openedRef.current = true;
+    // M20.7 "the opening": the same click-time-rect handoff Scan/Digest use
+    // (openScan/openDigest below) — the cover's own rect, not the whole
+    // draggable book, is what BookOpening.tsx flies from.
+    if (coverRef.current) {
+      setPendingOverlayOrigin(captureOverlayOrigin(coverRef.current));
+    }
     navigate(`/read/${resource.id}`);
   }
 
@@ -190,6 +197,7 @@ export function BookObject({
         transition={{ type: "spring", stiffness: 420, damping: 30 }}
       >
         <motion.div
+          ref={coverRef}
           className={`${styles.coverWrap} ${isDragging ? styles.lifted : ""}`}
           layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
         >

@@ -8,11 +8,17 @@ import { coverLayoutId } from "../library/coverLayoutId.js";
 import { formatPublishSummary, runPublish } from "../library/publish.js";
 import { Button } from "../controls/Button.js";
 import { BrainIcon, MagnifierIcon } from "../controls/icons.js";
-import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
+import {
+  captureOverlayOrigin,
+  readPendingOverlayOrigin,
+  setPendingOverlayOrigin,
+  type OverlayOrigin,
+} from "../controls/overlayOrigin.js";
 import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
 import { useOpenSettings } from "../settings/useOpenSettings.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
+import { BookOpening } from "./BookOpening.js";
 import { ReaderView } from "./ReaderView.js";
 import styles from "./ReaderPage.module.css";
 
@@ -64,6 +70,15 @@ export function ReaderPage() {
     () => location.state as ReaderLocationState | null,
   );
   const scanButtonRef = useRef<HTMLButtonElement>(null);
+  // M20.7 "the opening": read once at mount, the same click-time-rect
+  // handoff the Scan/Digest overlays use (App.tsx's "background location"
+  // pattern doesn't apply here — the reader is a full room, not a popup —
+  // but the origin-capture half of that machinery is identical). Absent on
+  // a direct/deep link or the list view's plain `<Link>`, both of which
+  // keep today's plain load with no overlay.
+  const [origin] = useState<OverlayOrigin | null>(() => readPendingOverlayOrigin());
+  const [openingDone, setOpeningDone] = useState(false);
+  const [readerReady, setReaderReady] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -140,10 +155,6 @@ export function ReaderPage() {
     );
   }
 
-  if (!resource || !spreadMode || readerPaneWidth === null) {
-    return <div className={styles.page} />;
-  }
-
   async function handlePublish() {
     if (!resource) return;
     setPublishing(true);
@@ -156,71 +167,95 @@ export function ReaderPage() {
     );
   }
 
+  // M20.7: the ready room (title bar + ReaderView) waits on the fetch below
+  // exactly as before; the opening overlay does not — it renders from `id`
+  // alone (BookCover fetches its cover by id directly) so it can mask this
+  // earlier loading beat too, not just what used to be an empty `.page`
+  // div. Kept at a stable position among this component's siblings across
+  // that loading -> loaded transition so it never remounts (and restarts
+  // its flight) partway through.
   return (
     <div className={`${styles.readerPage} register-paper register-quiet`} ref={appBoundsRef}>
-      <div className={styles.titleBar}>
-        {/* Doorway transition (DESIGN.md): shares a layoutId with the
-            library card's cover — the same element the user just clicked,
-            landing here (M7's proof of the shared-element motion system). */}
-        <motion.div
-          className={styles.coverThumb}
-          layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
-        >
-          <BookCover resourceId={resource.id} title={resource.title} />
-        </motion.div>
-        <span className={styles.title}>{resource.title}</span>
-        {resource.author && (
-          <span className={styles.author}>{resource.author}</span>
-        )}
-        <Button
-          variant="outline"
-          size="sm"
-          icon={<BrainIcon size={15} />}
-          className={styles.digestLink}
-          onClick={handleOpenDigest}
-        >
-          Digest
-        </Button>
-        {/* M20.5 "the reader's digest button gets the treatment": a second
-            mount of the same ProviderPickerPopover the query role already
-            uses (ReaderView's top row), scoped to "digest" — reachable by
-            keyboard/click, not just hover, and reflects immediately in
-            Settings and on the Scan since all three read the same
-            provider-role store. */}
-        <ProviderPickerPopover
-          role="digest"
-          label="Digest provider"
-          onNavigateToSettings={openSettingsToLLM}
-          className={styles.digestProviderPopover}
+      {resource && spreadMode && readerPaneWidth !== null && (
+        <>
+          <div className={styles.titleBar}>
+            {/* Doorway transition (DESIGN.md): shares a layoutId with the
+                library card's cover — the same element the user just
+                clicked, landing here (M7's proof of the shared-element
+                motion system). */}
+            <motion.div
+              className={styles.coverThumb}
+              layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
+            >
+              <BookCover resourceId={resource.id} title={resource.title} />
+            </motion.div>
+            <span className={styles.title}>{resource.title}</span>
+            {resource.author && (
+              <span className={styles.author}>{resource.author}</span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<BrainIcon size={15} />}
+              className={styles.digestLink}
+              onClick={handleOpenDigest}
+            >
+              Digest
+            </Button>
+            {/* M20.5 "the reader's digest button gets the treatment": a
+                second mount of the same ProviderPickerPopover the query
+                role already uses (ReaderView's top row), scoped to
+                "digest" — reachable by keyboard/click, not just hover, and
+                reflects immediately in Settings and on the Scan since all
+                three read the same provider-role store. */}
+            <ProviderPickerPopover
+              role="digest"
+              label="Digest provider"
+              onNavigateToSettings={openSettingsToLLM}
+              className={styles.digestProviderPopover}
+            />
+            <Button
+              ref={scanButtonRef}
+              variant="outline"
+              size="sm"
+              icon={<MagnifierIcon size={15} />}
+              className={styles.scanButton}
+              onClick={handleOpenScan}
+            >
+              Scan
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className={styles.publishButton}
+              disabled={publishing}
+              onClick={handlePublish}
+            >
+              {publishing ? "Publishing…" : "Publish"}
+            </Button>
+          </div>
+          <ReaderView
+            resourceId={resource.id}
+            initialHighlightId={initialLocationState?.jumpToHighlightId}
+            initialQuestion={initialLocationState?.jumpToQuestion}
+            spreadMode={spreadMode}
+            initialReaderPaneWidth={readerPaneWidth}
+            appBoundsRef={appBoundsRef}
+            onReady={() => setReaderReady(true)}
+          />
+        </>
+      )}
+      {origin && !openingDone && (
+        <BookOpening
+          origin={origin}
+          resourceId={id}
+          title={resource?.title ?? ""}
+          reducedMotion={reducedMotion}
+          contentReady={readerReady}
+          onDone={() => setOpeningDone(true)}
+          onCancel={() => navigate("/")}
         />
-        <Button
-          ref={scanButtonRef}
-          variant="outline"
-          size="sm"
-          icon={<MagnifierIcon size={15} />}
-          className={styles.scanButton}
-          onClick={handleOpenScan}
-        >
-          Scan
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          className={styles.publishButton}
-          disabled={publishing}
-          onClick={handlePublish}
-        >
-          {publishing ? "Publishing…" : "Publish"}
-        </Button>
-      </div>
-      <ReaderView
-        resourceId={resource.id}
-        initialHighlightId={initialLocationState?.jumpToHighlightId}
-        initialQuestion={initialLocationState?.jumpToQuestion}
-        spreadMode={spreadMode}
-        initialReaderPaneWidth={readerPaneWidth}
-        appBoundsRef={appBoundsRef}
-      />
+      )}
       {toast && (
         <Toast
           message={toast.message}

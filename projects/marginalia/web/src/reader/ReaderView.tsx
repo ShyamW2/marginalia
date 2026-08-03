@@ -357,6 +357,11 @@ interface ReaderViewProps {
    * same "resolved before mount" story as spreadMode above — 0 means unset
    * (use the spread-mode default). */
   initialReaderPaneWidth: ReaderPaneWidth;
+  /** M20.7 "the opening": fires once `rendition.display()` has resolved on
+   * the saved (or jumped-to) position — the exact moment there's no longer
+   * a risk of the book-opening overlay revealing a flash of the wrong page
+   * or the plain "Loading book…" text underneath it. */
+  onReady?: () => void;
 }
 
 export function ReaderView({
@@ -366,6 +371,7 @@ export function ReaderView({
   spreadMode,
   initialReaderPaneWidth,
   appBoundsRef,
+  onReady,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1532,6 +1538,7 @@ export function ReaderView({
         await rendition.display(displayTarget ?? position?.location ?? undefined);
         if (cancelled) return;
         setStatus("ready");
+        onReady?.();
         if (jumpTarget) {
           setExpandedThread({
             highlightId: jumpTarget.id,
@@ -1567,7 +1574,12 @@ export function ReaderView({
         }
       })
       .catch(() => {
-        if (!cancelled) setStatus("error");
+        if (cancelled) return;
+        setStatus("error");
+        // A failed load is still "done" as far as the opening overlay is
+        // concerned — it must reveal the error state rather than hold its
+        // masking animation forever waiting for a `ready` that never comes.
+        onReady?.();
       });
 
     return () => {

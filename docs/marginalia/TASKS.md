@@ -416,7 +416,7 @@ provider pickers.
       coordinates still place books where the operator left them (they are stored in px —
       confirm nothing re-lays-out on first load); the grain is a texture, not an image
       request that blocks first paint._
-- [ ] **The opening.** DESIGN.md's signature transition, finally built: the clicked book's
+- [x] **The opening.** DESIGN.md's signature transition, finally built: the clicked book's
       title/cover moves to centre, the book opens, and the view zooms into the reader with
       the page filling the pane.
       ⚠️ Under reduced motion this is a plain crossfade, and it must be **interruptible** —

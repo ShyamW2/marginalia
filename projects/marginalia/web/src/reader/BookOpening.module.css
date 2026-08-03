@@ -1,0 +1,52 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  /* Same overlay tier as ScanOverlay/DigestOverlay (900) — NavCluster's
+     floating cluster claims 950 specifically so it stays reachable *above*
+     every overlay (NOTES.md M20.6: it was previously found genuinely
+     unreachable while a same-tier overlay outranked it). This backdrop is
+     pointer-events: none regardless, so reachability was never at risk
+     here, but matching the established tier keeps the nav cluster visually
+     un-dimmed through the opening rather than washed under this overlay's
+     tint for its own sake. */
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 6, 8, 0.35);
+  /* Decorative lid only — never gates the reader underneath (CLAUDE.md "no
+     blocking spinners over the text"), and lets Escape's keydown listener
+     be the only thing this overlay actually intercepts. */
+  pointer-events: none;
+}
+
+.stage {
+  position: relative;
+  width: min(240px, 42vw);
+  aspect-ratio: 2 / 3;
+}
+
+.cover {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  border-radius: 6px;
+  box-shadow: 0 24px 48px rgba(10, 6, 2, 0.35);
+}
+
+.flutter {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.page {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0% 50%;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 10px 20px rgba(10, 6, 2, 0.2);
+}
