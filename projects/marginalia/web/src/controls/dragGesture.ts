@@ -1,4 +1,4 @@
-import { clampValue, dragToValue, type SliderScale } from "./sliderMath.js";
+import { clampValue, dragToValue, type DetentCapture, type SliderScale } from "./sliderMath.js";
 
 const DRAG_THRESHOLD_PX = 4;
 
@@ -9,7 +9,11 @@ export interface DragGestureConfig {
   max: number;
   scale?: SliderScale;
   detents?: readonly number[];
-  captureFraction?: number;
+  /** Default `{ fraction: 0.03 }` — see sliderMath's `DetentCapture`. */
+  capture?: DetentCapture;
+  /** Rounds every preview and commit to the nearest multiple — a control
+   * may not emit a value its own consumer will reject. */
+  step?: number;
   /** Pixels of drag per value-unit (linear) or per octave (log2). */
   dragPxPerUnit: number;
   /** Which movement axis drives the value — "x" for a horizontal track
@@ -52,7 +56,8 @@ export function startDragGesture(event: PointerDownLike, config: DragGestureConf
     max,
     scale = "linear",
     detents = [],
-    captureFraction = 0.03,
+    capture = { fraction: 0.03 },
+    step,
     dragPxPerUnit,
     axis,
     onPreview,
@@ -95,7 +100,7 @@ export function startDragGesture(event: PointerDownLike, config: DragGestureConf
     } else {
       dx = pos(moveEvent) - startPos;
     }
-    liveValue = dragToValue(startValue, dx, dragPxPerUnit, scale, min, max, detents, captureFraction);
+    liveValue = dragToValue(startValue, dx, dragPxPerUnit, scale, min, max, detents, capture, step);
     onPreview(clampValue(liveValue, min, max));
   }
 

@@ -24,23 +24,32 @@ export function clampValue(value: number, min: number, max: number): number {
 }
 
 /**
+ * A detent's capture window, either a *fraction of the detent's own value*
+ * (right for a log2 range — a fixed window would be unusably wide at the
+ * bottom and unusably narrow at the top) or a fixed *absolute* amount
+ * (right for a linear range with an ask like "±25 either side of every
+ * 500" — one fraction cannot be both 5% at 500 and 0.25% at 10,000).
+ */
+export type DetentCapture = { fraction: number } | { absolute: number };
+
+function captureWindow(detent: number, capture: DetentCapture): number {
+  return "absolute" in capture ? capture.absolute : detent * capture.fraction;
+}
+
+/**
  * The nearest detent within its own capture window, or null if none is
- * close enough. The window is a *fraction of the detent's own value*
- * (`captureFraction`), not a fixed absolute distance — a fixed window would
- * be unusably wide at the bottom of a log2 range and unusably narrow at the
- * top (TASKS.md: "a capture window that is a percentage of the current
- * value, so it works at 2048 and at 131072").
+ * close enough.
  */
 export function nearestDetent(
   value: number,
   detents: readonly number[],
-  captureFraction: number,
+  capture: DetentCapture,
 ): number | null {
   let best: number | null = null;
   let bestDistance = Infinity;
   for (const detent of detents) {
     const distance = Math.abs(value - detent);
-    if (distance > detent * captureFraction) continue;
+    if (distance > captureWindow(detent, capture)) continue;
     if (distance < bestDistance) {
       best = detent;
       bestDistance = distance;
@@ -50,8 +59,19 @@ export function nearestDetent(
 }
 
 /**
- * Drag distance (in the position space above) to a value, clamped and
- * advisory-snapped to the nearest in-window detent.
+ * Rounds to the nearest multiple of `step`, or returns `value` unchanged
+ * when no step is given. A slider may not commit a value its own consumer
+ * will reject (e.g. a `.int()`-validated field fed a drag's raw float).
+ */
+export function quantize(value: number, step: number | undefined): number {
+  if (!step) return value;
+  return Math.round(value / step) * step;
+}
+
+/**
+ * Drag distance (in the position space above) to a value: clamped,
+ * quantised to `step`, then advisory-snapped to the nearest in-window
+ * detent.
  */
 export function dragToValue(
   startValue: number,
@@ -61,9 +81,11 @@ export function dragToValue(
   min: number,
   max: number,
   detents: readonly number[],
-  captureFraction: number,
+  capture: DetentCapture,
+  step?: number,
 ): number {
   const startPosition = valueToPosition(startValue, scale);
   const rawValue = clampValue(positionToValue(startPosition + deltaPx / pxPerUnit, scale), min, max);
-  return nearestDetent(rawValue, detents, captureFraction) ?? rawValue;
+  const quantized = quantize(rawValue, step);
+  return nearestDetent(quantized, detents, capture) ?? quantized;
 }

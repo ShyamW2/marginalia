@@ -62,7 +62,6 @@ import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, current
 import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
 import { PageNumberDisplay } from "./PageNumberDisplay.js";
-import { ScrubDial, DIAL_PX_PER_PERCENT } from "./ScrubDial.js";
 import { NavCluster } from "../app/NavCluster.js";
 import {
   buildBookPageMap,
@@ -130,6 +129,13 @@ const DWELL_DURATION_MS = 2000;
 const REFUSAL_FLASH_MS = 260;
 
 const SCRUB_KEYBOARD_STEP_PERCENT = 1;
+
+/** Pixels of ruler movement per whole percentage point — passed once into
+ * `Slider` and read from there by both its own drag math and its dial's
+ * ruler, so the two can no longer drift apart (M22.5: they were previously
+ * a hand-shared constant, and that's exactly how the duplication that hid
+ * the response-length slider's bug happened elsewhere). */
+const PROGRESS_DRAG_PX_PER_PERCENT = 6;
 
 // epub.js's View typings don't expose the `contents` it renders, though it
 // exists at runtime (see managers/views/iframe.js) — narrow just that.
@@ -1947,6 +1953,11 @@ export function ReaderView({
   // of them governs the current position — the single source both the
   // ChapterNav cluster and the `[`/`]` shortcuts step through.
   const chapterStopsList = deriveChapterStops(toc);
+  // The progress dial's own chapter ticks (M22.5) — Slider's generic
+  // `dialTicks`, fed the reader's book-specific chapter boundaries.
+  const chapterDialTicks = chapterStopsList
+    .filter((stop): stop is TocEntry & { percent: number } => stop.percent !== null)
+    .map((stop) => ({ value: stop.percent, label: stop.label }));
   const activeChapter = deriveCurrentChapter(chapterStopsList, currentSpineIndex);
   const activeChapterStopIndex = activeChapter
     ? chapterStopsList.findIndex((s) => s.href === activeChapter.href)
@@ -2201,13 +2212,18 @@ export function ReaderView({
             value={progressPercent ?? 0}
             min={0}
             max={100}
-            dragPxPerUnit={DIAL_PX_PER_PERCENT}
+            dragPxPerUnit={PROGRESS_DRAG_PX_PER_PERCENT}
             keyboardStep={SCRUB_KEYBOARD_STEP_PERCENT}
             commitOnArrow={false}
             clickToType={false}
             disabled={progressPercent === null}
             ariaLabel="Reading progress"
-            formatValue={(v) => `${Math.round(v)}%`}
+            formatValue={(v) => {
+              const chapter = chapterAtPercent(chapterStopsList, v);
+              return `${Math.round(v)}%${chapter ? ` · ${chapter.label}` : ""}`;
+            }}
+            dialTicks={chapterDialTicks}
+            dialHint="Release to jump · Esc to cancel"
             aria-haspopup="true"
             aria-expanded={progressPopoverOpen}
             onPreviewChange={setScrubPreviewPercent}
@@ -2217,23 +2233,14 @@ export function ReaderView({
             {progressPercent !== null ? `${progressPercent}%` : ""}
           </Slider>
           <AnimatePresence>
-            {scrubPreviewPercent !== null ? (
-              <ScrubDial
-                key="scrub-dial"
-                previewPercent={scrubPreviewPercent}
-                chapterLabel={chapterAtPercent(chapterStopsList, scrubPreviewPercent)?.label ?? null}
-                chapterStops={chapterStopsList}
+            {scrubPreviewPercent === null && progressPopoverOpen && (
+              <ProgressPopover
+                key="progress-popover"
+                percent={progressPercent}
+                page={displayedPage?.page ?? null}
+                totalPages={displayedPage?.total ?? null}
+                chapterLabel={activeChapter?.label ?? null}
               />
-            ) : (
-              progressPopoverOpen && (
-                <ProgressPopover
-                  key="progress-popover"
-                  percent={progressPercent}
-                  page={displayedPage?.page ?? null}
-                  totalPages={displayedPage?.total ?? null}
-                  chapterLabel={activeChapter?.label ?? null}
-                />
-              )
             )}
           </AnimatePresence>
         </div>

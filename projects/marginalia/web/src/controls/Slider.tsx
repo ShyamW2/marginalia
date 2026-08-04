@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { AnimatePresence } from "motion/react";
 import { startDragGesture } from "./dragGesture.js";
-import { clampValue, type SliderScale } from "./sliderMath.js";
+import { clampValue, quantize, type DetentCapture, type SliderScale } from "./sliderMath.js";
+import { SliderDial, type SliderDialTick } from "./SliderDial.js";
 import styles from "./Slider.module.css";
 
 export interface SliderProps {
@@ -12,33 +14,53 @@ export interface SliderProps {
    * the top of the range. Default "linear". */
   scale?: SliderScale;
   /** Advisory snap points — see sliderMath's nearestDetent. Also what
-   * Shift+Arrow steps between, when non-empty. */
+   * Shift+Arrow steps between, when non-empty. Doubles as the drag dial's
+   * ruler marks. */
   detents?: readonly number[];
-  /** Detent capture window, as a fraction of the detent's own value.
-   * Default 0.03 (the 2–3% TASKS.md names for log2 token sliders). */
-  captureFraction?: number;
-  /** Pixels of drag per value-unit (linear) or per octave (log2). */
+  /** Detent capture window: a fraction of the detent's own value (right for
+   * a log2 range) or a fixed absolute amount (right for a linear range —
+   * "±25 either side of every 500" can't be expressed as one fraction).
+   * Default `{ fraction: 0.03 }`. */
+  capture?: DetentCapture;
+  /** Rounds every preview and commit — drag, arrow-step and typed alike —
+   * to the nearest multiple of `step`. A control may not emit a value its
+   * own consumer will reject (e.g. a `.int()`-validated field fed a drag's
+   * raw float). */
+  step?: number;
+  /** Pixels of drag per value-unit (linear) or per octave (log2). Also the
+   * drag dial's ruler rate — the ticks track the pointer 1:1 only if this
+   * matches the dial's own `dragPxPerUnit`, which it always does since the
+   * dial reads it straight from this prop. */
   dragPxPerUnit: number;
   /** Plain-Arrow keyboard step. Linear: added/subtracted directly.
    * Log2: value is multiplied/divided by this (must be > 1). */
   keyboardStep: number;
   onCommit: (value: number) => void;
   /** Live value while dragging or arrow-stepping-before-commit; `null` once
-   * the gesture ends. Lets a caller (e.g. ReaderView's ScrubDial) render its
-   * own floating preview instead of this component's default one. */
+   * the gesture ends. For a caller that wants to know a drag is live (e.g.
+   * to suppress a popover) without rendering anything itself — the dial
+   * itself is now always this component's own. */
   onPreviewChange?: (value: number | null) => void;
-  /** aria-valuetext, e.g. "16,384 tokens" — not the raw number. */
+  /** aria-valuetext, e.g. "16,384 tokens" — not the raw number. Also what
+   * the drag dial's own readout shows. */
   formatValue: (value: number) => string;
   /** Parses a typed value back out of click-to-type; default `Number`.
    * Returns null to reject (out-of-range or unparseable) rather than
    * silently clamping to something the user didn't type. */
   parseValue?: (text: string) => number | null;
   ariaLabel: string;
-  /** "track": a real track/fill/thumb (the settings token sliders).
-   * "trigger": a plain button showing `children`, no track — for a control
-   * that already has its own rich visual (the reader's `%` dial keeps
-   * ScrubDial). Default "track". */
-  variant?: "track" | "trigger";
+  /** Labelled marks the drag dial should show beside its own `detents`
+   * ruler (the reader's chapter stops) — in the same value units as
+   * `value`. */
+  dialTicks?: readonly SliderDialTick[];
+  /** Drag dial hint line. Default "Release to set · Esc to cancel". */
+  dialHint?: string;
+  /** "readout": the formatted value flanked by dim chevrons, no track, fill
+   * or thumb — the default, and the only resting form (DESIGN.md "the
+   * control system", amended 2026-08-04). "trigger": a plain button showing
+   * `children` — for a control with its own rich visual, i.e. none left;
+   * kept for a caller that wants a bare click target with custom content. */
+  variant?: "readout" | "trigger";
   /** Click-to-type is the default second input mode (DESIGN.md). Set false
    * to keep a click meaning something else entirely (the reader's existing
    * click-opens-a-popover behavior) — `onPlainClick` fires instead. */
@@ -52,7 +74,7 @@ export interface SliderProps {
   commitOnArrow?: boolean;
   disabled?: boolean;
   className?: string;
-  /** Trigger-mode label content. Ignored in track mode, which renders
+  /** Trigger-mode label content. Ignored in readout mode, which renders
    * `formatValue(value)` itself. */
   children?: React.ReactNode;
   /** For a trigger that also opens a popover on plain click (the reader's
@@ -70,6 +92,10 @@ export interface SliderProps {
  * directions, Escape-cancels via a capture-phase listener so it wins over a
  * room's own Escape handler, and `blur()` on release so the control stops
  * eating arrow keys afterward.
+ *
+ * At rest it is a readout, not a track (M22.5, decisions.md 2026-08-04):
+ * while dragging, `SliderDial` — generalised from that same `%` scrub —
+ * appears centred beneath the control.
  */
 export function Slider({
   value,
@@ -77,7 +103,8 @@ export function Slider({
   max,
   scale = "linear",
   detents = [],
-  captureFraction = 0.03,
+  capture = { fraction: 0.03 },
+  step,
   dragPxPerUnit,
   keyboardStep,
   onCommit,
@@ -88,7 +115,9 @@ export function Slider({
     return Number.isFinite(n) ? n : null;
   },
   ariaLabel,
-  variant = "track",
+  dialTicks,
+  dialHint,
+  variant = "readout",
   clickToType = true,
   onPlainClick,
   commitOnArrow = true,
@@ -124,7 +153,7 @@ export function Slider({
   function commitDraft() {
     const parsed = parseValue(draft);
     if (parsed !== null && parsed >= min && parsed <= max) {
-      onCommit(parsed);
+      onCommit(quantize(parsed, step));
     }
     setEditing(false);
   }
@@ -137,7 +166,8 @@ export function Slider({
       max,
       scale,
       detents,
-      captureFraction,
+      capture,
+      step,
       dragPxPerUnit,
       axis: "x",
       onPreview: setPreviewAndClampToCommit,
@@ -167,10 +197,10 @@ export function Slider({
             ? (sorted.find((d) => d > base) ?? sorted[sorted.length - 1])
             : ([...sorted].reverse().find((d) => d < base) ?? sorted[0]);
       } else {
-        const step = event.shiftKey ? keyboardStep ** 2 : keyboardStep;
-        next = scale === "log2" ? base * (direction > 0 ? step : 1 / step) : base + direction * step;
+        const arrowStep = event.shiftKey ? keyboardStep ** 2 : keyboardStep;
+        next = scale === "log2" ? base * (direction > 0 ? arrowStep : 1 / arrowStep) : base + direction * arrowStep;
       }
-      const clamped = clampValue(next, min, max);
+      const clamped = quantize(clampValue(next, min, max), step);
       if (commitOnArrow) onCommit(clamped);
       else setPreview(clamped);
     } else if (event.key === "Enter") {
@@ -189,10 +219,6 @@ export function Slider({
   }
 
   const displayValue = preview ?? value;
-  const trackFraction =
-    scale === "log2"
-      ? (Math.log2(displayValue) - Math.log2(min)) / (Math.log2(max) - Math.log2(min))
-      : (displayValue - min) / (max - min);
 
   if (editing) {
     return (
@@ -233,29 +259,55 @@ export function Slider({
     onKeyDown: handleKeyDown,
   };
 
+  const dial = preview !== null && (
+    <SliderDial
+      key="slider-dial"
+      value={preview}
+      min={min}
+      max={max}
+      scale={scale}
+      dragPxPerUnit={dragPxPerUnit}
+      formatValue={formatValue}
+      ariaLabel={ariaLabel}
+      ticks={detents}
+      extraTicks={dialTicks}
+      hint={dialHint}
+    />
+  );
+
   if (variant === "trigger") {
     return (
-      <button
-        type="button"
-        disabled={disabled}
-        className={[styles.trigger, className].filter(Boolean).join(" ")}
-        {...commonProps}
-      >
-        {children}
-      </button>
+      <div className={styles.wrapper}>
+        <button
+          type="button"
+          disabled={disabled}
+          className={[styles.trigger, className].filter(Boolean).join(" ")}
+          {...commonProps}
+        >
+          {children}
+        </button>
+        <AnimatePresence>{dial}</AnimatePresence>
+      </div>
     );
   }
 
   return (
-    <div className={[styles.track, disabled ? styles.disabled : "", className].filter(Boolean).join(" ")} {...commonProps}>
-      <div className={styles.trackFill} style={{ width: `${clampValue(trackFraction, 0, 1) * 100}%` }} />
-      <div className={styles.thumb} style={{ left: `${clampValue(trackFraction, 0, 1) * 100}%` }} />
-      {preview !== null && (
-        <div className={styles.floatingReadout} style={{ left: `${clampValue(trackFraction, 0, 1) * 100}%` }}>
-          {formatValue(preview)}
-        </div>
-      )}
-      <span className={styles.trackValue}>{formatValue(displayValue)}</span>
+    <div className={styles.wrapper}>
+      <button
+        type="button"
+        disabled={disabled}
+        className={[styles.readout, disabled ? styles.disabled : "", className].filter(Boolean).join(" ")}
+        {...commonProps}
+      >
+        <span className={styles.chevron} aria-hidden="true">
+          ‹
+        </span>
+        <span className={styles.readoutValue}>{formatValue(displayValue)}</span>
+        <span className={styles.chevron} aria-hidden="true">
+          ›
+        </span>
+      </button>
+      <AnimatePresence>{dial}</AnimatePresence>
     </div>
   );
 }

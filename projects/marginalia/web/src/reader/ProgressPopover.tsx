@@ -11,8 +11,8 @@ interface ProgressPopoverProps {
 /**
  * M12 (decisions.md 2026-07-20: "the % readout is an instrument, not a
  * label"). A plain click on the progress readout reveals this — the same
- * position expressed three ways, instrument-panel style. Drag instead opens
- * ScrubDial.
+ * position expressed three ways, instrument-panel style. Drag instead shows
+ * the slider's own drag dial (`SliderDial`, M22.5).
  */
 export function ProgressPopover({ percent, page, totalPages, chapterLabel }: ProgressPopoverProps) {
   const reducedMotion = useReducedMotion();

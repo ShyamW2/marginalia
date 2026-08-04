@@ -232,6 +232,21 @@ rendered as instrument glass takes the glass one. Nothing gets a bespoke button 
   log2 detents on powers of two with a capture window that is a *percentage* of the
   current value, or it is unusable at the top of the range. Keyboard is a first-class
   path with a real `role="slider"` and an `aria-valuetext` carrying the formatted value.
+  **Amended 2026-08-04 (M22.5).** Three refinements, all generalising the reader's `%`
+  dial — which was the best slider in the app and was the only one not built on this
+  component's own rendering:
+  - **At rest a slider is a readout, not a track**: the formatted value flanked by dim
+    chevrons, no fill and no thumb. The track rendering is retired.
+  - **While dragging, a slider shows one shared dial** — a ruler scrolling under a fixed
+    needle with the live value above it, centred beneath the control. Its ticks are laid
+    out in the slider's own **position space** (so a log2 slider's ruler is uniform per
+    octave) and its pixels-per-unit comes from the slider's `dragPxPerUnit`, or the ticks
+    do not track the pointer.
+  - **A capture window is a percentage *or* an absolute amount**, chosen per slider. A
+    percentage is right across a log2 range and wrong across a linear one where the ask is
+    "±25 either side of every 500".
+  - A slider **quantises what it commits**. A control may not emit a value its own
+    consumer will reject, and a rejected save may not fail silently.
 - **Overlays fly from the control that opened them**, using the invoking element's rect —
   never a hardcoded corner, because the same overlay has more than one caller. Resizing an
   open overlay morphs its box. **~240ms with a spring**, not the 500ms first proposed:
@@ -246,6 +261,19 @@ rendered as instrument glass takes the glass one. Nothing gets a bespoke button 
   floating icon cluster in the top-right of every room. In the reader it joins M14's
   proximity-revealed set rather than sitting over the page, and it never intrudes on the
   left/right turn-zone strips.
+  **Amended 2026-08-04 (M22.5): the cluster owns the corner, and a room joins it.** The
+  cluster renders one fixed **chrome row**; a room contributes its own global actions into
+  a leading slot in that row, left of the permanent icons (the Desk's view toggle and
+  Import book are the first). *Nothing else may be fixed to the top-right corner* — the
+  rule exists because every room that laid out its own actions there ended up underneath
+  the cluster.
+  **A room's actions about the thing you are looking at go bottom-right instead**, as a
+  floating cluster: icon-only at rest, labels revealed by proximity *and* by keyboard
+  focus, never hover-only. The reader's Digest/Scan/Publish are the first. ⚠️ In the reader
+  that corner is also the page fold's grab anchor, so the boundary is absolute rather than
+  tuned: **a floating cluster never overlaps the reading card** (`.stage`) — beside it, or
+  below it, but never on it. In fullscreen, where the page takes that space, it joins the
+  proximity-revealed floating set instead and is not on the page at rest.
 
 ## Motion language (shared physics of the building)
 
@@ -262,6 +290,14 @@ Signature transitions ("doorways"):
   lands on your saved position as the real reader fades in beneath it
   (heatbureau-style scroll-to-your-page feel). Falls back to a plain crossfade under
   reduced motion.
+  **Amended 2026-08-04 (M22.5): the cover actually opens.** M20.7 shipped the zoom plus a
+  flutter played *over* a closed cover, which is not this. The sequence is: fly to centre,
+  then the front cover **rotates anticlockwise about its spine (left) edge** toward the
+  viewer, revealing a two-page spread beneath it, which scales onto the reading pane and
+  crossfades to the live reader. Unchanged and load-bearing: the pages are **blank paper
+  planes, never real epub pages**; the reveal waits on the reader having landed, so it can
+  never flash an unstyled page; Escape cancels at any phase; reduced motion is a crossfade
+  with no 3D at all.
 - **Book → Scan: the airlock.** The lights change: page desaturates and dims, chrome
   recedes, scanlines fade in, and the highlights you were just reading *become* the
   glowing bands — the same marks, re-materialized as data. Reverse on the way back

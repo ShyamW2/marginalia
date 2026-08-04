@@ -1,8 +1,22 @@
-.dial {
+/* Static centring lives on this plain node, never on `.dial` itself:
+   `motion` writes its own `transform` on the element it animates (the
+   opacity/y entrance below), and a CSS `transform: translateX(-50%)` on
+   that same element loses that fight silently — the same trap DESIGN.md
+   names for FlyPanel ("the 3D must live on a child of FlyPanel, never on
+   the flown node itself"). A `left: 0; right: 0; margin: auto` centring
+   trick doesn't rescue it either: a fit-content box wider than its
+   container forces negative auto-margins, and CSS2.1's over-constrained
+   rule collapses those onto one side instead of splitting them, which
+   re-introduces the same off-centre bug from the opposite direction. */
+.anchor {
   position: absolute;
-  right: 0;
+  left: 50%;
   top: calc(100% + 0.4rem);
+  transform: translateX(-50%);
   z-index: 20;
+}
+
+.dial {
   display: flex;
   flex-direction: column;
   align-items: center;

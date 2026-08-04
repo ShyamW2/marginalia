@@ -272,9 +272,9 @@ place so step 3's record reads whole.
 
 ### M20.5 — The instrument case (the Scan and the Digest become instruments)
 
-**Next up — M20 is complete and signed off (2026-08-03); its remaining refinements are
-parked as M25.** This is an implementation milestone: everything below is decided, and a
-Sonnet session executes it without re-deciding any of it.
+*(Complete. The "next up" marker moved on 2026-08-04 to **M22.5**, below M22.)* This is an
+implementation milestone: everything below is decided, and a Sonnet session executes it
+without re-deciding any of it.
 
 **Read the 2026-07-30 decisions entry's "Scan and Digest stop being rooms" section
 first.** This changes DESIGN.md's thesis from three rooms to **two rooms and four
@@ -612,6 +612,396 @@ to in one voice, with the page following along, before any casting exists.
       Casting popup from inside that listening session, and overriding a voice — the
       exact seam connecting this task's two pieces to M21/M22 pass 1–2's already-verified
       core.
+
+### M22.5 — The revision pass (controls, chrome, and telling the truth)
+
+**Next up.** Operator feedback from 2026-08-04, after living with M20.5–M22. Numbered
+`.5` rather than inserted as a new M23 because renumbering M23–M25 would invalidate
+cross-references in five documents (OPUS.md's rule); it runs **before** M23.
+
+**Read the 2026-08-04 decisions entry ("The revision pass") first** — it holds the
+reasoning for every ruling below, including the three places the operator's diagnosis and
+the actual cause differ. Two DESIGN.md sections were amended in the same pass (the control
+system gains the slider's resting form and the chrome-row rule; the motion language's
+"the opening" bullet is rewritten) — those are the standing specs, this is the work.
+
+This is an implementation milestone: everything below is decided. Nothing here needs a new
+control — settled decision 12 still holds, and every item that looks like a new component
+is a change to an existing one in `web/src/controls/`.
+
+#### A — One slider, one look
+
+The operator's `%` dial is the aesthetic everything else should have had. It already
+exists (`Slider` `variant="trigger"` + `ScrubDial`); the work is promoting it to the
+default and retiring the track.
+
+- [x] **The slider's resting form is a readout, not a track.** `controls/Slider.tsx`'s
+      default variant becomes `"readout"` — the formatted value flanked by dim chevrons
+      (`‹ 8,192 tokens ›`) that brighten on hover — replacing the fill/thumb track in
+      `Slider.module.css`. `variant="trigger"` is unchanged (the reader's `%`). The prop's
+      `"track"` member is **renamed**, not kept as an alias: a name that describes a
+      rendering nobody renders is the "comment that outlived the code" failure this project
+      keeps hitting.
+      ⚠️ The chevrons are `aria-hidden` decoration, not buttons. Arrow keys already step
+      the value and `role="slider"` already announces it; making the chevrons clickable
+      adds a third input mode and two more accessible names to keep honest.
+      _Acceptance: no call site passes `variant` for the readout form (it is the default);
+      `SettingsPage.test.tsx` and the existing `role="slider"`/`aria-valuetext` assertions
+      still pass unchanged; at rest the control shows its value as text with no track,
+      fill or thumb anywhere in the DOM._
+- [x] **The drag dial is shared, and it sits centred under the control.** `ScrubDial` moves
+      to `controls/SliderDial.tsx` and becomes what *every* `Slider` shows while dragging —
+      the ruler scrolling under a fixed needle, the live value above it, positioned centred
+      beneath the control that spawned it. `Slider`'s own `.floatingReadout` (which sits
+      *above* the thumb) is deleted; the reader keeps its chapter ticks by passing them in.
+      ⚠️ **The ticks must be laid out in the slider's own position space**, via
+      `sliderMath.ts`'s `valueToPosition` — a linear ruler under the log2 context-window
+      slider is wrong at both ends of the range.
+      ⚠️ **Derive the ruler's pixels-per-unit from the slider's `dragPxPerUnit`, not from a
+      constant.** `DIAL_PX_PER_PERCENT = 6` is today shared by hand between `ScrubDial`'s
+      rendering and `ReaderView`'s drag math precisely so the ticks track the pointer 1:1;
+      a generalised dial that keeps its own constant will drift against every slider whose
+      rate differs.
+      _Acceptance: dragging any slider hides the cursor (pointer lock, unchanged) and shows
+      one dial centred under it; the tick under the needle at drag start is the value the
+      control read before the drag; on the log2 context slider, one octave of drag moves the
+      ruler by the same distance at 2,048 and at 131,072._
+- [x] **Detent capture gets an absolute mode — the response-length ask cannot be expressed
+      without it.** `nearestDetent` (`controls/sliderMath.ts`) captures within
+      `detent * captureFraction`, a *fraction of the detent's own value*. The operator asked
+      for snapping every 500 tokens with a **±25** window; as a fraction that is 5% at
+      detent 500 and 0.25% at 10,000 — one number cannot be both. Add a second capture mode
+      (`{ absolute: number }` alongside `{ fraction: number }`), keep the fractional one as
+      the default, and pin both with tests.
+      _Acceptance: a unit test asserts a ±25 window holds at detent 500 **and** at detent
+      10,000; the existing log2 capture tests are unchanged._
+- [x] **The response-length slider is broken, and the cause is not the slider.** *(Operator
+      bug: "cannot change the LLM response length using the slider, only by retyping into
+      the box".)* `ProviderPicker.tsx`'s `handleMaxResponseTokensCommit` PUTs the raw
+      committed value; a drag commits a **float**; `MaxResponseTokensSchema`
+      (`shared/src/schemas.ts:525`) is `.int()`; the server 400s;
+      `setRoleMaxResponseTokens` returns `null` and the failure is swallowed. Typing "5000"
+      produces an integer, which is why the box works. The context slider one field up does
+      `Math.round(value)` at its own call site (`ProviderPicker.tsx:258`), which is why *it*
+      works — and is the duplication that hid this.
+      Fix it in the control, not at the call site: `Slider` takes a `step` and quantises
+      **both** the preview and the commit. Then **make the silent failure loud** — a save
+      that returns null must surface, not vanish.
+      _Acceptance: dragging the response-length slider changes the persisted value (confirm
+      by re-opening Settings, not by watching the readout); the readout never shows a
+      fraction mid-drag; with the endpoint stubbed to 400, the UI says the save failed._
+- [x] **Every remaining slider moves onto the control, with the settings in the table below.**
+      The two native `<input type="range">` survivors are `tabs/ScanTab.tsx:15` and
+      `tabs/ReadingTab.tsx:97`; the two `Slider` call sites are in `ProviderPicker.tsx`.
+      ⚠️ CRT intensity 0 must still mean *exactly* zero displacement (M18's bound, restated
+      in M20.5) — with `step: 0.01` the slider can land on 0.00 exactly; do not introduce a
+      floor.
+      _Acceptance: all four drag, type, arrow-step and snap as specified; text size still
+      lands only on values the reader already supported; the scan at intensity 0 renders
+      identical pixels to before this change._
+
+| Slider | Where | Scale | Range | Detents | Capture | Step |
+|---|---|---|---|---|---|---|
+| CRT intensity | `ScanTab` | linear | 0–1 | none | — | 0.01 |
+| Text size | `ReadingTab` | linear | 0.8–1.6 | every 0.05 (today's `step` — the predetermined sizes) | absolute 0.012 | 0.01 |
+| Context window | `ProviderPicker` | log2 | 1,024–200,000 | powers of two | **fraction 0.05** (up from 0.03) | 1 |
+| Response length | `ProviderPicker` | linear | 250–10,000 | every 500 | **absolute 25** | 1 |
+
+#### B — Where the buttons live
+
+- [ ] **Nothing else is fixed to the top-right corner.** *(Operator: "make sure the nav
+      buttons aren't sitting above the other buttons" — confirmed in the operator's desk
+      screenshot, where the cluster overlaps Desk/List and Import book.)* `NavCluster`
+      renders one fixed **chrome row**; a room contributes its own actions into a leading
+      slot in that row via a portal, left of the permanent icons. The Desk's `.headerRow`
+      actions (`DeskPage.tsx:106-130` — the Desk/List toggle and Import book) move there.
+      This is the rule, not just this fix: *a room's global actions join the chrome row;
+      nothing else may occupy that corner.*
+      _Acceptance: at 1280×800 and 1024×640, on the Desk, the reader, the Scan and the
+      Digest, the nav cluster's `getBoundingClientRect()` intersects no other interactive
+      element's rect — measured, not eyeballed. The Desk heading ("The Desk"/"Library")
+      stays where it is; only the actions move._
+- [ ] **The reader's book actions become a floating bottom-right cluster.** Digest, the
+      digest `ProviderPickerPopover`, Scan and Publish leave `ReaderPage.tsx`'s `.titleBar`
+      (lines 200–239) for a floating cluster in the bottom-right: icon-only at rest, each
+      label sliding out on proximity. Reuse `KeyCap.module.css`'s proximity-reveal mechanic
+      rather than writing a second one. Digest and Scan already have icons (`BrainIcon`,
+      `MagnifierIcon`); Publish needs one — see the icon task below.
+      ⚠️ **The landmine: the bottom-right corner of the *card* is the page fold's grab
+      anchor.** The M20 grab surface lives inside `.pageClip` (`inset: 0` within `.stage`)
+      and a corner grab there is what folds the bottom-right corner. So the rule is not an
+      inset in pixels, it is a boundary: **the cluster never overlaps `.stage`'s rect.**
+      That makes the conflict structurally impossible instead of tuned.
+      Where it actually sits, in order: in the empty room to the **right of the card** when
+      the window is wider than `--reader-max-width` (the common case — `.wrapper` centres a
+      max-width column, so that room already exists); when it isn't, **below the card**,
+      right-aligned on the footer's line, which is outside the stage too.
+      ⚠️ In fullscreen (`fullscreenMode`) the page grows into the freed space and "outside
+      the stage" stops being available — there the cluster joins M14's proximity-revealed
+      floating set (`.footerFloating`/`.marginRailFloating` are the pattern), so at rest it
+      is not on the page at all and the grab surface is unobstructed.
+      _Acceptance: at 1440px, 1100px and 900px window widths, and in fullscreen at rest,
+      the cluster's rect does not intersect `.stage`'s rect — measured; a fold started from
+      the card's bottom-right corner initiates at every one of those widths; labels are
+      revealed by proximity **and** reachable by keyboard focus (not hover-only); nothing
+      in the cluster overlaps the footer's page-turn chevrons at any pane width._
+- [ ] **The annotations rail scrolls, and it keeps to the top half.** `MarginRail.module.css`
+      caps the rail at 50% of the reading pane's height, top-aligned, with its own
+      `overflow-y: auto`. The fullscreen proximity reveal around it (`ReaderView.tsx:2507`)
+      is unchanged.
+      _Acceptance: a book with 40 highlights on one section scrolls the rail rather than
+      running past the pane; wheeling over the rail does not turn the page or scroll the
+      room behind it; the rail's dots still sit beside the text they belong to._
+- [ ] **The three theme buttons read as one control.** *(Operator's own first instinct, and
+      the choice they confirmed over a single hover-revealing button — the cluster is
+      already gaining hover-revealed labels in the reader, and a third disclosure mechanic
+      in the same pass is one too many.)* `NavCluster`'s `.themeGroup` becomes a segmented
+      control: one recessed pill, hairline dividers, a sliding active thumb. It keeps
+      `role="group"` and three real buttons.
+      _Acceptance: the group reads as one object at a glance and as three buttons to a
+      screen reader; keyboard focus still lands on each option individually._
+- [ ] **Two icons that lie, and one that doesn't exist yet.** `GearIcon`
+      (`controls/icons.tsx:64`) is a circle with eight radial ticks — the same drawing as
+      `SunIcon` (`icons.tsx:102`) at a different radius, two slots away in the same cluster.
+      **`GearIcon` is the one that's wrong**: `SunIcon` is the Paper (light) theme option in
+      `NavCluster`'s `THEME_OPTIONS` and a sun is exactly what it should be. Draw a real cog
+      — toothed outer profile, hollow centre — and the collision resolves itself.
+      `TrayIcon` (`icons.tsx:81`) is an inbox with a down-arrow, i.e. a downloads icon for
+      something that is not downloads; replace it with an activity ring whose filled arc is
+      the running jobs' aggregate progress, so the icon carries the state the badge carries
+      alone today.
+      New `PublishIcon` for the reader cluster, per the operator: **a cardboard carton with
+      an arrow entering it from the left** — packing what you've learned into the vault.
+      ⚠️ An arrow *into* a container is also the conventional archive/import glyph, and the
+      retired `TrayIcon` was exactly that shape. Give the carton visible flaps and a
+      three-quarter box, not a plain rectangle, so it reads as a parcel rather than as the
+      inbox we just removed.
+      _Acceptance: at 18px, no two icons in the nav cluster share a silhouette, and neither
+      the publish carton nor the tray ring resembles the retired tray icon; the tray icon's
+      ring visibly advances during a real multi-chapter digest._
+
+#### C — Settings opens and closes cleanly
+
+- [ ] **`s` is a toggle.** *(Operator: pressing `s` twice does something strange; exiting
+      then takes two goes.)* `NavCluster`'s `s` handler closes settings when
+      `location.pathname === "/settings"` instead of navigating again.
+      ⚠️ It reaches `NavCluster` at all because `SettingsModal` claims only Escape
+      (`useDialogA11y` registers exactly one binding), so `s` falls straight through the
+      scope stack to the cluster underneath. That is by design; the toggle is the fix, not a
+      new scope.
+      _Acceptance: `s`, `s` over the reader leaves exactly one new history entry and one
+      Escape returns to the reader; `s` typed into the notepad or a thread composer still
+      types an "s"._
+- [ ] **`/settings` may never be its own background — and the Scan must survive one anyway.**
+      Root cause of "the background jumps to the library, even from reader/scan view":
+      `findOverlayPathname` (`App.tsx:47-51`) looks **one level** deep for an open
+      Scan/Digest, while `roomLocation` (`App.tsx:59-67`) walks the whole `background`
+      chain. Stack a second `/settings` on a `/settings`-over-`/scan/:id` and `scanPathname`
+      goes null — the Scan unmounts and the room beneath it (the Desk, in list mode: the
+      library) is what you see. The extra history entry is the "delay on exit". Fix both
+      ends: `openSettings` refuses to push `/settings` over `/settings` (the toggle above
+      covers the keyboard path; the click path needs it too), and `findOverlayPathname`
+      walks the chain the way `roomLocation` does.
+      _Acceptance: from `/scan/:id` opened over the Desk, press `s` four times — the Scan
+      never unmounts, exactly one entry is added, and one Escape lands back on the Scan with
+      the Desk still behind it._
+
+#### D — The tasks tray tells the truth
+
+- [ ] **The tray is live for jobs it did not start.** *(Operator: pressing play renders audio
+      but nothing appears in the tray until a reload.)* `JobsContext` learns about jobs from
+      exactly two places today — `registerStarted` (five call sites) and a one-shot
+      `fetchJobs()` at mount — and `usePlayer.ts:140,343` subscribes to the audio-render
+      job's own SSE **directly**, never registering it. Add a registry-wide event stream
+      (`GET /api/jobs/events`, emitting job-created and job-updated for every job) and
+      subscribe to it once in `JobsProvider`.
+      ⚠️ **Watching is not owning** (`jobs/registry.ts`'s stated invariant): the registry-wide
+      stream must not create, extend or cancel anything, and a client dropping off it must
+      not stop work.
+      ⚠️ **Do not auto-toast from the stream.** Toasts stay opt-in through `registerStarted`,
+      or chapter-ahead audio rendering pops a popup over the reader every few minutes —
+      which is the blocking-spinner-over-the-text failure in a new costume.
+      _Acceptance: with the tray open, pressing play on an unrendered chapter shows the
+      render job within ~1s and no reload; a job started in one browser tab appears in a
+      second tab's tray; no toast appears for a job this client did not start._
+- [ ] **A job says what it is working on.** `Job` gains a `detail` set at start and stable
+      for its lifetime, distinct from `progress.message` (live, changes per item): a range
+      digest carries its endpoints, an audio render and a cast scan carry their section.
+      Set it at the five `startJob` call sites (`routes/digest.ts:267,435,526`,
+      `routes/audio.ts:227,377`).
+      ⚠️ Section labels are **`S<n> · <title>`** and nothing else — M20.5 made that the only
+      number permitted in any UI, and "0 of 2" with no range is the exact confusion this
+      fixes. No surface prints `spineIndex`.
+      _Acceptance: a two-chapter digest reads "S4 · The Trial → S5 · …" from the moment it
+      starts, before any progress arrives; an audio render names the section it is
+      rendering, not the sentence alone._
+- [ ] **Hovering a task row explains the job.** Kind, book, range or section, started-at,
+      elapsed, and the current item — in the tray, on hover and on focus.
+      _Acceptance: reachable by keyboard, not hover-only; a running digest shows both range
+      endpoints; a finished job still shows what it was._
+- [ ] **`t` toggles the tray.** Registered through `shortcuts/keys.ts` + `useShortcuts` in
+      `TasksTray.tsx` (which owns the `open` state), with a `KeyCapAnchor` like the others.
+      _Acceptance: `t` opens and closes it from every room; it types a "t" in a text field._
+
+#### E — `d` for the Desk, `l` for the Library
+
+- [ ] **Both keys work from anywhere, including from on top of an instrument.** New entries
+      in `SHORTCUT_KEYS`; `d` lands on the Desk in desk view, `l` on the Desk in list view.
+      ⚠️ **They are the same route.** `/` is `DeskPage`, and the view mode is local state
+      seeded from `localStorage` (`DeskPage.tsx:14-19`) — so these keys must *set the mode*,
+      not merely navigate. Lift it into a small module with a subscribe/emit, following
+      `settings/settingsBus.ts`, which is the pattern this codebase already uses for exactly
+      this; do not write to `localStorage` from the keypress and hope `DeskPage` re-reads it.
+      ⚠️ **From inside the Scan or the Digest, the instrument must close first.** Those
+      overlays only claim Escape, so a bare `navigate("/")` leaves the popup mounted over
+      the room it no longer belongs to.
+      _Acceptance: `d` from the reader lands on the desk in desk view; `l` from the reader
+      lands in list view; `d` from an open Scan closes the Scan and lands on the desk;
+      neither fires while typing in the notepad, a thread composer or a settings field._
+
+#### F — The opening actually opens
+
+- [ ] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
+      with the flight to centre; the flutter is not what was asked for.)* `BookOpening.tsx`
+      keeps the fly (`FlyPanel`, 240ms) and replaces `PAGE_OFFSETS`'s four flat planes with a
+      real open: the front cover rotates anticlockwise about its **left (spine) edge**
+      toward the viewer, revealing a two-page spread beneath, which then scales and
+      translates onto the reading pane's rect and crossfades to the live reader.
+      ⚠️ **The 3D must live on a child of `FlyPanel`, never on the flown node itself.**
+      `motion` is already writing `transform` to that node for the layout flight; a
+      `preserve-3d` rotation on the same element fights it, and the symptom is a cover that
+      jumps rather than opens.
+      ⚠️ **Blank paper planes, not real pages.** DESIGN.md already rules the opening's pages
+      fake, and PAGE_CURL.md is the record of what real paper motion costs. The revealed
+      spread takes the reader's own paper colour and carries no text.
+      ⚠️ **Keep the `contentReady` gate** (`BookOpening.tsx:68-72`) — it is the only thing
+      standing between the reveal and a flash of "Loading book…". The open plays while the
+      reader loads underneath; the *reveal* still waits.
+      ⚠️ Reduced motion stays a plain crossfade with zero 3D transforms, and Escape still
+      cancels at any phase (`BookOpening.tsx:74-85`).
+      _Acceptance: the spine edge's x moves less than 2px through the whole rotation
+      (measured); the revealed spread's final rect matches the reader pane's within a few
+      px; the whole sequence from click to readable page stays inside DESIGN.md's ~400ms
+      input-blocking bound; Escape during fly, open and zoom each leave no overlay mounted
+      and the app in a coherent state._
+
+#### G — What is rendered, and getting rid of it
+
+- [ ] **The Digest shows which sections have audio.** A per-section "rendered" column for the
+      current cast hash, with sizes and a book total, behind a new
+      `GET /api/resources/:id/audio/sections`. `listCachedSpineIndices` (`audio/render.ts:123`)
+      and `getSectionManifest` (`render.ts:84`) already do the work.
+      ⚠️ **Cache truth is file existence, never a ledger row** — M21's rule, and the vault
+      compiler's 2026-07-19 bug is why.
+      _Acceptance: rendering a chapter flips its row to "Rendered · N MB" with no reload
+      (it rides the live tray stream from D); changing a voice invalidates the cast hash and
+      the rows go back to "Not rendered", matching what playback would actually do._
+- [ ] **Rendered audio can be deleted from the app.** Per section and per book:
+      `DELETE /api/resources/:id/audio/sections/:spineIndex`, with
+      `deleteResourceAudioCache` (`render.ts:129`) already covering the whole book.
+      ⚠️ **Deleting what is playing or rendering is a designed state**: cancel the render job
+      first, and the player degrades to "not rendered" rather than 404-ing mid-sentence.
+      ⚠️ **Scope ruling, so it is not relitigated:** rendered audio only. `data/audio` is 12MB
+      for one partly-rendered book against 40KB of digests — it is the only real space cost.
+      **`resource_text` is out of bounds**: it is the coordinate system every highlight
+      offset, audio segment and digest anchors into, and deleting it rots annotations
+      (settled decision 5, immutable-on-import). Digests are out of scope here too — small
+      on disk, expensive in tokens to rebuild.
+      _Acceptance: deleting a section frees the bytes on disk (verified with `du`, not from
+      the API's own response); playing that chapter afterwards re-renders rather than
+      erroring; deleting a section mid-render stops the render._
+
+#### H — Which model actually answered, and what it really cost
+
+**The premise needs correcting before any of this is built.** *(Operator: "I chose Qwen,
+and when I asked what LLM I was asking a question to, it said it was part of the Anthropic
+family.")* A model's self-report is **not evidence of anything**. Models are trained on each
+other's outputs and have no privileged access to their own identity; a Qwen served over an
+OpenAI-compatible endpoint will claim to be Claude, and no system prompt reliably fixes it.
+So the question "prove what LLM we are using" cannot be answered by asking the model. It has
+to be answered from the transport — which this project is already most of the way to, because
+the usage ledger records `provider` and `model` on every call (`llm/usage.ts`'s
+`UsageLedgerRow`, written by `recordUsage`). Two things are missing.
+
+- [ ] **Record what the endpoint says it served, not only what we asked for.**
+      `openaiCompat.ts:154,202` sends `this.config.model` and the ledger stores that same
+      configured string — so a misconfigured or silently-substituting endpoint is invisible.
+      OpenAI-compatible responses echo a `model` field; record that when present, fall back
+      to the configured string, and record which of the two it was.
+      _Acceptance: against a real local endpoint, the ledger row's model is the string the
+      endpoint returned; renaming the profile changes nothing; an endpoint that returns no
+      model still logs a row, marked as the configured value._
+- [ ] **Every answer carries its provenance.** A quiet byline under each assistant message in
+      `ThreadPanel.tsx`: profile name · provider · served model · endpoint host — derived
+      from that message's own ledger row, never from whatever the settings UI currently
+      holds.
+      ⚠️ `llm_usage` has `resource_id` but no message or thread id, so there is no way to
+      join a row to the answer it produced. That is a migration, and it is the actual size of
+      this task.
+      _Acceptance: the byline under a Qwen answer names Qwen and the local endpoint even
+      when the answer itself claims to be Claude; switching the query role mid-thread shows
+      different bylines on the two answers in the same thread._
+- [ ] **Say it where the confusion starts.** One line under the profile in Settings/LLM:
+      models routinely misreport their own identity, and the name shown comes from the
+      endpoint rather than from the model. Cheap, and it is the honest answer to the
+      question that was asked.
+      _Acceptance: present in the LLM divider; no equivalent claim is made anywhere that the
+      code cannot back._
+- [ ] **The Usage divider's dollar figure is backwards.** *(Operator: "the ledger showed a
+      cost under last 7 days — I thought a Claude subscription plus a local LLM meant no API
+      costs?" They are right, and the ledger is wrong in an interesting way.)* `costUsd` is
+      populated from exactly one place — `claudeAgent.ts:149,193`, taking the Agent SDK's
+      `message.total_cost_usd`, which is a **notional API-equivalent price** for usage a
+      subscription does not bill per token. Meanwhile `anthropic.ts` (the keyed API, where
+      money is genuinely spent) reports **no cost at all**, and `openaiCompat.ts:117`
+      documents that it never populates it. So the one number on that card is the one place
+      you aren't billed, and real spend reads as nothing.
+      Fix by making the row say what kind of number it is: cost gains a **basis** —
+      `billed` (keyed API), `notional` (subscription; what this would have cost on the API),
+      or `none` (local). The Usage divider totals **billed only**, and shows notional
+      separately and labelled, never added in.
+      ⚠️ Do not "fix" this by dropping the Agent SDK's number — it is genuinely useful ("what
+      is this subscription saving me"), it just isn't spend.
+      ⚠️ A keyed Anthropic profile reporting no cost is a **second, independent gap**: it has
+      real token counts and no price attached. Either price it from a table or leave it
+      explicitly unpriced — but do not let "no cost recorded" keep reading as "free".
+      _Acceptance: with a subscription profile and a local profile configured and no keyed
+      API profile in use, the "Last 7 days" billed total is $0.00, with the notional figure
+      shown beside it and labelled; a keyed-API call is either priced or visibly marked
+      unpriced, never silently zero._
+- [ ] **The ledger breaks down by provider and model, not just book and operation.**
+      *(Operator's ask, and the data is nearly all there already.)* `llm_usage` records
+      `provider`, `model`, `cache_read_tokens` and `duration_ms` per row — but
+      `getUsageBreakdownSince` groups only by `resource_id, operation, role`
+      (`llm/usage.ts:173`) and `UsageBreakdownRow` carries neither provider nor model, so
+      none of it reaches the UI. Widen the grouping and the row, and let the divider group by
+      provider/model with a sort.
+      Per group: **local** (openai-compatible) shows tokens and **tokens/sec** — derivable
+      today from `output_tokens / duration_ms`, no new column; **hosted** shows model, calls
+      and tokens, with cost broken into **input / cached-input / output** where the provider
+      reports it (`cache_read_tokens` is already stored and already dropped on the floor by
+      the breakdown).
+      ⚠️ **"Is this local?" cannot be answered from the row.** `provider` is one of three
+      ids, and `openai-compatible` covers both a local Ollama and a hosted OpenRouter — the
+      distinguishing fact is the base URL, which lives on the profile, and the ledger has no
+      profile id. Add `profile_id` to `llm_usage` **in the same migration as the message id**
+      the byline above needs; pre-M22.5 rows keep null and are grouped as "unknown profile"
+      rather than guessed at.
+      _Acceptance: the Usage divider groups a real week's rows by provider and model and
+      sorts by each; a local model's group shows a tokens/sec figure that matches a
+      hand-check of one row's `output_tokens / duration_ms`; a cached Anthropic call shows
+      its cache-read tokens separately from its fresh input tokens; rows written before this
+      migration still appear, marked unknown._
+
+#### Verify
+
+- [ ] **Drive it, don't read it.** Every slider dragged, typed, arrow-stepped and snapped in
+      the real app; `s`/`t`/`d`/`l`/`q` pressed from every room and from on top of every
+      instrument, and each one typed into a text field to prove the guard; a book opened from
+      the desk in both themes and under reduced motion; a chapter played from cold to watch
+      the render job appear in the tray unprompted, then deleted and played again. Both
+      themes, reduced motion, and at CRT intensity 0 and 1. Log what was driven and what was
+      only read, per OPUS.md.
 
 ### M23 — Web search
 

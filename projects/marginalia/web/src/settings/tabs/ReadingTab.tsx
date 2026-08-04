@@ -6,11 +6,23 @@ import type {
   SpreadMode,
 } from "@marginalia/shared";
 import { Button } from "../../controls/Button.js";
+import { Slider } from "../../controls/Slider.js";
 import styles from "../SettingsPage.module.css";
 
 interface ReadingTabProps {
   form: Settings;
   update: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+}
+
+// M22.5: "every 0.05" — today's step, i.e. the predetermined sizes the
+// reader already supports — generated so the top of the range can't
+// silently fall out of sync with the bottom, same reasoning as the two
+// token-slider detent lists in ProviderPicker.tsx.
+const TEXT_SIZE_MIN = 0.8;
+const TEXT_SIZE_MAX = 1.6;
+const TEXT_SIZE_DETENTS: number[] = [];
+for (let d = TEXT_SIZE_MIN; d <= TEXT_SIZE_MAX + 1e-9; d += 0.05) {
+  TEXT_SIZE_DETENTS.push(Math.round(d * 100) / 100);
 }
 
 export function ReadingTab({ form, update }: ReadingTabProps) {
@@ -89,17 +101,21 @@ export function ReadingTab({ form, update }: ReadingTabProps) {
         </div>
       </div>
       <div className={styles.field}>
-        <label className={styles.label} htmlFor="reader-font-scale">
-          Text size — {Math.round(form.readerFontScale * 100)}%
-        </label>
-        <input
-          id="reader-font-scale"
-          type="range"
-          min={0.8}
-          max={1.6}
-          step={0.05}
+        <span className={styles.label} id="reader-font-scale-label">
+          Text size
+        </span>
+        <Slider
+          ariaLabel="Text size"
           value={form.readerFontScale}
-          onChange={(e) => update("readerFontScale", Number.parseFloat(e.target.value))}
+          min={TEXT_SIZE_MIN}
+          max={TEXT_SIZE_MAX}
+          detents={TEXT_SIZE_DETENTS}
+          capture={{ absolute: 0.012 }}
+          step={0.01}
+          dragPxPerUnit={200}
+          keyboardStep={0.05}
+          formatValue={(v) => `${Math.round(v * 100)}%`}
+          onCommit={(value) => update("readerFontScale", value)}
         />
       </div>
       <div className={styles.field}>

@@ -37,6 +37,14 @@ for (let p = Math.log2(CONTEXT_TOKENS_MIN); 2 ** p <= CONTEXT_TOKENS_MAX; p++) {
   CONTEXT_TOKEN_DETENTS.push(2 ** p);
 }
 
+// M22.5: every 500 tokens, generated for the same reason as the context
+// detents above — the top of the range (10,000) is itself a multiple of
+// 500, but hand-listing invites the two falling out of sync anyway.
+const RESPONSE_TOKEN_DETENTS: number[] = [];
+for (let d = 500; d <= MAX_RESPONSE_TOKENS_MAX; d += 500) {
+  RESPONSE_TOKEN_DETENTS.push(d);
+}
+
 const ROLE_COPY: Record<ProviderRole, { label: string; hint: string }> = {
   query: {
     label: "Query",
@@ -252,10 +260,12 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
               max={CONTEXT_TOKENS_MAX}
               scale="log2"
               detents={CONTEXT_TOKEN_DETENTS}
+              capture={{ fraction: 0.05 }}
+              step={1}
               dragPxPerUnit={64}
               keyboardStep={2}
               formatValue={formatTokens}
-              onCommit={(value) => set("openaiContextTokens", Math.round(value))}
+              onCommit={(value) => set("openaiContextTokens", value)}
             />
           </div>
         </>
@@ -282,6 +292,7 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
   const [testState, setTestState] = useState<
     { status: "idle" } | { status: "testing" } | { status: "ok" } | { status: "error"; message: string }
   >({ status: "idle" });
+  const [maxTokensError, setMaxTokensError] = useState<string | null>(null);
   const draftForProfileId = useRef<string | "new" | null>(null);
 
   const copy = ROLE_COPY[role];
@@ -300,7 +311,12 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
   }
 
   async function handleMaxResponseTokensCommit(value: number) {
-    await setRoleMaxResponseTokens(role, value);
+    setMaxTokensError(null);
+    const result = await setRoleMaxResponseTokens(role, value);
+    if (result === null) {
+      setMaxTokensError("Couldn't save the response length — try again.");
+      return;
+    }
     emitProviderRolesSaved();
   }
 
@@ -433,11 +449,15 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
           value={assignment?.maxResponseTokens ?? 8192}
           min={MAX_RESPONSE_TOKENS_MIN}
           max={MAX_RESPONSE_TOKENS_MAX}
+          detents={RESPONSE_TOKEN_DETENTS}
+          capture={{ absolute: 25 }}
+          step={1}
           dragPxPerUnit={0.08}
           keyboardStep={250}
           formatValue={formatTokens}
           onCommit={handleMaxResponseTokensCommit}
         />
+        {maxTokensError && <p className={styles.statusError}>{maxTokensError}</p>}
         <p className={styles.hint}>
           Applies to whichever profile answers this role — a subscription profile has no
           hard ceiling to enforce (only a request made in the system prompt); a keyed or

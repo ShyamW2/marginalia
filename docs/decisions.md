@@ -3,7 +3,187 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
-## 2026-08-03 (sign-off, latest) — The curl is signed off, and the back of the sheet stops being a mirror
+## 2026-08-04 — The revision pass (M22.5)
+
+Operator feedback after living with M20.5–M22: a list of small things, grouped here into one
+milestone (**TASKS.md M22.5**, placed before M23 rather than renumbering anything). Most of it
+is straightforward. These are the parts where a ruling was needed, or where the reported cause
+and the actual cause differ.
+
+### Three bugs whose cause is not what it looks like
+
+- **"Cannot change the LLM response length using the slider, only by retyping into the box."**
+  The slider is fine. A drag commits a **float**; `MaxResponseTokensSchema` is `.int()`; the
+  server 400s; `setRoleMaxResponseTokens` returns `null` and nobody looks. Typing produces an
+  integer, which is why the box works. The context slider directly above it works only because
+  its call site happens to do `Math.round` — the same obligation, discharged in one of two
+  places, which is how one of them got missed. **Quantisation moves into `Slider` as a `step`,
+  and the swallowed save failure becomes visible.** A control that can emit a value its own
+  consumer rejects is the bug; the missing round is the symptom.
+- **"Pressing `s` twice takes the background to the library page."** `findOverlayPathname`
+  (App.tsx) looks one level deep for an open Scan/Digest; `roomLocation` walks the whole
+  `background` chain. Stack `/settings` on `/settings`-over-`/scan/:id` and the Scan's
+  pathname is no longer found — the Scan unmounts and the room underneath (the Desk, in list
+  mode: the library) is what you see. The second history entry is the "delay on exit". The
+  operator's requested fix (`s` toggles) is right and is adopted, but **it is not the whole
+  fix**: the one-level lookup is wrong independently, and the Scan can sit under a Digest
+  too. Both ends get fixed.
+- **"Rendering audio doesn't show up as a task until I reload."** The tray is not stale — it
+  never knew. `JobsContext` learns about jobs from `registerStarted` and one `fetchJobs()` at
+  mount; `usePlayer` subscribes to the render job's own SSE directly and never registers it.
+  The fix is a **registry-wide event stream**, not a sixth `registerStarted` call, because the
+  same hole swallows any job started by another tab, and one more call site is one more thing
+  to forget. Two constraints carried over from M20.6 and restated in the task: watching a job
+  must not own it, and the stream must not auto-toast — chapter-ahead rendering would pop a
+  popup over the reader every few minutes, which is the blocking-spinner-over-the-text failure
+  in a new costume.
+
+### The slider's resting form is the `%` dial, everywhere
+
+The operator asked for the reader's `%` control's aesthetic on every slider. It already exists
+as `Slider variant="trigger"` plus `ScrubDial`, so this is a promotion, not a build: the
+readout becomes the default rendering, the fill/thumb track is retired, and `ScrubDial` moves
+into `controls/` as the drag dial every slider shows. Two things fall out that are worth
+recording because they are easy to get wrong and invisible when you do:
+
+- **The ruler must be laid out in the slider's position space**, not in value space, or it is
+  wrong at both ends of the log2 context-window range. `sliderMath.ts` already exposes the
+  transform.
+- **Detent capture needs an absolute mode.** `nearestDetent` captures within
+  `detent * captureFraction` — deliberately, because a fixed window is unusable across a log2
+  range. But the operator asked for ±25 tokens around every 500 on a *linear* slider, and as a
+  fraction that is 5% at 500 and 0.25% at 10,000. One number cannot be both. The fractional
+  mode stays the default (the context slider still wants it, now at 5%); an absolute mode is
+  added beside it. This is the kind of ask that gets silently fudged into "close enough" by an
+  implementation session, so it is named here.
+
+### Nothing else may occupy the top-right corner
+
+The nav cluster is `position: fixed` and every room lays out its own actions underneath it, so
+they collide — visible in the operator's desk screenshot, where the cluster sits on top of
+Desk/List and Import book. The fix is structural rather than per-room: **`NavCluster` owns one
+chrome row, and a room contributes its actions into a leading slot in it.** Stated as a rule so
+it settles the rooms nobody has added yet.
+
+The reader's book actions (Digest, digest provider, Scan, Publish) go the other way — out of
+the title bar and into a floating bottom-right cluster, icon-only with proximity-revealed
+labels, reusing the keycap mechanic rather than a second one. ⚠️ The trap, flagged at the task:
+**the bottom-right corner is the page fold's grab anchor**. A button parked there eats the
+gesture M20 spent four passes on.
+
+### The three theme buttons become a segmented group, not a hover-revealing single button
+
+The operator offered both. Grouping is the cheaper one and keeps three real focusable buttons;
+the single-button form would add a third hover-disclosure mechanic in a pass that is already
+adding proximity-revealed labels to the reader's cluster. Recorded because the alternative was
+considered, not overlooked.
+
+### The gear does not look like a gear, and it is worse than that
+
+`GearIcon` is a circle with eight radial ticks. `SunIcon` — two slots away in the same cluster
+— is a circle with eight radial ticks at a different radius. They are the same drawing. The
+tray icon has the matching problem in the other direction: it is an inbox with a down-arrow,
+i.e. a downloads icon, for something that is not downloads. Both get redrawn, and the tray's
+replacement carries the running-jobs progress as a filled arc, so the icon says something the
+badge alone was saying.
+
+### The opening opens
+
+DESIGN.md's motion section promised "its cover zooms toward the viewer, opens, and the pages
+flick". What shipped in M20.7 is the zoom plus a four-plane flutter *over* the cover — the
+cover never opens. The operator is happy with the flight and wants the open. Adopted as asked:
+the front cover rotates about its spine edge toward the viewer, revealing a spread that scales
+onto the reading pane. DESIGN.md's bullet is amended to say what it will actually do.
+
+Three things it must not break, all already load-bearing: the `contentReady` gate (the only
+thing between the reveal and a flash of "Loading book…"), Escape at any phase, and the rule
+that the opening's pages are **fake planes** — PAGE_CURL.md is this project's record of what
+real paper motion costs, and the opening is a decorative aside. ⚠️ The 3D goes on a child of
+`FlyPanel`, never on the flown node: `motion` is already writing `transform` there.
+
+### Deleting stored artifacts means audio, and only audio
+
+The operator asked to "delete stored text logs to save space". Scoped, with their confirmation,
+to **rendered audio**: `data/audio` is 12MB for one partly-rendered book against 40KB of
+digests, so it is the only real space cost. Two exclusions recorded so they are not
+relitigated:
+
+- **`resource_text` is out of bounds.** It is the coordinate system every highlight offset,
+  audio segment and digest anchors into. Deleting it rots annotations, which is the exact
+  failure settled decision 5 (immutable-on-import) exists to prevent.
+- **Digests are out of scope here.** Kilobytes on disk, real money in tokens to rebuild — a
+  bad trade to offer behind a delete button whose stated purpose is saving space.
+
+### You cannot prove which model answered by asking the model
+
+The operator chose Qwen, asked the assistant what it was, and was told it was Anthropic's. The
+reported symptom is real; the implied premise — that the model knows — is false. Models are
+trained on each other's outputs and have no privileged access to their own identity. No system
+prompt fixes this reliably, and **any feature built on the model's self-report would be
+decoration over a coin flip.**
+
+The proof has to come from the transport, and this project is most of the way there already:
+the M17 usage ledger records `provider` and `model` per call. Two gaps, both real:
+
+- The `model` recorded for an OpenAI-compatible profile is the **configured** string, not what
+  the endpoint says it served. OpenAI-compatible responses echo a `model` field; record that,
+  and mark when it had to fall back.
+- Nothing is ever shown next to an answer. A per-message byline needs `llm_usage` to carry a
+  message id — it has only `resource_id` — which is a migration, and is the actual size of the
+  task.
+
+This is a small extension of settled decision 11's spirit ("the model never returns
+positions"): **the model is not a source of truth about itself either.** Not promoted to a
+numbered settled decision — it is one instance of a rule already written down — but stated here
+because the operator's question deserves the general answer, not just a byline.
+
+### The one cost the ledger reports is the one you are not billed for
+
+Follow-up question from the operator: *"the ledger showed a cost under last 7 days — I thought
+a Claude subscription plus a local LLM meant no API costs?"* They are right, and the way it is
+wrong is worth recording:
+
+- `costUsd` is written from **exactly one place**: `claudeAgent.ts`, taking the Agent SDK's
+  `message.total_cost_usd`. That is the **subscription** provider, and the number is notional —
+  what the same usage would have cost on the API, not money billed.
+- `anthropic.ts` — the keyed API, where you genuinely pay — reports **no cost at all**.
+- `openaiCompat.ts` documents that it never populates cost, which is correct for a local model.
+
+So the divider adds up a price for the one path that isn't billed, shows nothing for the one
+that is, and both look the same to a reader. The ruling: **cost carries a basis** — `billed`,
+`notional`, or `none` — the total sums `billed` only, and `notional` is shown separately and
+labelled. The Agent SDK's figure is not discarded; "what is this subscription saving me" is a
+real question, it just isn't spend. A keyed call with tokens and no price is a separate gap and
+is not allowed to keep reading as free.
+
+The operator also asked for the ledger to break down by provider — and nearly all of it is
+already recorded and thrown away: `llm_usage` has `provider`, `model`, `cache_read_tokens` and
+`duration_ms` per row, while `getUsageBreakdownSince` groups only by book, operation and role
+and `UsageBreakdownRow` carries neither provider nor model. So this is a widening, not a new
+subsystem, and tokens/sec needs no new column. ⚠️ The one thing genuinely missing:
+**"is this local?" is not answerable from a row** — `openai-compatible` covers both a local
+Ollama and a hosted OpenRouter, and the base URL that distinguishes them lives on the profile,
+which the ledger does not reference. `profile_id` goes in, in the same migration as the message
+id the byline needs.
+
+### The reader's action cluster never overlaps the card
+
+Refined from the operator's question ("did you mean to keep it outside the reading pane?") —
+yes, and stating it as a boundary rather than a pixel inset is what makes it safe. The M20 grab
+surface lives inside `.pageClip`, which is `inset: 0` within `.stage`; so *the cluster does not
+intersect `.stage`* is a rule that makes the fold conflict structurally impossible instead of
+tuned. It sits in the empty room right of the card on a window wider than `--reader-max-width`,
+and below the card when there isn't room. In fullscreen the page grows into that space, so
+there the cluster joins M14's proximity-revealed floating set and is simply not on the page at
+rest.
+
+### `SunIcon` keeps its job
+
+Asked whether the sun icon should go. No — it is the Paper (light) theme option and a sun is
+the right drawing for it. `GearIcon` is the one that is wrong, and redrawing it as a real
+toothed cog resolves the collision from the correct end.
+
+## 2026-08-03 (sign-off) — The curl is signed off, and the back of the sheet stops being a mirror
 
 Operator verification of the shipped curl on the Mac, which is the item TASKS.md has carried
 since 2026-08-01. **Verdict: it passes.** Curl happens on every turn (so the guard latch is
