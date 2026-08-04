@@ -5,6 +5,8 @@ import { Toast } from "../app/Toast.js";
 import { LibraryGrid } from "../library/LibraryGrid.js";
 import { useLibrary } from "../library/useLibrary.js";
 import { Button } from "../controls/Button.js";
+import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
+import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { DeskCanvas } from "./DeskCanvas.js";
 import styles from "./DeskPage.module.css";
 
@@ -43,6 +45,17 @@ export function DeskPage() {
   const [cursorStyle, setCursorStyle] = useState<CursorStyleChoice>("custom");
   const [cursorTrailEnabled, setCursorTrailEnabled] = useState(true);
   const reducedMotion = Boolean(useReducedMotion());
+
+  // M22 "the desk tool": session-only, deliberately not persisted — a
+  // physical toggle you'd expect to still be lit next time you sit down
+  // would also be easy to leave on and forget (DESIGN.md gives no
+  // persistence rule; this is the boring, safer default — SPEC-GAP, NOTES.md).
+  // Lives here, above both view modes, since "opening any book" applies
+  // whichever one is showing.
+  const [listeningEngaged, setListeningEngaged] = useState(false);
+  useShortcuts([
+    { key: SHORTCUT_KEYS.escape, handler: () => listeningEngaged && setListeningEngaged(false), allowWhileTyping: true },
+  ]);
 
   useEffect(() => {
     localStorage.setItem(VIEW_MODE_KEY, mode);
@@ -155,9 +168,16 @@ export function DeskPage() {
             publishingId={publishingId}
             onPublish={handlePublish}
             onToast={setToast}
+            listeningEngaged={listeningEngaged}
+            onToggleListening={() => setListeningEngaged((prev) => !prev)}
           />
         ) : (
-          <LibraryGrid resources={resources} publishingId={publishingId} onPublish={handlePublish} />
+          <LibraryGrid
+            resources={resources}
+            publishingId={publishingId}
+            onPublish={handlePublish}
+            listeningEngaged={listeningEngaged}
+          />
         )
       ) : (
         <div className={styles.empty}>

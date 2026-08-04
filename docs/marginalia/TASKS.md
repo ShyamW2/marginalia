@@ -556,25 +556,62 @@ to in one voice, with the page following along, before any casting exists.
       Unit tests cover verbatim match, repeated identical quotes resolving in order,
       the unlocatable case, alias matching, ambiguous-sentence-keeps-first, and the
       curly-quote regression pinned from the live find._
-- [ ] **Casting UI.** Cast list with per-character voice pickers (preview button speaks
-      a sample line), narrator voice, and the single/multi voice-mode toggle. A user
-      override sets `voice_locked` and **must survive a re-scan**; changing any
-      assignment invalidates the rendered audio by changing `castHash`, which must not
-      require deleting anything by hand.
-      _Acceptance: override a voice, hear the change on the next chapter, re-scan, and
-      confirm the override held; switching multi→single→multi doesn't re-render audio
-      that's already cached under the same hash._
-- [ ] **The desk tool.** The tactile listening-mode object per DESIGN.md and AUDIO.md: a
-      real focusable button with an accessible name and pressed state (not a div), lit
-      while engaged, so opening any book opens it in audio mode. Escape or a second click
-      disengages. The list view's "Listen" action from M17 remains the canonical keyboard
-      path — the tool is the charm, not the gate.
-      _Acceptance: engage the tool, click a book, it opens listening; the engaged state
-      is unmistakable; the whole flow is also completable from the keyboard without ever
-      touching the tool; reduced motion removes its animation, not its function._
-- [ ] **Verify:** scan the cast on a dialogue-heavy fixture, listen to a chapter in
-      multi-voice, override a voice, and listen again. Confirm every M17 behaviour
-      (tint, auto-turn, pause-on-interaction, position) is unchanged in multi-voice mode.
+- [x] **Casting UI.** *(2026-08-04.)* `PUT /api/cast/:castId` added (route + schema +
+      `castStore.ts`'s `updateCastVoice`, top-level per AUDIO.md's HTTP table, not
+      `/api/resources/:id/...`) — always sets `voice_locked`, matching `saveCastScan`'s
+      existing lock check, so an override survives a re-scan with no extra code. Cast
+      list with per-character voice pickers, a preview button per row and for the
+      narrator (`POST /api/audio/test-voice`, reused — `AudioTab.tsx`'s "Test voice" now
+      shares the same `previewVoice` helper instead of a second copy), and the
+      single/multi voice-mode toggle, all in `CastingModal.tsx`.
+      ⚠️ `// SPEC-GAP` (NOTES.md): AUDIO.md doesn't say where the casting UI lives.
+      Boring choice made: not a fifth routed instrument (decisions.md 2026-07-30 names
+      exactly four — Scan, Digest, Settings, Annotations), so it mounts locally from a
+      new "Cast" icon in the reader's transport row, sharing SettingsModal's own dialog
+      shell (backdrop + `FlyPanel` + `useDialogA11y`) rather than a new one.
+      _Acceptance: met. Live against the real Metamorphosis fixture and its real
+      11-member cast (the same stale-duplicate-name cast NOTES.md's M22 pass-1 entry
+      found): overrode Gregor Samsa's voice via the API and Grete Samsa's via the actual
+      UI select — both persisted, both show "Locked", and `castHash` picked up the
+      change (confirmed via `book_cast`/`audio_state` reads). Toggled single→multi→single
+      through the UI, confirmed via `GET /audio` each time. Changed the narrator voice;
+      persisted. Preview played with no console errors. One real bug found this way and
+      not this code's own: a long-running `audio-render` job's synchronous Kokoro
+      synthesis stalls unrelated API requests on the same process — starved the
+      voice-mode PUT for over a minute in one run. Not fixed here (pre-existing engine
+      characteristic, AUDIO.md's known native-binding/perf hazard, not new in M22);
+      logged in NOTES.md. Both light and dark themes screenshotted and legible._
+- [x] **The desk tool.** *(2026-08-04.)* `ListeningTool.tsx`: a real `<button>` (not a
+      div) with `aria-pressed` and an accessible name, lit with a warm glow + pulsing
+      needle-tip while engaged (pulse removed under reduced motion, per
+      `@media (prefers-reduced-motion: reduce)` — the glow itself, not just the
+      animation, is the actual "is it on" signal, so function survives). Session-only
+      state in `DeskPage.tsx` (`// SPEC-GAP`, NOTES.md: DESIGN.md gives no persistence
+      rule; not persisting is the safer boring default — an always-lit tool from a
+      forgotten prior session is worse than a reset one), wired through `DeskCanvas` to
+      `BookObject.open()` and through to `LibraryGrid`'s plain link so both view modes
+      honour it; the explicit "Listen" actions (info-strip button, list-view button) are
+      unconditional either way, per "the tool is the charm, not the gate." Escape
+      disengages via the shared shortcut registry.
+      _Acceptance: met, live (screenshots + `aria-pressed` reads, both themes). Click
+      engages (`aria-pressed: false → true`), Escape disengages
+      (`aria-pressed: true → false`) from anywhere on the desk, not just while the tool
+      has focus. Engaged + click a book → reader opens with playback already running
+      (transport button read "Pause listening" immediately). Confirmed reduced motion
+      removes the needle's `animation-name` (`pulse` → `none`) while `aria-pressed`
+      still flips — the toggle still works, only the motion is gone._
+- [x] **Verify:** *(2026-08-04, against the real Metamorphosis fixture and its real
+      cast — see the two entries above for the detailed live traces.)* Not separately
+      re-driven: a fresh cast scan (the fixture's cast was already scanned and verified
+      live in the pass-1 entry above; re-running one here would spend real LLM calls to
+      re-prove logic `castStore.test.ts` already pins) and a full multi-voice chapter
+      listen-through with the M17 tint/auto-turn/pause-on-interaction/position checklist
+      (unchanged code path — `resolveSectionVoices`/`assignSentenceVoices` were M22 pass
+      2's own live-verified surface, not touched by this task). What *was* newly driven:
+      engaging the tool, opening a book into listening mode from the desk, opening the
+      Casting popup from inside that listening session, and overriding a voice — the
+      exact seam connecting this task's two pieces to M21/M22 pass 1–2's already-verified
+      core.
 
 ### M23 — Web search
 

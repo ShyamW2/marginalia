@@ -1,0 +1,87 @@
+.tool {
+  position: absolute;
+  left: 32px;
+  bottom: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.7rem 0.6rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-bg-raised) 85%, black 5%), var(--color-bg-raised));
+  box-shadow: 0 6px 16px rgba(30, 22, 10, 0.18);
+  cursor: pointer;
+  color: var(--color-text-muted);
+  transition:
+    box-shadow var(--duration-standard) var(--ease-standard),
+    color var(--duration-standard) var(--ease-standard),
+    transform var(--duration-standard) var(--ease-standard);
+}
+
+.tool:hover {
+  transform: translateY(-2px);
+}
+
+.tool:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.icon {
+  --tool-plate: color-mix(in srgb, var(--color-text) 15%, transparent);
+  --tool-rim: var(--color-text-muted);
+  --tool-arm: var(--color-text-muted);
+  --tool-glow: var(--color-text-muted);
+}
+
+.label {
+  font-family: var(--font-serif);
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+}
+
+/* Lit while engaged (DESIGN.md: "lights when engaged") — a warm glow around
+   the plate and an amber needle-tip, the tactile "it's on" a physical deck
+   would give. */
+.engaged {
+  color: var(--color-accent-text, var(--color-text));
+  box-shadow:
+    0 6px 16px rgba(30, 22, 10, 0.18),
+    0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent),
+    0 0 18px 2px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.engaged .icon {
+  --tool-rim: var(--color-accent);
+  --tool-arm: var(--color-accent);
+  --tool-glow: var(--color-accent);
+}
+
+.engaged .needle {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool {
+    transition: none;
+  }
+
+  .tool:hover {
+    transform: none;
+  }
+
+  .engaged .needle {
+    animation: none;
+  }
+}

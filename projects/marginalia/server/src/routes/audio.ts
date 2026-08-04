@@ -2,10 +2,12 @@ import { Router } from "express";
 import {
   AudioSectionManifestSchema,
   AudioStateSchema,
+  BookCastMemberSchema,
   BookCastResponseSchema,
   StartJobResponseSchema,
   TestVoiceBodySchema,
   UpdateAudioStateBodySchema,
+  UpdateCastVoiceBodySchema,
   type AudioState,
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
@@ -16,7 +18,7 @@ import { TTSError } from "../audio/engine.js";
 import { getAudioState, markCastScanned, updateAudioState } from "../audio/state.js";
 import { assignVoices } from "../audio/casting.js";
 import { resolveSectionVoices } from "../audio/attribution.js";
-import { listBookCast, saveCastScan, type BookCastMemberRow } from "../audio/castStore.js";
+import { listBookCast, saveCastScan, updateCastVoice, type BookCastMemberRow } from "../audio/castStore.js";
 import {
   computeCastHash,
   deleteResourceAudioCache,
@@ -38,6 +40,11 @@ export const ttsRouter: Router = Router();
 
 /** `/api/resources/:id/audio*` — one listening state + rendered cache per book. */
 export const audioRouter: Router = Router();
+
+/** `PUT /api/cast/:castId` — the casting UI's voice override. Top-level
+ * (not `/api/resources/:id/...`) exactly as AUDIO.md's HTTP table has it: a
+ * `book_cast` row's own id already identifies its resource. */
+export const castRouter: Router = Router();
 
 /**
  * De-dupes concurrent render requests for the same resource/cast/section —
@@ -276,6 +283,20 @@ audioRouter.post("/:id/cast/scan", (req, res) => {
     reportProgress({ current: 1, total: 1, message: null });
   });
   res.status(202).json(StartJobResponseSchema.parse({ jobId: job.id }));
+});
+
+castRouter.put("/:castId", (req, res) => {
+  const parsed = UpdateCastVoiceBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const updated = updateCastVoice(getDb(), req.params.castId, parsed.data.voiceId);
+  if (!updated) {
+    res.status(404).json({ error: "cast_member_not_found" });
+    return;
+  }
+  res.json(BookCastMemberSchema.parse(updated));
 });
 
 function parseSpineIndex(raw: string): number | null {

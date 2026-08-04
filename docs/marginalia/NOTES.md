@@ -4596,3 +4596,68 @@ elsewhere in this project. The stale narrator-only cache from the first (pre-fix
 render was cleared (`DELETE /api/resources/:id/audio`) so a future real render of
 Metamorphosis chapter I picks up the fix; `audio_state.voice_mode` was left as
 `"multi"` for that resource as a result of this testing.
+
+## M22 — Casting UI + the desk tool — 2026-08-04
+
+**Two `// SPEC-GAP`s, both boring choices, not oversights:**
+
+1. **Where the casting UI lives.** AUDIO.md names the pieces (cast list, voice pickers,
+   preview, mode toggle) but not where they're mounted. Decisions.md 2026-07-30 names
+   exactly four instruments — Scan, Digest, Settings, Annotations — as a deliberate,
+   closed set ("nothing gets a bespoke one again" is about controls, but a fifth routed
+   popup instrument felt like re-opening that count without a decision session saying
+   so). Chose not to add one: `CastingModal.tsx` mounts locally from a new "Cast" icon in
+   the reader's transport row (`ReaderView.tsx`), sharing `SettingsModal.tsx`'s own
+   dialog shell (backdrop + `FlyPanel` + `useDialogA11y`) instead of routing through
+   `background`-location like Scan/Digest do. If this turns out to want a bookmarkable
+   URL later, that's a small follow-up, not a rewrite — the shell is already the
+   Settings-modal one, just not wired to a route.
+2. **The desk tool's engaged state isn't persisted.** DESIGN.md/AUDIO.md say it lights
+   when engaged and describe the toggle, not whether "engaged" survives a reload. Chose
+   session-only (`useState` in `DeskPage.tsx`, not `localStorage` like the desk/list view
+   toggle next to it): a physical deck you'd expect still lit next time you sit down is
+   also one you'd forget was on and get surprised when the next book you open starts
+   talking. Revisit if that reads as the wrong call in practice.
+
+**A real, pre-existing perf characteristic surfaced during live verification, not a
+defect in this task's own code.** While an `audio-render` job was actively synthesizing
+a chapter in the background (Kokoro, in-process, per AUDIO.md's stack table), a
+`PUT /api/resources/:id/audio` from the new casting UI's voice-mode toggle sat
+unanswered for well over a minute — the click registered, the request was sent, but the
+server didn't respond until the synthesis loop yielded. `GET` requests to unrelated
+routes during the same window returned instantly, so the stall is specific to whatever
+`renderSection`/`synthesize` holds that a later handler waits behind, not a general
+request-queue problem. Cancelling the render job (`POST /api/jobs/:id/cancel`, already
+built, worked correctly) freed it immediately. Not fixed here — AUDIO.md already flags
+`onnxruntime-node`'s native-binding/perf class of hazard and M21 shipped chapter-ahead
+scheduling specifically to bound how much of this a listener pays; this is that same
+tradeoff showing up on a *concurrent, unrelated* request rather than on playback itself.
+Worth a real look if it turns out to block the player's own next-segment fetch during
+playback, which this session didn't specifically test.
+
+**Live verification, against the real Metamorphosis fixture and its real (already-scanned,
+already-messy — see the pass-1 entry above) 11-member cast:**
+
+- Overrode Gregor Samsa's voice via `PUT /api/cast/:castId` directly, then Grete Samsa's
+  through the actual casting UI's select — both show `voiceLocked: true` and the new
+  `voiceId` on reload, confirming the route and the UI path both land in
+  `castStore.updateCastVoice`.
+- Toggled voice mode single → multi → single through the UI; `GET /audio` confirmed each
+  transition landed (once the perf issue above was worked around by cancelling the
+  in-flight render job).
+- Changed the narrator voice through the UI; persisted.
+- Clicked a per-character preview button; played with no console errors (only the
+  unrelated, harmless `favicon.ico` 404 every fresh page load produces).
+- Engaged the desk tool (`aria-pressed` false → true), disengaged with Escape from
+  anywhere on the desk (true → false, not just while the tool had focus), re-engaged,
+  clicked a book: the reader opened with playback already running (`aria-label` on the
+  transport button read "Pause listening" the moment the reader mounted).
+- Reduced motion: the needle's `animation-name` computed to `none` (vs. `pulse` normally)
+  while `aria-pressed` still flips correctly — the toggle survives, only the motion goes.
+- Both themes screenshotted for the casting modal and the desk tool; legible, consistent
+  with the rest of the paper register in both.
+
+Driven with a Playwright session (`playwright-core` from the local npx cache, no new
+project dependency) against the two already-running dev servers rather than a fresh
+`pnpm dev` — see the memory note on this project's two-machine setup for why killing and
+restarting those ports without cause is something to avoid.

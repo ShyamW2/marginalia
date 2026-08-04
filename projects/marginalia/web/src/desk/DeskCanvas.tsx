@@ -4,6 +4,7 @@ import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia
 import { BookObject } from "./BookObject.js";
 import { Notepad } from "./Notepad.js";
 import { CursorTrail } from "./CursorTrail.js";
+import { ListeningTool } from "./ListeningTool.js";
 import { useDeskParallax } from "./useDeskParallax.js";
 import { defaultShelfState } from "./shelfDefaults.js";
 import styles from "./DeskCanvas.module.css";
@@ -23,6 +24,10 @@ interface DeskCanvasProps {
   publishingId: string | null;
   onPublish: (resourceId: string) => void;
   onToast: (toast: { message: string; tone: "success" | "error" }) => void;
+  /** M22 "the desk tool": while engaged, a plain click on a book opens it
+   * listening instead of reading. */
+  listeningEngaged: boolean;
+  onToggleListening: () => void;
 }
 
 /**
@@ -40,6 +45,8 @@ export function DeskCanvas({
   publishingId,
   onPublish,
   onToast,
+  listeningEngaged,
+  onToggleListening,
 }: DeskCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [positions, setPositions] = useState<Record<string, ShelfState>>({});
@@ -125,10 +132,12 @@ export function DeskCanvas({
               onPositionChange={persistPosition}
               onPublish={onPublish}
               publishing={publishingId === resource.id}
+              listeningEngaged={listeningEngaged}
             />
           );
         })}
         <Notepad onToast={onToast} />
+        <ListeningTool engaged={listeningEngaged} onToggle={onToggleListening} />
       </div>
       <CursorTrail containerRef={containerRef} enabled={cursorTrailEnabled && !reducedMotion} />
     </motion.div>

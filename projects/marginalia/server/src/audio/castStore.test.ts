@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDb } from "../db.js";
-import { listBookCast, saveCastScan, type CastScanCharacter } from "./castStore.js";
+import { listBookCast, saveCastScan, updateCastVoice, type CastScanCharacter } from "./castStore.js";
 
 function seedResource(db: ReturnType<typeof createDb>, id = "res-1"): void {
   db.prepare(
@@ -81,6 +81,42 @@ describe("saveCastScan / listBookCast", () => {
     const characters = [alice(), alice({ name: null as unknown as string, voiceId: "am_beta" })];
     expect(() => saveCastScan(db, "res-1", characters)).toThrow();
     expect(listBookCast(db, "res-1")).toHaveLength(0);
+    db.close();
+  });
+});
+
+describe("updateCastVoice", () => {
+  it("sets the voice and locks it", () => {
+    const db = createDb(":memory:");
+    seedResource(db);
+    saveCastScan(db, "res-1", [alice()]);
+    const id = listBookCast(db, "res-1")[0].id;
+
+    const updated = updateCastVoice(db, id, "user_choice");
+    expect(updated?.voiceId).toBe("user_choice");
+    expect(updated?.voiceLocked).toBe(true);
+    expect(listBookCast(db, "res-1")[0].voiceId).toBe("user_choice");
+    db.close();
+  });
+
+  it("survives a re-scan, per saveCastScan's own lock check", () => {
+    const db = createDb(":memory:");
+    seedResource(db);
+    saveCastScan(db, "res-1", [alice()]);
+    const id = listBookCast(db, "res-1")[0].id;
+    updateCastVoice(db, id, "user_choice");
+
+    saveCastScan(db, "res-1", [alice({ voiceId: "af_beta", description: "re-scanned" })]);
+    const cast = listBookCast(db, "res-1");
+    expect(cast[0].voiceId).toBe("user_choice");
+    expect(cast[0].voiceLocked).toBe(true);
+    db.close();
+  });
+
+  it("returns null for an id that doesn't exist", () => {
+    const db = createDb(":memory:");
+    seedResource(db);
+    expect(updateCastVoice(db, "no-such-id", "af_alpha")).toBeNull();
     db.close();
   });
 });

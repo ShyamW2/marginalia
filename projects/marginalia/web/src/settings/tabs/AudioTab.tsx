@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Settings, Voice } from "@marginalia/shared";
 import { Button } from "../../controls/Button.js";
+import { previewVoice } from "../../audio/audioApi.js";
 import styles from "../SettingsPage.module.css";
 
 interface AudioTabProps {
@@ -43,25 +44,12 @@ export function AudioTab({ form, update }: AudioTabProps) {
 
   async function handleTestVoice() {
     setTestState({ status: "testing" });
-    try {
-      const res = await fetch("/api/audio/test-voice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voiceId: form.audioDefaultVoice }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: string } | null;
-        setTestState({ status: "error", message: body?.error ?? "Couldn't reach the audio engine." });
-        return;
-      }
-      const url = URL.createObjectURL(await res.blob());
-      const audio = new Audio(url);
-      audio.addEventListener("ended", () => URL.revokeObjectURL(url));
-      await audio.play();
-      setTestState({ status: "idle" });
-    } catch {
-      setTestState({ status: "error", message: "Couldn't reach the server." });
-    }
+    const failure = await previewVoice(form.audioDefaultVoice);
+    setTestState(
+      failure
+        ? { status: "error", message: failure.error === "network_error" ? "Couldn't reach the server." : "Couldn't reach the audio engine." }
+        : { status: "idle" },
+    );
   }
 
   return (

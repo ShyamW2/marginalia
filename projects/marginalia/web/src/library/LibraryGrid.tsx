@@ -10,6 +10,11 @@ interface LibraryGridProps {
   resources: ResourceSummary[];
   publishingId: string | null;
   onPublish: (resourceId: string) => void;
+  /** M22 "the desk tool": while lit, the plain "open" link also opens
+   * listening — the explicit Listen button below does this unconditionally
+   * regardless of the tool. Optional: LibraryGrid predates the tool and not
+   * every caller needs it. */
+  listeningEngaged?: boolean;
 }
 
 /**
@@ -17,7 +22,7 @@ interface LibraryGridProps {
  * screen-reader path is the list"). Plain DOM order, real links, no
  * freeform positioning — the canonical a11y path for the desk.
  */
-export function LibraryGrid({ resources, publishingId, onPublish }: LibraryGridProps) {
+export function LibraryGrid({ resources, publishingId, onPublish, listeningEngaged = false }: LibraryGridProps) {
   const reducedMotion = useReducedMotion();
   const navigate = useNavigate();
 
@@ -25,7 +30,11 @@ export function LibraryGrid({ resources, publishingId, onPublish }: LibraryGridP
     <div className={styles.grid}>
       {resources.map((resource) => (
         <div key={resource.id} className={styles.card}>
-          <Link to={`/read/${resource.id}`} className={styles.cardLink}>
+          <Link
+            to={`/read/${resource.id}`}
+            className={styles.cardLink}
+            state={listeningEngaged ? { listenOnOpen: true } : undefined}
+          >
             <motion.div
               className={styles.coverWrap}
               layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}

@@ -34,6 +34,10 @@ interface BookObjectProps {
   onPositionChange: (resourceId: string, next: ShelfState) => void;
   onPublish: (resourceId: string) => void;
   publishing: boolean;
+  /** M22 "the desk tool": while lit, a plain open (click, Enter, or the
+   * wheel-wound crown) opens the book listening — the explicit "Listen"
+   * action in the info strip does this unconditionally regardless. */
+  listeningEngaged: boolean;
 }
 
 /**
@@ -51,6 +55,7 @@ export function BookObject({
   onPositionChange,
   onPublish,
   publishing,
+  listeningEngaged,
 }: BookObjectProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -73,7 +78,10 @@ export function BookObject({
     if (coverRef.current) {
       setPendingOverlayOrigin(captureOverlayOrigin(coverRef.current));
     }
-    navigate(`/read/${resource.id}`);
+    // M22 "the desk tool": while lit, a plain open behaves like the
+    // explicit "Listen" action below — the tool is the charm, not a
+    // separate gate other opens have to know about.
+    navigate(`/read/${resource.id}`, listeningEngaged ? { state: { listenOnOpen: true } } : undefined);
   }
 
   // Unlike `open()` below, these don't gate on `openedRef`: opening the

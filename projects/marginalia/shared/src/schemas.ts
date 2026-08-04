@@ -1072,6 +1072,15 @@ export const BookCastResponseSchema = z.object({
 });
 export type BookCastResponse = z.infer<typeof BookCastResponseSchema>;
 
+/** PUT /api/cast/:castId — a user's voice override (AUDIO.md: "the user can
+ * override any assignment in the casting UI; overrides persist and win over
+ * re-scans"). Always sets `voiceLocked`; there is no unlock endpoint —
+ * AUDIO.md's HTTP table names only the override. */
+export const UpdateCastVoiceBodySchema = z.object({
+  voiceId: z.string().min(1),
+});
+export type UpdateCastVoiceBody = z.infer<typeof UpdateCastVoiceBodySchema>;
+
 /** GET /api/resources/:id/audio */
 export const AudioStateSchema = z.object({
   narratorVoice: z.string(),

@@ -51,6 +51,26 @@ export function listBookCast(db: Database.Database, resourceId: string): BookCas
   return rows.map(fromRow);
 }
 
+/**
+ * The casting UI's voice override (AUDIO.md "PUT /api/cast/:castId ... sets
+ * voice_locked"): a user's pick always locks, so `saveCastScan`'s `CASE WHEN
+ * voice_locked = 1` branch keeps it through every future re-scan. Returns
+ * `null` for an id that doesn't exist rather than throwing — the route turns
+ * that into a 404.
+ */
+export function updateCastVoice(
+  db: Database.Database,
+  castId: string,
+  voiceId: string,
+): BookCastMemberRow | null {
+  const result = db
+    .prepare("UPDATE book_cast SET voice_id = ?, voice_locked = 1 WHERE id = ?")
+    .run(voiceId, castId);
+  if (result.changes === 0) return null;
+  const row = db.prepare("SELECT * FROM book_cast WHERE id = ?").get(castId) as RawRow | undefined;
+  return row ? fromRow(row) : null;
+}
+
 export interface CastScanCharacter {
   name: string;
   aliases: string[];

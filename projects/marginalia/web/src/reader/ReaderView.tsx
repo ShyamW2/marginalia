@@ -48,6 +48,8 @@ import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js
 import { audioTintStyle, hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
 import { usePlayer, type AudioPlayer } from "../audio/usePlayer.js";
 import { updateAudioState } from "../audio/audioApi.js";
+import { CastingModal } from "../audio/CastingModal.js";
+import { captureOverlayOrigin, type OverlayOrigin } from "../controls/overlayOrigin.js";
 import { cursorPastPageText } from "./pageTextEdge.js";
 import { PageCurl } from "./PageCurl.js";
 import { PageSlide } from "./PageSlide.js";
@@ -529,6 +531,12 @@ export function ReaderView({
   const [digestChapterJobId, setDigestChapterJobId] = useState<string | null>(null);
   const [digestChapterResult, setDigestChapterResult] = useState<string | null>(null);
   const { registerStarted, jobs } = useJobs();
+
+  // M22 "Casting UI": local dialog state, not routed (see CastingModal.tsx's
+  // own comment on why) — the origin is captured straight from the trigger
+  // click, no overlayOrigin.ts bridge needed since there's a direct prop path.
+  const [castOpen, setCastOpen] = useState(false);
+  const [castOrigin, setCastOrigin] = useState<OverlayOrigin | null>(null);
 
   useEffect(() => {
     if (!digestChapterJobId) return;
@@ -2266,6 +2274,15 @@ export function ReaderView({
               hid annotations to listen still needs to pause. */}
           <div className={styles.audioTransport}>
             <IconButton
+              icon={<AudioTransportIcon kind="cast" />}
+              label="Cast — voices for this book"
+              pressed={castOpen}
+              onClick={(event) => {
+                setCastOrigin(captureOverlayOrigin(event.currentTarget));
+                setCastOpen(true);
+              }}
+            />
+            <IconButton
               icon={<AudioTransportIcon kind="skip-prev" />}
               label="Previous sentence"
               disabled={player.status === "idle"}
@@ -2542,6 +2559,16 @@ export function ReaderView({
           onClick={() => turnPage("next")}
         />
       </div>
+      <AnimatePresence>
+        {castOpen && (
+          <CastingModal
+            key="casting-modal"
+            resourceId={resourceId}
+            origin={castOrigin}
+            onClose={() => setCastOpen(false)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

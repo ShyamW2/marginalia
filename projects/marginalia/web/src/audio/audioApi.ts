@@ -1,8 +1,12 @@
 import {
   AudioSectionManifestSchema,
   AudioStateSchema,
+  BookCastMemberSchema,
+  BookCastResponseSchema,
   type AudioSectionManifest,
   type AudioState,
+  type BookCastMember,
+  type BookCastResponse,
   type UpdateAudioStateBody,
   type Voice,
 } from "@marginalia/shared";
@@ -87,4 +91,60 @@ export async function fetchSectionManifest(
 
 export function segmentAudioUrl(resourceId: string, spineIndex: number, n: number): string {
   return `/api/resources/${resourceId}/audio/sections/${spineIndex}/${n}`;
+}
+
+export async function fetchBookCast(resourceId: string): Promise<BookCastResponse | null> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/cast`);
+    if (!res.ok) return null;
+    const parsed = BookCastResponseSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `PUT /api/cast/:castId` — the casting UI's voice override; always locks
+ * (routes/audio.ts, AUDIO.md). */
+export async function overrideCastVoice(castId: string, voiceId: string): Promise<BookCastMember | null> {
+  try {
+    const res = await fetch(`/api/cast/${castId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voiceId }),
+    });
+    if (!res.ok) return null;
+    const parsed = BookCastMemberSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `POST /api/audio/test-voice` — the audio equivalent of a provider's "Test
+ * connection" (AudioTab.tsx's original use) and the casting UI's per-voice
+ * preview (AUDIO.md task 3: "preview button speaks a sample line"). Plays
+ * the clip itself rather than handing back a URL — the caller has nothing
+ * further to do with the bytes, and both call sites want "click, hear it."
+ */
+export async function previewVoice(voiceId: string, text?: string): Promise<{ error: string } | null> {
+  try {
+    const res = await fetch("/api/audio/test-voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(text ? { voiceId, text } : { voiceId }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      return { error: body?.error ?? "request_failed" };
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const audio = new Audio(url);
+    audio.addEventListener("ended", () => URL.revokeObjectURL(url));
+    await audio.play();
+    return null;
+  } catch {
+    return { error: "network_error" };
+  }
 }
