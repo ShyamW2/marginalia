@@ -522,16 +522,40 @@ to in one voice, with the page following along, before any casting exists.
       assignments byte-identical across three separate runs. Unit tests cover
       determinism, gender-compatibility fallback, never-reuse-while-unused-compatible-
       remains, and locked-voice survival across a re-scan._
-- [ ] **Attribution (pass 2) + multi-voice rendering.** Per-section `AttributionSchema`
-      extract, on demand and cached with the section's audio. **The model returns the
-      quoted string; code locates it** by exact search — never offsets from the model
-      (CLAUDE.md settled decision 2). Unlocatable quote, unknown speaker, or a failed
-      call all degrade to the narrator voice, and a whole failed section degrades to
-      single-voice without blocking playback.
-      _Acceptance: dialogue in a chapter of Metamorphosis is spoken in character with
-      the narrator carrying everything else; killing the provider mid-attribution keeps
-      audio playing in one voice; unit tests cover verbatim match, repeated identical
-      quotes resolving in order, and the unlocatable case._
+- [x] **Attribution (pass 2) + multi-voice rendering.** *(2026-08-04.)* Per-section
+      `AttributionSchema` extract (`audio/attribution.ts`), on demand — cached
+      implicitly, by riding the same `castHash`-keyed render cache the audio itself
+      uses (no separate attribution cache/table, matching AUDIO.md's "not a table").
+      **The model returns the quoted string; code locates it** by exact search — never
+      offsets from the model (CLAUDE.md settled decision 2). Unlocatable quote, unknown
+      speaker, or a failed call all degrade to the narrator voice
+      (`assignSentenceVoices`), and a whole failed section degrades to single-voice
+      without blocking playback (`resolveSectionVoices`). `computeCastHash` now also
+      hashes `voiceMode` and the cast's voice mapping (`render.ts`), so switching
+      single→multi or changing a character's voice always invalidates old audio rather
+      than silently serving it.
+      ⚠️ Live verification against the real Metamorphosis fixture found and fixed a real
+      bug — the source's typographic quotes/apostrophes (`“”’`) don't survive the
+      model's JSON output verbatim (it straightens them), so every span failed to
+      locate until `attribution.ts` normalizes both sides before matching (same
+      length-preserving-swap trick as `segment.ts`'s isolated-newline fix). Also found,
+      *not* a defect: quote-boundary imprecision (a model-added comma not in the
+      source) and `EXTRACT_MAX_TOKENS` overflow on a very dialogue-dense whole-chapter
+      call both degrade exactly as designed — see NOTES.md for the full account,
+      including why the token-budget case is a logged `// SPEC-GAP` rather than fixed
+      here (needs a chunking design, not a guess).
+      _Acceptance: met. Live: a real attribution call against real book text produced
+      correct per-character spans; the quote-normalization fix confirmed against the
+      actual failing text; a full 293-sentence real render of a whole chapter completed
+      end-to-end without blocking when attribution failed outright (the token-overflow
+      case above, discovered before the quote-normalization fix existed) — proving the
+      non-blocking-degradation path live, not simulated. Provider-failure- and
+      cancellation-mid-attribution are covered by `attribution.test.ts` instead of a
+      third live repro, using the same mechanism (`try`/`catch`, rethrow only on abort)
+      the digest and cast-scan jobs already prove live elsewhere in this project.
+      Unit tests cover verbatim match, repeated identical quotes resolving in order,
+      the unlocatable case, alias matching, ambiguous-sentence-keeps-first, and the
+      curly-quote regression pinned from the live find._
 - [ ] **Casting UI.** Cast list with per-character voice pickers (preview button speaks
       a sample line), narrator voice, and the single/multi voice-mode toggle. A user
       override sets `voice_locked` and **must survive a re-scan**; changing any

@@ -15,7 +15,8 @@ import { getEngine } from "../audio/registry.js";
 import { TTSError } from "../audio/engine.js";
 import { getAudioState, markCastScanned, updateAudioState } from "../audio/state.js";
 import { assignVoices } from "../audio/casting.js";
-import { listBookCast, saveCastScan } from "../audio/castStore.js";
+import { resolveSectionVoices } from "../audio/attribution.js";
+import { listBookCast, saveCastScan, type BookCastMemberRow } from "../audio/castStore.js";
 import {
   computeCastHash,
   deleteResourceAudioCache,
@@ -25,6 +26,7 @@ import {
   listCachedSpineIndices,
   renderSection,
 } from "../audio/render.js";
+import { segmentSentences } from "../audio/segment.js";
 import { getJob, startJob } from "../jobs/registry.js";
 import { getProvider } from "../llm/provider.js";
 import { runDigest } from "../digest/build.js";
@@ -107,12 +109,23 @@ ttsRouter.post("/test-voice", async (req, res) => {
   }
 });
 
+/** M22: the voiced cast, in the shape `computeCastHash` wants — only
+ * meaningful (and only fetched) in multi-voice mode; single-voice always
+ * hashes against an empty mapping regardless of what's cast, so tweaking a
+ * character's voice never invalidates a single-voice render. A cast member
+ * with no voice assigned yet can't be part of the hash it would need to be
+ * rendered under, so it's filtered out rather than hashed as `""`. */
+function castMappingForHash(cast: BookCastMemberRow[]): { speakerId: string; voiceId: string }[] {
+  return cast.filter((m) => m.voiceId).map((m) => ({ speakerId: m.id, voiceId: m.voiceId }));
+}
+
 function buildAudioState(resourceId: string): AudioState {
   const db = getDb();
   const row = getAudioState(db, resourceId);
   const { audioDefaultVoice, ttsEngine } = getRawSettings(db);
   const narratorVoice = row.narratorVoice || audioDefaultVoice;
-  const castHash = computeCastHash(ttsEngine, narratorVoice);
+  const cast = row.voiceMode === "multi" ? castMappingForHash(listBookCast(db, resourceId)) : [];
+  const castHash = computeCastHash(ttsEngine, narratorVoice, row.voiceMode, cast);
   const spineIndices = getResourceTextSections(db, resourceId).map((s) => s.spineIndex);
   return {
     narratorVoice,
@@ -279,12 +292,13 @@ type SectionContextResult =
       section: ReturnType<typeof getResourceTextSections>[number];
       narratorVoice: string;
       speed: number;
+      voiceMode: AudioState["voiceMode"];
       castHash: string;
     };
 
 /** Resolves the resource, section, and the narrator voice + cast hash this
- * request should act under — the same three lookups every section route
- * needs before it can do anything. */
+ * request should act under — the same lookups every section route needs
+ * before it can do anything. */
 function resolveSectionContext(resourceId: string, spineIndexRaw: string): SectionContextResult {
   const db = getDb();
   const resource = getResourceById(db, resourceId);
@@ -297,8 +311,18 @@ function resolveSectionContext(resourceId: string, spineIndexRaw: string): Secti
   const { audioDefaultVoice, ttsEngine } = getRawSettings(db);
   const audioState = getAudioState(db, resource.id);
   const narratorVoice = audioState.narratorVoice || audioDefaultVoice;
-  const castHash = computeCastHash(ttsEngine, narratorVoice);
-  return { ok: true, resource, spineIndex, section, narratorVoice, speed: audioState.speed, castHash };
+  const cast = audioState.voiceMode === "multi" ? castMappingForHash(listBookCast(db, resource.id)) : [];
+  const castHash = computeCastHash(ttsEngine, narratorVoice, audioState.voiceMode, cast);
+  return {
+    ok: true,
+    resource,
+    spineIndex,
+    section,
+    narratorVoice,
+    speed: audioState.speed,
+    voiceMode: audioState.voiceMode,
+    castHash,
+  };
 }
 
 /**
@@ -314,7 +338,7 @@ audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
     res.status(ctx.status).json(ctx.body);
     return;
   }
-  const { resource, spineIndex, section, narratorVoice, speed, castHash } = ctx;
+  const { resource, spineIndex, section, narratorVoice, speed, voiceMode, castHash } = ctx;
 
   if (isSectionCached(resource.id, castHash, spineIndex)) {
     res.json({ cached: true });
@@ -331,6 +355,16 @@ audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
   const engine = getEngine(getDb());
   const job = startJob("audio-render", resource.id, resource.title, async (signal, reportProgress) => {
     try {
+      // M22: pass 2 (attribution) + voice assignment, single-voice's own
+      // narrator-for-everyone default when not in multi mode or nothing's
+      // been cast yet — resolveSectionVoices folds every failure mode into
+      // that same default rather than ever blocking the render.
+      const db = getDb();
+      const sentences = segmentSentences(section.text);
+      const cast = voiceMode === "multi" ? listBookCast(db, resource.id) : [];
+      const provider = voiceMode === "multi" ? getProvider(db, "digest", "cast", resource.id) : null;
+      const sentenceVoices = await resolveSectionVoices(provider, section.text, sentences, cast, narratorVoice, signal);
+
       await renderSection(
         engine,
         resource.id,
@@ -341,6 +375,7 @@ audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
         speed,
         signal,
         (current, total, message) => reportProgress({ current, total, message: message ?? null }),
+        sentenceVoices,
       );
     } catch (err) {
       if (err instanceof TTSError) {

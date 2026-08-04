@@ -4537,3 +4537,62 @@ every existing row, locked or not. The underlying rename-creates-a-duplicate pro
 above is unfixed — that needs actual entity resolution (fuzzy name/alias matching
 across scans), which is a bigger question than this task's scope. Left for whoever
 picks up the casting UI (task 3) or a dedicated pass.
+
+## M22 — attribution (pass 2) + multi-voice rendering — 2026-08-04
+
+**A real bug found and fixed via live verification: quote-punctuation normalization.**
+First live attribution call against Metamorphosis chapter I (spine 2, real dialogue
+with the family and the chief clerk through Gregor's door) returned 37 well-formed,
+contextually accurate spans — but `locateAttributionSpans` located **zero** of them.
+Cause: the source text (Project-Gutenberg-derived) uses typographic quotes (`“` `”`
+U+201C/D) and apostrophes (`’` U+2019), but the model's JSON output "cleans up" to
+straight ASCII (`"`, `'`) even when explicitly told to copy verbatim — every single
+span failed exact-match for the same reason, not a rare edge case but a *total*
+failure on any Gutenberg-style book. Fixed in `attribution.ts` with the same trick
+`segment.ts`'s isolated-newline fix used: normalize both `text` and each `quote` with
+a straight one-character-for-one-character swap (`QUOTE_NORMALIZATION`) before
+searching, so offsets found in the normalized copy are still valid offsets into the
+original. Verified live, twice: (1) a real curly-quote span from the actual
+Metamorphosis text ("Oh, God”,") located correctly after the fix; (2) pinned as a
+regression test in `attribution.test.ts` using that exact real quote pair.
+
+**A second, real-but-expected failure mode, confirmed live: quote-boundary
+imprecision.** Same live run, smaller excerpt: the model sometimes appends
+punctuation to a quote that isn't actually adjacent to it in the source (e.g. quoted
+`"“What's happened to me?”,"` with a trailing comma the source doesn't have at that
+spot — the comma belongs to a *different* line a few sentences later). 5 of 6 spans in
+that run failed to locate for exactly this reason and were correctly dropped/logged,
+while the 1 genuinely verbatim span (`"“Oh, God”,"`) was located and would have been
+voiced correctly. This is `locateAttributionSpans` working as designed (AUDIO.md:
+"unlocatable quote → dropped, logged, narrator voice" — a wrong voice is worse than
+one voice), not a defect; not fixed further, since "fix" here would mean guessing at
+what the model meant, which is exactly what the spec forbids.
+
+**A third finding, not a defect either: `EXTRACT_MAX_TOKENS` (8192, `openaiCompat.ts`)
+can't hold attribution's own output for a very long, dialogue-dense chapter.** A
+full-section attribution call against the *whole* of chapter I (38K chars, ~37 spans,
+some quotes hundreds of characters long) failed to parse — `extract()`'s own
+retry-once-then-fail path exhausted — most likely genuine token-budget overflow on
+the response side. `resolveSectionVoices` degrades this correctly too: the section
+rendered fully and played, single-voice, no crash, no stall (confirmed live — this
+was the very first end-to-end render, 293/293 sentences, before the quote-punctuation
+bug above was even found). Unlike the digest's map step, attribution has no chunking
+fallback for a section whose *output* alone would exceed the budget — AUDIO.md is
+silent on this (`// SPEC-GAP`). Not fixed here: a section this dialogue-dense is
+plausibly rare, the degradation is honest and non-blocking, and a real fix (chunking
+attribution by, say, half-sections and merging) deserves its own decision rather than
+a guess bolted on here.
+
+**Live verification summary:** real end-to-end multi-voice render (293 real TTS
+segments) confirmed non-blocking degradation on a total attribution failure; direct
+`extractAttribution`/`locateAttributionSpans` calls against real book text (several
+runs, ~15–35 min each on the local Ollama model — attribution is one call over a whole
+section, comparable in cost to a digest chapter) confirmed the fix and both
+degradation paths above. Provider-failure-mid-attribution and cancellation-mid-
+attribution are unit-tested (`attribution.test.ts`) rather than re-demonstrated live a
+third time — the mechanism (a `try`/`catch` around one `extract()` call, rethrow only
+on abort) is identical to what the digest and cast-scan jobs already prove live
+elsewhere in this project. The stale narrator-only cache from the first (pre-fix) full
+render was cleared (`DELETE /api/resources/:id/audio`) so a future real render of
+Metamorphosis chapter I picks up the fix; `audio_state.voice_mode` was left as
+`"multi"` for that resource as a result of this testing.

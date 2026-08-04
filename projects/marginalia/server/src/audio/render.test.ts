@@ -43,11 +43,11 @@ describe("computeCastHash", () => {
   });
 
   it("is order-independent in the cast mapping", () => {
-    const a = computeCastHash("kokoro", "af_heart", [
+    const a = computeCastHash("kokoro", "af_heart", "multi", [
       { speakerId: "alice", voiceId: "v1" },
       { speakerId: "bob", voiceId: "v2" },
     ]);
-    const b = computeCastHash("kokoro", "af_heart", [
+    const b = computeCastHash("kokoro", "af_heart", "multi", [
       { speakerId: "bob", voiceId: "v2" },
       { speakerId: "alice", voiceId: "v1" },
     ]);
@@ -55,9 +55,16 @@ describe("computeCastHash", () => {
   });
 
   it("changes when the cast mapping changes", () => {
-    const a = computeCastHash("kokoro", "af_heart", [{ speakerId: "alice", voiceId: "v1" }]);
-    const b = computeCastHash("kokoro", "af_heart", [{ speakerId: "alice", voiceId: "v2" }]);
+    const a = computeCastHash("kokoro", "af_heart", "multi", [{ speakerId: "alice", voiceId: "v1" }]);
+    const b = computeCastHash("kokoro", "af_heart", "multi", [{ speakerId: "alice", voiceId: "v2" }]);
     expect(a).not.toBe(b);
+  });
+
+  it("changes when voice mode changes, even with the same narrator and no cast mapping", () => {
+    // The correctness-critical case: an empty/unchanged cast mapping must
+    // not let a multi-voice hash collide with the single-voice hash already
+    // on disk (render.ts's own comment on why voiceMode is hashed at all).
+    expect(computeCastHash("kokoro", "af_heart", "single")).not.toBe(computeCastHash("kokoro", "af_heart", "multi"));
   });
 });
 

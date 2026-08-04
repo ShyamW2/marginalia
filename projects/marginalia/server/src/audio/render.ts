@@ -2,9 +2,10 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
-import type { AudioSegment } from "@marginalia/shared";
+import type { AudioSegment, VoiceMode } from "@marginalia/shared";
 import { AUDIO_DIR } from "../paths.js";
 import type { TTSEngine } from "./engine.js";
+import type { SentenceVoice } from "./attribution.js";
 import { segmentSentences } from "./segment.js";
 import { writeEncodedSegment } from "./encode.js";
 
@@ -25,17 +26,22 @@ export interface SectionManifestFile {
 
 /**
  * AUDIO.md: "castHash = sha256 of the ordered (speakerId → voiceId)
- * mapping plus the narrator voice and engine id." M21 is single-voice only,
- * so `cast` is always empty here — M22 extends this function's input, not
- * its shape, when per-character voices exist.
+ * mapping plus the narrator voice and engine id." `voiceMode` is also part
+ * of the hash (M22) — without it, switching single→multi with an empty or
+ * unchanged cast mapping would hash identically to the single-voice render
+ * already on disk, and the route would serve that stale single-voice audio
+ * as though it were the (never-run) multi-voice render. `cast` defaults to
+ * empty for the single-voice (M21) case, where character assignments are
+ * irrelevant to what's actually rendered.
  */
 export function computeCastHash(
   engineId: string,
   narratorVoiceId: string,
+  voiceMode: VoiceMode = "single",
   cast: { speakerId: string; voiceId: string }[] = [],
 ): string {
   const ordered = [...cast].sort((a, b) => a.speakerId.localeCompare(b.speakerId));
-  const payload = JSON.stringify({ engine: engineId, narrator: narratorVoiceId, cast: ordered });
+  const payload = JSON.stringify({ engine: engineId, narrator: narratorVoiceId, voiceMode, cast: ordered });
   return crypto.createHash("sha256").update(payload).digest("hex").slice(0, 16);
 }
 
@@ -146,6 +152,11 @@ export async function renderSection(
   speed: number,
   signal: AbortSignal,
   reportProgress: (current: number, total: number, message?: string | null) => void,
+  /** M22: one entry per sentence (same length/order `segmentSentences`
+   * produces from `sectionText` — the caller computes attribution against
+   * that exact same segmentation). Omitted entirely for single-voice
+   * (M21 behaviour, unchanged): every sentence uses `narratorVoiceId`. */
+  sentenceVoices?: SentenceVoice[],
 ): Promise<void> {
   const sentences = segmentSentences(sectionText);
   const dir = sectionDir(resourceId, castHash, spineIndex);
@@ -168,11 +179,12 @@ export async function renderSection(
   for (let n = 0; n < sentences.length; n++) {
     if (signal.aborted) throw new DOMException("Section render aborted", "AbortError");
     const sentence = sentences[n];
+    const voice = sentenceVoices?.[n] ?? { voiceId: narratorVoiceId, speakerId: null };
     reportProgress(n, sentences.length, sentence.text.slice(0, 48));
 
     const result = await engine.synthesize({
       text: sentence.text,
-      voiceId: narratorVoiceId,
+      voiceId: voice.voiceId,
       speed,
       signal,
     });
@@ -182,8 +194,8 @@ export async function renderSection(
       charStart: sentence.charStart,
       charEnd: sentence.charEnd,
       durationMs: result.durationMs,
-      voiceId: narratorVoiceId,
-      speakerId: null,
+      voiceId: voice.voiceId,
+      speakerId: voice.speakerId,
       text: sentence.text,
       ext,
     });
