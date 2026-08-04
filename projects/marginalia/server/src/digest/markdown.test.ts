@@ -62,7 +62,17 @@ describe("renderDigestMarkdown", () => {
     putBookDigest(db, {
       resourceId: resource.id,
       synopsis: "A book about arrival.",
-      cast: [{ name: "Alice", description: "the protagonist" }],
+      cast: [
+        {
+          name: "Alice",
+          aliases: [],
+          gender: "female",
+          ageHint: "young",
+          description: "the protagonist",
+          lineCountHint: "many",
+        },
+      ],
+      narratorGender: "unknown",
       themes: ["arrival"],
     });
 

@@ -4495,3 +4495,45 @@ before committing to a design):
   - Kokoro/`onnxruntime-node` loads lazily and its failure path already converts
     correctly to `model_unavailable` (`server/src/routes/audio.ts`) — this part is
     *not* a suspect, unlike the better-sqlite3 precedent it was modeled to avoid.
+
+## M22 — cast scan (pass 1), two SPEC-GAPs — 2026-08-04
+
+**1. Voice assignment ignores `ageHint` entirely.** AUDIO.md's algorithm says "matching
+gender/ageHint", but `Voice` (`server/src/audio/engine.ts`) carries only
+id/label/gender/accent — kokoro's own voice metadata (`kokoro.ts`'s `normalizeGender`/
+`accentFromLanguage`) has no age dimension to match against at all. `assignVoices`
+(`server/src/audio/casting.ts`) matches gender only; `ageHint` is persisted and surfaced
+for the casting UI (M22 task 3) but not consumed by assignment. Noted rather than
+guessed at — there's nothing to guess, the data doesn't exist.
+
+**2. A re-scan never deletes a `book_cast` row for a character that no longer appears.**
+`saveCastScan` (`server/src/audio/castStore.ts`) upserts by `(resource_id, name)` and
+never issues a `DELETE`. AUDIO.md doesn't say what should happen to a character the
+digest stops detecting on a later scan (a chapter re-digested differently, or a
+narrower re-run). Boring/safe default chosen: leave the stale row rather than risk
+discarding a user's locked voice override for a character that's really still in the
+book but phrased differently this time. Revisit if the casting UI (task 3) makes stale
+entries confusing in practice.
+
+**Confirmed confusing in practice, live against Metamorphosis on the local Ollama
+model (2026-08-04).** The book-level reduce doesn't name minor characters
+consistently between runs — three separate scans of the same digested chapters
+produced `"The Chief Clerk"`, `"Chief Clerk"`, then `"Chief Clerk (Boss)"` for the same
+person (same for `"The Charwoman"` → `"Charwoman"`). Each reword creates a new
+`book_cast` row rather than updating the old one, so the resource now genuinely has
+duplicate-looking entries — not a hypothetical. The four principal characters (Gregor,
+Grete, Mr. Samsa, Mrs. Samsa) stayed name-stable across all three scans and kept the
+*same* `book_cast` id and voice every time, so the instability is specific to
+minor/one-line roles the model has more freedom in how to refer to.
+
+Caught and fixed one real consequence of this while verifying: the voice-assignment
+call site (`routes/audio.ts`'s `/cast/scan`) only reserved *locked* characters'
+voices, not stale ones' — so a fresh reword ("Chief Clerk") could get assigned the
+exact voice a stale, still-listed row ("The Chief Clerk") already had, producing two
+visibly different cast entries speaking in the same voice. Fixed by also reserving
+every existing row's voice whose name isn't in the new scan's cast (`claimed` in the
+route). Verified live: a subsequent scan's fresh rewords got voices distinct from
+every existing row, locked or not. The underlying rename-creates-a-duplicate problem
+above is unfixed — that needs actual entity resolution (fuzzy name/alias matching
+across scans), which is a bigger question than this task's scope. Left for whoever
+picks up the casting UI (task 3) or a dedicated pass.

@@ -11,6 +11,7 @@ const KIND_LABEL: Record<Job["kind"], string> = {
   thematic: "Thematic reading",
   "theme-tagging": "Theme tagging",
   "audio-render": "Rendering audio",
+  "cast-scan": "Casting",
 };
 
 function jobTitle(job: Job): string {

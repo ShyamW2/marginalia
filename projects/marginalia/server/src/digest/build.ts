@@ -40,9 +40,22 @@ const ChapterPartSchema = z.object({
 });
 type ChapterPart = z.infer<typeof ChapterPartSchema>;
 
+// M22 (AUDIO.md "Casting", amended 2026-07-28): this reduce step is pass 1
+// of the audio cast scan, not a second scanner — its `cast` output is
+// AUDIO.md's `CastSchema` shape verbatim, enriched from what the map step
+// already recorded per chapter (`characters: string[]`, name-only).
+const BookReduceCastMemberSchema = z.object({
+  name: z.string(),
+  aliases: z.array(z.string()).max(10),
+  gender: z.enum(["female", "male", "unknown"]),
+  ageHint: z.enum(["child", "young", "adult", "old", "unknown"]),
+  description: z.string(),
+  lineCountHint: z.enum(["many", "few"]),
+});
 const BookReduceSchema = z.object({
   synopsis: z.string(),
-  cast: z.array(z.object({ name: z.string(), description: z.string() })).max(20),
+  cast: z.array(BookReduceCastMemberSchema).max(20),
+  narratorGender: z.enum(["female", "male", "unknown"]),
   themes: z.array(z.string()).max(12),
 });
 type BookReduce = z.infer<typeof BookReduceSchema>;
@@ -75,14 +88,25 @@ Respond with a single JSON object with exactly these keys:
 Return only the JSON object, no other text.`;
 
 const BOOK_REDUCE_INSTRUCTIONS = `You are producing a book-level digest from a set of chapter (or chapter-
-group) summaries.
+group) summaries. This digest also drives an audio narration feature that
+assigns a distinct voice to each character, so the cast needs enough detail
+for that — not just a one-line description.
 
 Respond with a single JSON object with exactly these keys:
 {
   "synopsis": "a few paragraphs summarizing the book as a whole, in reading order",
-  "cast": [ { "name": "character name", "description": "one line describing them" } ],
+  "cast": [ { "name": "...", "aliases": ["..."], "gender": "...", "ageHint": "...", "description": "...", "lineCountHint": "..." } ],
+  "narratorGender": "the implied gender of the narrating voice — female | male | unknown",
   "themes": ["short theme names for the book overall, at most 12, deduplicated"]
 }
+
+"cast" holds at most 20 people, most prominent (many lines) first. Each entry:
+- "name": canonical character name as it appears in the book
+- "aliases": other names or titles this character is called, e.g. "Mr. Samsa" — NOT generic references like "he" or "the father"
+- "gender": "female" | "male" | "unknown"
+- "ageHint": "child" | "young" | "adult" | "old" | "unknown"
+- "description": one line describing them
+- "lineCountHint": "many" (a major character with a lot of dialogue) or "few"
 
 Return only the JSON object, no other text.`;
 
@@ -421,6 +445,7 @@ export async function runDigest(
         resourceId: resource.id,
         synopsis: reduced.synopsis,
         cast: reduced.cast,
+        narratorGender: reduced.narratorGender,
         themes: reduced.themes,
       });
     } catch (err) {
@@ -479,6 +504,7 @@ export async function maybeRefreshBookDigestSnapshot(
     upToSpineIndex: frontier,
     synopsis: reduced.synopsis,
     cast: reduced.cast,
+    narratorGender: reduced.narratorGender,
     themes: reduced.themes,
   });
 }

@@ -101,7 +101,7 @@ describe("runDigest", () => {
         return { summary: "Ch2 happens", themes: ["loss"], characters: ["Bob"] };
       }
       // reduce call
-      return { synopsis: "A book about hope and loss.", cast: [{ name: "Alice", description: "protagonist" }], themes: ["hope", "loss"] };
+      return { synopsis: "A book about hope and loss.", cast: [{ name: "Alice", description: "protagonist" }], narratorGender: "unknown", themes: ["hope", "loss"] };
     });
 
     const run = await runDigest(db, provider, resource, sections, 0, 1);
@@ -132,7 +132,7 @@ describe("runDigest", () => {
       callCount++;
       if (req.input.includes("Chapter one")) return { summary: `Ch1 v${callCount}`, themes: [], characters: [] };
       if (req.input.includes("Chapter two")) return { summary: "Ch2 happens", themes: [], characters: [] };
-      return { synopsis: "s", cast: [], themes: [] };
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
     });
 
     await runDigest(db, provider, resource, sections, 0, 1);
@@ -172,7 +172,7 @@ describe("runDigest", () => {
       }
       if (req.input.includes("Chapter one")) return { summary: "Ch1", themes: [], characters: [] };
       if (req.input.includes("Chapter three")) return { summary: "Ch3", themes: [], characters: [] };
-      return { synopsis: "s", cast: [], themes: [] };
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
     });
 
     const paused = await runDigest(db, provider, resource, sections, 0, 2);
@@ -195,7 +195,7 @@ describe("runDigest", () => {
       }
       if (req.input.includes("Chapter two")) return { summary: "Ch2", themes: [], characters: [] };
       if (req.input.includes("Chapter three")) return { summary: "Ch3", themes: [], characters: [] };
-      return { synopsis: "s", cast: [], themes: [] };
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
     });
     const completed = await runDigest(db, unblockedProvider, resource, sections, 0, 2);
     expect(completed.status).toBe("completed");
@@ -219,7 +219,7 @@ describe("runDigest", () => {
         throw new LLMError("context_too_large", "nope");
       }
       if (req.input.includes("Chapter two")) return { summary: "Ch2", themes: [], characters: [] };
-      return { synopsis: "s", cast: [], themes: [] };
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
     });
 
     const run = await runDigest(db, provider, resource, sections, 0, 1);
@@ -323,7 +323,7 @@ describe("maybeRefreshBookDigestSnapshot", () => {
     let calls = 0;
     const provider = makeProvider(() => {
       calls++;
-      return { synopsis: "s", cast: [], themes: [] };
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
     });
 
     await maybeRefreshBookDigestSnapshot(db, provider, resource, 5);
@@ -346,14 +346,14 @@ describe("maybeRefreshBookDigestSnapshot", () => {
       if (req.input.includes("Chapter one")) return { summary: "Ch1", themes: [], characters: [] };
       if (req.input.includes("Chapter two")) return { summary: "Ch2", themes: [], characters: [] };
       if (req.input.includes("Chapter three")) return { summary: "Ch3", themes: [], characters: [] };
-      return { synopsis: "s", cast: [], themes: [] };
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
     });
     await runDigest(db, plotProvider, resource, sections, 0, 2);
 
     let seenChapterNumbers: number[] = [];
     const snapshotProvider = makeProvider((req) => {
       seenChapterNumbers = [0, 1, 2].filter((n) => req.input.includes(`Chapter ${n}:`));
-      return { synopsis: "safe synopsis", cast: [], themes: [] };
+      return { synopsis: "safe synopsis", cast: [], narratorGender: "unknown", themes: [] };
     });
 
     // Bookmark at chapter 1 — chapter 2 is past it and must not appear.
@@ -376,7 +376,7 @@ describe("maybeRefreshBookDigestSnapshot", () => {
       makeProvider((req) =>
         req.input.includes("Chapter one")
           ? { summary: "Ch1", themes: [], characters: [] }
-          : { synopsis: "s", cast: [], themes: [] },
+          : { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] },
       ),
       resource,
       sections,
@@ -387,7 +387,7 @@ describe("maybeRefreshBookDigestSnapshot", () => {
     let calls = 0;
     const provider = makeProvider(() => {
       calls++;
-      return { synopsis: "s", cast: [], themes: [] };
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
     });
     await maybeRefreshBookDigestSnapshot(db, provider, resource, 0);
     expect(calls).toBe(1);

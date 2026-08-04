@@ -2,6 +2,8 @@ import { Router } from "express";
 import {
   AudioSectionManifestSchema,
   AudioStateSchema,
+  BookCastResponseSchema,
+  StartJobResponseSchema,
   TestVoiceBodySchema,
   UpdateAudioStateBodySchema,
   type AudioState,
@@ -11,7 +13,9 @@ import { getResourceById, getResourceTextSections } from "../library/store.js";
 import { getRawSettings } from "../settings/store.js";
 import { getEngine } from "../audio/registry.js";
 import { TTSError } from "../audio/engine.js";
-import { getAudioState, updateAudioState } from "../audio/state.js";
+import { getAudioState, markCastScanned, updateAudioState } from "../audio/state.js";
+import { assignVoices } from "../audio/casting.js";
+import { listBookCast, saveCastScan } from "../audio/castStore.js";
 import {
   computeCastHash,
   deleteResourceAudioCache,
@@ -22,6 +26,9 @@ import {
   renderSection,
 } from "../audio/render.js";
 import { getJob, startJob } from "../jobs/registry.js";
+import { getProvider } from "../llm/provider.js";
+import { runDigest } from "../digest/build.js";
+import { getBookDigest } from "../digest/store.js";
 
 /** `GET /api/audio/*`, `POST /api/audio/test-voice` — engine-level, not
  * scoped to a resource. */
@@ -151,6 +158,111 @@ audioRouter.delete("/:id/audio", async (req, res) => {
   }
   await deleteResourceAudioCache(resource.id);
   res.status(204).end();
+});
+
+// ---------------------------------------------------------------------------
+// M22 — the cast (AUDIO.md "Casting"). Pass 1 is the digest's own book-level
+// reduce (decisions.md 2026-07-28: "it *is* pass 1 of the audio cast scan.
+// Do not build a second scanner"), so this route ensures/resumes a full-book
+// digest, then does the one thing that's genuinely new: deterministic voice
+// assignment (casting.ts) and persistence (castStore.ts).
+// ---------------------------------------------------------------------------
+
+audioRouter.get("/:id/cast", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  res.json(
+    BookCastResponseSchema.parse({
+      scannedAt: getAudioState(db, resource.id).castScannedAt,
+      members: listBookCast(db, resource.id),
+    }),
+  );
+});
+
+audioRouter.post("/:id/cast/scan", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  // AUDIO.md: "Both passes claim the digest provider role rather than the
+  // global provider — casting a long book is batch analysis."
+  const provider = getProvider(db, "digest", "cast", resource.id);
+  if (!provider) {
+    res.status(400).json({ error: "provider_unconfigured" });
+    return;
+  }
+  const sections = getResourceTextSections(db, resource.id);
+  if (sections.length === 0) {
+    res.status(400).json({ error: "no_text" });
+    return;
+  }
+  const spineEnd = Math.max(...sections.map((s) => s.spineIndex));
+
+  const job = startJob("cast-scan", resource.id, resource.title, async (signal, reportProgress) => {
+    const run = await runDigest(db, provider, resource, sections, 0, spineEnd, signal, (current, total, message) =>
+      reportProgress({ current, total, message }),
+    );
+    // Cooperative cancellation returns normally (never throws) — `startJob`
+    // itself checks `signal.aborted` after a clean resolve and marks the job
+    // "cancelled", so returning here (not throwing) is what makes that work.
+    if (signal.aborted) return;
+    // Anything short of "completed" (paused on a rate limit, or a chapter
+    // that failed outright) means the cast this scan would produce is
+    // systematically incomplete — AUDIO.md's "a provider failure mid-scan
+    // leaves no half-written cast" extends to "leaves no cast built on a
+    // half-finished digest". Surfacing this as a failed job (with the
+    // digest's own reason) beats silently completing with nothing written.
+    if (run.status !== "completed") {
+      throw new Error(`Digest ${run.status}${run.lastError ? `: ${run.lastError}` : ""}`);
+    }
+
+    reportProgress({ current: 0, total: 1, message: "Assigning voices" });
+    const digest = getBookDigest(db, resource.id);
+    const characters = digest?.cast ?? [];
+
+    const engine = getEngine(db);
+    const voices = await engine.voices();
+    const { audioDefaultVoice } = getRawSettings(db);
+    const narratorVoice = getAudioState(db, resource.id).narratorVoice || audioDefaultVoice;
+
+    const existing = listBookCast(db, resource.id);
+    const lockedByName = new Map(existing.filter((m) => m.voiceLocked).map((m) => [m.name, m]));
+    const newNames = new Set(characters.map((c) => c.name));
+    // Reserve two kinds of voice: every locked character's (never even
+    // handed to assignVoices — a lock is a hard pin), and every *stale* row
+    // not present in this scan's fresh cast (a name the digest phrased
+    // differently this time — castStore.ts never deletes these, so their
+    // voice is still live and must not be handed to someone new; see
+    // NOTES.md's M22 SPEC-GAP on stale rows). Without the second half, a
+    // freshly-reworded character can silently collide with an orphaned
+    // one's voice — reproduced live: "Chief Clerk" vs "The Chief Clerk".
+    const claimed = existing.filter((m) => m.voiceLocked || !newNames.has(m.name));
+    const reserved = [narratorVoice, ...claimed.map((m) => m.voiceId)];
+    const assignable = characters.filter((c) => !lockedByName.has(c.name));
+    const assignments = assignVoices(assignable, voices, reserved);
+
+    saveCastScan(
+      db,
+      resource.id,
+      characters.map((c) => ({
+        name: c.name,
+        aliases: c.aliases,
+        gender: c.gender,
+        ageHint: c.ageHint,
+        description: c.description,
+        voiceId: assignments.get(c.name) ?? lockedByName.get(c.name)?.voiceId ?? "",
+      })),
+    );
+    markCastScanned(db, resource.id);
+    reportProgress({ current: 1, total: 1, message: null });
+  });
+  res.status(202).json(StartJobResponseSchema.parse({ jobId: job.id }));
 });
 
 function parseSpineIndex(raw: string): number | null {

@@ -494,15 +494,34 @@ to in one voice, with the page following along, before any casting exists.
 
 ### M22 — Audio II: the cast
 
-- [ ] **Cast scan (pass 1).** User-initiated `POST /api/resources/:id/cast/scan` (SSE)
+- [x] **Cast scan (pass 1).** *(2026-08-04.)* User-initiated `POST /api/resources/:id/cast/scan`
       running AUDIO.md's `CastSchema` extract through the **existing** LLM seam and
       context builder — no new provider code — then persisting the cast (`book_cast`
       migration). Deterministic code-side voice assignment from `engine.voices()`:
       narrator first, then by line-count hint and appearance order, matching gender/age,
       never reusing a voice while an unused compatible one remains.
-      _Acceptance: a scan of a real fixture book produces a sane cast with distinct
-      voices; re-running it is stable (same input → same assignment); a provider failure
-      mid-scan leaves no half-written cast._
+      Goes through the **M20.6 job registry** (`kind: "cast-scan"`), not a bespoke SSE
+      endpoint — same deviation the M21 render pipeline already made from AUDIO.md's
+      HTTP table, for the same reason (the job registry generalizes it). Pass 1 itself
+      is the digest's own book-level reduce (decisions.md 2026-07-28: "it *is* pass 1 of
+      the audio cast scan"), extended with `aliases`/`gender`/`ageHint`/`lineCountHint`/
+      `narratorGender` (`digest/build.ts`'s `BookReduceSchema`) — one pipeline, two
+      consumers, as specified. Ensures/resumes a full-book digest first; anything short
+      of `"completed"` (paused on a rate limit, a failed chapter) aborts the scan with no
+      cast written, matching the half-written-cast guarantee.
+      ⚠️ `ageHint` is matched by nothing — `Voice` has no age dimension at all
+      (`// SPEC-GAP`, NOTES.md) — and a re-scanned character whose name the model
+      rewords creates a new row rather than updating the old one (also `// SPEC-GAP`,
+      NOTES.md, confirmed live: reserving *stale* rows' voices, not just locked ones',
+      was a real bug this surfaced and fixed).
+      _Acceptance: met. Verified live against the real Metamorphosis fixture on a local
+      Ollama model — a full scan produced 6 distinct characters with 6 distinct voices
+      correctly matched by gender; killing the dev server mid-digest (a real, unplanned
+      failure, not simulated) left zero `book_cast` rows, confirming no half-written
+      cast; re-scanning kept the four name-stable principal characters' ids and voice
+      assignments byte-identical across three separate runs. Unit tests cover
+      determinism, gender-compatibility fallback, never-reuse-while-unused-compatible-
+      remains, and locked-voice survival across a re-scan._
 - [ ] **Attribution (pass 2) + multi-voice rendering.** Per-section `AttributionSchema`
       extract, on demand and cached with the section's audio. **The model returns the
       quoted string; code locates it** by exact search — never offsets from the model

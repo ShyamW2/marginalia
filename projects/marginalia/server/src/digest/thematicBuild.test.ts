@@ -99,7 +99,7 @@ describe("runThematicDigest", () => {
     const plotProvider = makeProvider((req) => {
       plotCalls.push(req.input);
       if (req.input.includes("Chapter one")) return { summary: "Ch1 happens", themes: ["hope"], characters: ["Alice"] };
-      return { synopsis: "s", cast: [], themes: [] };
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
     });
     await runDigest(db, plotProvider, resource, sections, 0, 0);
     const plotCallsAfterPlot = plotCalls.length;

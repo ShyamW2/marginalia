@@ -14,10 +14,22 @@ export interface ChapterDigest {
   generatedAt: string;
 }
 
+/** M22 (AUDIO.md "Casting"): the digest reduce's cast entry, enriched enough
+ * to drive voice assignment — see `CastSchema` in AUDIO.md. */
+export interface BookDigestCastMember {
+  name: string;
+  aliases: string[];
+  gender: "female" | "male" | "unknown";
+  ageHint: "child" | "young" | "adult" | "old" | "unknown";
+  description: string;
+  lineCountHint: "many" | "few";
+}
+
 export interface BookDigest {
   resourceId: string;
   synopsis: string;
-  cast: { name: string; description: string }[];
+  cast: BookDigestCastMember[];
+  narratorGender: "female" | "male" | "unknown";
   themes: string[];
   generatedAt: string;
 }
@@ -116,6 +128,7 @@ interface BookDigestRow {
   resource_id: string;
   synopsis: string;
   cast: string;
+  narrator_gender: string;
   themes: string;
   generated_at: string;
 }
@@ -125,6 +138,7 @@ function rowToBookDigest(row: BookDigestRow): BookDigest {
     resourceId: row.resource_id,
     synopsis: row.synopsis,
     cast: JSON.parse(row.cast),
+    narratorGender: row.narrator_gender as BookDigest["narratorGender"],
     themes: JSON.parse(row.themes),
     generatedAt: row.generated_at,
   };
@@ -146,14 +160,16 @@ export function putBookDigest(
 ): BookDigest {
   const generatedAt = new Date().toISOString();
   db.prepare(
-    `INSERT INTO book_digests (resource_id, synopsis, cast, themes, generated_at)
-     VALUES (@resourceId, @synopsis, @cast, @themes, @generatedAt)
+    `INSERT INTO book_digests (resource_id, synopsis, cast, narrator_gender, themes, generated_at)
+     VALUES (@resourceId, @synopsis, @cast, @narratorGender, @themes, @generatedAt)
      ON CONFLICT(resource_id) DO UPDATE SET
-       synopsis = @synopsis, cast = @cast, themes = @themes, generated_at = @generatedAt`,
+       synopsis = @synopsis, cast = @cast, narrator_gender = @narratorGender,
+       themes = @themes, generated_at = @generatedAt`,
   ).run({
     resourceId: digest.resourceId,
     synopsis: digest.synopsis,
     cast: JSON.stringify(digest.cast),
+    narratorGender: digest.narratorGender,
     themes: JSON.stringify(digest.themes),
     generatedAt,
   });
@@ -164,7 +180,8 @@ export interface BookDigestSnapshot {
   resourceId: string;
   upToSpineIndex: number;
   synopsis: string;
-  cast: { name: string; description: string }[];
+  cast: BookDigestCastMember[];
+  narratorGender: "female" | "male" | "unknown";
   themes: string[];
   generatedAt: string;
 }
@@ -174,6 +191,7 @@ interface BookDigestSnapshotRow {
   up_to_spine_index: number;
   synopsis: string;
   cast: string;
+  narrator_gender: string;
   themes: string;
   generated_at: string;
 }
@@ -184,6 +202,7 @@ function rowToBookDigestSnapshot(row: BookDigestSnapshotRow): BookDigestSnapshot
     upToSpineIndex: row.up_to_spine_index,
     synopsis: row.synopsis,
     cast: JSON.parse(row.cast),
+    narratorGender: row.narrator_gender as BookDigestSnapshot["narratorGender"],
     themes: JSON.parse(row.themes),
     generatedAt: row.generated_at,
   };
@@ -207,15 +226,17 @@ export function putBookDigestSnapshot(
 ): BookDigestSnapshot {
   const generatedAt = new Date().toISOString();
   db.prepare(
-    `INSERT INTO book_digest_snapshots (resource_id, up_to_spine_index, synopsis, cast, themes, generated_at)
-     VALUES (@resourceId, @upToSpineIndex, @synopsis, @cast, @themes, @generatedAt)
+    `INSERT INTO book_digest_snapshots
+       (resource_id, up_to_spine_index, synopsis, cast, narrator_gender, themes, generated_at)
+     VALUES (@resourceId, @upToSpineIndex, @synopsis, @cast, @narratorGender, @themes, @generatedAt)
      ON CONFLICT(resource_id) DO UPDATE SET
        up_to_spine_index = @upToSpineIndex, synopsis = @synopsis, cast = @cast,
-       themes = @themes, generated_at = @generatedAt`,
+       narrator_gender = @narratorGender, themes = @themes, generated_at = @generatedAt`,
   ).run({
     resourceId: snapshot.resourceId,
     upToSpineIndex: snapshot.upToSpineIndex,
     synopsis: snapshot.synopsis,
+    narratorGender: snapshot.narratorGender,
     cast: JSON.stringify(snapshot.cast),
     themes: JSON.stringify(snapshot.themes),
     generatedAt,

@@ -52,6 +52,18 @@ export function getAudioState(db: Database.Database, resourceId: string): AudioS
   };
 }
 
+/** M22: stamps `cast_scanned_at` after a cast scan completes — the signal
+ * `AudioState.castScannedAt` surfaces so the UI knows a cast already exists. */
+export function markCastScanned(db: Database.Database, resourceId: string): void {
+  const current = getAudioState(db, resourceId);
+  const next: AudioStateRow = { ...current, castScannedAt: new Date().toISOString() };
+  db.prepare(
+    `INSERT INTO audio_state (resource_id, narrator_voice, voice_mode, speed, cast_scanned_at, updated_at)
+     VALUES (@resourceId, @narratorVoice, @voiceMode, @speed, @castScannedAt, @updatedAt)
+     ON CONFLICT (resource_id) DO UPDATE SET cast_scanned_at = @castScannedAt, updated_at = @updatedAt`,
+  ).run({ ...next, updatedAt: next.castScannedAt });
+}
+
 export function updateAudioState(
   db: Database.Database,
   resourceId: string,

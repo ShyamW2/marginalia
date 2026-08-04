@@ -124,6 +124,7 @@ function buildDigestStatus(
               ? {
                   synopsis: snapshot.synopsis,
                   cast: snapshot.cast,
+                  narratorGender: snapshot.narratorGender,
                   themes: snapshot.themes,
                   generatedAt: snapshot.generatedAt,
                 }
@@ -133,6 +134,7 @@ function buildDigestStatus(
                 ? {
                     synopsis: fullBook.synopsis,
                     cast: fullBook.cast,
+                    narratorGender: fullBook.narratorGender,
                     themes: fullBook.themes,
                     generatedAt: fullBook.generatedAt,
                   }

@@ -776,9 +776,43 @@ export const DigestChapterStatusSchema = z.object({
 });
 export type DigestChapterStatus = z.infer<typeof DigestChapterStatusSchema>;
 
+// M22 (AUDIO.md "Casting"): the digest's book-level reduce step is pass 1 of
+// the audio cast scan — decisions.md 2026-07-28 ("it *is* pass 1 of the
+// audio cast scan. Do not build a second scanner for casting"). These are
+// the character fields the reduce step must produce; distinct from
+// `CastCharacterGenderSchema`'s neighbour `VoiceGenderSchema` above because
+// a character's gender (as written) and a voice's gender (as synthesized)
+// are different axes that happen to share three of four values.
+export const CastCharacterGenderSchema = z.enum(["female", "male", "unknown"]);
+export type CastCharacterGender = z.infer<typeof CastCharacterGenderSchema>;
+
+export const CastAgeHintSchema = z.enum(["child", "young", "adult", "old", "unknown"]);
+export type CastAgeHint = z.infer<typeof CastAgeHintSchema>;
+
+export const CastLineCountHintSchema = z.enum(["many", "few"]);
+export type CastLineCountHint = z.infer<typeof CastLineCountHintSchema>;
+
+/** One character as the digest reduce step (and only the reduce step)
+ * produces it — no voice assignment yet, that's code's job (AUDIO.md
+ * "Voice assignment is code, not the model"). */
+export const DigestCastCharacterSchema = z.object({
+  name: z.string(),
+  aliases: z.array(z.string()),
+  gender: CastCharacterGenderSchema,
+  ageHint: CastAgeHintSchema,
+  description: z.string(),
+  lineCountHint: CastLineCountHintSchema,
+});
+export type DigestCastCharacter = z.infer<typeof DigestCastCharacterSchema>;
+
 export const BookDigestSchema = z.object({
   synopsis: z.string(),
-  cast: z.array(z.object({ name: z.string(), description: z.string() })),
+  cast: z.array(DigestCastCharacterSchema),
+  /** Informational only — voice assignment matches gender against real
+   * `Voice`s but has no age signal to match `ageHint` against (kokoro's
+   * voice metadata carries no age dimension), so this and `ageHint` above
+   * are surfaced for the casting UI, not consumed by `assignVoices`. */
+  narratorGender: CastCharacterGenderSchema,
   themes: z.array(z.string()),
   generatedAt: z.string(),
 });
@@ -952,8 +986,8 @@ export type UpdateContextLadderBody = z.infer<typeof UpdateContextLadderBodySche
 // ---------------------------------------------------------------------------
 
 // M21 adds "audio-render" (rendering one spine section's sentence audio);
-// M22 will add "cast-scan".
-export const JobKindSchema = z.enum(["digest", "thematic", "theme-tagging", "audio-render"]);
+// M22 adds "cast-scan" (pass 1: ensure/resume the digest, then assign voices).
+export const JobKindSchema = z.enum(["digest", "thematic", "theme-tagging", "audio-render", "cast-scan"]);
 export type JobKind = z.infer<typeof JobKindSchema>;
 
 export const JobStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);
@@ -1014,6 +1048,29 @@ export type Voice = z.infer<typeof VoiceSchema>;
 
 export const VoiceModeSchema = z.enum(["single", "multi"]);
 export type VoiceMode = z.infer<typeof VoiceModeSchema>;
+
+/** One `book_cast` row — a character plus its code-assigned (or
+ * user-overridden) voice. `voiceLocked` means a user override (AUDIO.md
+ * "Casting UI"): it must survive a re-scan. */
+export const BookCastMemberSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  aliases: z.array(z.string()),
+  gender: CastCharacterGenderSchema,
+  ageHint: CastAgeHintSchema,
+  description: z.string(),
+  voiceId: z.string(),
+  voiceLocked: z.boolean(),
+  sortOrder: z.number().int(),
+});
+export type BookCastMember = z.infer<typeof BookCastMemberSchema>;
+
+/** GET /api/resources/:id/cast */
+export const BookCastResponseSchema = z.object({
+  scannedAt: z.string().nullable(),
+  members: z.array(BookCastMemberSchema),
+});
+export type BookCastResponse = z.infer<typeof BookCastResponseSchema>;
 
 /** GET /api/resources/:id/audio */
 export const AudioStateSchema = z.object({

@@ -510,4 +510,32 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M22 (AUDIO.md "Data model" + "Casting"): `book_cast`, verbatim per the
+    // spec's schema. `narrator_gender` lands on `book_digests` and
+    // `book_digest_snapshots` too — the digest's book-level reduce is pass 1
+    // of the cast scan (decisions.md 2026-07-28), and the reduce step now
+    // also names the narrator's gender so voice assignment doesn't have to
+    // guess it. Both `cast` columns already store a loosely-typed JSON blob
+    // (no column change needed for the richer per-character shape).
+    version: 22,
+    sql: `
+      CREATE TABLE book_cast (
+        id            TEXT PRIMARY KEY,
+        resource_id   TEXT NOT NULL REFERENCES resources(id),
+        name          TEXT NOT NULL,
+        aliases       TEXT NOT NULL DEFAULT '[]',
+        gender        TEXT NOT NULL,
+        age_hint      TEXT NOT NULL,
+        description   TEXT NOT NULL DEFAULT '',
+        voice_id      TEXT NOT NULL DEFAULT '',
+        voice_locked  INTEGER NOT NULL DEFAULT 0,
+        sort_order    INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (resource_id, name)
+      );
+
+      ALTER TABLE book_digests ADD COLUMN narrator_gender TEXT NOT NULL DEFAULT 'unknown';
+      ALTER TABLE book_digest_snapshots ADD COLUMN narrator_gender TEXT NOT NULL DEFAULT 'unknown';
+    `,
+  },
 ];
