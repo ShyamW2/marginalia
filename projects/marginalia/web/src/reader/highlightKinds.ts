@@ -61,3 +61,24 @@ export function markStyleForKind(
 export function hoverFillOpacity(colorScheme: "light" | "dark"): number {
   return colorScheme === "dark" ? 0.6 : 0.95;
 }
+
+/**
+ * M21 (AUDIO.md): the currently-playing sentence's mark while listening —
+ * "visually distinct from the four highlight kinds and quieter than all of
+ * them". Uses the reader's own accent rather than a `kindColors` entry, so
+ * it never reads as a fifth highlight kind a reader might try to click into
+ * a thread — it moves every few seconds on its own, driven by playback, not
+ * by anything the reader chose to mark.
+ */
+export function audioTintStyle(
+  vars: { accent: string; colorScheme: "light" | "dark" },
+  hidden = false,
+): Record<string, string> {
+  if (hidden) return { fill: "transparent", "fill-opacity": "0" };
+  const isDark = vars.colorScheme === "dark";
+  return {
+    fill: vars.accent,
+    "fill-opacity": isDark ? "0.22" : "0.14",
+    "mix-blend-mode": isDark ? "screen" : "multiply",
+  };
+}

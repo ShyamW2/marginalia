@@ -97,6 +97,20 @@ export function BookObject({
     navigate(`/digest/${resource.id}`, { state: { background: location } });
   }
 
+  // M21 "Listen" (AUDIO.md: "the tool is the charm, not the gate" — this
+  // plain action is the canonical path, same DESIGN.md accessibility rule
+  // as everywhere else). Opens the reader room itself (unlike Scan/Digest,
+  // it isn't a popup), so it shares `open()`'s origin-capture and its
+  // openedRef gate rather than openScan/openDigest's ungated pattern.
+  function openListen() {
+    if (openedRef.current) return;
+    openedRef.current = true;
+    if (coverRef.current) {
+      setPendingOverlayOrigin(captureOverlayOrigin(coverRef.current));
+    }
+    navigate(`/read/${resource.id}`, { state: { listenOnOpen: true } });
+  }
+
   function handleDragStart() {
     dragDistance.current = 0;
     setIsDragging(true);
@@ -258,6 +272,17 @@ export function BookObject({
               }}
             >
               Read digest
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={styles.infoAction}
+              onClick={(e) => {
+                e.stopPropagation();
+                openListen();
+              }}
+            >
+              Listen
             </Button>
             <Button
               variant="ghost"

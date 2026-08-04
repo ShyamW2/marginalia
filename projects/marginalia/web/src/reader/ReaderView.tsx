@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -11,6 +12,7 @@ import type { Book, Contents, Location, Rendition } from "epubjs";
 import { AnimatePresence, motion } from "motion/react";
 import {
   UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
+  findAnchorInText,
   type CreateHighlightBody,
   type CursorStyleChoice,
   type HighlightImportance,
@@ -37,12 +39,15 @@ import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
+import { AudioTransportIcon } from "./AudioTransportIcon.js";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
 import { Slider } from "../controls/Slider.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
-import { hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
+import { audioTintStyle, hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
+import { usePlayer, type AudioPlayer } from "../audio/usePlayer.js";
+import { updateAudioState } from "../audio/audioApi.js";
 import { cursorPastPageText } from "./pageTextEdge.js";
 import { PageCurl } from "./PageCurl.js";
 import { PageSlide } from "./PageSlide.js";
@@ -363,6 +368,9 @@ interface ReaderViewProps {
    * a risk of the book-opening overlay revealing a flash of the wrong page
    * or the plain "Loading book…" text underneath it. */
   onReady?: () => void;
+  /** M21 "Listen" entry point (desk hover strip / list view): start
+   * listening from wherever the book opens, once it's actually open. */
+  initialAutoplay?: boolean;
 }
 
 export function ReaderView({
@@ -373,6 +381,7 @@ export function ReaderView({
   initialReaderPaneWidth,
   appBoundsRef,
   onReady,
+  initialAutoplay,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -412,6 +421,16 @@ export function ReaderView({
   // Same story, for the spine index — handleSectionRepaginated needs to know
   // which section the reader is in without being a render dependency.
   const currentSpineIndexRef = useRef<number | null>(null);
+  // M21: the live epub.js Contents for whatever section is currently
+  // rendered — the audio tint effect needs its DOM text to resolve a
+  // playing sentence's char range, and it fires from a separate effect
+  // outside the book-loading effect below, so it can't just close over the
+  // `contents` handleRendered receives.
+  const currentContentsRef = useRef<Contents | null>(null);
+  // The CFI the audio tint mark currently sits at, if any — tracked
+  // separately from cfiOwnersRef (real highlights) since exactly one tint
+  // is ever live and it is never co-owned.
+  const tintCfiRef = useRef<string | null>(null);
   const highlightsRef = useRef<HighlightWithThread[]>([]);
   const resolvedIdsRef = useRef<Set<string>>(new Set());
   // Tracks the CFI each highlight's mark was actually attached at, which can
@@ -446,6 +465,7 @@ export function ReaderView({
     getFoldPointer,
     handleDrawCost,
     turnPage,
+    turnPageSlide,
     handleGrabPointerDown,
   } = usePageTurnAnimation({
     renditionRef,
@@ -497,6 +517,8 @@ export function ReaderView({
   const [currentSpineIndex, setCurrentSpineIndex] = useState<number | null>(
     null,
   );
+  // M21: bumped on every "relocated" — see handleRelocated's own comment.
+  const [turnTick, setTurnTick] = useState(0);
   // M17 "digest this chapter" (decisions.md 2026-07-28 later): the
   // spotlight's reader-side shortcut — same POST the scan's spotlight uses,
   // scoped to just the current chapter, without visiting the scan.
@@ -542,6 +564,15 @@ export function ReaderView({
     initialDraft?: string;
   } | null>(null);
   const [providerConfigured, setProviderConfigured] = useState(false);
+  // M21: whether an audio-driven page turn should happen automatically —
+  // live-via-settingsBus like readerMargin below. Read inside the tint
+  // effect through the ref, not the state itself, so a setting change
+  // doesn't need to re-run that effect.
+  const [audioAutoTurnPages, setAudioAutoTurnPages] = useState(true);
+  const audioAutoTurnPagesRef = useRef(audioAutoTurnPages);
+  useEffect(() => {
+    audioAutoTurnPagesRef.current = audioAutoTurnPages;
+  }, [audioAutoTurnPages]);
   // M14: persisted, but must take effect live while this component stays
   // mounted underneath the settings modal (M11) — settingsBus is how a
   // save reaches this component without a reload or a remount.
@@ -586,6 +617,24 @@ export function ReaderView({
   // a ref like sectionWeightRef above — ChapterNav needs to re-render once
   // this resolves, not just read it inside an event-handler closure.
   const [chapterNumbers, setChapterNumbers] = useState<Map<number, number> | null>(null);
+  // M21: every spine index in reading order, derived from the same
+  // chapter-meta fetch chapterNumbers already comes from — usePlayer needs
+  // it to find "the next/previous section" for chapter-ahead prefetch and
+  // cross-section advance. Memoized so its identity is stable across
+  // renders that don't actually change the book's section list.
+  const orderedSpineIndices = useMemo(
+    () => (chapterNumbers ? Array.from(chapterNumbers.keys()).sort((a, b) => a - b) : []),
+    [chapterNumbers],
+  );
+  const player = usePlayer({ resourceId, spineIndices: orderedSpineIndices, initialSpeed: 1 });
+  // Stable handle for the book-loading effect's closures (handleIframeKeydown,
+  // the shortcut handlers below) — same reason turnPageRef/chapterJumpRef
+  // exist: those are set up once and must reach *current* player behavior,
+  // not whatever it was on the render that ran the effect.
+  const playerRef = useRef<AudioPlayer>(player);
+  useEffect(() => {
+    playerRef.current = player;
+  }, [player]);
   const [showAnnotations, setShowAnnotations] = useState(false);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
@@ -630,8 +679,19 @@ export function ReaderView({
   // setters, so none of these need dependencies beyond what's shown.
   const handleArrowLeftShortcut = useCallback(() => turnPageRef.current("prev"), []);
   const handleArrowRightShortcut = useCallback(() => turnPageRef.current("next"), []);
-  const handleChapterPrevShortcut = useCallback(() => chapterJumpRef.current("prev"), []);
-  const handleChapterNextShortcut = useCallback(() => chapterJumpRef.current("next"), []);
+  // M21 "skip chapter reusing [/]": while a listening session is active,
+  // the same keys skip to the previous/next section's audio instead of the
+  // ordinary TOC-based chapter jump — the tint effect below (watching
+  // player.currentSegment) is what actually turns the visible page to
+  // follow it, exactly as an audio-driven cross-section advance already does.
+  const handleChapterPrevShortcut = useCallback(() => {
+    if (playerRef.current.status === "idle") chapterJumpRef.current("prev");
+    else playerRef.current.skipChapter(-1);
+  }, []);
+  const handleChapterNextShortcut = useCallback(() => {
+    if (playerRef.current.status === "idle") chapterJumpRef.current("next");
+    else playerRef.current.skipChapter(1);
+  }, []);
   const handleEscapeShortcut = useCallback(() => {
     setPendingSelection(null);
     setExpandedThread(null);
@@ -646,8 +706,34 @@ export function ReaderView({
       return next;
     });
   }, []);
+  // M21 "play/pause on space with the existing isTyping guard": useShortcuts
+  // (window path) and handleIframeKeydown (iframe path, below) both already
+  // give every binding that guard for free — this only needs to stop the
+  // browser's own "space scrolls/activates the focused control" default.
+  const handleSpaceShortcut = useCallback((event?: KeyboardEvent) => {
+    event?.preventDefault();
+    playerRef.current.toggle();
+  }, []);
+  // M21 "skip sentence shift+←/→": placed *before* the plain prevPage/
+  // nextPage bindings below — useShortcuts dispatches to the first binding
+  // whose key matches, and a binding with `shift` left undefined matches
+  // either shift state, so the shifted variant must be checked first. When
+  // nothing is loaded, these fall back to the ordinary page turn — the same
+  // thing the unshifted key already does — rather than silently doing
+  // nothing.
+  const handleSkipSentencePrevShortcut = useCallback(() => {
+    if (playerRef.current.status === "idle") turnPageRef.current("prev");
+    else playerRef.current.skipSentence(-1);
+  }, []);
+  const handleSkipSentenceNextShortcut = useCallback(() => {
+    if (playerRef.current.status === "idle") turnPageRef.current("next");
+    else playerRef.current.skipSentence(1);
+  }, []);
 
   useShortcuts([
+    { key: SHORTCUT_KEYS.skipSentencePrev, shift: true, handler: handleSkipSentencePrevShortcut },
+    { key: SHORTCUT_KEYS.skipSentenceNext, shift: true, handler: handleSkipSentenceNextShortcut },
+    { key: SHORTCUT_KEYS.playPause, handler: handleSpaceShortcut },
     { key: SHORTCUT_KEYS.prevPage, handler: handleArrowLeftShortcut },
     { key: SHORTCUT_KEYS.nextPage, handler: handleArrowRightShortcut },
     { key: SHORTCUT_KEYS.prevChapter, handler: handleChapterPrevShortcut },
@@ -786,6 +872,129 @@ export function ReaderView({
     );
   }
 
+  // M21: the playing sentence's mark — a distinct class from
+  // HIGHLIGHT_MARK_CLASS (never shares cfiOwnersRef's ownership bookkeeping;
+  // exactly one tint is ever live, and it's ephemeral, not a real highlight
+  // a click should open a thread on).
+  const AUDIO_TINT_MARK_CLASS = "marginalia-audio-tint";
+  function setAudioTint(cfi: string | null) {
+    if (tintCfiRef.current === cfi) return;
+    if (tintCfiRef.current) {
+      renditionRef.current?.annotations.remove(tintCfiRef.current, "highlight");
+    }
+    tintCfiRef.current = cfi;
+    if (cfi) {
+      renditionRef.current?.annotations.highlight(
+        cfi,
+        {},
+        undefined,
+        AUDIO_TINT_MARK_CLASS,
+        audioTintStyle(themeVarsRef.current, focusModeRef.current),
+      );
+    }
+  }
+
+  // M21: resolves the playing sentence to a DOM range and tints it, and
+  // drives auto-page-turn (the slide, never the curl — AUDIO.md) when it
+  // falls outside the visible page or a different section entirely.
+  // Deliberately its own effect, outside the book-loading effect above, so
+  // it can freely depend on player.currentSegment/turnTick without
+  // re-running the whole book setup on every sentence.
+  useEffect(() => {
+    const segment = player.currentSegment;
+    if (!segment) {
+      setAudioTint(null);
+      return;
+    }
+
+    const contents = currentContentsRef.current;
+    if (!contents || contents.sectionIndex !== segment.spineIndex) {
+      // The visible page hasn't caught up to this section yet — turn
+      // toward it rather than leaving the tint on stale, wrong-section text.
+      setAudioTint(null);
+      if (audioAutoTurnPagesRef.current && currentSpineIndexRef.current !== null) {
+        const direction = segment.spineIndex > currentSpineIndexRef.current ? "next" : "prev";
+        void turnPageSlide(direction);
+      }
+      return;
+    }
+
+    const sectionText = contents.document.body.textContent ?? "";
+    // AUDIO.md: "the manifest's char range -> text search in the section
+    // contents" — an exact-text search against the *live* DOM, not a
+    // recomputed offset, since epub.js's rendered text can differ slightly
+    // from resource_text's raw extraction (collapsed whitespace etc.). No
+    // prefix/suffix: the sentence itself is almost always unique enough
+    // within one section, and findAnchorInText already degrades gracefully
+    // (see below) rather than throwing on a false match.
+    const match = findAnchorInText(sectionText, { exact: segment.text, prefix: "", suffix: "" });
+    if (!match) {
+      // AUDIO.md: "a sentence that can't be resolved is skipped silently —
+      // audio keeps playing; a missing tint is a blemish, a stall is a
+      // broken product." Nothing else to do here.
+      setAudioTint(null);
+      return;
+    }
+    const range = rangeFromTextOffsets(contents.document, match.start, match.end);
+    if (!range) {
+      setAudioTint(null);
+      return;
+    }
+    setAudioTint(contents.cfiFromRange(range));
+
+    if (audioAutoTurnPagesRef.current) {
+      // epub.js's paginated flow lays the whole section out in one very
+      // wide iframe and reveals the current page by shifting *the iframe
+      // element itself* within a viewport-sized, overflow-clipped
+      // container (see handleContentClick's own comment on this same
+      // trick) — confirmed live: the iframe's own `innerWidth` was 26708px
+      // for a normal-looking single page, so checking a range's rect
+      // against the iframe's viewport is meaningless (nearly everything in
+      // the section reads as "visible"). The real visible window is
+      // `containerRef`; translate through the iframe element's own
+      // position first, exactly like handleContentClick/MouseMove do.
+      const iframeEl = contents.document.defaultView?.frameElement as HTMLElement | null;
+      const container = containerRef.current;
+      if (iframeEl && container) {
+        const iframeRect = iframeEl.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const rangeRect = range.getBoundingClientRect();
+        const left = iframeRect.left + rangeRect.left - containerRect.left;
+        const right = iframeRect.left + rangeRect.right - containerRect.left;
+        const top = iframeRect.top + rangeRect.top - containerRect.top;
+        const bottom = iframeRect.top + rangeRect.bottom - containerRect.top;
+        const visible = right > 0 && left < containerRect.width && bottom > 0 && top < containerRect.height;
+        if (!visible) void turnPageSlide("next");
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.currentSegment, turnTick]);
+
+  // AUDIO.md: "making a selection, opening a thread, or opening the
+  // annotations overview pauses [playback]; it does not stop. You cannot
+  // read an answer while being talked at." One effect covers all three
+  // rather than touching every place that sets these three pieces of state.
+  useEffect(() => {
+    if (pendingSelection || expandedThread || showAnnotations) {
+      playerRef.current.pause();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSelection, expandedThread, showAnnotations]);
+
+  // M21 "Listen" entry point: once the book has actually opened (a real
+  // spine index is known), start listening from wherever it opened — the
+  // saved position for a plain reopen, or the jumped-to highlight's section
+  // when arriving from the scan. Fires once per mount, never re-fires on
+  // every ordinary page turn.
+  const hasAutoplayedRef = useRef(false);
+  useEffect(() => {
+    if (!initialAutoplay || hasAutoplayedRef.current) return;
+    if (currentSpineIndex === null) return;
+    hasAutoplayedRef.current = true;
+    player.startListening(currentSpineIndex);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialAutoplay, currentSpineIndex]);
+
   useEffect(() => {
     highlightsRef.current = highlights;
   }, [highlights]);
@@ -799,6 +1008,7 @@ export function ReaderView({
       setReaderPaneWidth(settings.readerPaneWidth);
       setPageTransition(settings.pageTransition);
       setCursorStyle(settings.cursorStyle);
+      setAudioAutoTurnPages(settings.audioAutoTurnPages);
     });
     fetchQueryRoleConfigured().then(setProviderConfigured);
   }, []);
@@ -811,6 +1021,7 @@ export function ReaderView({
       setReaderPaneWidth(settings.readerPaneWidth);
       setPageTransition(settings.pageTransition);
       setCursorStyle(settings.cursorStyle);
+      setAudioAutoTurnPages(settings.audioAutoTurnPages);
     });
   }, []);
 
@@ -1146,6 +1357,10 @@ export function ReaderView({
       setAtStart(Boolean(location.atStart));
       setAtEnd(Boolean(location.atEnd));
       setCurrentSpineIndex(location.start.index);
+      // M21: the audio tint/auto-turn effect needs to know "a page just
+      // turned" even *within* the same spine section (currentSpineIndex
+      // alone wouldn't change) — a plain counter is the cheapest signal.
+      setTurnTick((t) => t + 1);
       const pct = location.start.percentage;
 
       const usedPageBasedPercent = publishPageNumbers(location.start.index);
@@ -1168,6 +1383,7 @@ export function ReaderView({
     function handleRendered(_section: unknown, view: unknown) {
       const contents = (view as ViewWithContents).contents;
       if (!contents) return;
+      currentContentsRef.current = contents;
       resolveHighlightsForSection(contents);
 
       // The section's fonts may still be loading at this point; when they
@@ -1517,8 +1733,13 @@ export function ReaderView({
 
       if (isTyping) return;
 
-      if (event.key === "ArrowLeft") handleArrowLeftShortcut();
-      else if (event.key === "ArrowRight") handleArrowRightShortcut();
+      if (event.key === "ArrowLeft") {
+        if (event.shiftKey) handleSkipSentencePrevShortcut();
+        else handleArrowLeftShortcut();
+      } else if (event.key === "ArrowRight") {
+        if (event.shiftKey) handleSkipSentenceNextShortcut();
+        else handleArrowRightShortcut();
+      } else if (event.key === " ") handleSpaceShortcut(event);
       else if (event.key === "[") handleChapterPrevShortcut();
       else if (event.key === "]") handleChapterNextShortcut();
       else if (event.key === "Escape") handleEscapeShortcut();
@@ -1653,6 +1874,20 @@ export function ReaderView({
         markStyleForKind(highlight.kind, themeVars, focusMode),
       );
     }
+
+    // M21: the audio tint gets the same re-tint-in-place treatment as a
+    // real highlight above — `f` must hide it exactly like any other
+    // annotation-layer effect (AUDIO.md).
+    if (tintCfiRef.current) {
+      renditionRef.current.annotations.remove(tintCfiRef.current, "highlight");
+      renditionRef.current.annotations.highlight(
+        tintCfiRef.current,
+        {},
+        undefined,
+        AUDIO_TINT_MARK_CLASS,
+        audioTintStyle(themeVars, focusMode),
+      );
+    }
   }, [themeVars, focusMode]);
 
   // M16 "reading text size": applied through the epub theme
@@ -1733,6 +1968,25 @@ export function ReaderView({
       setDigestChapterResult("Digest failed");
       window.setTimeout(() => setDigestChapterResult(null), 4000);
     }
+  }
+
+  // M21 transport controls. The footer's play/pause button is the one place
+  // a reader can start listening without ever visiting the desk/list — it
+  // starts from wherever the book is currently open to.
+  function handleTransportPlayClick() {
+    if (player.status === "idle" || player.status === "error") {
+      if (currentSpineIndex !== null) player.startListening(currentSpineIndex);
+    } else {
+      player.toggle();
+    }
+  }
+
+  const SPEED_STEPS = [0.75, 1, 1.25, 1.5, 2];
+  function handleCycleSpeed() {
+    const i = SPEED_STEPS.indexOf(player.speed);
+    const next = SPEED_STEPS[(i + 1) % SPEED_STEPS.length] ?? 1;
+    player.setSpeed(next);
+    void updateAudioState(resourceId, { speed: next });
   }
 
   /** Resolve a previewed percent to a CFI and actually move the book —
@@ -2000,6 +2254,56 @@ export function ReaderView({
               />
             </>
           )}
+          {/* M21 transport controls: not gated by focusMode — a reader who
+              hid annotations to listen still needs to pause. */}
+          <div className={styles.audioTransport}>
+            <IconButton
+              icon={<AudioTransportIcon kind="skip-prev" />}
+              label="Previous sentence"
+              disabled={player.status === "idle"}
+              onClick={() => player.skipSentence(-1)}
+            />
+            <IconButton
+              icon={
+                <AudioTransportIcon
+                  kind={player.status === "playing" || player.status === "loading" ? "pause" : "play"}
+                />
+              }
+              label={
+                player.status === "playing" || player.status === "loading"
+                  ? "Pause listening"
+                  : player.status === "paused"
+                    ? "Resume listening"
+                    : "Listen"
+              }
+              pressed={player.status === "playing" || player.status === "loading"}
+              onClick={handleTransportPlayClick}
+            />
+            <IconButton
+              icon={<AudioTransportIcon kind="skip-next" />}
+              label="Next sentence"
+              disabled={player.status === "idle"}
+              onClick={() => player.skipSentence(1)}
+            />
+            {player.status !== "idle" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={styles.speedButton}
+                onClick={handleCycleSpeed}
+                title="Playback speed"
+              >
+                {player.speed}×
+              </Button>
+            )}
+            {player.status === "error" && (
+              <span className={styles.audioError} role="status">
+                {player.errorCode === "model_unavailable" || player.errorCode === "model_download_failed"
+                  ? "Audio engine unavailable"
+                  : "Couldn't play audio"}
+              </span>
+            )}
+          </div>
           {/* M19.7 "the nav bar becomes a floating cluster": outside
               fullscreen, App.tsx's own top-right instance already covers the
               reader. In real Fullscreen API fullscreen, anything outside

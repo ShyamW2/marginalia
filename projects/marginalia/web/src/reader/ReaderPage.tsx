@@ -27,6 +27,10 @@ interface ReaderLocationState {
   /** M19.5: a posed question's text, arriving from the digest page — seeds
    * the jumped-to thread's draft, pre-filled. */
   jumpToQuestion?: string;
+  /** M21 "Listen" entry point (desk hover strip / list view): start
+   * listening once the book is open, same "captured once at mount" story
+   * as the other two fields above. */
+  listenOnOpen?: boolean;
 }
 
 export function ReaderPage() {
@@ -242,6 +246,7 @@ export function ReaderPage() {
             initialReaderPaneWidth={readerPaneWidth}
             appBoundsRef={appBoundsRef}
             onReady={() => setReaderReady(true)}
+            initialAutoplay={initialLocationState?.listenOnOpen}
           />
         </>
       )}

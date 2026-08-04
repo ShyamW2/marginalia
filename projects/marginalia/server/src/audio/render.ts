@@ -10,10 +10,16 @@ import { writeEncodedSegment } from "./encode.js";
 
 /** The on-disk manifest carries one field the wire schema doesn't (`ext`,
  * so the file-serving route knows whether to look for `.opus` or `.wav`
- * without a directory scan) — never sent to the client as-is. */
+ * without a directory scan) — never sent to the client as-is.
+ *
+ * Written incrementally, one sentence at a time (see `renderSection`) —
+ * `totalSegments` is known and written up front (segmentation is instant;
+ * synthesis is what's slow), so a client can tell "3 of 40 rendered so far"
+ * from "this section only ever had 3 sentences". */
 export interface SectionManifestFile {
   spineIndex: number;
   castHash: string;
+  totalSegments: number;
   segments: (AudioSegment & { ext: "opus" | "wav" })[];
 }
 
@@ -64,12 +70,33 @@ function readManifest(resourceId: string, castHash: string, spineIndex: number):
 export function isSectionCached(resourceId: string, castHash: string, spineIndex: number): boolean {
   const manifest = readManifest(resourceId, castHash, spineIndex);
   if (!manifest) return false;
+  if (manifest.segments.length !== manifest.totalSegments) return false;
   const dir = sectionDir(resourceId, castHash, spineIndex);
   return manifest.segments.every((seg) => fs.existsSync(path.join(dir, `${seg.n}.${seg.ext}`)));
 }
 
 export function getSectionManifest(resourceId: string, castHash: string, spineIndex: number): SectionManifestFile | null {
   return isSectionCached(resourceId, castHash, spineIndex) ? readManifest(resourceId, castHash, spineIndex) : null;
+}
+
+/**
+ * Whatever is on disk right now, complete or not — the render route's
+ * manifest endpoint uses this (not `getSectionManifest`) so a player can
+ * start speaking sentence 0 the moment it lands instead of waiting for the
+ * whole section (decisions.md 2026-07-27: "listening starts in seconds").
+ * Still file-existence-checked per segment, same cache-honesty rule as
+ * `isSectionCached` — a segment whose file vanished doesn't get handed to
+ * the player as playable.
+ */
+export function getPartialSectionManifest(
+  resourceId: string,
+  castHash: string,
+  spineIndex: number,
+): SectionManifestFile | null {
+  const manifest = readManifest(resourceId, castHash, spineIndex);
+  if (!manifest) return null;
+  const dir = sectionDir(resourceId, castHash, spineIndex);
+  return { ...manifest, segments: manifest.segments.filter((seg) => fs.existsSync(path.join(dir, `${seg.n}.${seg.ext}`))) };
 }
 
 /** Absolute path to one rendered segment file, or null if it isn't
@@ -99,13 +126,15 @@ export async function deleteResourceAudioCache(resourceId: string): Promise<void
 
 /**
  * Renders one spine section's sentence-by-sentence audio and writes its
- * manifest. Idempotent per AUDIO.md ("rendering a chapter twice does no
- * synthesis the second time") via the job route's own cache check before
- * this is ever called — this function itself always (re)renders every
- * sentence when invoked, and does not attempt to resume a previously
- * interrupted partial render (SPEC-GAP: AUDIO.md only requires that a full
- * cache hit is a no-op and that cancelling actually stops work, not that a
- * *partial* render survives a restart — see NOTES.md).
+ * manifest — incrementally, one sentence at a time, so a section is
+ * playable before it's fully rendered (see `getPartialSectionManifest`).
+ * Idempotent per AUDIO.md ("rendering a chapter twice does no synthesis the
+ * second time") via the job route's own cache check before this is ever
+ * called — this function itself always (re)renders every sentence when
+ * invoked, and does not attempt to resume a previously interrupted partial
+ * render (SPEC-GAP: AUDIO.md only requires that a full cache hit is a
+ * no-op and that cancelling actually stops work, not that a *partial*
+ * render survives a restart — see NOTES.md).
  */
 export async function renderSection(
   engine: TTSEngine,
@@ -122,7 +151,20 @@ export async function renderSection(
   const dir = sectionDir(resourceId, castHash, spineIndex);
   await fsp.mkdir(dir, { recursive: true });
 
+  const manifestFile = manifestPath(resourceId, castHash, spineIndex);
   const segments: (AudioSegment & { ext: "opus" | "wav" })[] = [];
+  const writeManifest = () =>
+    fsp.writeFile(
+      manifestFile,
+      JSON.stringify({ spineIndex, castHash, totalSegments: sentences.length, segments } satisfies SectionManifestFile),
+      "utf8",
+    );
+
+  // Written before any synthesis happens: a client racing the very start of
+  // this job already learns "N sentences are coming" even though none of
+  // them exist on disk yet.
+  await writeManifest();
+
   for (let n = 0; n < sentences.length; n++) {
     if (signal.aborted) throw new DOMException("Section render aborted", "AbortError");
     const sentence = sentences[n];
@@ -145,9 +187,8 @@ export async function renderSection(
       text: sentence.text,
       ext,
     });
+    await writeManifest();
   }
 
-  const manifest: SectionManifestFile = { spineIndex, castHash, segments };
-  await fsp.writeFile(manifestPath(resourceId, castHash, spineIndex), JSON.stringify(manifest), "utf8");
   reportProgress(sentences.length, sentences.length, null);
 }

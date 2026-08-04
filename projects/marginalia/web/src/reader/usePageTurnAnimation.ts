@@ -176,6 +176,12 @@ export function usePageTurnAnimation({
   getFoldPointer: () => Point;
   handleDrawCost: (medianDrawMs: number, samples: number) => void;
   turnPage: (direction: "prev" | "next") => Promise<void>;
+  /** M21 (AUDIO.md: "the slide, not M10's curl" for auto-turn-while-listening
+   * — a turn every ~30s must never cost a snapshot capture that could stall
+   * audio). The M7 dip-and-recover fallback, called directly rather than
+   * through `turnPage`'s `resolveRenderer()` ladder so a reader's curl
+   * preference can never leak into an audio-driven turn. */
+  turnPageSlide: (direction: "prev" | "next") => Promise<void>;
   handleGrabPointerDown: (
     direction: "prev" | "next",
     event: React.PointerEvent<HTMLDivElement>,
@@ -844,6 +850,7 @@ export function usePageTurnAnimation({
     getFoldPointer,
     handleDrawCost,
     turnPage,
+    turnPageSlide,
     handleGrabPointerDown,
   };
 }

@@ -57,6 +57,30 @@
   white-space: nowrap;
 }
 
+/* M21 "one voice, end to end": the transport cluster, same visual weight as
+   the digest/annotations buttons beside it — a mode of the Book room, not a
+   distinct instrument. */
+.audioTransport {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding-left: 0.35rem;
+  border-left: 1px solid var(--color-border);
+}
+
+.speedButton {
+  min-height: 0;
+  padding: 0.15rem 0.4rem;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.audioError {
+  font-size: 0.78rem;
+  color: var(--color-danger);
+  white-space: nowrap;
+}
+
 .annotationsButton {
   min-height: 0;
   padding: 0.15rem 0.3rem;

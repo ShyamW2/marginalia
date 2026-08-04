@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type { ResourceSummary } from "@marginalia/shared";
 import { BookCover } from "./BookCover.js";
@@ -19,6 +19,7 @@ interface LibraryGridProps {
  */
 export function LibraryGrid({ resources, publishingId, onPublish }: LibraryGridProps) {
   const reducedMotion = useReducedMotion();
+  const navigate = useNavigate();
 
   return (
     <div className={styles.grid}>
@@ -50,15 +51,29 @@ export function LibraryGrid({ resources, publishingId, onPublish }: LibraryGridP
                 ? `${resource.highlightCount} highlight${resource.highlightCount === 1 ? "" : "s"}`
                 : "No highlights yet"}
             </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className={styles.publishButton}
-              disabled={publishingId === resource.id}
-              onClick={() => onPublish(resource.id)}
-            >
-              {publishingId === resource.id ? "Publishing…" : "Publish"}
-            </Button>
+            <div className={styles.cardActions}>
+              {/* M21 "Listen" (AUDIO.md: "the list view remains the
+                  canonical keyboard/screen-reader path") — a real button,
+                  not a div with a click handler, per DESIGN.md's
+                  accessibility rule for the desk tool this mirrors. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                className={styles.listenButton}
+                onClick={() => navigate(`/read/${resource.id}`, { state: { listenOnOpen: true } })}
+              >
+                Listen
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className={styles.publishButton}
+                disabled={publishingId === resource.id}
+                onClick={() => onPublish(resource.id)}
+              >
+                {publishingId === resource.id ? "Publishing…" : "Publish"}
+              </Button>
+            </div>
           </div>
         </div>
       ))}

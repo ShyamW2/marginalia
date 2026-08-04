@@ -474,7 +474,7 @@ to in one voice, with the page following along, before any casting exists.
       `data/audio/` mid-session re-renders rather than erroring; navigating away aborts
       in-flight synthesis (verified by watching it actually stop, not by reading the
       code); a 10-minute chapter renders without exhausting memory._
-- [ ] **Player + follow-along in the reader.** Sequential segment playback in the
+- [x] **Player + follow-along in the reader.** Sequential segment playback in the
       browser; the playing sentence tinted via the existing anchor machinery
       (`anchorResolution.ts`) in a style quieter than all four highlight kinds; auto page
       turn using the **slide, not M10's curl**; transport controls as reader chrome
@@ -488,7 +488,7 @@ to in one voice, with the page following along, before any casting exists.
       skipped silently with audio continuing; highlighting mid-listen pauses, and asking
       a question works exactly as it does when reading; stopping and reopening the book
       with your eyes lands where the audio left off._
-- [ ] **Verify:** listen to 15 minutes of a real fixture book in one voice while doing
+- [x] **Verify:** listen to 15 minutes of a real fixture book in one voice while doing
       normal reading things — pause, highlight, ask, turn back a page, resume. Note
       friction in NOTES.md. Both themes, reduced motion, and focus mode.
 

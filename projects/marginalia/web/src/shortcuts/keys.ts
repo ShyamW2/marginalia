@@ -16,4 +16,9 @@ export const SHORTCUT_KEYS = {
   settings: "s",
   reader: "r",
   scan: "q",
+  // M21: play/pause reuses prevPage/nextPage's own key for skip-sentence,
+  // distinguished by shift (AUDIO.md: "space", "shift+←/→").
+  playPause: " ",
+  skipSentencePrev: "ArrowLeft",
+  skipSentenceNext: "ArrowRight",
 } as const;

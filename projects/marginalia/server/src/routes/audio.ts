@@ -15,13 +15,13 @@ import { getAudioState, updateAudioState } from "../audio/state.js";
 import {
   computeCastHash,
   deleteResourceAudioCache,
-  getSectionManifest,
+  getPartialSectionManifest,
   getSegmentFilePath,
   isSectionCached,
   listCachedSpineIndices,
   renderSection,
 } from "../audio/render.js";
-import { startJob } from "../jobs/registry.js";
+import { getJob, startJob } from "../jobs/registry.js";
 
 /** `GET /api/audio/*`, `POST /api/audio/test-voice` — engine-level, not
  * scoped to a resource. */
@@ -29,6 +29,24 @@ export const ttsRouter: Router = Router();
 
 /** `/api/resources/:id/audio*` — one listening state + rendered cache per book. */
 export const audioRouter: Router = Router();
+
+/**
+ * De-dupes concurrent render requests for the same resource/cast/section —
+ * the player's own chapter-ahead prefetch (warming the next section) and a
+ * reader jumping straight there manually can both call this route for the
+ * identical section before the first render finishes. Two jobs racing to
+ * write the same manifest file would not corrupt the audio itself (each
+ * writes the same deterministic content for a given sentence index), but
+ * the *manifest* is a full overwrite per job, not a merge — a slower job's
+ * write landing after a faster one's could regress an already-complete
+ * manifest back to a partial one. Keyed in memory, same lifetime as the
+ * job registry itself (a single local-first process, CLAUDE.md decision 4).
+ */
+const inFlightRenders = new Map<string, string>();
+
+function renderKey(resourceId: string, castHash: string, spineIndex: number): string {
+  return `${resourceId}:${castHash}:${spineIndex}`;
+}
 
 function ttsErrorStatus(code: TTSError["code"]): number {
   switch (code) {
@@ -191,6 +209,13 @@ audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
     return;
   }
 
+  const key = renderKey(resource.id, castHash, spineIndex);
+  const existingJobId = inFlightRenders.get(key);
+  if (existingJobId && getJob(existingJobId)?.status === "running") {
+    res.status(202).json({ jobId: existingJobId });
+    return;
+  }
+
   const engine = getEngine(getDb());
   const job = startJob("audio-render", resource.id, resource.title, async (signal, reportProgress) => {
     try {
@@ -214,18 +239,28 @@ audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
         console.error("[audio-render]", err);
       }
       throw err;
+    } finally {
+      if (inFlightRenders.get(key) === job.id) inFlightRenders.delete(key);
     }
   });
+  inFlightRenders.set(key, job.id);
   res.status(202).json({ jobId: job.id });
 });
 
+/**
+ * Returns whatever has actually rendered so far, complete or not — a
+ * partial manifest (`segments.length < totalSegments`) is a normal,
+ * expected response while a render job is still running, not an error
+ * (decisions.md 2026-07-27: "listening starts in seconds", not once the
+ * whole chapter has synthesized).
+ */
 audioRouter.get("/:id/audio/sections/:spineIndex/manifest", (req, res) => {
   const ctx = resolveSectionContext(req.params.id, req.params.spineIndex);
   if (!ctx.ok) {
     res.status(ctx.status).json(ctx.body);
     return;
   }
-  const manifest = getSectionManifest(ctx.resource.id, ctx.castHash, ctx.spineIndex);
+  const manifest = getPartialSectionManifest(ctx.resource.id, ctx.castHash, ctx.spineIndex);
   if (!manifest) {
     res.status(404).json({ error: "not_rendered" });
     return;
@@ -234,6 +269,7 @@ audioRouter.get("/:id/audio/sections/:spineIndex/manifest", (req, res) => {
     AudioSectionManifestSchema.parse({
       spineIndex: manifest.spineIndex,
       castHash: manifest.castHash,
+      totalSegments: manifest.totalSegments,
       segments: manifest.segments.map(({ ext: _ext, ...seg }) => seg),
     }),
   );

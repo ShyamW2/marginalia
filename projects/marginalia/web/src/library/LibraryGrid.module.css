@@ -88,7 +88,14 @@
   color: var(--color-text-muted);
 }
 
-.publishButton {
+.cardActions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.publishButton,
+.listenButton {
   min-height: 0;
   padding: 0.25rem 0.6rem;
 }

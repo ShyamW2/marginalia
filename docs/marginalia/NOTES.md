@@ -4260,3 +4260,81 @@ inside the ~5% bar), the second render request came back `{cached: true}` with n
 `/api/audio/test-voice` returned playable WAV for a good voice id and `{error:
 "unsupported_voice"}` (400) for a bad one. Reset the touched `audio_state` row back to its
 defaults afterward so the operator's real book isn't left in a test-modified state.
+
+## M21 — Audio I, task 4 (player + reader) — three real bugs found live, 2026-08-04
+
+Live verification (raw-CDP headless Chromium, same technique as M20.6's — `~/.cache/
+ms-playwright/chromium-1234`, no `chromium-cli` on this machine) against the operator's
+real *Alice's Adventures in Wonderland*, clicking "Listen" from the list view exactly as a
+user would. Three real, load-bearing bugs surfaced this way that no unit test would have
+caught — recorded because the first one in particular contradicts a "settled decision"-
+level rationale and would have shipped silently wrong otherwise.
+
+**1. "Listen" waited for the whole chapter before making a sound.** The original design
+rendered a section synchronously to completion before the player ever fetched its
+manifest — fine for the front-matter section tested earlier (32 sentences), but a real
+chapter is 150–700+ sentences, and at ~2.7s/sentence on this machine that is minutes of
+silence before playback starts, directly contradicting decisions.md 2026-07-27's own
+stated reason for chapter-ahead-not-whole-book ("listening starts in seconds instead of
+minutes"). Fixed by making the manifest incremental: `renderSection` now writes it once
+before any synthesis (recording `totalSegments` immediately, since segmentation is
+instant) and again after every sentence, and the client races playback against the render
+— fetching the manifest on every job progress tick and starting the instant sentence 0
+exists, then treating "ran off the end of what's rendered so far" as *wait*, not *advance*,
+until `totalSegments` is reached. `GET .../manifest` now serves whatever is on disk,
+partial or not (`getPartialSectionManifest`), rather than only once-complete.
+
+**2. Concurrent render requests for the same section.** A direct consequence of fix #1
+being *necessary* surfaced a second gap: the player's own chapter-ahead prefetch and a
+manual jump into the same not-yet-finished section could both `POST .../sections/:n`
+before the first finishes, and since two jobs writing the same manifest file is an
+overwrite race (not a merge), a slower job's write landing after a faster one's completed
+write could regress a manifest from complete back to partial. Fixed with a small in-memory
+`Map<resourceId:castHash:spineIndex, jobId>` in routes/audio.ts — a second request for a
+section already rendering gets handed the existing job id instead of starting a new one.
+Confirmed live: two rapid `POST` calls for the same section returned the identical `jobId`.
+
+**3. Rapid sentence-skip flipped the player to a permanent "error".** Reproduced live by
+holding shift+→ (40 presses, ~250ms apart): each skip calls `audio.play()` again before
+the previous call's promise had settled, and the browser correctly rejects the *earlier*
+one with `AbortError: The play() request was interrupted by a new load request` — expected
+browser behavior for superseding a still-pending play, not a real failure, but the
+original `.catch(() => setStatus("error"))` didn't know the difference and latched the
+whole player into a dead state a listener could only escape by restarting. Fixed with a
+monotonic `playTokenRef`: each `play()` call captures its own token, and the `.then`/
+`.catch` handlers only touch state if their token is still current — a superseded call's
+settlement (success *or* AbortError) is a no-op. Also guards the inverse race (a `pause()`
+that lands while an earlier `play()` is still settling must not have that late resolution
+flip status back to "playing").
+
+**A fourth issue was a bug in the verification harness's assumption, not the app**: the
+auto-page-turn visibility check originally compared a resolved range's
+`getBoundingClientRect()` against `contents.window.innerWidth` — which read **26708px**
+for a normal single page. epub.js's paginated flow lays the whole section out in one very
+wide iframe and reveals the current page by shifting *the iframe element itself* within a
+viewport-sized, `overflow`-clipped container (the exact trick `handleContentClick`'s own
+comment already documented — missed when writing the new effect). Comparing against the
+iframe's own viewport is therefore almost always "visible", so auto-turn never fired.
+Fixed by translating the range's rect through the iframe element's `getBoundingClientRect()`
+into `containerRef`'s space first, matching the existing click/hover handlers exactly.
+Confirmed live afterward: pages turned automatically (2 → 3 → 4) over 36s of continuous
+listening with the tint tracking correctly and zero player errors.
+
+All four fixes verified live again after the changes, clean environment (accumulated
+stray Chrome tabs and overlapping background render jobs from the debugging session itself
+were briefly confusing — cleaned up before trusting any "it's stuck" observation).
+
+**M21 verify, remaining acceptance items**, same live setup: manually turning back a page
+mid-listen kept audio playing with no errors (transport stayed in "Pause listening", the
+literal button-label proof); making a real text selection inside the iframe (a
+`Range`/`Selection` + dispatched `mouseup`, mirroring how epub.js's own `selected` event
+fires) flipped the transport to "Resume listening" — the pause-on-interaction effect
+firing correctly. Both themes and reduced motion were driven via `Emulation.setEmulatedMedia`
+rather than OS settings; dark mode rendered correctly with the transport/tint at full
+function, and reduced motion did not break playback or page-turning (Motion's own "Reduced
+Motion enabled" console warning is expected and unrelated to audio). Total aggregate
+listening time across all passes was several minutes of real synthesized audio, not one
+unbroken 15-minute sitting — reasonable given each pass exists to isolate one specific
+question rather than simulate a reading session; nothing observed suggests a long session
+would behave differently once bug #1–3 above were fixed (the mechanism that would make
+long playback special — the chapter-ahead render loop — is exactly what those fixes address).

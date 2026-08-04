@@ -1051,6 +1051,12 @@ export type AudioSegment = z.infer<typeof AudioSegmentSchema>;
 export const AudioSectionManifestSchema = z.object({
   spineIndex: z.number().int().nonnegative(),
   castHash: z.string(),
+  /** How many sentences this section segments into in total — known (and
+   * sent) before synthesis of any of them finishes, so a client can tell
+   * "3 of 40 rendered so far" from "this section only has 3 sentences" and
+   * keep waiting for more instead of treating a still-rendering section as
+   * finished. */
+  totalSegments: z.number().int().nonnegative(),
   segments: z.array(AudioSegmentSchema),
 });
 export type AudioSectionManifest = z.infer<typeof AudioSectionManifestSchema>;
