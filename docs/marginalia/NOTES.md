@@ -4724,3 +4724,20 @@ verification, not touched) was temporarily overridden mid-session to test the "r
 the card" branch and restored to its original value afterward; one live provider role's
 `maxResponseTokens` was likewise nudged during the response-length-slider bug repro and
 restored.
+
+**Part B3/B4.** Both straightforward against the spec. The annotations rail's `max-height:
+50%` needed `box-sizing: border-box` alongside it (the padding was otherwise added on top,
+quietly pushing the actual cap past 50%) and `overscroll-behavior: contain` so a wheel that
+hits the rail's own scroll limit doesn't chain into the room behind it — verified live with
+a wheel event and a `scrollTop` read, not just eyeballed. The theme segmented control's
+sliding thumb is a plain `motion.div` with `animate={{ x: ... }}` in a percent-of-its-own-
+width unit, not `layoutId` — simpler, and there was no reason to reach for the
+shared-element machinery when the three positions are already known slots. Split into its
+own `.themePill` wrapper, separate from `.themeGroup`'s existing divider-from-Settings
+spacing, specifically so the thumb's percentage math has a clean, unpadded box to measure
+against rather than reconciling two different box models.
+
+**Not done this session:** M22.5 parts C (Settings open/close), D (tasks tray), E (`d`/`l`
+shortcuts), F (the opening), G (rendered-audio management) and H (provenance/cost). Only A
+and B were in scope. TASKS.md's own milestone-level Verify checkbox is left unchecked —
+it covers the whole milestone.

@@ -745,14 +745,14 @@ default and retiring the track.
       the card's bottom-right corner initiates at every one of those widths; labels are
       revealed by proximity **and** reachable by keyboard focus (not hover-only); nothing
       in the cluster overlaps the footer's page-turn chevrons at any pane width._
-- [ ] **The annotations rail scrolls, and it keeps to the top half.** `MarginRail.module.css`
+- [x] **The annotations rail scrolls, and it keeps to the top half.** `MarginRail.module.css`
       caps the rail at 50% of the reading pane's height, top-aligned, with its own
       `overflow-y: auto`. The fullscreen proximity reveal around it (`ReaderView.tsx:2507`)
       is unchanged.
       _Acceptance: a book with 40 highlights on one section scrolls the rail rather than
       running past the pane; wheeling over the rail does not turn the page or scroll the
       room behind it; the rail's dots still sit beside the text they belong to._
-- [ ] **The three theme buttons read as one control.** *(Operator's own first instinct, and
+- [x] **The three theme buttons read as one control.** *(Operator's own first instinct, and
       the choice they confirmed over a single hover-revealing button — the cluster is
       already gaining hover-revealed labels in the reader, and a third disclosure mechanic
       in the same pass is one too many.)* `NavCluster`'s `.themeGroup` becomes a segmented

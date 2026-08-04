@@ -6,6 +6,15 @@
   width: 2.5rem;
   padding-top: 1rem;
   padding-right: 0.75rem;
+  /* M22.5: a book with enough highlights on one section used to just run
+   * past the bottom of the pane. Capped to the top half and made to scroll
+   * its own overflow instead — `overscroll-behavior: contain` keeps a
+   * wheel that reaches the rail's own scroll limit from then turning the
+   * page or scrolling whatever is behind it. */
+  max-height: 50%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
 }
 
 /* One custom-property-setting class per highlight kind (docs/marginalia/

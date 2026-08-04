@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { buttonClassName } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
@@ -45,6 +46,8 @@ export function NavCluster({ settingsTab, floating = true, className }: NavClust
   const location = useLocation();
   const navigate = useNavigate();
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const reducedMotion = useReducedMotion();
+  const activeThemeIndex = THEME_OPTIONS.findIndex((option) => option.value === choice);
   // Only the App-shell's one persistent cluster owns the chrome row's
   // leading slot — the reader's un-floated fullscreen copy never has a room
   // behind it to contribute actions, so it doesn't register one.
@@ -91,16 +94,37 @@ export function NavCluster({ settingsTab, floating = true, className }: NavClust
           onClick={(event) => openSettings(event.currentTarget)}
         />
       </KeyCapAnchor>
+      {/* M22.5 (decisions.md 2026-08-04 "the three theme buttons become a
+          segmented control"): one recessed pill with a sliding active thumb,
+          the operator's own first instinct over a single hover-revealing
+          button (a third disclosure mechanic alongside the chrome row's new
+          proximity-revealed labels was one too many). Still `role="group"`
+          over three real, individually-focusable buttons — the thumb is
+          `aria-hidden` decoration. */}
       <div className={styles.themeGroup} role="group" aria-label="Theme">
-        {THEME_OPTIONS.map((option) => (
-          <IconButton
-            key={option.value}
-            icon={option.icon}
-            label={option.label}
-            pressed={choice === option.value}
-            onClick={() => setChoice(option.value)}
-          />
-        ))}
+        <div className={styles.themePill}>
+          {activeThemeIndex >= 0 && (
+            <motion.div
+              className={styles.themeThumb}
+              aria-hidden="true"
+              animate={{ x: `${activeThemeIndex * 100}%` }}
+              transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 500, damping: 32 }}
+            />
+          )}
+          {THEME_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={styles.themeButton}
+              aria-label={option.label}
+              title={option.label}
+              aria-pressed={choice === option.value}
+              onClick={() => setChoice(option.value)}
+            >
+              {option.icon}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
