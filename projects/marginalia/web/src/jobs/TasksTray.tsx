@@ -79,13 +79,22 @@ export function TasksTray() {
   const { jobs } = useJobs();
   const [open, setOpen] = useState(false);
   const reducedMotion = useReducedMotion();
-  const runningCount = jobs.filter((j) => j.status === "running").length;
+  const runningJobs = jobs.filter((j) => j.status === "running");
+  const runningCount = runningJobs.length;
+  // M22.5: the ring's fill is the average completion of whichever running
+  // jobs report a total — jobs with no total (an indeterminate scan) simply
+  // don't contribute one, rather than forcing the whole ring to a guess.
+  const jobsWithTotal = runningJobs.filter((j) => j.progress.total > 0);
+  const aggregateProgress =
+    jobsWithTotal.length > 0
+      ? jobsWithTotal.reduce((sum, j) => sum + j.progress.current / j.progress.total, 0) / jobsWithTotal.length
+      : null;
 
   return (
     <div className={styles.wrap}>
       <div className={styles.triggerWrap}>
         <IconButton
-          icon={<TrayIcon />}
+          icon={<TrayIcon progress={aggregateProgress} />}
           label={runningCount > 0 ? `Tasks (${runningCount} running)` : "Tasks"}
           aria-haspopup="true"
           aria-expanded={open}

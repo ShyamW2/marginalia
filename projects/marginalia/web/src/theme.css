@@ -40,12 +40,15 @@
   --duration-standard: 180ms;
 
   /* M19.7 "the nav bar becomes a floating cluster": the cluster's own
-   * measured footprint (library + settings + 3 theme icon buttons, gaps and
-   * padding — NavCluster.module.css), reserved by any room chrome that
-   * shares the top-right corner (ReaderPage's title bar, the Scan's header
-   * row) so the two can never overlap or drift out of sync with each
-   * other. */
-  --nav-cluster-reserve: 17rem;
+   * measured footprint (library + tasks tray + settings + 3 theme icon
+   * buttons, gaps and padding — NavCluster.module.css) plus its own
+   * `right: 1rem` offset, reserved by any room chrome that shares the
+   * top-right corner (the reader's top row, the Scan's header row) so the
+   * two can never overlap or drift out of sync with each other.
+   * Amended M22.5: 17rem measurably undershot (a live 283.7px-wide cluster
+   * plus its 1rem offset — nearly 19rem — still overlapped the reader's
+   * top row by ~12px at 1280px). */
+  --nav-cluster-reserve: 19rem;
 }
 
 :root[data-theme="ink"] {

@@ -4661,3 +4661,66 @@ Driven with a Playwright session (`playwright-core` from the local npx cache, no
 project dependency) against the two already-running dev servers rather than a fresh
 `pnpm dev` — see the memory note on this project's two-machine setup for why killing and
 restarting those ports without cause is something to avoid.
+
+## M22.5 A + B (one slider one look; where the buttons live) — 2026-08-04
+
+**Part A.** Built as specified — readout resting form, shared `SliderDial`, absolute
+detent capture, `step` quantisation, the four remaining sliders moved onto the control.
+One real bug found live, not in the spec: `SliderDial` positioned itself with
+`transform: translateX(-50%)`, but `motion` writes its own `transform` on the same node
+for the opacity/y entrance and silently wins that fight — the dial rendered offset right
+by half its own width, no error, no warning. Fixed by moving the static centring onto a
+plain wrapping node (the same pattern DESIGN.md already names for `FlyPanel`: never stack
+a CSS transform onto a node `motion` animates). Also tried `left/right: 0` +
+`margin-inline: auto` on a `fit-content` box as a transform-free alternative — doesn't
+work either, because CSS2.1's over-constrained rule collapses negative auto-margins onto
+one side instead of splitting them, which re-creates the same off-centre bug from the
+other direction. Recorded in `SliderDial.module.css` so it isn't rediscovered.
+
+**Part B1/B2.** The Desk's chrome-row portal (`app/chromeSlot.tsx`) and the reader's
+floating actions cluster (`ReaderActionsCluster.tsx`) both built and verified live at
+1280×800, 1024×640 (Desk/reader/Scan/Digest) and 1440/1100/900px (reader beside vs. below
+vs. fullscreen). Three SPEC-GAPs, none named in TASKS.md:
+
+- **`--nav-cluster-reserve` (theme.css) measurably undershot.** 17rem was calibrated
+  against an unstated cluster width; the actual cluster (library + tasks tray + settings +
+  3 theme icons) measures 283.7px plus its own 1rem offset — call it 19rem. Bumped, with
+  the measurement recorded in the constant's own comment so the next person recalibrates
+  from evidence instead of a guess.
+- **The Desk's leading-slot actions stayed portalled into the chrome row even while the
+  Desk was hidden behind an open Settings/Scan/Digest overlay** — `roomLocation` resolves
+  the same background route either way, so `DeskPage` alone can't tell "genuinely on the
+  Desk" from "standing in behind a modal." Found live: this widened the cluster enough
+  that the Digest overlay's own close/expand icons grazed it. Fixed with an explicit
+  `overlayOpen` prop threaded from App.tsx's raw (pre-`roomLocation`) location, not
+  inferred from the route DeskPage itself sees.
+- **The reader's `topRowRight` (chapter nav + digest-chapter shortcut + query provider
+  picker + audio transport) doesn't fit its own row's fair share once the nav-cluster
+  reserve is applied**, on a book with a resized-wide reading pane at 1280×800 or even at
+  the *default* pane width at 1024×640 — its ~600px of content against a ~325px track.
+  Chased this through three layers of the CSS Grid/flexbox "implicit `min-width: auto`"
+  trap (a grid item with `justify-self: end` ignores its track's size entirely and
+  overflows toward its anchor's opposite edge; a flex child's own `min-width: auto` refuses
+  to shrink below its content's natural size; and a descendant's explicit `min-width`
+  doesn't feed into an ancestor's *automatic* min-width calculation, so setting it two
+  levels down did nothing until the squeezed ancestor's own `min-width` was also stated
+  explicitly). No CSS-only fix actually closed the gap without either erasing the chapter
+  nav entirely or leaving a residual few-pixel overlap. Settled on: the digest-chapter
+  button (redundant with the whole-book Digest now in the actions cluster) hides outright
+  once there's no room beside the card; the chapter label caps to a short fixed width in
+  the same state, told directly via a new `compact` prop rather than asked to negotiate
+  its own shrinking. `.topRow`'s reserve itself is conditional on that same "room beside
+  the card" signal, not unconditional like ScanPage's equivalent fix — permanently
+  reserving it would have starved this row even when there was never any real collision
+  risk. `DigestOverlay`/`DigestPage`'s own chrome also needed a small top offset, previously
+  applied only in the expanded state on an incorrect "the default size has enough margin"
+  assumption that didn't hold at 1280×800.
+
+Driven live throughout (Playwright against the running dev servers) rather than inferred
+from the acceptance text — the transform bug, the grid/flexbox squeeze, and the hidden-Desk
+chrome-widening bug would all have shipped invisibly otherwise. One real persisted setting
+(`readerPaneWidth: 1288`, wider than the 1280px test viewport — leftover from earlier M19.6
+verification, not touched) was temporarily overridden mid-session to test the "room beside
+the card" branch and restored to its original value afterward; one live provider role's
+`maxResponseTokens` was likewise nudged during the response-length-slider bug repro and
+restored.

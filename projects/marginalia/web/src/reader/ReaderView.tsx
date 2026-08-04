@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type RefObject,
 } from "react";
 import ePub from "epubjs";
@@ -62,6 +63,7 @@ import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, current
 import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
 import { PageNumberDisplay } from "./PageNumberDisplay.js";
+import { ReaderActionsCluster } from "./ReaderActionsCluster.js";
 import { NavCluster } from "../app/NavCluster.js";
 import {
   buildBookPageMap,
@@ -129,6 +131,12 @@ const DWELL_DURATION_MS = 2000;
 const REFUSAL_FLASH_MS = 260;
 
 const SCRUB_KEYBOARD_STEP_PERCENT = 1;
+
+// M22.5: the actions cluster's own rendered width (icon-only row: four
+// ~32px targets + gaps) plus a margin — below this much room to the right
+// of the reading column, it drops below the footer instead of floating
+// beside the card.
+const READER_ACTIONS_MIN_ROOM_PX = 170;
 
 /** Pixels of ruler movement per whole percentage point — passed once into
  * `Slider` and read from there by both its own drag math and its dial's
@@ -379,6 +387,17 @@ interface ReaderViewProps {
   /** M21 "Listen" entry point (desk hover strip / list view): start
    * listening from wherever the book opens, once it's actually open. */
   initialAutoplay?: boolean;
+  /** M22.5 "the reader's action cluster never overlaps the card": Digest,
+   * Scan and Publish moved out of `ReaderPage`'s title bar into
+   * `ReaderActionsCluster`, rendered from in here (so it can be positioned
+   * against `.stage`/fullscreen state this component already owns) — but
+   * the click handlers stay owned by `ReaderPage`, alongside the publish
+   * toast and the scan shortcut's own focus target. */
+  onOpenDigest: (event: ReactMouseEvent<HTMLElement>) => void;
+  onOpenScan: (event: ReactMouseEvent<HTMLElement>) => void;
+  onPublish: () => void;
+  publishing: boolean;
+  scanButtonRef: RefObject<HTMLButtonElement>;
 }
 
 export function ReaderView({
@@ -390,6 +409,11 @@ export function ReaderView({
   appBoundsRef,
   onReady,
   initialAutoplay,
+  onOpenDigest,
+  onOpenScan,
+  onPublish,
+  publishing,
+  scanButtonRef,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -404,6 +428,35 @@ export function ReaderView({
   // M14: the reader's stage — the thread panel's drag is constrained to it,
   // and a stale panel offset gets clamped back into its bounds on reopen.
   const stageRef = useRef<HTMLDivElement>(null);
+  // M22.5 "the reader's action cluster never overlaps the card": measures
+  // whether there's room beside the reading column (stage + rail) to float
+  // the actions cluster there, or whether it must drop below the footer
+  // instead. Measured from the row itself, not read from
+  // `--reader-max-width`, because what matters is the rendered width after
+  // the viewport has already clamped it, not the cap alone.
+  const readerRowRef = useRef<HTMLDivElement>(null);
+  const [actionsBesideCard, setActionsBesideCard] = useState(true);
+  useEffect(() => {
+    const el = readerRowRef.current;
+    if (!el) return;
+    function updatePlacement() {
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const roomRight = window.innerWidth - rect.right;
+      setActionsBesideCard((prev) => {
+        const next = roomRight >= READER_ACTIONS_MIN_ROOM_PX;
+        return prev === next ? prev : next;
+      });
+    }
+    updatePlacement();
+    const observer = new ResizeObserver(updatePlacement);
+    observer.observe(el);
+    window.addEventListener("resize", updatePlacement);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updatePlacement);
+    };
+  }, []);
   // M20 (2026-08-02): the paper card — .pageClip's own box, which is what
   // the fold canvas is positioned inside and therefore the only rect its
   // geometry may be measured from. containerRef is the text column, one
@@ -680,9 +733,11 @@ export function ReaderView({
     revealTop,
     revealBottom,
     revealRail,
+    revealActions,
     setRevealTop,
     setRevealBottom,
     setRevealRail,
+    setRevealActions,
   } = useFullscreenChrome();
   const { effectivePaneWidth, paneWidthDragging, handlePaneResizePointerDown } =
     useReaderPaneWidth(readerPaneWidth, setReaderPaneWidth, spreadMode, fullscreenMode);
@@ -1663,9 +1718,12 @@ export function ReaderView({
         const nearBottom = viewportY > window.innerHeight - FULLSCREEN_REVEAL_BAND_PX;
         const nearRailCorner =
           nearTop && viewportX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
+        const nearActionsCorner =
+          nearBottom && viewportX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
         setRevealTop((prev) => (prev === nearTop ? prev : nearTop));
         setRevealBottom((prev) => (prev === nearBottom ? prev : nearBottom));
         setRevealRail((prev) => (prev === nearRailCorner ? prev : nearRailCorner));
+        setRevealActions((prev) => (prev === nearActionsCorner ? prev : nearActionsCorner));
       }
     }
     rendition.on("mousemove", handleContentMouseMove);
@@ -2181,7 +2239,7 @@ export function ReaderView({
             ? `${styles.topRow} ${styles.fullscreenFloating} ${styles.topRowFloating} ${
                 revealTop ? styles.revealed : ""
               }`
-            : styles.topRow
+            : `${styles.topRow} ${actionsBesideCard ? "" : styles.topRowReserve}`
         }
         onPointerEnter={fullscreenMode ? () => setRevealTop(true) : undefined}
         onPointerLeave={fullscreenMode ? () => setRevealTop(false) : undefined}
@@ -2257,8 +2315,14 @@ export function ReaderView({
                 onNext={() => jumpToChapter("next")}
                 hasPrev={hasPrevChapter}
                 hasNext={hasNextChapter}
+                compact={!actionsBesideCard}
               />
-              {currentSpineIndex !== null && (
+              {/* M22.5: steps aside once there's no room beside the card —
+                  the same signal `.topRowReserve` reacts to. The whole-book
+                  Digest action is always reachable from the actions
+                  cluster below; this is a convenience shortcut, not the
+                  only path to it. */}
+              {currentSpineIndex !== null && actionsBesideCard && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -2347,7 +2411,7 @@ export function ReaderView({
         </div>
       </div>
 
-      <div className={styles.readerRow}>
+      <div className={styles.readerRow} ref={readerRowRef}>
         <div className={styles.stage} ref={stageRef} onPointerLeave={handleStagePointerLeave}>
           <div className={styles.pageClip} ref={pageClipRef}>
             {/* M20 step 3 "the next page slides over": while a slide is
@@ -2533,6 +2597,24 @@ export function ReaderView({
             />
           </div>
         )}
+        {/* M22.5 "the reader's action cluster never overlaps the card":
+            floats in the room beside the reading column when there's
+            enough of it — never inside .stage's own rect, since that's the
+            page fold's grab surface. Absent in fullscreen (joins the
+            proximity-revealed set below instead, since there's no longer
+            room outside the page to float in). */}
+        {!fullscreenMode && actionsBesideCard && (
+          <div className={styles.actionsBeside}>
+            <ReaderActionsCluster
+              onOpenDigest={onOpenDigest}
+              onOpenScan={onOpenScan}
+              onNavigateToSettings={openSettingsToLLM}
+              onPublish={onPublish}
+              publishing={publishing}
+              scanButtonRef={scanButtonRef}
+            />
+          </div>
+        )}
       </div>
 
       <div
@@ -2546,26 +2628,58 @@ export function ReaderView({
         onPointerEnter={fullscreenMode ? () => setRevealBottom(true) : undefined}
         onPointerLeave={fullscreenMode ? () => setRevealBottom(false) : undefined}
       >
-        <IconButton
-          icon={<ChevronIcon direction="left" />}
-          label="Previous page"
-          disabled={atStart}
-          onClick={() => turnPage("prev")}
-        />
-        <PageNumberDisplay
-          mode={pageNumberMode}
-          bookPage={bookPage?.page ?? null}
-          bookTotal={bookPage?.total ?? null}
-          chapterPage={displayedPage?.page ?? null}
-          chapterTotal={displayedPage?.total ?? null}
-        />
-        <IconButton
-          icon={<ChevronIcon direction="right" />}
-          label="Next page"
-          disabled={atEnd}
-          onClick={() => turnPage("next")}
-        />
+        <div className={styles.footerNav}>
+          <IconButton
+            icon={<ChevronIcon direction="left" />}
+            label="Previous page"
+            disabled={atStart}
+            onClick={() => turnPage("prev")}
+          />
+          <PageNumberDisplay
+            mode={pageNumberMode}
+            bookPage={bookPage?.page ?? null}
+            bookTotal={bookPage?.total ?? null}
+            chapterPage={displayedPage?.page ?? null}
+            chapterTotal={displayedPage?.total ?? null}
+          />
+          <IconButton
+            icon={<ChevronIcon direction="right" />}
+            label="Next page"
+            disabled={atEnd}
+            onClick={() => turnPage("next")}
+          />
+        </div>
+        {/* The "no room beside the card" fallback — same row as the page
+            turn controls, right-aligned past them, still outside .stage. */}
+        {!fullscreenMode && !actionsBesideCard && (
+          <ReaderActionsCluster
+            onOpenDigest={onOpenDigest}
+            onOpenScan={onOpenScan}
+            onNavigateToSettings={openSettingsToLLM}
+            onPublish={onPublish}
+            publishing={publishing}
+            scanButtonRef={scanButtonRef}
+          />
+        )}
       </div>
+      {fullscreenMode && (
+        <div
+          className={`${styles.fullscreenFloating} ${styles.actionsFullscreenFloating} ${
+            revealActions ? styles.revealed : ""
+          }`}
+          onPointerEnter={() => setRevealActions(true)}
+          onPointerLeave={() => setRevealActions(false)}
+        >
+          <ReaderActionsCluster
+            onOpenDigest={onOpenDigest}
+            onOpenScan={onOpenScan}
+            onNavigateToSettings={openSettingsToLLM}
+            onPublish={onPublish}
+            publishing={publishing}
+            scanButtonRef={scanButtonRef}
+          />
+        </div>
+      )}
       <AnimatePresence>
         {castOpen && (
           <CastingModal

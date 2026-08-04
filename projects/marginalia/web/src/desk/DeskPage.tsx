@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useReducedMotion } from "motion/react";
 import type { CursorStyleChoice, Settings } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
+import { ChromeSlotPortal } from "../app/chromeSlot.js";
 import { LibraryGrid } from "../library/LibraryGrid.js";
 import { useLibrary } from "../library/useLibrary.js";
 import { Button } from "../controls/Button.js";
@@ -18,12 +19,20 @@ function loadViewMode(): ViewMode {
   return localStorage.getItem(VIEW_MODE_KEY) === "list" ? "list" : "desk";
 }
 
+interface DeskPageProps {
+  /** M22.5: true when the Desk is mounted only as the hidden background
+   * behind an open Settings/Scan/Digest overlay — its own header actions
+   * then stay out of the chrome row (they'd widen it behind the overlay's
+   * back, and the true foreground surface owns that corner instead). */
+  overlayOpen?: boolean;
+}
+
 /**
  * The default room (DESIGN.md "Room 1 — The Desk"): a freeform workspace of
  * draggable books, with the pre-M8 accessible grid surviving as a "List"
  * toggle — the canonical keyboard/screen-reader path.
  */
-export function DeskPage() {
+export function DeskPage({ overlayOpen = false }: DeskPageProps) {
   const {
     resources,
     uploads,
@@ -103,32 +112,40 @@ export function DeskPage() {
       {hasBooks && (
         <div className={styles.headerRow}>
           <h1 className={styles.heading}>{mode === "desk" ? "The Desk" : "Library"}</h1>
-          <div className={styles.headerActions}>
-            <div className={styles.modeToggle} role="group" aria-label="View">
-              <Button
-                size="sm"
-                variant="ghost"
-                pressed={mode === "desk"}
-                className={styles.modeButton}
-                onClick={() => setMode("desk")}
-              >
-                Desk
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                pressed={mode === "list"}
-                className={styles.modeButton}
-                onClick={() => setMode("list")}
-              >
-                List
-              </Button>
-            </div>
-            <Button variant="solid" onClick={() => fileInputRef.current?.click()}>
-              Import book
+        </div>
+      )}
+
+      {/* M22.5 (decisions.md 2026-08-04 "nothing else may occupy the
+          top-right corner"): the Desk's global actions join NavCluster's
+          chrome row instead of laying out their own fixed header cluster,
+          which used to end up underneath it. Suppressed while an overlay
+          hides the Desk — see DeskPageProps.overlayOpen. */}
+      {hasBooks && !overlayOpen && (
+        <ChromeSlotPortal>
+          <div className={styles.modeToggle} role="group" aria-label="View">
+            <Button
+              size="sm"
+              variant="ghost"
+              pressed={mode === "desk"}
+              className={styles.modeButton}
+              onClick={() => setMode("desk")}
+            >
+              Desk
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              pressed={mode === "list"}
+              className={styles.modeButton}
+              onClick={() => setMode("list")}
+            >
+              List
             </Button>
           </div>
-        </div>
+          <Button variant="solid" size="sm" onClick={() => fileInputRef.current?.click()}>
+            Import book
+          </Button>
+        </ChromeSlotPortal>
       )}
 
       {uploads.length > 0 && (

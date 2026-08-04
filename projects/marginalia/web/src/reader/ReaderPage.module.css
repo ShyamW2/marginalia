@@ -15,7 +15,6 @@
 }
 
 .titleBar {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -43,45 +42,4 @@
 .author {
   font-size: 0.85rem;
   color: var(--color-text-muted);
-}
-
-/* Skin (colour/border/radius/focus) all comes from the shared Button kit
-   now (M19.7) — only the title bar's own absolute layout is left here. */
-.publishButton,
-.scanButton,
-.digestLink,
-.digestProviderPopover {
-  /* Vertical centering via auto margins on a full-height absolute box,
-     deliberately not `top: 50%; transform: translateY(-50%)` — Button's own
-     hover rule sets `transform` (M19.7), which would fight and win a
-     transform-based centering trick every time one of these is hovered. */
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  margin-top: auto;
-  margin-bottom: auto;
-  height: fit-content;
-  min-height: 0;
-}
-
-/* M19.7: shifted left by --nav-cluster-reserve so the floating nav cluster
-   (App.tsx, top-right of every room) never overlaps these. */
-.publishButton {
-  right: calc(1rem + var(--nav-cluster-reserve));
-}
-
-.scanButton {
-  right: calc(7.25rem + var(--nav-cluster-reserve));
-}
-
-.digestLink {
-  right: calc(13rem + var(--nav-cluster-reserve));
-  text-decoration: none;
-}
-
-/* M20.5 "the reader's digest button gets the treatment": sits just left of
-   the Digest button itself — clear of its own span, not overlapping it
-   (caught live: 15.5rem still landed underneath "Digest"'s label). */
-.digestProviderPopover {
-  right: calc(19.5rem + var(--nav-cluster-reserve));
 }

@@ -10,6 +10,7 @@ import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import type { TabId } from "../settings/SettingsPage.js";
 import { TasksTray } from "../jobs/TasksTray.js";
 import { useTheme, type ThemeChoice } from "./useTheme.js";
+import { useRegisterChromeSlot } from "./chromeSlot.js";
 import styles from "./NavCluster.module.css";
 
 const THEME_OPTIONS: { value: ThemeChoice; label: string; icon: ReactNode }[] = [
@@ -44,6 +45,10 @@ export function NavCluster({ settingsTab, floating = true, className }: NavClust
   const location = useLocation();
   const navigate = useNavigate();
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  // Only the App-shell's one persistent cluster owns the chrome row's
+  // leading slot — the reader's un-floated fullscreen copy never has a room
+  // behind it to contribute actions, so it doesn't register one.
+  const registerChromeSlot = useRegisterChromeSlot();
 
   function openSettings(originEl: Element) {
     setPendingOverlayOrigin(captureOverlayOrigin(originEl));
@@ -66,6 +71,7 @@ export function NavCluster({ settingsTab, floating = true, className }: NavClust
 
   return (
     <div className={[styles.cluster, floating ? styles.floating : "", className].filter(Boolean).join(" ")}>
+      {floating && <div className={styles.leadingSlot} ref={registerChromeSlot} />}
       <Link
         to="/"
         className={[buttonClassName({ variant: "ghost", size: "md", iconOnly: true }), styles.libraryLink].join(

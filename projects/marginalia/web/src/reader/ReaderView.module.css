@@ -31,9 +31,30 @@
   width: 100%;
   max-width: var(--reader-max-width, 800px);
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  /* `minmax(0, 1fr)`, not a bare `1fr`: a grid track's implicit
+   * `min-width: auto` otherwise sizes it to its content's minimum
+   * intrinsic width even past its "fair" fr share — found live, once the
+   * reserve below narrowed the row enough for topRowRight's own content
+   * (chapter nav + digest-chapter + provider picker + audio transport) to
+   * hit that floor, it pushed straight through the centred `auto` column
+   * instead of yielding to it. */
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   min-height: 1.5rem;
+}
+
+/* M22.5 (decisions.md 2026-08-04 "nothing else may occupy the top-right
+ * corner"): applied only once ReaderView's own resize-observed measurement
+ * finds no room beside the reading column (the same signal `.actionsBeside`
+ * below depends on) — a wide reader pane can then saturate this row to the
+ * full available width, putting topRowRight's own content directly under
+ * the fixed nav cluster. Conditional, not unconditional like ScanPage's
+ * equivalent fix: topRowRight's content (chapter nav + digest-chapter +
+ * provider picker + audio transport) is already a tight fit at the default
+ * pane width, and permanently reserving this much would starve it even
+ * when there was never any real collision risk. */
+.topRowReserve {
+  padding-right: var(--nav-cluster-reserve);
 }
 
 .topRowLeft {
@@ -42,10 +63,18 @@
 }
 
 .topRowRight {
-  justify-self: end;
+  /* M22.5: no `justify-self: end` — a grid item with self-alignment "end"
+   * sizes to its own natural content width and anchors its right edge,
+   * overflowing *left* past its track's boundary the moment its content
+   * doesn't fit (found live: it pushed straight through the centred
+   * `.topRow` column once the nav-cluster reserve narrowed the track). The
+   * default self-alignment stretches this item to fill the track exactly;
+   * `justify-content: flex-end` keeps the same visual right-alignment for
+   * its children *inside* that now-correctly-sized box instead. */
   min-width: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 0.5rem;
 }
 
@@ -122,6 +151,7 @@
 }
 
 .readerRow {
+  position: relative;
   display: flex;
   align-items: stretch;
   width: 100%;
@@ -129,6 +159,19 @@
   flex: 1;
   min-height: 0;
   gap: 0.25rem;
+}
+
+/* M22.5: floats in the empty room to the right of the reading column
+ * (stage + rail together — .readerRow's own box already spans both), which
+ * only exists once the viewport is wider than the column's own max-width.
+ * `left: 100%` therefore lands past the rail's right edge, never over
+ * `.stage` — ReaderView.tsx only mounts this once its own resize-observed
+ * measurement confirms the room is actually there. */
+.actionsBeside {
+  position: absolute;
+  left: 100%;
+  bottom: 0;
+  margin-left: 0.6rem;
 }
 
 .stage {
@@ -363,9 +406,21 @@
 
 .footer {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
   width: 100%;
   max-width: var(--reader-max-width, 800px);
+}
+
+/* M22.5: the page-turn controls, now their own flex item so the "no room
+ * beside the card" actions cluster can join this row without disturbing
+ * their own internal spacing — `flex: 1` keeps this group spreading across
+ * the full row exactly as it did when it was .footer's only content, and
+ * still pushes a sibling cluster hard right when there is one. */
+.footerNav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex: 1;
 }
 
 /* M14 fullscreen reading mode (decisions.md 2026-07-27): shift+F hides the
@@ -430,4 +485,15 @@
   right: 0.75rem;
   border-radius: 10px;
   padding: 0.4rem 0.15rem 0.6rem;
+}
+
+/* M22.5: the actions cluster's fullscreen mount — the bottom-right mirror
+ * of .marginRailFloating's top-right corner, joining the same
+ * proximity-revealed set once the page grows into the room this cluster
+ * otherwise floats in. */
+.actionsFullscreenFloating {
+  bottom: 0.75rem;
+  right: 0.75rem;
+  border-radius: 999px;
+  padding: 0.3rem;
 }

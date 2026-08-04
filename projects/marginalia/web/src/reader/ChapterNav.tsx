@@ -21,6 +21,11 @@ interface ChapterNavProps {
   onNext: () => void;
   hasPrev: boolean;
   hasNext: boolean;
+  /** M22.5: a short, fixed cap on the label's width instead of the prev/next
+   * buttons' own size — set once ReaderView's own measurement finds no room
+   * beside the reading column for the actions cluster (the same squeeze
+   * that pushes this whole row up against the fixed nav cluster). */
+  compact?: boolean;
 }
 
 /** "S<n> · title", falling back to just the title/label when there's no
@@ -50,6 +55,7 @@ export function ChapterNav({
   onNext,
   hasPrev,
   hasNext,
+  compact = false,
 }: ChapterNavProps) {
   const [open, setOpen] = useState(false);
   const reducedMotion = useReducedMotion();
@@ -70,7 +76,7 @@ export function ChapterNav({
       />
       <button
         type="button"
-        className={styles.label}
+        className={compact ? `${styles.label} ${styles.labelCompact}` : styles.label}
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((prev) => !prev)}

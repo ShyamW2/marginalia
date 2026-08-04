@@ -13,6 +13,15 @@
   text-decoration: none;
 }
 
+/* M22.5: the chrome row's leading slot — a room's own global actions
+ * portal in here (chromeSlot.tsx), left of the permanent icons. `contents`
+ * so an empty slot contributes no box and no extra `.cluster` gap; a
+ * populated one lays its children out as if they were direct flex items of
+ * `.cluster` itself. */
+.leadingSlot {
+  display: contents;
+}
+
 .themeGroup {
   display: flex;
   gap: 0.15rem;

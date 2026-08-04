@@ -6,16 +6,12 @@ import { Toast } from "../app/Toast.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { formatPublishSummary, runPublish } from "../library/publish.js";
-import { Button } from "../controls/Button.js";
-import { BrainIcon, MagnifierIcon } from "../controls/icons.js";
 import {
   captureOverlayOrigin,
   readPendingOverlayOrigin,
   setPendingOverlayOrigin,
   type OverlayOrigin,
 } from "../controls/overlayOrigin.js";
-import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
-import { useOpenSettings } from "../settings/useOpenSettings.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { BookOpening } from "./BookOpening.js";
@@ -62,7 +58,6 @@ export function ReaderPage() {
   const [publishing, setPublishing] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const reducedMotion = Boolean(useReducedMotion());
-  const openSettingsToLLM = useOpenSettings("llm");
   // Captured once, lazily, at mount — not read live from `location` on every
   // render. ReaderView only mounts once `resource` finishes its async fetch
   // below; a live read would see `null` by the time that happens, because
@@ -197,46 +192,6 @@ export function ReaderPage() {
             {resource.author && (
               <span className={styles.author}>{resource.author}</span>
             )}
-            <Button
-              variant="outline"
-              size="sm"
-              icon={<BrainIcon size={15} />}
-              className={styles.digestLink}
-              onClick={handleOpenDigest}
-            >
-              Digest
-            </Button>
-            {/* M20.5 "the reader's digest button gets the treatment": a
-                second mount of the same ProviderPickerPopover the query
-                role already uses (ReaderView's top row), scoped to
-                "digest" — reachable by keyboard/click, not just hover, and
-                reflects immediately in Settings and on the Scan since all
-                three read the same provider-role store. */}
-            <ProviderPickerPopover
-              role="digest"
-              label="Digest provider"
-              onNavigateToSettings={openSettingsToLLM}
-              className={styles.digestProviderPopover}
-            />
-            <Button
-              ref={scanButtonRef}
-              variant="outline"
-              size="sm"
-              icon={<MagnifierIcon size={15} />}
-              className={styles.scanButton}
-              onClick={handleOpenScan}
-            >
-              Scan
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className={styles.publishButton}
-              disabled={publishing}
-              onClick={handlePublish}
-            >
-              {publishing ? "Publishing…" : "Publish"}
-            </Button>
           </div>
           <ReaderView
             resourceId={resource.id}
@@ -247,6 +202,11 @@ export function ReaderPage() {
             appBoundsRef={appBoundsRef}
             onReady={() => setReaderReady(true)}
             initialAutoplay={initialLocationState?.listenOnOpen}
+            onOpenDigest={handleOpenDigest}
+            onOpenScan={handleOpenScan}
+            onPublish={handlePublish}
+            publishing={publishing}
+            scanButtonRef={scanButtonRef}
           />
         </>
       )}

@@ -709,7 +709,7 @@ default and retiring the track.
 
 #### B — Where the buttons live
 
-- [ ] **Nothing else is fixed to the top-right corner.** *(Operator: "make sure the nav
+- [x] **Nothing else is fixed to the top-right corner.** *(Operator: "make sure the nav
       buttons aren't sitting above the other buttons" — confirmed in the operator's desk
       screenshot, where the cluster overlaps Desk/List and Import book.)* `NavCluster`
       renders one fixed **chrome row**; a room contributes its own actions into a leading
@@ -721,7 +721,7 @@ default and retiring the track.
       Digest, the nav cluster's `getBoundingClientRect()` intersects no other interactive
       element's rect — measured, not eyeballed. The Desk heading ("The Desk"/"Library")
       stays where it is; only the actions move._
-- [ ] **The reader's book actions become a floating bottom-right cluster.** Digest, the
+- [x] **The reader's book actions become a floating bottom-right cluster.** Digest, the
       digest `ProviderPickerPopover`, Scan and Publish leave `ReaderPage.tsx`'s `.titleBar`
       (lines 200–239) for a floating cluster in the bottom-right: icon-only at rest, each
       label sliding out on proximity. Reuse `KeyCap.module.css`'s proximity-reveal mechanic
@@ -760,7 +760,7 @@ default and retiring the track.
       `role="group"` and three real buttons.
       _Acceptance: the group reads as one object at a glance and as three buttons to a
       screen reader; keyboard focus still lands on each option individually._
-- [ ] **Two icons that lie, and one that doesn't exist yet.** `GearIcon`
+- [x] **Two icons that lie, and one that doesn't exist yet.** `GearIcon`
       (`controls/icons.tsx:64`) is a circle with eight radial ticks — the same drawing as
       `SunIcon` (`icons.tsx:102`) at a different radius, two slots away in the same cluster.
       **`GearIcon` is the one that's wrong**: `SunIcon` is the Paper (light) theme option in

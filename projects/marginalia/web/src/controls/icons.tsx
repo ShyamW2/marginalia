@@ -61,37 +61,100 @@ export function LibraryIcon({ size = 18 }: IconProps) {
   );
 }
 
+// M22.5 (decisions.md 2026-08-04 "the gear does not look like a gear, and
+// it is worse than that"): the previous GearIcon was a circle with eight
+// radial ticks — the same drawing as SunIcon at a different radius, two
+// slots away in the same cluster. A real cog: a toothed outer profile
+// (eight stubby rectangles, not thin rays, so the silhouette reads
+// differently from SunIcon's rays even at 18px) around a hollow centre.
+const GEAR_TEETH_DEG = [0, 45, 90, 135, 180, 225, 270, 315];
+
 export function GearIcon({ size = 18 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
-      <path
-        d="M12 3.5v2.1m0 12.8v2.1m8.5-8.5h-2.1M5.6 12H3.5m13.06-6.56-1.49 1.49M8.93 15.07l-1.49 1.49m0-9.12 1.49 1.49m6.63 6.63 1.49 1.49"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+      {GEAR_TEETH_DEG.map((deg) => (
+        <rect
+          key={deg}
+          x="11.1"
+          y="1.7"
+          width="1.8"
+          height="3.6"
+          rx="0.5"
+          fill="currentColor"
+          transform={`rotate(${deg} 12 12)`}
+        />
+      ))}
+      <circle cx="12" cy="12" r="6.4" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="12" cy="12" r="2.3" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
 }
 
-/** M20.6 "the tasks tray": a browser-downloads-style tray icon — an inbox
- * with a down-arrow, for the persistent "running/recently finished work"
- * button in the nav cluster. */
-export function TrayIcon({ size = 18 }: IconProps) {
+/** M20.6 "the tasks tray", redrawn M22.5 (decisions.md 2026-08-04): the
+ * original was an inbox with a down-arrow — a downloads icon, for
+ * something that is not downloads, and (per the same pass) a shape the new
+ * `PublishIcon` risked colliding with. An activity ring instead: its filled
+ * arc is the running jobs' aggregate progress, so the icon carries the
+ * state the badge next to it carries alone today. `progress` is a 0–1
+ * fraction; omitted (nothing running, or nothing reports a total) draws
+ * just the inactive ring. */
+export function TrayIcon({ size = 18, progress }: IconProps & { progress?: number | null }) {
+  const radius = 8;
+  const circumference = 2 * Math.PI * radius;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r={radius} stroke="currentColor" strokeWidth="1.6" opacity="0.3" />
+      {progress != null && (
+        <circle
+          cx="12"
+          cy="12"
+          r={radius}
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - Math.min(1, Math.max(0, progress)))}
+          transform="rotate(-90 12 12)"
+        />
+      )}
+    </svg>
+  );
+}
+
+/** M22.5: the reader's floating actions cluster needs an icon for
+ * "publish to the vault" that doesn't reuse the retired `TrayIcon`'s
+ * inbox-with-an-arrow shape (a plain arrow into a container reads as the
+ * same archive glyph). A cardboard carton — visible splayed flaps and a
+ * three-quarter body, not a flat rectangle, so it reads as a parcel — with
+ * an arrow entering from the left: packing what you've learned into it. */
+export function PublishIcon({ size = 18 }: IconProps) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
-        d="M4 13.5v4A1.5 1.5 0 0 0 5.5 19h13a1.5 1.5 0 0 0 1.5-1.5v-4"
+        d="M6 11h12v7.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V11Z"
         stroke="currentColor"
         strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M6 11 3.4 7.3 10 6.3 12 11"
+        stroke="currentColor"
+        strokeWidth="1.4"
         strokeLinecap="round"
         strokeLinejoin="round"
       />
       <path
-        d="M12 4v9.2m0 0 3.2-3.2M12 13.2 8.8 10"
+        d="M18 11 20.6 7.3 14 6.3 12 11"
         stroke="currentColor"
-        strokeWidth="1.5"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M0.8 14.6h5.6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path
+        d="M3.9 12.4 7 14.6 3.9 16.8"
+        stroke="currentColor"
+        strokeWidth="1.6"
         strokeLinecap="round"
         strokeLinejoin="round"
       />

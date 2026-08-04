@@ -13,6 +13,11 @@
 .headerRow {
   display: flex;
   justify-content: space-between;
+  /* M22.5: clears DigestOverlay's own expand/close icons and, at a narrow
+     panel height, the fixed nav cluster beyond the panel's edge (measured
+     at 1024×640 — the panel's own top padding alone left "Open book"
+     grazing the cluster by a few px). */
+  margin-top: 0.75rem;
   margin-bottom: 1.5rem;
 }
 

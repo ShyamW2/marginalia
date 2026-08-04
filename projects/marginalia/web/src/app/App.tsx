@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { AnimatePresence } from "motion/react";
 import { Route, Routes, matchPath, useLocation, useNavigate, type Location } from "react-router-dom";
 import { NavCluster } from "./NavCluster.js";
+import { ChromeSlotProvider } from "./chromeSlot.js";
 import { JobsProvider } from "../jobs/JobsContext.js";
 import { JobToastStack } from "../jobs/JobToastStack.js";
 import type { TabId } from "../settings/SettingsPage.js";
@@ -97,6 +98,15 @@ export function App() {
   const scanId = scanPathname ? matchPath("/scan/:id", scanPathname)?.params.id ?? null : null;
   const digestId = digestPathname ? matchPath("/digest/:id", digestPathname)?.params.id ?? null : null;
 
+  // M22.5: whether some overlay is genuinely showing right now — from the
+  // *raw* location, not `roomLocation`'s walked-back one, which resolves to
+  // "/" for both "really on the Desk" and "an overlay is open over the
+  // Desk" alike. DeskPage needs the distinction: its own header actions
+  // join the chrome row only while it's the true foreground room, not a
+  // hidden background sitting behind a modal (found live — the Digest's own
+  // header nearly touched the cluster once the Desk's actions widened it).
+  const overlayOpen = settingsOpen || scanId !== null || digestId !== null;
+
   function closeSettings() {
     if (background) navigate(-1);
     else navigate("/");
@@ -114,46 +124,48 @@ export function App() {
 
   return (
     <JobsProvider>
-      <div className={`${styles.shell} register-paper`}>
-        <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
-        <main className={styles.main}>
-        <Suspense fallback={<div className={styles.routeFallback} />}>
-          <Routes location={roomLocation(location)}>
-            <Route path="/" element={<DeskPage />} />
-            <Route path="/read/:id" element={<ReaderPage />} />
-            {/* Deep link / hard refresh straight at an overlay path has no
-                background room to fall back on — the Desk stands in, per
-                TASKS.md ("/settings ... renders the desk with the modal
-                open"). */}
-            <Route path="/settings" element={<DeskPage />} />
-            <Route path="/scan/:id" element={<DeskPage />} />
-            <Route path="/digest/:id" element={<DeskPage />} />
-          </Routes>
-        </Suspense>
-        <AnimatePresence>
-          {scanId && (
-            <Suspense key="scan-overlay-suspense" fallback={null}>
-              <ScanOverlay key="scan-overlay" resourceId={scanId} onClose={closeScan} />
+      <ChromeSlotProvider>
+        <div className={`${styles.shell} register-paper`}>
+          <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
+          <main className={styles.main}>
+            <Suspense fallback={<div className={styles.routeFallback} />}>
+              <Routes location={roomLocation(location)}>
+                <Route path="/" element={<DeskPage overlayOpen={overlayOpen} />} />
+                <Route path="/read/:id" element={<ReaderPage />} />
+                {/* Deep link / hard refresh straight at an overlay path has no
+                    background room to fall back on — the Desk stands in, per
+                    TASKS.md ("/settings ... renders the desk with the modal
+                    open"). */}
+                <Route path="/settings" element={<DeskPage overlayOpen={overlayOpen} />} />
+                <Route path="/scan/:id" element={<DeskPage overlayOpen={overlayOpen} />} />
+                <Route path="/digest/:id" element={<DeskPage overlayOpen={overlayOpen} />} />
+              </Routes>
             </Suspense>
-          )}
-        </AnimatePresence>
-        <AnimatePresence>
-          {digestId && (
-            <Suspense key="digest-overlay-suspense" fallback={null}>
-              <DigestOverlay key="digest-overlay" resourceId={digestId} onClose={closeDigest} />
-            </Suspense>
-          )}
-        </AnimatePresence>
-        <AnimatePresence>
-          {settingsOpen && (
-            <Suspense fallback={null}>
-              <SettingsModal key="settings-modal" onClose={closeSettings} />
-            </Suspense>
-          )}
-        </AnimatePresence>
-        </main>
-        <JobToastStack />
-      </div>
+            <AnimatePresence>
+              {scanId && (
+                <Suspense key="scan-overlay-suspense" fallback={null}>
+                  <ScanOverlay key="scan-overlay" resourceId={scanId} onClose={closeScan} />
+                </Suspense>
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
+              {digestId && (
+                <Suspense key="digest-overlay-suspense" fallback={null}>
+                  <DigestOverlay key="digest-overlay" resourceId={digestId} onClose={closeDigest} />
+                </Suspense>
+              )}
+            </AnimatePresence>
+            <AnimatePresence>
+              {settingsOpen && (
+                <Suspense fallback={null}>
+                  <SettingsModal key="settings-modal" onClose={closeSettings} />
+                </Suspense>
+              )}
+            </AnimatePresence>
+          </main>
+          <JobToastStack />
+        </div>
+      </ChromeSlotProvider>
     </JobsProvider>
   );
 }

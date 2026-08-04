@@ -1,0 +1,41 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.3rem;
+  border-radius: 999px;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-panel);
+}
+
+.actionAnchor {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Slides out to the left of its icon on proximity — every mount of this
+   cluster sits at or past the reading column's right edge, so "left" is
+   always the direction with room. */
+.actionLabel {
+  position: absolute;
+  right: calc(100% + 6px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.78rem;
+  color: var(--color-text);
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: var(--shadow-panel);
+  transition: opacity var(--duration-standard) var(--ease-standard);
+}
+
+.actionAnchor:hover .actionLabel,
+.actionAnchor:focus-within .actionLabel {
+  opacity: 1;
+}

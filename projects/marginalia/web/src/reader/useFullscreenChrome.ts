@@ -37,9 +37,11 @@ export function useFullscreenChrome(): {
   revealTop: boolean;
   revealBottom: boolean;
   revealRail: boolean;
+  revealActions: boolean;
   setRevealTop: Dispatch<SetStateAction<boolean>>;
   setRevealBottom: Dispatch<SetStateAction<boolean>>;
   setRevealRail: Dispatch<SetStateAction<boolean>>;
+  setRevealActions: Dispatch<SetStateAction<boolean>>;
 } {
   // `wrapperRef` is "the app root" the browser Fullscreen API is requested
   // on; degrades silently to an in-page-only fullscreen layout (ReaderView's
@@ -58,12 +60,17 @@ export function useFullscreenChrome(): {
   const [revealTop, setRevealTop] = useState(false);
   const [revealBottom, setRevealBottom] = useState(false);
   const [revealRail, setRevealRail] = useState(false);
+  // M22.5: the reader's floating actions cluster (Digest/Scan/Publish),
+  // revealed from the bottom-right corner — the mirror of the rail's
+  // top-right corner reveal below.
+  const [revealActions, setRevealActions] = useState(false);
 
   useEffect(() => {
     if (fullscreenMode) return;
     setRevealTop(false);
     setRevealBottom(false);
     setRevealRail(false);
+    setRevealActions(false);
   }, [fullscreenMode]);
 
   // M14 fullscreen reveal, continued: the iframe-forwarded mousemove only
@@ -85,9 +92,12 @@ export function useFullscreenChrome(): {
       const nearBottom = event.clientY > window.innerHeight - FULLSCREEN_REVEAL_BAND_PX;
       const nearRailCorner =
         nearTop && event.clientX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
+      const nearActionsCorner =
+        nearBottom && event.clientX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
       setRevealTop((prev) => (prev === nearTop ? prev : nearTop));
       setRevealBottom((prev) => (prev === nearBottom ? prev : nearBottom));
       setRevealRail((prev) => (prev === nearRailCorner ? prev : nearRailCorner));
+      setRevealActions((prev) => (prev === nearActionsCorner ? prev : nearActionsCorner));
     }
     window.addEventListener("mousemove", handleWindowMouseMove);
     return () => window.removeEventListener("mousemove", handleWindowMouseMove);
@@ -128,8 +138,10 @@ export function useFullscreenChrome(): {
     revealTop,
     revealBottom,
     revealRail,
+    revealActions,
     setRevealTop,
     setRevealBottom,
     setRevealRail,
+    setRevealActions,
   };
 }

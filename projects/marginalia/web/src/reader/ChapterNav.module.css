@@ -21,6 +21,19 @@
   transition: color var(--duration-standard) var(--ease-standard);
 }
 
+/* M22.5 (decisions.md 2026-08-04 "nothing else may occupy the top-right
+ * corner"): the label's flex-shrink floor turned out to be the wrong lever
+ * — a nested flex child's `min-width` doesn't feed into an ancestor's own
+ * automatic sizing, so no CSS-only shrink chain actually reached it under
+ * real pressure without either overflowing or (with `min-width: 0`
+ * upstream) collapsing the whole control, prev/next chapter buttons
+ * included. Told directly instead, from ReaderView's own "no room beside
+ * the card" signal: a short, fixed cap that still shows enough of the
+ * label to be legible, while leaving both chapter buttons untouched. */
+.labelCompact {
+  max-width: 1.75rem;
+}
+
 .label:hover {
   color: var(--color-text);
 }
