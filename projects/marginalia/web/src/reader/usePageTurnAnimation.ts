@@ -180,8 +180,19 @@ export function usePageTurnAnimation({
    * — a turn every ~30s must never cost a snapshot capture that could stall
    * audio). The M7 dip-and-recover fallback, called directly rather than
    * through `turnPage`'s `resolveRenderer()` ladder so a reader's curl
-   * preference can never leak into an audio-driven turn. */
+   * preference can never leak into an audio-driven turn. Shares
+   * `turnLockRef` with `turnPage` (see `turnPageSlideGuarded`'s comment) —
+   * use that, not this, from the audio auto-turn effect. */
   turnPageSlide: (direction: "prev" | "next") => Promise<void>;
+  /** The audio auto-turn effect's entry point for "next/prev page, same
+   * section" — `turnPageSlide` guarded by `turnLockRef` so it can never run
+   * concurrently with a manual `turnPage` or with another auto-turn call. */
+  turnPageSlideGuarded: (direction: "prev" | "next") => Promise<void>;
+  /** The audio auto-turn effect's entry point for "the audio moved to a
+   * different section" (a chapter skip, or advancing past the last sentence
+   * of one) — jumps straight there in one `rendition.display()` call instead
+   * of walking single pages toward it, and is likewise `turnLockRef`-guarded. */
+  turnPageSlideToSectionGuarded: (spineIndex: number) => Promise<void>;
   handleGrabPointerDown: (
     direction: "prev" | "next",
     event: React.PointerEvent<HTMLDivElement>,
@@ -372,6 +383,66 @@ export function usePageTurnAnimation({
       });
     },
     [stageControls, stageReducedMotion],
+  );
+
+  // M21 fix (operator-reported: "jumping chapters keeps jumping forward and
+  // back constantly"). Root cause was two-fold: (1) `turnPageSlide` above is
+  // called directly by the audio auto-turn effect, bypassing `turnPage`'s own
+  // `turnLockRef` entirely — so a manual turn (drag, arrow key, click) and an
+  // audio-driven catch-up turn could run concurrently, each stepping
+  // `rendition` from underneath the other; and (2) the auto-turn effect used
+  // to reach a *different section* (a skip-chapter jump, or skip-sentence
+  // across a boundary) by repeatedly calling `turnPageSlide("next"/"prev")`
+  // one page at a time — each step re-triggers `relocated`, which re-runs the
+  // effect, which computed a fresh direction from refs that could disagree
+  // with a concurrent manual turn, producing exactly the observed forward/
+  // back thrash. `turnPageSlideToSection` below jumps straight to the target
+  // section in one `rendition.display()` call — the same mechanism the plain
+  // (non-audio) chapter-jump already uses — so a distant chapter skip is one
+  // atomic move, never a chain of single-page corrections. Both this and
+  // `turnPageSlide` are wrapped in `withTurnLock` so every auto-turn call now
+  // shares `turnLockRef` with `turnPage`: whichever fires second while the
+  // other is mid-animation just no-ops, and the next `relocated`'s `turnTick`
+  // bump gives the effect another chance once the lock clears.
+  const turnPageSlideToSection = useCallback(
+    async (spineIndex: number) => {
+      const rendition = renditionRef.current;
+      if (!rendition) return;
+      if (stageReducedMotion) {
+        await rendition.display(spineIndex);
+        return;
+      }
+      await stageControls.start({
+        opacity: 0.55,
+        transition: { duration: 0.09, ease: "easeOut" },
+      });
+      await rendition.display(spineIndex);
+      await stageControls.start({
+        opacity: 1,
+        transition: { duration: 0.13, ease: "easeOut" },
+      });
+    },
+    [stageControls, stageReducedMotion, renditionRef],
+  );
+
+  const withTurnLock = useCallback(async (work: () => Promise<void>) => {
+    if (turnLockRef.current) return;
+    turnLockRef.current = true;
+    try {
+      await work();
+    } finally {
+      turnLockRef.current = false;
+    }
+  }, []);
+
+  const turnPageSlideGuarded = useCallback(
+    (direction: "prev" | "next") => withTurnLock(() => turnPageSlide(direction)),
+    [withTurnLock, turnPageSlide],
+  );
+
+  const turnPageSlideToSectionGuarded = useCallback(
+    (spineIndex: number) => withTurnLock(() => turnPageSlideToSection(spineIndex)),
+    [withTurnLock, turnPageSlideToSection],
   );
 
   // M20's paper fold (decisions.md 2026-07-20): the departing page is
@@ -851,6 +922,8 @@ export function usePageTurnAnimation({
     handleDrawCost,
     turnPage,
     turnPageSlide,
+    turnPageSlideGuarded,
+    turnPageSlideToSectionGuarded,
     handleGrabPointerDown,
   };
 }

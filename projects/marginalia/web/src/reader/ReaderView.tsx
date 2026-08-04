@@ -465,7 +465,8 @@ export function ReaderView({
     getFoldPointer,
     handleDrawCost,
     turnPage,
-    turnPageSlide,
+    turnPageSlideGuarded,
+    turnPageSlideToSectionGuarded,
     handleGrabPointerDown,
   } = usePageTurnAnimation({
     renditionRef,
@@ -909,12 +910,19 @@ export function ReaderView({
 
     const contents = currentContentsRef.current;
     if (!contents || contents.sectionIndex !== segment.spineIndex) {
-      // The visible page hasn't caught up to this section yet — turn
-      // toward it rather than leaving the tint on stale, wrong-section text.
+      // The visible page hasn't caught up to this section yet — jump
+      // straight there rather than leaving the tint on stale, wrong-section
+      // text. A direct `display()` jump (turnPageSlideToSectionGuarded), not
+      // a chain of single-page turns: the target can be many pages from
+      // wherever the reader is currently sitting in the old section (a
+      // deliberate chapter skip in particular), and walking there one
+      // `turnPageSlide` step per `relocated` event is what produced the
+      // reported "keeps jumping forward and back constantly" — each step
+      // re-triggered this effect, racing a concurrent manual turn (see that
+      // helper's own comment).
       setAudioTint(null);
-      if (audioAutoTurnPagesRef.current && currentSpineIndexRef.current !== null) {
-        const direction = segment.spineIndex > currentSpineIndexRef.current ? "next" : "prev";
-        void turnPageSlide(direction);
+      if (audioAutoTurnPagesRef.current) {
+        void turnPageSlideToSectionGuarded(segment.spineIndex);
       }
       return;
     }
@@ -964,7 +972,7 @@ export function ReaderView({
         const top = iframeRect.top + rangeRect.top - containerRect.top;
         const bottom = iframeRect.top + rangeRect.bottom - containerRect.top;
         const visible = right > 0 && left < containerRect.width && bottom > 0 && top < containerRect.height;
-        if (!visible) void turnPageSlide("next");
+        if (!visible) void turnPageSlideGuarded("next");
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -292,6 +292,13 @@ audioRouter.get("/:id/audio/sections/:spineIndex/:n", (req, res) => {
     return;
   }
   res.type(file.ext === "opus" ? "audio/ogg" : "audio/wav");
+  // Content-addressed by `castHash` + spine + sentence index (render.ts) —
+  // this exact URL's bytes can never change, only a re-cast writes a new
+  // path. `send`'s own default (`max-age=0`, revalidate-on-every-request)
+  // was forcing a network round trip on every replay/skip-back even for a
+  // segment already fully downloaded once; `immutable` lets the browser
+  // skip that entirely.
+  res.set("Cache-Control", "public, max-age=31536000, immutable");
   // `res.sendFile` (via the `send` module) already implements Range/206 —
   // exactly what the player's sequential `<audio>` segments need, and
   // AUDIO.md's HTTP table asks for ("Range-supporting static file serve").

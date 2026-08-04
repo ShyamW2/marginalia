@@ -120,6 +120,35 @@ describe("segmentSentences", () => {
     }
   });
 
+  it("does not split at a hard-wrapped line break mid-sentence", () => {
+    // Reproduces the operator-reported bug (Alice in Wonderland, Chapter 4):
+    // Project-Gutenberg-derived HTML hard-wraps prose at a fixed column
+    // width using literal newlines inside a single <p>, which htmlToText
+    // passes through verbatim. Intl.Segmenter's sentence rules treat any
+    // line feed as a hard break (UAX #29 SB4), so without repair this splits
+    // into three "sentences" at ~30 and ~60 chars regardless of punctuation
+    // — which looked like a fixed-length bug rather than a newline one.
+    const text =
+      "It was the White Rabbit, trotting slowly back again, and looking anxiously\n" +
+      "about as it went, as if it had lost something; and she heard it muttering to\n" +
+      "itself as it searched.";
+    const sentences = segmentSentences(text);
+    expect(sentences).toHaveLength(1);
+    expect(sentences[0].text).toBe(text);
+    expectRoundTrip(text, sentences);
+  });
+
+  it("still breaks on a genuine paragraph boundary (a run of newlines)", () => {
+    const text =
+      "She found the room at last.\n\n" + "It was tidy, with a table by the window.";
+    const sentences = segmentSentences(text);
+    expect(sentences.map((s) => s.text.trim())).toEqual([
+      "She found the room at last.",
+      "It was tidy, with a table by the window.",
+    ]);
+    expectRoundTrip(text, sentences);
+  });
+
   it("preserves quotation marks in segment text", () => {
     const text = 'She said, "I will not go." Then she left.';
     const sentences = segmentSentences(text);
@@ -144,6 +173,30 @@ describe("segmentSentences", () => {
         expect(sentences[i].charStart).toBe(sentences[i - 1].charEnd);
       }
       for (const s of sentences) expect(s.text.length).toBeLessThanOrEqual(400);
+    });
+
+    // Regression for the operator-reported bug: Chapter 4 specifically, its
+    // source HTML hard-wraps every line inside each <p> (a Project Gutenberg
+    // transcription trait), which used to fracture almost every sentence at
+    // ~76 chars regardless of punctuation. A sentence is allowed to *not*
+    // end in terminal punctuation only if it's the chapter's very last one,
+    // or a `splitLongSentence` clause-boundary piece (ends in a comma/semi/
+    // colon/dash, per its own "hard-split at a clause boundary" contract).
+    it("does not fracture Chapter 4's hard-wrapped prose at the line width", () => {
+      // spine[0]/[1] are the (textless / boilerplate) cover and PG header,
+      // so Chapter 4 is spine[5], not spine[4] — confirmed against this
+      // fixture's actual chapter headings.
+      const chapter4Text = spine[5].text;
+      expect(chapter4Text).toContain("\n");
+      const sentences = segmentSentences(chapter4Text);
+      const TERMINAL_OR_CLAUSE_BREAK = /[.!?…"'”’)\],;:—-]\s*$/;
+      // sentences[0] is the chapter heading itself ("CHAPTER IV. ... Little
+      // Bill"), which has no terminal punctuation by nature, not because of
+      // the hard-wrap bug — excluded the same way the last sentence is.
+      const midSentenceBreaks = sentences
+        .slice(1, -1)
+        .filter((s) => !TERMINAL_OR_CLAUSE_BREAK.test(s.text));
+      expect(midSentenceBreaks).toEqual([]);
     });
   });
 });

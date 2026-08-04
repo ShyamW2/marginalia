@@ -90,6 +90,26 @@ export function usePlayer({ resourceId, spineIndices, initialSpeed }: UsePlayerO
   const spineIndicesRef = useRef(spineIndices);
   spineIndicesRef.current = spineIndices;
 
+  // M21 fix (operator-reported: "break between sentences is sometimes too
+  // long"). Every sentence is its own audio file (AUDIO.md's sentence-level
+  // sync), so the browser has to actually fetch a new URL every time
+  // `playCurrentSegment` advances — over a slow link (an SSH tunnel,
+  // confirmed as this operator's setup) that network round trip *is* the
+  // pause, not a rendering cost. These two maps let `playCurrentSegment`
+  // kick off the *next* sentence's fetch the moment the *current* one
+  // starts playing, so by the time playback needs it, it has had that
+  // sentence's whole duration to land — `resolveSegmentSrc` then serves the
+  // already-downloaded blob instead of making the reader wait on a fresh
+  // request. Keyed by segment URL, not index, since the URL already
+  // encodes resource/cast/section/sentence — content-addressed the same way
+  // the on-disk cache is (AUDIO.md).
+  const segmentBlobCacheRef = useRef<Map<string, string>>(new Map());
+  const segmentBlobInFlightRef = useRef<Map<string, Promise<string | null>>>(new Map());
+  // A generous cap, not a real LRU: sessions are overwhelmingly sequential
+  // (one sentence ahead), so a handful of entries covers normal playback and
+  // the occasional skip-back without the map growing for a whole book.
+  const MAX_CACHED_SEGMENT_BLOBS = 6;
+
   useEffect(() => {
     speedRef.current = speed;
     if (audioElRef.current) audioElRef.current.playbackRate = speed;
@@ -125,6 +145,60 @@ export function usePlayer({ resourceId, spineIndices, initialSpeed }: UsePlayerO
     },
     [resourceId],
   );
+
+  function pruneSegmentBlobCache() {
+    const cache = segmentBlobCacheRef.current;
+    while (cache.size > MAX_CACHED_SEGMENT_BLOBS) {
+      const oldestUrl = cache.keys().next().value;
+      if (oldestUrl === undefined) break;
+      const blobUrl = cache.get(oldestUrl);
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
+      cache.delete(oldestUrl);
+    }
+  }
+
+  function clearSegmentBlobCache() {
+    for (const blobUrl of segmentBlobCacheRef.current.values()) URL.revokeObjectURL(blobUrl);
+    segmentBlobCacheRef.current.clear();
+    segmentBlobInFlightRef.current.clear();
+  }
+
+  /** Fire-and-forget: downloads `url` into a blob ahead of when playback
+   * will actually need it. Never throws and is never retried on failure —
+   * a miss here just means `resolveSegmentSrc` falls back to the plain
+   * endpoint, exactly as if prefetching didn't exist (e.g. the next
+   * sentence hasn't finished rendering yet when this fires). */
+  const prefetchSegmentBlob = useCallback((url: string) => {
+    const cache = segmentBlobCacheRef.current;
+    const inFlight = segmentBlobInFlightRef.current;
+    if (cache.has(url) || inFlight.has(url)) return;
+    const promise = fetch(url)
+      .then((res) => (res.ok ? res.blob() : null))
+      .then((blob) => (blob ? URL.createObjectURL(blob) : null))
+      .catch(() => null);
+    inFlight.set(url, promise);
+    void promise.then((blobUrl) => {
+      inFlight.delete(url);
+      if (blobUrl) {
+        cache.set(url, blobUrl);
+        pruneSegmentBlobCache();
+      }
+    });
+  }, []);
+
+  /** The URL to actually assign to `audio.src` — a prefetched blob if one
+   * landed or is on its way, otherwise the plain endpoint (the browser
+   * fetches it itself, same as if prefetching didn't exist). */
+  async function resolveSegmentSrc(url: string): Promise<string> {
+    const cached = segmentBlobCacheRef.current.get(url);
+    if (cached) return cached;
+    const inFlight = segmentBlobInFlightRef.current.get(url);
+    if (inFlight) {
+      const blobUrl = await inFlight;
+      if (blobUrl) return blobUrl;
+    }
+    return url;
+  }
 
   // playCurrentSegmentRef / loadAndPlayRef: the two mutually call each other
   // (running off the end of a section's segments advances to the next
@@ -169,30 +243,42 @@ export function usePlayer({ resourceId, spineIndices, initialSpeed }: UsePlayerO
       return;
     }
     stalledRef.current = false;
-    audio.src = segmentAudioUrl(resourceId, spineIndex, segment.n);
-    audio.playbackRate = speedRef.current;
     setCurrentSegment({
       spineIndex,
       charStart: segment.charStart,
       charEnd: segment.charEnd,
       text: segment.text,
     });
+
+    // Kick off the *next* sentence's fetch now, while this one plays — see
+    // the field comments above segmentBlobCacheRef for why.
+    const nextSegment = manifest.segments[segmentIndexRef.current + 1];
+    if (nextSegment) prefetchSegmentBlob(segmentAudioUrl(resourceId, spineIndex, nextSegment.n));
+
+    const url = segmentAudioUrl(resourceId, spineIndex, segment.n);
     const token = ++playTokenRef.current;
-    audio
-      .play()
-      .then(() => {
-        // A pause() that lands while this play() was still settling must
-        // win — otherwise a late resolution flips "paused" back to
-        // "playing" right after the listener stopped it.
-        if (playTokenRef.current === token && !audio.paused) setStatus("playing");
-      })
-      .catch((err) => {
-        // A newer segment already superseded this call — its own
-        // play()/catch() owns the status now, not this stale one.
-        if (playTokenRef.current !== token) return;
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setStatus("error");
-      });
+    void resolveSegmentSrc(url).then((src) => {
+      // Superseded before its own fetch even resolved (a rapid skip) —
+      // whatever call replaced this one owns playback now.
+      if (playTokenRef.current !== token) return;
+      audio.src = src;
+      audio.playbackRate = speedRef.current;
+      audio
+        .play()
+        .then(() => {
+          // A pause() that lands while this play() was still settling must
+          // win — otherwise a late resolution flips "paused" back to
+          // "playing" right after the listener stopped it.
+          if (playTokenRef.current === token && !audio.paused) setStatus("playing");
+        })
+        .catch((err) => {
+          // A newer segment already superseded this call — its own
+          // play()/catch() owns the status now, not this stale one.
+          if (playTokenRef.current !== token) return;
+          if (err instanceof DOMException && err.name === "AbortError") return;
+          setStatus("error");
+        });
+    });
   };
 
   loadAndPlayRef.current = function loadAndPlay(spineIndex: number, sentenceIndex: number) {
@@ -304,6 +390,7 @@ export function usePlayer({ resourceId, spineIndices, initialSpeed }: UsePlayerO
     () => () => {
       stopSubscription();
       audioElRef.current?.pause();
+      clearSegmentBlobCache();
     },
     [stopSubscription],
   );
@@ -371,6 +458,7 @@ export function usePlayer({ resourceId, spineIndices, initialSpeed }: UsePlayerO
     manifestRef.current = null;
     spineIndexRef.current = null;
     segmentIndexRef.current = -1;
+    clearSegmentBlobCache();
     setStatus("idle");
     setErrorCode(null);
     setCurrentSegment(null);

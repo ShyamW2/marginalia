@@ -4338,3 +4338,160 @@ unbroken 15-minute sitting — reasonable given each pass exists to isolate one 
 question rather than simulate a reading session; nothing observed suggests a long session
 would behave differently once bug #1–3 above were fixed (the mechanism that would make
 long playback special — the chapter-ahead render loop — is exactly what those fixes address).
+
+## M21 — operator follow-up, four more real bugs from live listening — 2026-08-04
+
+Four issues reported after real use: (1) sentence segmentation breaking mid-sentence,
+noticed on Alice Chapter 4; (2) skipping chapters mid-listen "keeps jumping forward and
+back constantly"; (3) books slow to open and the backend sometimes unreachable
+(tasks/library/digest not loading, needing a window reload) — possibly related to
+viewing over an SSH tunnel; (4) the pause between sentences sometimes too long. Fixed
+1, 2, and 4; investigated and documented 3 without fixing it (asked for explicitly,
+since it needs more operator intent before committing to a design).
+
+**1. Segmentation "fixed length" was actually hard-wrapped newlines, not length.**
+Diagnosed against the real Alice fixture (`fixtures/alice-in-wonderland.epub`, Chapter
+4 = spine index 5): Project-Gutenberg-derived HTML hard-wraps prose at ~76 columns
+using literal `\n` characters *inside* a single `<p>`, which `htmlToText`
+(`server/src/library/epub.ts`) passes straight through into `resource_text` verbatim.
+`Intl.Segmenter`'s sentence rules (UAX #29 SB4: "break after Sep|CR|LF") treat *any*
+line feed as a hard sentence boundary — it was dutifully ending a "sentence" at every
+wrapped line regardless of punctuation, which is why it looked length-based rather than
+newline-based. A genuine paragraph break survives as a *run* of two-or-more newlines
+(the block tag's own inserted `\n` landing next to the previous line's trailing
+hard-wrap `\n`); an isolated single `\n` never is one. Fixed in
+`server/src/audio/segment.ts` by swapping only *isolated* newlines
+(`/(?<!\n)\n(?!\n)/g`) for a space before handing the text to `Intl.Segmenter` — a
+straight one-for-one character swap keeps every index identical, so offsets computed
+against the swapped copy are still valid offsets into the original `text`, and the
+`Sentence.text` returned is still `text.slice(charStart, charEnd)` on the *original*
+string (embedded `\n` preserved verbatim), so the round-trip invariant never breaks.
+Verified two ways: (a) against the real Chapter 4 HTML directly — 256 bogus fragments
+became 135 real sentences, only 3 false-flags remaining (the chapter heading, which
+never has terminal punctuation, and two legitimate `splitLongSentence` clause-boundary
+pieces); (b) live, against the actually-running dev server: rendered a
+previously-uncached chapter (Chapter V, spine 6) through the real pipeline and read
+its manifest back over HTTP — 149 total segments (vs. what would have been ~250+
+under the old logic), first several segments full multi-line sentences, zero
+mid-sentence fractures. New regression tests in `segment.test.ts` cover both the
+isolated-newline case and that a genuine paragraph break (a newline run) still ends a
+sentence.
+⚠️ **The on-disk audio cache is keyed by `castHash` (cast + voice + engine), not by
+segmentation logic** — a chapter already rendered before this fix (Chapter 4 on the
+`0fe9e733…` fixture resource, cached from the M21 live-verify pass above) keeps
+serving its *old*, badly-fragmented audio until its cache is cleared
+(`DELETE /api/resources/:id/audio`) and it re-renders. This fix only self-heals for
+newly-rendered sections; nothing currently invalidates old ones on a segmentation
+change. Not fixed here (would need a version stamp in the cache key or manifest,
+which is a real but separate decision) — flagged for whoever revisits the cache key.
+Related, found but **not fixed** (out of scope — a different, much rarer input
+shape): Chapter 3's "Mouse's Tale" concrete/shape poem is marked up as one `<br/>` per
+visual line *with a blank line between every line* (for the tail-shape indentation),
+which produces the same UAX SB4 over-splitting for a different reason (poetry line
+breaks, not prose hard-wrap) — every verse line becomes its own fragment. Ordinary
+prose is unaffected; this only bites concrete/shape poetry, which is rare enough not
+to chase in this pass.
+
+**2. Chapter-skip jitter: two bugs stacked — an unguarded call, and pathing there one
+page at a time.** `usePageTurnAnimation`'s `turnPage` (manual arrow-key/click/drag
+navigation) acquires `turnLockRef` for its whole animation, but the audio auto-turn
+effect in `ReaderView.tsx` called `turnPageSlide` *directly*, bypassing that lock
+entirely (by design, per its own comment, to skip `turnPage`'s curl/slide renderer
+ladder — but that comment didn't account for the lock too). A manual turn and an
+audio-driven catch-up turn could therefore run concurrently, each stepping `rendition`
+out from under the other. Compounding it: `turnPageSlide` only steps *one page* via
+`rendition.next()/prev()` per call — fine for the common case (audio naturally
+crossing into the very next section, when the visible page is already near the
+section's end), completely wrong for a deliberate chapter skip, where the target
+section could be many pages from wherever the reader happened to be sitting. Reaching
+it required many single-page corrective steps, each re-triggering the effect
+(`turnTick` bumps on every `relocated`) and re-computing a fresh direction from refs
+that could disagree with whatever the *other*, unguarded caller had just done — the
+combination is what produced "jumping forward and back constantly." Fixed in
+`usePageTurnAnimation.ts`: added `turnPageSlideToSection(spineIndex)`, which jumps
+straight there in one `rendition.display(spineIndex)` call (the exact mechanism the
+ordinary, non-audio chapter-jump — `jumpToChapter` in `ReaderView.tsx` — already uses),
+and wrapped both it and `turnPageSlide` in a shared `withTurnLock` helper so every
+auto-turn call now respects the same `turnLockRef` `turnPage` does: whichever fires
+second while the other is mid-animation just no-ops, and the next `relocated`'s
+`turnTick` gives the effect another chance once the lock clears. `ReaderView.tsx`'s
+audio-tint effect now calls `turnPageSlideToSectionGuarded` for a cross-section
+mismatch and `turnPageSlideGuarded` for the same-section "sentence scrolled off the
+visible page" case. Verified: `tsc --noEmit` clean on `web`, full `vitest` suite
+(166 tests) still passes. **Not verified live in a browser this pass** — no
+`chromium-cli`/Playwright available in this environment and the operator's own dev
+server (ports 5173/5175) was already up, so a live click-through of the actual
+chapter-skip-while-listening interaction is still owed before calling this fully
+closed.
+
+**4. The pause between sentences was real network latency, not rendering — exactly
+the operator's own hunch, confirmed live.** Each sentence is its own audio file
+(AUDIO.md's sentence-level sync), so every `playCurrentSegment` advance was setting
+`audio.src` to a URL the browser had never fetched, paying a full network round trip
+before playback could start — over a slow link (an SSH tunnel, the operator's own
+setup, ties back to bug #3) that round trip *is* the pause. Fixed two ways in
+`web/src/audio/usePlayer.ts`: (a) the moment a sentence starts playing, its
+*following* sentence's audio is prefetched via `fetch()` into a blob
+(`prefetchSegmentBlob`), cached by URL in a small capped map (`MAX_CACHED_SEGMENT_BLOBS
+= 6`, blob URLs revoked on eviction/stop/unmount) — by the time playback needs it,
+that sentence's whole duration has usually already passed, so `resolveSegmentSrc`
+serves the cached blob instead of making the reader wait; (b)
+`server/src/routes/audio.ts`'s segment route now sets
+`Cache-Control: public, max-age=31536000, immutable` (these files are content-addressed
+by `castHash` + section + sentence index and genuinely never change), so a replay or
+skip-back no longer revalidates over the network either — confirmed live, `curl` against
+a real rendered segment on the running server shows the header. The very first sentence
+of a freshly-opened section is still a cold-start cost (nothing could prefetch it before
+the section existed) — matches AUDIO.md's already-accepted "listening starts in
+seconds," not "instantly." **No dedicated unit tests added** — `usePlayer` has none by
+precedent (AUDIO.md's own testing section scopes unit tests to `segment.ts`/quote
+location/voice assignment/cache keying and calls the player itself out for *live*
+verification instead); a fresh test harness for DOM audio + fetch + blob URLs felt like
+new infrastructure beyond this task, not part of it. **Same live-browser caveat as
+bug #2**: confirmed the mechanism end-to-end down to the HTTP layer (manifest,
+Cache-Control, blob-worthy prefetch logic reviewed line-by-line) but did not listen to
+it in an actual browser this pass.
+
+**3. Investigated, not fixed — backend-unreachable / slow-open, ranked by
+plausibility** (explicitly asked for: exploration only, more operator intent needed
+before committing to a design):
+  - **No fetch anywhere in the client has a timeout or deadline.** Every data-loading
+    path (`web/src/library/useLibrary.ts`'s `fetchResources`, digest/scan pages, the
+    jobs list) catches a network failure into a silent empty/loading state and nothing
+    else — confirmed by grepping the whole `web/src` tree for `AbortController`/
+    `signal:` (only unmount-cancellation, e.g. `ThreadPanel.tsx`, never a timeout).
+    SSH tunnels are known to drop idle TCP connections without a FIN/RST, so a `fetch()`
+    stuck mid-flight over a dead tunnel never rejects — it just never resolves, and the
+    UI sits in whatever loading/empty state it started in until the window is reloaded
+    (forcing new TCP connections). This matches "books not appearing," "tasks not
+    showing," and "needing to close and reopen the window" precisely.
+  - **The job SSE stream has no heartbeat and no reconnect.**
+    `web/src/jobs/jobsApi.ts`'s `subscribeJobEvents` manually reads a `fetch` body
+    stream (not `EventSource`) with no idle timeout and no reconnect-on-drop; if
+    `reader.read()` never resolves because the tunnel died silently, nothing surfaces —
+    confirmed by reading the function directly. Server-side, `server/src/routes/jobs.ts`
+    (`/:id/events`) never writes a periodic keep-alive comment, so neither end can tell
+    "job still running" from "connection silently died." This is the same class of bug
+    NOTES.md already has precedent for (native-module ABI crashes hidden by `tsx watch`
+    staying alive) — here it's a long-lived HTTP stream instead of the process itself.
+  - **The job registry is purely in-memory** (`server/src/jobs/registry.ts`: "a job's
+    lifetime never needs to outlive the process") — any `tsx watch` restart (a file
+    save, or an actual crash) wipes the tray; NOTES.md already documents a confirmed
+    incident of a digest job left stuck at `status: "running"` in the DB after exactly
+    this. Any stray uncaught exception kills the whole process the same way, since
+    there's no `process.on("uncaughtException"/"unhandledRejection")` anywhere in
+    `server/src` — confirmed absent by grep.
+  - **No React error boundary exists anywhere** (`web/src/main.tsx` renders `<App/>`
+    directly; grepped `web/src` for `ErrorBoundary` — zero hits), so one render-time
+    exception blanks the whole UI rather than degrading a single surface.
+  - **Opening a book pays several sequential round trips** (position, locations,
+    highlights, provider roles, the EPUB file itself, plus client-side
+    `book.locations.generate()` on a cache miss — `ReaderView.tsx`) before it's fully
+    interactive; each one costs full tunnel RTT, which is more noticeable the laggier
+    the tunnel is. Already partly mitigated after first open by cached locations, but
+    the first open of any book pays all of it.
+  - No README or existing guidance anywhere addresses running this over an SSH tunnel
+    (`ServerAliveInterval`, keep-alives, HMR-over-tunnel behavior).
+  - Kokoro/`onnxruntime-node` loads lazily and its failure path already converts
+    correctly to `model_unavailable` (`server/src/routes/audio.ts`) — this part is
+    *not* a suspect, unlike the better-sqlite3 precedent it was modeled to avoid.

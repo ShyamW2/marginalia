@@ -164,6 +164,24 @@ function splitLongSentence(s: Sentence, text: string): Sentence[] {
   return pieces;
 }
 
+// Operator-reported (Alice in Wonderland, Chapter 4): segmentation was
+// breaking mid-sentence at what looked like a fixed length. The real cause
+// isn't length at all — Project-Gutenberg-derived HTML hard-wraps prose at
+// ~76 columns using literal newlines *inside* a single `<p>`, which
+// `htmlToText` passes straight through as embedded `\n` characters in
+// `resource_text`. UAX #29's sentence rules (what `Intl.Segmenter` implements)
+// treat *any* line feed as a hard break (SB4: "break after Sep|CR|LF"), so it
+// dutifully ends a "sentence" at every wrapped line, regardless of
+// punctuation. A genuine paragraph break survives as a *run* of two-or-more
+// newlines (the block tag's own inserted `\n` next to the previous line's
+// trailing hard-wrap `\n`); an isolated single `\n` never is one. Swapping
+// only the isolated ones for a space — never touching a `\n\n+` run, so real
+// paragraph breaks still end a sentence — repairs this before the segmenter
+// ever sees it. A straight character swap keeps every index identical, so
+// offsets computed against `forSegmenting` are still valid offsets into the
+// original `text`.
+const ISOLATED_NEWLINE = /(?<!\n)\n(?!\n)/g;
+
 /**
  * Segments one spine section's `resource_text` into sentences, char offsets
  * into that exact string. Empty/whitespace-only input returns no sentences
@@ -172,10 +190,11 @@ function splitLongSentence(s: Sentence, text: string): Sentence[] {
 export function segmentSentences(text: string): Sentence[] {
   if (text.trim().length === 0) return [];
 
+  const forSegmenting = text.replace(ISOLATED_NEWLINE, " ");
   const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
   const raw: Sentence[] = [];
-  for (const { segment, index } of segmenter.segment(text)) {
-    raw.push({ charStart: index, charEnd: index + segment.length, text: segment });
+  for (const { segment, index } of segmenter.segment(forSegmenting)) {
+    raw.push({ charStart: index, charEnd: index + segment.length, text: text.slice(index, index + segment.length) });
   }
 
   const repaired = mergeFalseBoundaries(raw, text);
