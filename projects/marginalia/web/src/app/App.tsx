@@ -40,14 +40,18 @@ function isOverlayPath(pathname: string): boolean {
   return pathname === "/settings" || pathname.startsWith("/scan/") || pathname.startsWith("/digest/");
 }
 
-/** Whether `prefix` (e.g. "/scan/") is open — either directly (`location`)
- * or one level further back behind another open overlay (`background`) —
- * and if so, the pathname it's open at. Shared by the Scan and Digest
- * checks below so a Settings-on-top-of-either case doesn't need writing
- * out twice. */
-function findOverlayPathname(location: Location, background: Location | undefined, prefix: string): string | null {
-  if (location.pathname.startsWith(prefix)) return location.pathname;
-  if (background?.pathname.startsWith(prefix)) return background.pathname;
+/** Whether `prefix` (e.g. "/scan/") is open — anywhere in the chain of
+ * overlays stacked through `background`, not just one level back. Walks the
+ * *whole* chain the way `roomLocation` does: a Settings stacked on a
+ * Settings stacked on a Scan used to stop after one hop and lose the Scan
+ * (M22.5, decisions.md 2026-08-04). Shared by the Scan and Digest checks
+ * below so a Settings-on-top-of-either case doesn't need writing out twice. */
+export function findOverlayPathname(location: Location, prefix: string): string | null {
+  let current: Location | undefined = location;
+  while (current) {
+    if (current.pathname.startsWith(prefix)) return current.pathname;
+    current = (current.state as NavigationState | null)?.background;
+  }
   return null;
 }
 
@@ -93,8 +97,8 @@ export function App() {
   const settingsOpen = location.pathname === "/settings";
   // The Scan/Digest overlays are open either directly, or one level further
   // back behind an open Settings — both render the same overlay underneath.
-  const scanPathname = findOverlayPathname(location, background, "/scan/");
-  const digestPathname = findOverlayPathname(location, background, "/digest/");
+  const scanPathname = findOverlayPathname(location, "/scan/");
+  const digestPathname = findOverlayPathname(location, "/digest/");
   const scanId = scanPathname ? matchPath("/scan/:id", scanPathname)?.params.id ?? null : null;
   const digestId = digestPathname ? matchPath("/digest/:id", digestPathname)?.params.id ?? null : null;
 

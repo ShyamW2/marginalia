@@ -32,6 +32,18 @@ interface InternalJob {
 
 const jobs = new Map<string, InternalJob>();
 
+// M22.5 "the tray is live for jobs it did not start" (decisions.md
+// 2026-08-04): per-job `subscribeJob` listeners only exist once a client
+// already knows a job's id — no help for a job started by another tab, or
+// one a subsystem (usePlayer) subscribes to directly without ever going
+// through the client-side registry mirror. This is the other half: every
+// creation and update, for every job, regardless of who's watching.
+const globalListeners = new Set<(job: Job, event: "created" | "updated") => void>();
+
+function emitGlobal(job: Job, event: "created" | "updated"): void {
+  for (const listener of globalListeners) listener(job, event);
+}
+
 // Keeps the tray's "recently finished work" bounded without a TTL sweep —
 // simplest boring choice for a registry that only ever lives as long as one
 // server process.
@@ -47,6 +59,7 @@ function pruneFinishedJobs(): void {
 
 function emit(job: InternalJob): void {
   for (const listener of job.listeners) listener(job.public);
+  emitGlobal(job.public, "updated");
 }
 
 export function startJob(
@@ -54,6 +67,11 @@ export function startJob(
   resourceId: string | null,
   resourceTitle: string | null,
   run: JobRunner,
+  // M22.5 "a job says what it is working on": stable for the job's whole
+  // life, unlike `progress.message` which changes per item — a range
+  // digest's endpoints, an audio render's or cast scan's section. Null for
+  // jobs with no single natural range/section (theme-tagging).
+  detail: string | null = null,
 ): Job {
   const controller = new AbortController();
   const job: InternalJob = {
@@ -62,6 +80,7 @@ export function startJob(
       kind,
       resourceId,
       resourceTitle,
+      detail,
       status: "running",
       progress: { current: 0, total: 0, message: null },
       error: null,
@@ -72,6 +91,7 @@ export function startJob(
     listeners: new Set(),
   };
   jobs.set(job.public.id, job);
+  emitGlobal(job.public, "created");
 
   const reportProgress: ProgressReporter = (progress) => {
     // A late progress report racing a just-cancelled job would otherwise
@@ -132,4 +152,13 @@ export function subscribeJob(id: string, listener: (job: Job) => void): (() => v
   if (!job) return null;
   job.listeners.add(listener);
   return () => job.listeners.delete(listener);
+}
+
+/** Subscribes to every job's creation and progress, registry-wide —
+ * M22.5's fix for the tray only ever learning about a job it started
+ * itself. Same invariant as `subscribeJob`: watching never owns, so this
+ * never touches `controller` and has no effect on any job's outcome. */
+export function subscribeAllJobs(listener: (job: Job, event: "created" | "updated") => void): () => void {
+  globalListeners.add(listener);
+  return () => globalListeners.delete(listener);
 }

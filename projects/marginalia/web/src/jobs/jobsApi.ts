@@ -45,20 +45,19 @@ export async function requestCancelJob(id: string): Promise<void> {
   }
 }
 
-/**
- * Subscribes to one job's SSE progress stream (M20.6). Returns an
- * unsubscribe function that closes *this client's* connection only —
- * never the job itself. The server ends the stream on its own once the job
- * reaches a terminal state; this is what lets a reconnect after a reload
- * pick up a still-running job's progress exactly where the registry has it.
- */
-export function subscribeJobEvents(id: string, onUpdate: (job: Job) => void): () => void {
+/** Shared by `subscribeJobEvents` and `subscribeAllJobEvents` — both just
+ * read a `Job` off each SSE frame's `data:` line and hand it to `onUpdate`;
+ * neither cares about the `event:` line, since `onUpdate` already handles
+ * both "created" and "updated" identically (upserting into a map). Returns
+ * an unsubscribe function that closes *this client's* connection only —
+ * never the job(s) themselves. */
+function subscribeSse(url: string, onUpdate: (job: Job) => void): () => void {
   const controller = new AbortController();
 
   (async () => {
     let response: Response;
     try {
-      response = await fetch(`/api/jobs/${id}/events`, { signal: controller.signal });
+      response = await fetch(url, { signal: controller.signal });
     } catch {
       return;
     }
@@ -95,4 +94,26 @@ export function subscribeJobEvents(id: string, onUpdate: (job: Job) => void): ()
   })();
 
   return () => controller.abort();
+}
+
+/**
+ * Subscribes to one job's SSE progress stream (M20.6). The server ends the
+ * stream on its own once the job reaches a terminal state; this is what
+ * lets a reconnect after a reload pick up a still-running job's progress
+ * exactly where the registry has it.
+ */
+export function subscribeJobEvents(id: string, onUpdate: (job: Job) => void): () => void {
+  return subscribeSse(`/api/jobs/${id}/events`, onUpdate);
+}
+
+/**
+ * Subscribes to every job's creation and progress, registry-wide (M22.5,
+ * decisions.md 2026-08-04 "the tray is live for jobs it did not start") —
+ * what lets the tray show a job started by another tab, or one a subsystem
+ * (`usePlayer`) subscribed to directly without ever calling
+ * `registerStarted`. This stream never closes on its own; the caller's
+ * unsubscribe is the only way it ends.
+ */
+export function subscribeAllJobEvents(onUpdate: (job: Job) => void): () => void {
+  return subscribeSse("/api/jobs/events", onUpdate);
 }

@@ -31,6 +31,7 @@ import {
 import { segmentSentences } from "../audio/segment.js";
 import { getJob, startJob } from "../jobs/registry.js";
 import { getProvider } from "../llm/provider.js";
+import { sectionRangeUiLabel, sectionUiLabel } from "../llm/context.js";
 import { runDigest } from "../digest/build.js";
 import { getBookDigest } from "../digest/store.js";
 
@@ -281,7 +282,7 @@ audioRouter.post("/:id/cast/scan", (req, res) => {
     );
     markCastScanned(db, resource.id);
     reportProgress({ current: 1, total: 1, message: null });
-  });
+  }, sectionRangeUiLabel(sections, 0, spineEnd, resource.metadata.chapterTitles));
   res.status(202).json(StartJobResponseSchema.parse({ jobId: job.id }));
 });
 
@@ -374,6 +375,7 @@ audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
   }
 
   const engine = getEngine(getDb());
+  const sections = getResourceTextSections(getDb(), resource.id);
   const job = startJob("audio-render", resource.id, resource.title, async (signal, reportProgress) => {
     try {
       // M22: pass 2 (attribution) + voice assignment, single-voice's own
@@ -410,7 +412,7 @@ audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
     } finally {
       if (inFlightRenders.get(key) === job.id) inFlightRenders.delete(key);
     }
-  });
+  }, sectionUiLabel(sections, spineIndex, resource.metadata.chapterTitles));
   inFlightRenders.set(key, job.id);
   res.status(202).json({ jobId: job.id });
 });

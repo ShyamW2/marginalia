@@ -1013,6 +1013,11 @@ export const JobSchema = z.object({
    * without a join back to a resource that (in principle) could be deleted
    * while the job is still finishing up. */
   resourceTitle: z.string().nullable(),
+  /** Stable for the job's whole life, unlike `progress.message` (live,
+   * changes per item): a range digest's endpoints, an audio render's or
+   * cast scan's section — "S<n> · <title>", never a raw spineIndex (M20.5).
+   * Null for jobs with no single natural range/section. */
+  detail: z.string().nullable(),
   status: JobStatusSchema,
   progress: JobProgressSchema,
   error: z.string().nullable(),

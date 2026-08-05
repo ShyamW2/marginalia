@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { cancelJob, getJob, listJobs, startJob, subscribeJob } from "./registry.js";
+import { cancelJob, getJob, listJobs, startJob, subscribeAllJobs, subscribeJob } from "./registry.js";
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -137,5 +137,43 @@ describe("job registry", () => {
     // Two real progress reports, then the terminal (completed) snapshot —
     // finishing a job never mutates the last progress it reported.
     expect(progressValues).toEqual([1, 2, 2]);
+  });
+
+  it("detail is stable for the job's whole life, and null when the caller doesn't pass one", async () => {
+    const withDetail = startJob("digest", "res-1", "Book", async () => {}, "S4 · The Trial → S5 · The Verdict");
+    expect(withDetail.detail).toBe("S4 · The Trial → S5 · The Verdict");
+
+    const withoutDetail = startJob("theme-tagging", "res-1", "Book", async () => {});
+    expect(withoutDetail.detail).toBeNull();
+
+    await new Promise((r) => setTimeout(r, 0));
+    // Finishing (which rewrites `.public` with a new object) must not drop it.
+    expect(getJob(withDetail.id)?.detail).toBe("S4 · The Trial → S5 · The Verdict");
+  });
+
+  it("subscribeAllJobs sees every job's creation and progress, registry-wide — not just the ones it's watching by id", async () => {
+    const seen: { id: string; event: string; status: string }[] = [];
+    const unsubscribe = subscribeAllJobs((job, event) => seen.push({ id: job.id, event, status: job.status }));
+
+    const jobA = startJob("digest", "res-1", "Book", async (_signal, reportProgress) => {
+      reportProgress({ current: 1, total: 1 });
+    });
+    const jobB = startJob("thematic", "res-2", "Other Book", async () => {});
+
+    await new Promise((r) => setTimeout(r, 0));
+    unsubscribe();
+
+    expect(seen[0]).toEqual({ id: jobA.id, event: "created", status: "running" });
+    expect(seen.some((e) => e.id === jobB.id && e.event === "created")).toBe(true);
+    expect(seen.some((e) => e.id === jobA.id && e.event === "updated" && e.status === "completed")).toBe(true);
+  });
+
+  it("subscribeAllJobs never affects a job's outcome — watching is not owning", async () => {
+    const unsubscribe = subscribeAllJobs(() => {});
+    const job = startJob("digest", "res-1", "Book", async () => {});
+    unsubscribe();
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getJob(job.id)?.status).toBe("completed");
   });
 });

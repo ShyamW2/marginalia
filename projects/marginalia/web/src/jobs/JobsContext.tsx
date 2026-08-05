@@ -1,6 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Job, JobKind } from "@marginalia/shared";
-import { fetchJobs, requestCancelJob, subscribeJobEvents } from "./jobsApi.js";
+import { fetchJobs, requestCancelJob, subscribeAllJobEvents } from "./jobsApi.js";
 
 /** What a call site already knows the moment `startJobRequest` returns an
  * id — enough to render a stub in the tray/toast immediately, before the
@@ -21,8 +21,8 @@ interface JobsContextValue {
   cancellingIds: ReadonlySet<string>;
   cancel: (id: string) => void;
   /** Called by whatever UI just started a job (POST returned a jobId) — adds
-   * it to the registry's local mirror, subscribes to its progress, and pops
-   * a dismissible toast for it. */
+   * a stub to the local mirror (the registry-wide stream overwrites it with
+   * the real snapshot moments later) and pops a dismissible toast for it. */
   registerStarted: (info: StartedJobInfo) => void;
   /** Ids currently shown as a toast. Dismissing (see `dismissToast`) only
    * removes it from this set — never touches the job itself. */
@@ -44,7 +44,6 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   const [jobsById, setJobsById] = useState<Map<string, Job>>(new Map());
   const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
   const [toastIds, setToastIds] = useState<Set<string>>(new Set());
-  const subscriptions = useRef<Map<string, () => void>>(new Map());
 
   const upsert = useCallback((job: Job) => {
     setJobsById((prev) => {
@@ -62,14 +61,6 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const ensureSubscribed = useCallback(
-    (id: string) => {
-      if (subscriptions.current.has(id)) return;
-      subscriptions.current.set(id, subscribeJobEvents(id, upsert));
-    },
-    [upsert],
-  );
-
   // Reload-mid-run (TASKS.md M20.6 verify): the registry is the source of
   // truth, so a fresh mount always starts by asking it for everything,
   // rather than assuming an empty tray until something new is started.
@@ -78,42 +69,46 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     fetchJobs().then((list) => {
       if (cancelled) return;
       setJobsById(new Map(list.map((j) => [j.id, j])));
-      for (const job of list) if (job.status === "running") ensureSubscribed(job.id);
     });
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(
-    () => () => {
-      for (const unsubscribe of subscriptions.current.values()) unsubscribe();
-    },
-    [],
-  );
+  // M22.5 "the tray is live for jobs it did not start" (decisions.md
+  // 2026-08-04): one registry-wide stream, subscribed once for the
+  // Provider's whole lifetime, replaces the old per-job subscription that
+  // only ever covered jobs this tab itself had learned about via
+  // `registerStarted` or the mount-time fetch above — missing a job started
+  // by another tab, or by a subsystem (usePlayer) that talks to its own job
+  // directly and never registers it here.
+  useEffect(() => subscribeAllJobEvents(upsert), [upsert]);
 
   const registerStarted = useCallback(
     (info: StartedJobInfo) => {
-      // A stub, immediately overwritten by the real snapshot the SSE
-      // subscription sends the instant it connects (jobsApi.subscribeJobEvents)
-      // — this just avoids a visible gap between "the POST returned" and
-      // "the first progress event arrived".
+      // A stub, immediately overwritten by the real snapshot the global
+      // stream above delivers the instant the job is created — this just
+      // avoids a visible gap between "the POST returned" and "the first
+      // SSE event arrived".
       upsert({
         id: info.id,
         kind: info.kind,
         resourceId: info.resourceId,
         resourceTitle: info.resourceTitle,
+        detail: null,
         status: "running",
         progress: { current: 0, total: 0, message: null },
         error: null,
         startedAt: new Date().toISOString(),
         finishedAt: null,
       });
-      ensureSubscribed(info.id);
+      // Toasts stay opt-in through this call, never from the stream above —
+      // chapter-ahead audio rendering would otherwise pop a popup over the
+      // reader every few minutes (decisions.md: the blocking-spinner
+      // failure in a new costume).
       setToastIds((prev) => new Set(prev).add(info.id));
     },
-    [upsert, ensureSubscribed],
+    [upsert],
   );
 
   const dismissToast = useCallback((id: string) => {

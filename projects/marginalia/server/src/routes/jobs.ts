@@ -1,11 +1,39 @@
 import { Router } from "express";
 import type { Job } from "@marginalia/shared";
-import { cancelJob, getJob, listJobs, subscribeJob } from "../jobs/registry.js";
+import { cancelJob, getJob, listJobs, subscribeAllJobs, subscribeJob } from "../jobs/registry.js";
 
 export const jobsRouter: Router = Router();
 
 jobsRouter.get("/", (_req, res) => {
   res.json(listJobs());
+});
+
+/**
+ * SSE stream of every job's creation and progress, registry-wide (M22.5,
+ * decisions.md 2026-08-04 "the tray is live for jobs it did not start").
+ * Must be registered before `/:id` — Express would otherwise match this
+ * path as `:id = "events"`. Same watching-never-owns contract as the
+ * per-job stream below: disconnecting here affects nothing.
+ */
+jobsRouter.get("/events", (req, res) => {
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  res.on("error", () => {
+    // client-side socket errors after disconnect are expected — nothing to do
+  });
+
+  function send(job: Job, event: "created" | "updated"): void {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(job)}\n\n`);
+  }
+
+  const unsubscribe = subscribeAllJobs(send);
+
+  res.on("close", () => {
+    unsubscribe();
+  });
 });
 
 jobsRouter.get("/:id", (req, res) => {

@@ -14,7 +14,7 @@ import {
 import { getDb } from "../db.js";
 import { getReadingPosition, getResourceById, getResourceTextSections } from "../library/store.js";
 import { getProvider, LLMError } from "../llm/provider.js";
-import { sectionLabel } from "../llm/context.js";
+import { sectionLabel, sectionRangeUiLabel } from "../llm/context.js";
 import { getRawSettings } from "../settings/store.js";
 import { estimateDigestRun, maybeRefreshBookDigestSnapshot, runDigest } from "../digest/build.js";
 import { runThematicDigest } from "../digest/thematicBuild.js";
@@ -264,23 +264,29 @@ digestRouter.post("/:id/digest", async (req, res) => {
   // cancellation. It now starts a job and returns immediately; the tasks
   // tray watches it via GET /api/jobs/:id/events and the client re-fetches
   // this same GET /:id/digest for the actual content once the job completes.
-  const job = startJob("digest", resource.id, resource.title, async (signal, reportProgress) => {
-    try {
-      await runDigest(db, provider, resource, sections, spineStart, spineEnd, signal, (current, total, message) =>
-        reportProgress({ current, total, message }),
-      );
-      writeDigestMarkdown(db, resource);
-    } catch (err) {
-      if (err instanceof LLMError) {
-        // eslint-disable-next-line no-console
-        console.error(`[digest] ${err.code}: ${err.message}`);
-      } else {
-        // eslint-disable-next-line no-console
-        console.error("[digest]", err);
+  const job = startJob(
+    "digest",
+    resource.id,
+    resource.title,
+    async (signal, reportProgress) => {
+      try {
+        await runDigest(db, provider, resource, sections, spineStart, spineEnd, signal, (current, total, message) =>
+          reportProgress({ current, total, message }),
+        );
+        writeDigestMarkdown(db, resource);
+      } catch (err) {
+        if (err instanceof LLMError) {
+          // eslint-disable-next-line no-console
+          console.error(`[digest] ${err.code}: ${err.message}`);
+        } else {
+          // eslint-disable-next-line no-console
+          console.error("[digest]", err);
+        }
+        throw err;
       }
-      throw err;
-    }
-  });
+    },
+    sectionRangeUiLabel(sections, spineStart, spineEnd, resource.metadata.chapterTitles),
+  );
   res.status(202).json({ jobId: job.id });
 });
 
@@ -432,22 +438,28 @@ digestRouter.post("/:id/thematic", async (req, res) => {
   }
 
   const sections = getResourceTextSections(db, resource.id);
-  const job = startJob("thematic", resource.id, resource.title, async (signal, reportProgress) => {
-    try {
-      await runThematicDigest(db, provider, resource, sections, spineStart, spineEnd, signal, (current, total, message) =>
-        reportProgress({ current, total, message }),
-      );
-    } catch (err) {
-      if (err instanceof LLMError) {
-        // eslint-disable-next-line no-console
-        console.error(`[thematic] ${err.code}: ${err.message}`);
-      } else {
-        // eslint-disable-next-line no-console
-        console.error("[thematic]", err);
+  const job = startJob(
+    "thematic",
+    resource.id,
+    resource.title,
+    async (signal, reportProgress) => {
+      try {
+        await runThematicDigest(db, provider, resource, sections, spineStart, spineEnd, signal, (current, total, message) =>
+          reportProgress({ current, total, message }),
+        );
+      } catch (err) {
+        if (err instanceof LLMError) {
+          // eslint-disable-next-line no-console
+          console.error(`[thematic] ${err.code}: ${err.message}`);
+        } else {
+          // eslint-disable-next-line no-console
+          console.error("[thematic]", err);
+        }
+        throw err;
       }
-      throw err;
-    }
-  });
+    },
+    sectionRangeUiLabel(sections, spineStart, spineEnd, resource.metadata.chapterTitles),
+  );
   res.status(202).json({ jobId: job.id });
 });
 

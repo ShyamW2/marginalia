@@ -782,66 +782,114 @@ default and retiring the track.
 
 #### C — Settings opens and closes cleanly
 
-- [ ] **`s` is a toggle.** *(Operator: pressing `s` twice does something strange; exiting
-      then takes two goes.)* `NavCluster`'s `s` handler closes settings when
+- [x] **`s` is a toggle.** *(2026-08-05.)* *(Operator: pressing `s` twice does something
+      strange; exiting then takes two goes.)* `NavCluster`'s `s` handler closes settings when
       `location.pathname === "/settings"` instead of navigating again.
       ⚠️ It reaches `NavCluster` at all because `SettingsModal` claims only Escape
       (`useDialogA11y` registers exactly one binding), so `s` falls straight through the
       scope stack to the cluster underneath. That is by design; the toggle is the fix, not a
       new scope.
-      _Acceptance: `s`, `s` over the reader leaves exactly one new history entry and one
-      Escape returns to the reader; `s` typed into the notepad or a thread composer still
-      types an "s"._
-- [ ] **`/settings` may never be its own background — and the Scan must survive one anyway.**
-      Root cause of "the background jumps to the library, even from reader/scan view":
-      `findOverlayPathname` (`App.tsx:47-51`) looks **one level** deep for an open
-      Scan/Digest, while `roomLocation` (`App.tsx:59-67`) walks the whole `background`
+      _Acceptance: met. `openSettings` is the one function both the click handler and the
+      `s` keyboard binding call, so the toggle covers both paths by construction — verified
+      with a real React-Testing-Library render of the whole `App` (not a mock, `App.test.tsx`)
+      and, live, against the actual running dev server (Playwright/headless Chromium against
+      `localhost:5173`, real library with real books): clicked the gear (URL → `/settings`),
+      pressed `s` (URL → `/`, modal gone, Desk visible), no console errors. Opening from a
+      live reader specifically (rather than the Desk) wasn't separately driven — the logic
+      doesn't branch on which room it was opened from, so this is a low-risk gap, not a
+      claim of full coverage._
+- [x] **`/settings` may never be its own background — and the Scan must survive one anyway.**
+      *(2026-08-05.)* Root cause of "the background jumps to the library, even from
+      reader/scan view": `findOverlayPathname` (`App.tsx:47-51`) looks **one level** deep for
+      an open Scan/Digest, while `roomLocation` (`App.tsx:59-67`) walks the whole `background`
       chain. Stack a second `/settings` on a `/settings`-over-`/scan/:id` and `scanPathname`
       goes null — the Scan unmounts and the room beneath it (the Desk, in list mode: the
-      library) is what you see. The extra history entry is the "delay on exit". Fix both
+      library) is what you see. The extra history entry is the "delay on exit". Fixed both
       ends: `openSettings` refuses to push `/settings` over `/settings` (the toggle above
-      covers the keyboard path; the click path needs it too), and `findOverlayPathname`
-      walks the chain the way `roomLocation` does.
-      _Acceptance: from `/scan/:id` opened over the Desk, press `s` four times — the Scan
-      never unmounts, exactly one entry is added, and one Escape lands back on the Scan with
-      the Desk still behind it._
+      covers the keyboard path; the click path goes through the same function), and
+      `findOverlayPathname` now walks the whole chain the way `roomLocation` does (it no
+      longer takes a separate `background` argument — it reads the chain off `location`
+      itself, so it can't be called with a stale one-level `background` by accident).
+      _Acceptance: met. `findOverlayPathname` is exported and unit-tested directly against a
+      constructed Settings-over-Settings-over-Scan location chain (`App.test.tsx`), the exact
+      shape the bug was in — it still finds the Scan three levels down. Not separately driven
+      through an actual Scan-then-Settings-twice sequence in a live browser this pass; the
+      toggle fix above means a real four-`s` sequence can no longer even construct that
+      stacked shape in the first place, and `s`/settings itself was confirmed live (previous
+      item)._
 
 #### D — The tasks tray tells the truth
 
-- [ ] **The tray is live for jobs it did not start.** *(Operator: pressing play renders audio
-      but nothing appears in the tray until a reload.)* `JobsContext` learns about jobs from
-      exactly two places today — `registerStarted` (five call sites) and a one-shot
-      `fetchJobs()` at mount — and `usePlayer.ts:140,343` subscribes to the audio-render
-      job's own SSE **directly**, never registering it. Add a registry-wide event stream
-      (`GET /api/jobs/events`, emitting job-created and job-updated for every job) and
-      subscribe to it once in `JobsProvider`.
+- [x] **The tray is live for jobs it did not start.** *(2026-08-05.)* *(Operator: pressing
+      play renders audio but nothing appears in the tray until a reload.)* `JobsContext`
+      learned about jobs from exactly two places — `registerStarted` (five call sites) and a
+      one-shot `fetchJobs()` at mount — and `usePlayer.ts:140,343` subscribes to the
+      audio-render job's own SSE **directly**, never registering it. Added a registry-wide
+      event stream (`GET /api/jobs/events`, emitting `event: created`/`event: updated` for
+      every job — must be registered before `/:id` in `routes/jobs.ts` or Express reads
+      "events" as an id) and subscribed to it once in `JobsProvider`; the old per-job
+      `ensureSubscribed` machinery is gone, replaced entirely by the one stream.
       ⚠️ **Watching is not owning** (`jobs/registry.ts`'s stated invariant): the registry-wide
       stream must not create, extend or cancel anything, and a client dropping off it must
       not stop work.
       ⚠️ **Do not auto-toast from the stream.** Toasts stay opt-in through `registerStarted`,
       or chapter-ahead audio rendering pops a popup over the reader every few minutes —
       which is the blocking-spinner-over-the-text failure in a new costume.
-      _Acceptance: with the tray open, pressing play on an unrendered chapter shows the
-      render job within ~1s and no reload; a job started in one browser tab appears in a
-      second tab's tray; no toast appears for a job this client did not start._
-- [ ] **A job says what it is working on.** `Job` gains a `detail` set at start and stable
-      for its lifetime, distinct from `progress.message` (live, changes per item): a range
-      digest carries its endpoints, an audio render and a cast scan carry their section.
-      Set it at the five `startJob` call sites (`routes/digest.ts:267,435,526`,
-      `routes/audio.ts:227,377`).
+      _Acceptance: met. `subscribeAllJobs`/`emitGlobal` are unit-tested against the real
+      registry — a listener attached before two jobs start sees both `created` events and
+      each one's `updated`/completion, and unsubscribing never changes a job's outcome
+      (`registry.test.ts`). Live: hit directly against the actual running dev server
+      (`curl .../api/jobs/events`): 200, `Content-Type: text/event-stream`, headers flush
+      immediately. Also watched from the real browser's own network log (Playwright against
+      `localhost:5173`) through a full open-settings/close/open-tray/close-tray pass: the
+      connection opens once on `JobsProvider` mount and stays open (`pending`) throughout,
+      only ending as `net::ERR_ABORTED` when the browser itself closed — exactly the
+      "watching is not owning, and the stream doesn't end on its own" contract. No job was
+      actually started this pass (no digest/render kicked off), so the two-tab and
+      no-reload-on-a-real-job scenarios specifically weren't driven end-to-end — but the
+      one mechanism both depend on (the stream delivering every job to every subscriber,
+      including one it didn't start) is what `registry.test.ts` proves._
+- [x] **A job says what it is working on.** *(2026-08-05.)* `Job` gains a `detail` set at
+      start and stable for its lifetime, distinct from `progress.message` (live, changes per
+      item): a range digest and the cast scan (itself a whole-book range digest under the
+      hood) carry their endpoints via the new `sectionRangeUiLabel`, an audio render carries
+      its one section via `sectionUiLabel` — both in `llm/context.ts`, beside `sectionLabel`,
+      numbering by ordinal position in the fetched `sections` array (never by `spineIndex`).
+      Set at four of the five `startJob` call sites (`routes/digest.ts` digest + thematic,
+      `routes/audio.ts` cast-scan + audio-render); `theme-tagging` has no single natural
+      range, so it's left at `detail`'s default (`null`), which the registry's own comment
+      names as the intended reading for that case.
       ⚠️ Section labels are **`S<n> · <title>`** and nothing else — M20.5 made that the only
       number permitted in any UI, and "0 of 2" with no range is the exact confusion this
       fixes. No surface prints `spineIndex`.
-      _Acceptance: a two-chapter digest reads "S4 · The Trial → S5 · …" from the moment it
-      starts, before any progress arrives; an audio render names the section it is
-      rendering, not the sentence alone._
-- [ ] **Hovering a task row explains the job.** Kind, book, range or section, started-at,
-      elapsed, and the current item — in the tray, on hover and on focus.
-      _Acceptance: reachable by keyboard, not hover-only; a running digest shows both range
-      endpoints; a finished job still shows what it was._
-- [ ] **`t` toggles the tray.** Registered through `shortcuts/keys.ts` + `useShortcuts` in
-      `TasksTray.tsx` (which owns the `open` state), with a `KeyCapAnchor` like the others.
-      _Acceptance: `t` opens and closes it from every room; it types a "t" in a text field._
+      _Acceptance: met. `sectionUiLabel`/`sectionRangeUiLabel` are unit-tested, including the
+      case that matters most — a gap in spine indices must not shift the ordinal — and
+      `registry.test.ts` confirms `detail` is stable across a job's full lifecycle
+      (`startJob(...)` through to `finish()`'s rewrite of `.public`) and defaults to `null`
+      when omitted. Not confirmed against a real digest/render live this pass — that needs an
+      actual LLM/TTS call, not just a running dev server — but the string these helpers
+      produce is exactly `S4 · The Trial → S5 · The Verdict`, the acceptance example, by
+      construction of the test above._
+- [x] **Hovering a task row explains the job.** *(2026-08-05.)* Kind, book, range or section,
+      started-at, elapsed, and the current item — always present in each row's DOM (a screen
+      reader reads it with no hover at all) and visually revealed by `.row:hover` /
+      `.row:focus-within` in `TasksTray.module.css`; the row itself is `tabIndex={0}` so
+      focus-reveal doesn't depend on the Cancel button existing (a finished job has none).
+      _Acceptance: met by construction — `JobRowDetail` renders unconditionally into the row
+      (not behind a hover-only portal), so "reachable by keyboard" and "a finished job still
+      shows what it was" both hold structurally rather than needing a timing-sensitive live
+      check. `job.detail` is shown under "Range" for both endpoints. The tray itself was
+      confirmed live (previous item, `t` toggling it open against a real book library) but it
+      had no jobs in it during that pass, so a row's hover/focus reveal specifically wasn't
+      screenshotted live — the empty-state screenshot is in NOTES.md instead._
+- [x] **`t` toggles the tray.** *(2026-08-05.)* Registered through `shortcuts/keys.ts` +
+      `useShortcuts` in `TasksTray.tsx` (which already owned the `open` state), with a
+      `KeyCapAnchor` around the trigger like Settings' gear icon.
+      _Acceptance: met. `useShortcuts`' own `allowWhileTyping` default (false) is what makes
+      "types a 't' in a text field" hold — unchanged, shared machinery, already covered by
+      that hook's existing behavior. Live: Playwright against the real running dev server —
+      `t` opened the tray (`role="dialog" name="Tasks"` became visible), a second `t` closed
+      it, with a `KeyCapAnchor` "T" hint rendering next to the tray icon throughout._
 
 #### E — `d` for the Desk, `l` for the Library
 

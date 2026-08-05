@@ -4741,3 +4741,63 @@ against rather than reconciling two different box models.
 shortcuts), F (the opening), G (rendered-audio management) and H (provenance/cost). Only A
 and B were in scope. TASKS.md's own milestone-level Verify checkbox is left unchecked —
 it covers the whole milestone.
+
+## M22.5 C + D (settings open/close; the tasks tray tells the truth) — 2026-08-05
+
+**Part C.** Both bugs were exactly as diagnosed in the 2026-08-04 decisions entry, and the
+fix was a genuine two-parter, not one thing wearing two names. `NavCluster.openSettings` now
+checks `location.pathname === "/settings"` first and either `navigate(-1)` (had a
+background) or `navigate("/")` (deep link), before doing anything else — since the click
+handler and the `s` binding were already the same function, the toggle covers both for free.
+Separately, `App.tsx`'s `findOverlayPathname` no longer takes a `background` parameter at
+all — it now walks `location.state.background` in a `while` loop exactly like `roomLocation`
+already did, so it finds a Scan/Digest any number of overlay-levels down instead of stopping
+after one hop. Worth naming: these two fixes are independent of each other by design (the
+toggle stops new bad stacks from forming; the walk fix means an *existing* stacked one, from
+whatever cause, still resolves correctly) — fixing only one would have left the other's bug
+class reachable.
+
+**Part D.** The registry gained a second, parallel notification path
+(`globalListeners`/`emitGlobal`/`subscribeAllJobs`) alongside the existing per-job
+`listeners`/`subscribeJob` — deliberately not a replacement, since `usePlayer.ts`'s direct
+per-job subscription is out of scope here and still needs the narrow one. `JobsProvider`
+itself, though, no longer does any per-job subscribing at all: `ensureSubscribed` and the
+`subscriptions` ref are gone, replaced by one `subscribeAllJobEvents` call for the Provider's
+whole lifetime. `job.detail` is set at four of the five `startJob` call sites via two new
+helpers in `llm/context.ts` (`sectionUiLabel`, `sectionRangeUiLabel`) that number sections by
+their ordinal position in the fetched `sections` array, never by `spineIndex` — matching the
+`chapterNumber` the digest status endpoint already computes the same way, so there's exactly
+one place this numbering rule lives in spirit even though it's not literally shared code.
+`theme-tagging` (the fifth site) has no natural single range, so it's left at the `detail`
+parameter's default (`null`) rather than forced into a label that would lie.
+
+### Verification method
+
+Unit tests: `registry.test.ts` (global stream created/updated events, watching-never-owns,
+`detail` stability and default), `context.test.ts` (`sectionUiLabel`/`sectionRangeUiLabel`,
+including the case that matters — a gap in spine indices must not shift the ordinal — and the
+two-endpoint arrow format), `App.test.tsx` (a real RTL render of the whole `App`: `s` closing
+an already-open `/settings` with no extra history entry; `findOverlayPathname` exported and
+unit-tested directly against a constructed Settings-over-Settings-over-Scan location chain).
+
+No `chromium-cli` in this environment, but a cached Chromium existed at
+`~/.cache/ms-playwright/chromium-1234` (left over from a prior session's verification pass —
+see the M22.5 A+B entry above) from an `npm install playwright-core` in scratch. Drove the
+real dev servers (already running, `tsx watch` + Vite, real library — Metamorphosis, a
+Murakami short story, Alice in Wonderland): gear icon → `/settings` → `s` → back to `/` with
+the modal gone; `t` opened the tray (`Nothing running or recently finished`, styled
+correctly) and a second `t` closed it; the `GET /api/jobs/events` connection was visible in
+the browser's own network log as a single long-lived `pending` request from mount, ending
+only as `net::ERR_ABORTED` when the browser closed — the "watching, not owning, never ends on
+its own" contract, observed rather than assumed. `curl` directly against the endpoint
+separately confirmed the headers (200, `text/event-stream`) with the server otherwise idle.
+
+Not driven this pass: an actual digest/audio-render job in flight (so `detail`'s live string
+and a task row's hover-reveal weren't screenshotted with real content in them — both are
+covered structurally by the unit tests instead, and by the acceptance-example assertion in
+`context.test.ts`), the Scan-then-Settings-twice sequence specifically (covered by the
+exported-function unit test instead of a live click sequence), and a second browser tab (the
+cross-tab claim rests on the stream being registry-wide with no per-client state, which
+`registry.test.ts` establishes directly). No screenshots were saved outside the session
+scratch directory — the app's real book covers are in them, so they weren't published
+anywhere.

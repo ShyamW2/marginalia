@@ -73,6 +73,10 @@
   border-radius: 8px;
   background: var(--color-bg);
 }
+.row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
 
 .rowHeader {
   display: flex;
@@ -134,6 +138,47 @@
 .progressFill[data-indeterminate="true"] {
   width: 30% !important;
   animation: indeterminate 1.2s ease-in-out infinite;
+}
+
+/* M22.5 "hovering a task row explains the job": always in the DOM (a
+   screen reader reads it regardless), visually collapsed until the row is
+   hovered or focused (including via Tab, or focusing the Cancel button
+   inside it — :focus-within covers both). */
+.rowDetail {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  transition:
+    max-height 0.15s ease-out,
+    opacity 0.15s ease-out;
+}
+.row:hover .rowDetail,
+.row:focus-within .rowDetail {
+  max-height: 10rem;
+  opacity: 1;
+  margin-top: 0.4rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--color-border);
+}
+.rowDetail div {
+  display: flex;
+  gap: 0.35rem;
+}
+.rowDetail dt {
+  flex: none;
+  width: 3.6rem;
+  font-weight: 600;
+}
+.rowDetail dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @keyframes indeterminate {

@@ -99,6 +99,36 @@ export function sectionLabel(
   return title ? `section ${spineIndex}: ${title}` : `section ${spineIndex}`;
 }
 
+/** The UI-facing form of a section's label — `S<n> · <title>` — where `n` is
+ * the section's ordinal position in `sections` (1-based), never its raw
+ * `spineIndex`. M20.5 made `S<n>` the only number permitted in any surface
+ * (decisions.md 2026-07-30 later); this is that rule's one source for
+ * server-built strings (the tasks tray's job `detail`, M22.5), matching the
+ * `chapterNumber` the digest status endpoint already computes the same way. */
+export function sectionUiLabel(
+  sections: Pick<ResourceTextSection, "spineIndex">[],
+  spineIndex: number,
+  chapterTitles: Record<string, string> | undefined,
+): string {
+  const chapterNumber = sections.findIndex((s) => s.spineIndex === spineIndex) + 1;
+  const title = chapterTitles?.[String(spineIndex)];
+  return title ? `S${chapterNumber} · ${title}` : `S${chapterNumber}`;
+}
+
+/** A range's `detail` string for the tasks tray (M22.5 "a job says what it
+ * is working on") — a single label when the range is one section, an arrow
+ * between the endpoints otherwise. */
+export function sectionRangeUiLabel(
+  sections: Pick<ResourceTextSection, "spineIndex">[],
+  spineStart: number,
+  spineEnd: number,
+  chapterTitles: Record<string, string> | undefined,
+): string {
+  const start = sectionUiLabel(sections, spineStart, chapterTitles);
+  if (spineStart === spineEnd) return start;
+  return `${start} → ${sectionUiLabel(sections, spineEnd, chapterTitles)}`;
+}
+
 function renderBookContext(
   title: string,
   author: string | null,

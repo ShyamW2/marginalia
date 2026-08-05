@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildContext, buildDigestContext, buildOffContext } from "./context.js";
+import { buildContext, buildDigestContext, buildOffContext, sectionRangeUiLabel, sectionUiLabel } from "./context.js";
 import type { ResourceTextSection } from "../library/store.js";
 
 function makeSections(count: number, charsPerSection: number): ResourceTextSection[] {
@@ -259,5 +259,35 @@ describe("buildDigestContext", () => {
       chapterDigests,
     });
     expect(withoutThematic.bookContext).not.toContain("THEMATIC READING");
+  });
+});
+
+describe("sectionUiLabel", () => {
+  it("numbers by ordinal position in `sections`, not by spineIndex, and includes the title when known", () => {
+    const sections = makeSections(3, 10); // spineIndex 0, 1, 2
+    expect(sectionUiLabel(sections, 0, undefined)).toBe("S1");
+    expect(sectionUiLabel(sections, 2, { "2": "The Storm" })).toBe("S3 · The Storm");
+  });
+
+  it("never prints spineIndex — a gap in spine indices doesn't shift the ordinal", () => {
+    const sections = [
+      { spineIndex: 4, href: "a", text: "x" },
+      { spineIndex: 9, href: "b", text: "x" },
+    ];
+    expect(sectionUiLabel(sections, 9, { "9": "The Trial" })).toBe("S2 · The Trial");
+  });
+});
+
+describe("sectionRangeUiLabel", () => {
+  it("joins two distinct endpoints with an arrow", () => {
+    const sections = makeSections(6, 10);
+    expect(sectionRangeUiLabel(sections, 3, 4, { "3": "The Trial", "4": "The Verdict" })).toBe(
+      "S4 · The Trial → S5 · The Verdict",
+    );
+  });
+
+  it("collapses to one label when start and end are the same section", () => {
+    const sections = makeSections(6, 10);
+    expect(sectionRangeUiLabel(sections, 2, 2, { "2": "The Trial" })).toBe("S3 · The Trial");
   });
 });
