@@ -6,6 +6,7 @@ import {
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
+  type MutableRefObject,
   type RefObject,
 } from "react";
 import ePub from "epubjs";
@@ -398,6 +399,12 @@ interface ReaderViewProps {
   onPublish: () => void;
   publishing: boolean;
   scanButtonRef: RefObject<HTMLButtonElement>;
+  /** M22.5 "the opening actually opens": exposes the `.stage` node —
+   * the reading pane's own rect — so `BookOpening` can measure it once the
+   * reader has landed and animate the revealed spread onto it. Optional:
+   * only `ReaderPage` (the real book-opening flow) passes one.
+   * `MutableRefObject`, not `RefObject`: this component writes to it. */
+  stageRef?: MutableRefObject<HTMLDivElement | null>;
 }
 
 export function ReaderView({
@@ -414,6 +421,7 @@ export function ReaderView({
   onPublish,
   publishing,
   scanButtonRef,
+  stageRef: externalStageRef,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -427,7 +435,10 @@ export function ReaderView({
   const marginWrapperRef = useRef<HTMLDivElement>(null);
   // M14: the reader's stage — the thread panel's drag is constrained to it,
   // and a stale panel offset gets clamped back into its bounds on reopen.
-  const stageRef = useRef<HTMLDivElement>(null);
+  // Typed `HTMLDivElement | null` (not just `HTMLDivElement`) so `useRef`
+  // resolves to a `MutableRefObject`: the ref below is written by hand in a
+  // callback ref, not just handed to JSX, to merge in `externalStageRef`.
+  const stageRef = useRef<HTMLDivElement | null>(null);
   // M22.5 "the reader's action cluster never overlaps the card": measures
   // whether there's room beside the reading column (stage + rail) to float
   // the actions cluster there, or whether it must drop below the footer
@@ -2412,7 +2423,14 @@ export function ReaderView({
       </div>
 
       <div className={styles.readerRow} ref={readerRowRef}>
-        <div className={styles.stage} ref={stageRef} onPointerLeave={handleStagePointerLeave}>
+        <div
+          className={styles.stage}
+          ref={(node) => {
+            stageRef.current = node;
+            if (externalStageRef) externalStageRef.current = node;
+          }}
+          onPointerLeave={handleStagePointerLeave}
+        >
           <div className={styles.pageClip} ref={pageClipRef}>
             {/* M20 step 3 "the next page slides over": while a slide is
                 live this is the *incoming* page — it gets a stacking context

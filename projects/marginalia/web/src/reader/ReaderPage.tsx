@@ -78,6 +78,12 @@ export function ReaderPage() {
   const [origin] = useState<OverlayOrigin | null>(() => readPendingOverlayOrigin());
   const [openingDone, setOpeningDone] = useState(false);
   const [readerReady, setReaderReady] = useState(false);
+  // M22.5 "the opening actually opens": the reading pane's rect, measured by
+  // BookOpening once the reader is ready — the target the revealed spread
+  // scales and translates onto before crossfading to the live reader.
+  // `HTMLDivElement | null` so `useRef` resolves to a `MutableRefObject` —
+  // ReaderView writes this one, it doesn't just receive it as a JSX `ref`.
+  const readerStageRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -207,6 +213,7 @@ export function ReaderPage() {
             onPublish={handlePublish}
             publishing={publishing}
             scanButtonRef={scanButtonRef}
+            stageRef={readerStageRef}
           />
         </>
       )}
@@ -217,6 +224,7 @@ export function ReaderPage() {
           title={resource?.title ?? ""}
           reducedMotion={reducedMotion}
           contentReady={readerReady}
+          stageRef={readerStageRef}
           onDone={() => setOpeningDone(true)}
           onCancel={() => navigate("/")}
         />

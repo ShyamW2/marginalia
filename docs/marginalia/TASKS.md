@@ -909,7 +909,7 @@ default and retiring the track.
 
 #### F — The opening actually opens
 
-- [ ] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
+- [x] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
       with the flight to centre; the flutter is not what was asked for.)* `BookOpening.tsx`
       keeps the fly (`FlyPanel`, 240ms) and replaces `PAGE_OFFSETS`'s four flat planes with a
       real open: the front cover rotates anticlockwise about its **left (spine) edge**
