@@ -476,6 +476,100 @@ technical note anticipates (a real book reader doesn't show you the next
 page's content until you've turned far enough to see it either), not a
 missing feature.
 
+## M22.5 G + H (what is rendered; which model actually answered) — 2026-08-05
+
+**Part G.** `render.ts` gained `getResourceAudioSections`/`getSectionAudioSizeBytes` (file
+`stat`, never a stored byte count — same cache-is-existence rule as `isSectionCached`) and
+`deleteSectionAudioCache`. The new `GET .../audio/sections` route reuses a hoisted
+`currentCastHash` helper that used to be hand-duplicated across `buildAudioState` and
+`resolveSectionContext`. The delete route cancels any in-flight render job for that exact
+resource/cast/section key before deleting files (`inFlightRenders` + `cancelJob`, both already
+in `routes/audio.ts`); `usePlayer.ts`'s job-subscription handler now treats a `cancelled`
+render (as opposed to `failed`) as a clean return to `idle` rather than `error` — this is the
+"player degrades to not rendered rather than 404-ing" the task asked for, and it only mattered
+for the "render just started, then deleted" race (a render cancelled after some segments
+already played just runs off the end of the manifest normally, no 404 involved).
+
+**Part H.** `openaiCompat.ts`'s `parseOpenAICompatSSE` gained a third optional `modelSink`
+parameter (independent of `usageSink` — a served-model string and a usage object arrive on
+different endpoints' responses, not always together), and `extractAttempt`'s non-streaming
+path reads `body.model` the same way. `LLMProvider` gained an optional `reportedModel()`,
+mirroring `reportedUsage()`. `withUsageLedger`'s `log()` now decides `costUsd`/`costBasis` via
+a new `llm/pricing.ts` (`priceCall`/`priceAnthropicCall`) instead of trusting whatever the
+provider handed it — `claude-agent` is always `notional`, `openai-compatible` is always `none`,
+and `anthropic` is priced from a small hand-maintained table keyed by exact model string,
+falling back to `unpriced` (never a silent `$0`) for a model not in it. Migration 23 adds
+`message_id`/`profile_id`/`model_source`/`cost_basis` to `llm_usage`; the per-message byline
+(`Message.provenance`) is built two ways from the same `buildMessageProvenance`/
+`endpointHostFor` logic in `usage.ts` — live, in the SSE `done` payload, from the just-logged
+`UsageLedgerRow` (`threads.ts`'s `usageRowRef`), and on reload via a `LEFT JOIN llm_usage ...
+LEFT JOIN provider_profiles` in `annotations/threads.ts`'s `listMessagesForThread`. `recordUsage`
+now returns the full row (id included) instead of `void`, which is what makes the SSE path
+possible without a re-query.
+
+Two things left deliberately unfinished, both scope calls rather than oversights:
+
+- **SPEC-GAP: cache-*write* tokens aren't priced.** `ReportedUsage` only carries
+  `cacheReadTokens`; Anthropic's `cache_creation_input_tokens` (visible today only in
+  `anthropic.ts`'s own `console.debug`) isn't threaded through, so a call that populates the
+  cache prices its cache-write tokens as ordinary input instead of at the ~1.25x/2x write
+  rate. Under-counts real spend slightly; never over-counts. Fixing it properly means widening
+  `ReportedUsage` itself, which is a seam change bigger than this milestone's "get the basis
+  right" scope.
+- **"Is this local?" still reads `provider === 'openai-compatible'`**, same coarse definition
+  `routes/usage.ts`'s pre-existing `RolePlanLimits.isLocal` already used — decisions.md
+  2026-08-04 names this explicitly as the one thing `profile_id` makes newly *possible* to fix
+  (join to `provider_profiles.openai_base_url`) but doesn't itself fix. The Usage divider's new
+  provider/model table shows the model string, which is usually enough for a human to tell a
+  local Ollama from a hosted OpenRouter by eye; a real host-based classifier is future work.
+
+### Verification method
+
+Unit tests: `render.test.ts` (new `getSectionAudioSizeBytes`/`getResourceAudioSections`/
+`deleteSectionAudioCache`, isolated tmp dir per existing pattern), `openaiCompat.test.ts` (model
+sink captured independent of usage sink, stays null when absent), `usage.test.ts` (rewritten —
+cost basis per provider including the unpriced-model case, model-source endpoint-vs-configured,
+breakdown grouping by provider/model/profile with FK-valid seeded profiles, `linkUsageToMessage`
++ `buildMessageProvenance` round trip). `db.test.ts`'s hardcoded `user_version` expectations
+bumped 22 → 23.
+
+Live, against the real running dev server and real library (no mocks): `DELETE
+.../audio/sections/2` on Metamorphosis, confirmed via `du` before/after that the bytes actually
+left disk, not just the API's own say-so; `POST` on the same section afterward returned a fresh
+`jobId` (not `{cached:true}`) and the render ran to completion a second time, landing on the
+identical byte count — confirming "re-renders rather than erroring" isn't a coincidence of the
+first run. A second render (section 3) was deleted ~1s after starting; the job transitioned
+straight to `cancelled` and no partial directory was left on disk, confirming the mid-render
+cancel path. The Digest page itself was screenshotted in three states: nothing rendered ("No
+audio rendered yet", no delete-all button — the button is conditional on `totalBytes > 0`),
+mid-book with one section done ("Audio rendered: 8.0 MB across 1 of 5 sections", that section's
+row reading "Rendered · 8.0 MB · Delete audio", every other row "Not rendered" with no delete
+link). The live-without-reload flip (the tray-stream acceptance criterion) rode a real
+6-minute-long background render in the same open tab; the poll window ended about 15 seconds
+before the job actually finished, so that exact instant wasn't caught on camera — the *result*
+(a fresh page load showing the flipped state with no server restart in between) was, and the
+underlying mechanism is the same `subscribeAllJobs` stream M22.5 D already drove live.
+
+For H: a real question asked against the local Qwen profile (`POST
+/api/threads/:id/messages` on an existing Kafka on the Shore thread) — the SSE `done` event's
+`provenance` field came back `{profileName: "Qwen3.5", provider: "openai-compatible", model:
+"qwen3.5-hermes:latest", endpointHost: "localhost:11434"}`, and a subsequent plain `GET
+/api/threads/:id` (the JOIN-based read path, not the SSE path) returned the identical object for
+that message — the two independent code paths agree. The same thread's four pre-migration
+messages all came back `provenance: null`, no crash. Screenshotted live in the reader: the
+byline reads exactly `Qwen3.5 · local · qwen3.5-hermes:latest · localhost:11434` under the
+answer, styled as quietly as the existing context-usage caption beside it. Settings → LLM shows
+the one-line disclaimer; Settings → Usage shows `billed`/`notional` both present and a
+provider/model breakdown table — read from the real ledger, which happened to already contain a
+mix of `openai-compatible` (none) and `claude-agent` (notional, $0.46 across two operations)
+rows from this session's own digest/cast work, so the "$0.00 billed, notional shown separately"
+acceptance case was verified against real data rather than a fixture.
+
+Not driven live: the keyed/`billed` Anthropic path (no `anthropicApiKey` configured on this
+machine) and the `unpriced` fallback (would need a profile pointed at a model string absent from
+`pricing.ts`'s table) — both covered by `usage.test.ts` instead, which exercises `priceCall`
+directly against fabricated `ReportedUsage`.
+
 ## Blockers
 
 - **M19.7 — "Codex CLI as a fourth provider" needs `codex login` first,

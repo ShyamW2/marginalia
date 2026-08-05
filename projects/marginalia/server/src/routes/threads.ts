@@ -21,7 +21,7 @@ import {
 } from "../annotations/threads.js";
 import { getProvider, LLMError, type LLMErrorCode, type LLMProvider } from "../llm/provider.js";
 import { buildContext, buildDigestContext, buildOffContext, WINDOWED_CONTEXT_NOTE } from "../llm/context.js";
-import { computeContextUsage, type UsageLedgerRow } from "../llm/usage.js";
+import { buildMessageProvenance, computeContextUsage, linkUsageToMessage, type UsageLedgerRow } from "../llm/usage.js";
 import { getBookDigest, listChapterDigests } from "../digest/store.js";
 import { resolveContextLadderDepth } from "../digest/ladder.js";
 import { getBrief, hashBrief, listThematicDigests } from "../digest/thematicStore.js";
@@ -182,8 +182,9 @@ async function streamThreadReply(
   transparency: { contextNote: string | null; contextDepth: ContextLadderDepth; contextChapters: number[] },
   /** M17 "context-window readout": populated by the usage-ledger wrapper's
    * onLogged callback once the call completes — read here rather than
-   * re-querying the ledger, which would race concurrent requests. */
-  usageRowRef: { current: Omit<UsageLedgerRow, "id" | "createdAt"> | null },
+   * re-querying the ledger, which would race concurrent requests. Also the
+   * M22.5 H2 source for the answer's provenance byline. */
+  usageRowRef: { current: UsageLedgerRow | null },
   contextWindowTokens: number,
 ): Promise<void> {
   res.status(200);
@@ -223,6 +224,10 @@ async function streamThreadReply(
     }
     if (!disconnected) {
       const assistantMessage = persistExchange(db, threadId, userContent, fullText, transparency);
+      // M22.5 H2: the usage row is logged (inside provider.stream()'s own
+      // finally) before the message exists to link it to — link it now,
+      // the first moment both ids are known.
+      if (usageRowRef.current) linkUsageToMessage(db, usageRowRef.current.id, assistantMessage.id);
       const contextUsage: ContextUsage | null = usageRowRef.current
         ? computeContextUsage(usageRowRef.current, contextWindowTokens)
         : null;
@@ -235,6 +240,7 @@ async function streamThreadReply(
           contextUsage,
           contextDepth: transparency.contextDepth,
           contextChapters: transparency.contextChapters,
+          provenance: buildMessageProvenance(db, usageRowRef.current),
         })}\n\n`,
       );
     }
@@ -271,7 +277,7 @@ threadsRouter.post("/", async (req, res) => {
     return;
   }
 
-  const usageRowRef: { current: Omit<UsageLedgerRow, "id" | "createdAt"> | null } = {
+  const usageRowRef: { current: UsageLedgerRow | null } = {
     current: null,
   };
   const provider = getProvider(db, "query", "thread", resource.id, (row) => {
@@ -337,7 +343,7 @@ threadsRouter.post("/:id/messages", async (req, res) => {
     return;
   }
 
-  const usageRowRef: { current: Omit<UsageLedgerRow, "id" | "createdAt"> | null } = {
+  const usageRowRef: { current: UsageLedgerRow | null } = {
     current: null,
   };
   const provider = getProvider(db, "query", "thread", resource.id, (row) => {

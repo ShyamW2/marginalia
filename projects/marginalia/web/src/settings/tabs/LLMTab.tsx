@@ -14,6 +14,11 @@ export function LLMTab() {
         digest will nudge you to set one up. A profile is a complete, reusable config; a
         role decides which profile handles which kind of work.
       </p>
+      <p className={styles.hint}>
+        Models routinely misreport their own identity — a local model can and will claim
+        to be Claude. The name shown next to an answer comes from the endpoint you
+        configured here, never from what the model itself says it is.
+      </p>
       <ProviderPicker role="query" variant="full" />
       <ProviderPicker role="digest" variant="full" />
     </>

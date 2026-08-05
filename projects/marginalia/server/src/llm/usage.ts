@@ -1,11 +1,13 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
-import type { ProviderRole } from "@marginalia/shared";
+import type { LLMProviderId, MessageProvenance, ProviderRole, UsageCostBasis } from "@marginalia/shared";
 import type {
   LLMExtractRequest,
   LLMProvider,
   LLMStreamRequest,
 } from "./provider.js";
+import { priceCall } from "./pricing.js";
+import { getProviderProfile } from "../settings/providers.js";
 
 /**
  * M17 usage ledger (docs/decisions.md 2026-07-28 later). One row per
@@ -29,10 +31,20 @@ export type LLMOperation = "thread" | "extract" | "digest" | "cast" | "thematic"
  */
 export type UsageProvenance = "reported" | "measured" | "estimated";
 
+/** M22.5 H1: which of `model`'s two possible sources this row records —
+ * the endpoint's own echoed string, or (absent that) the profile's
+ * configured one. See openaiCompat.ts's `reportedModel()`. */
+export type ModelSource = "endpoint" | "configured";
+
+/** M22.5 H4: excludes `mixed`, which only ever appears on a rolled-up
+ * group, never a single ledger row. */
+export type RowCostBasis = Exclude<UsageCostBasis, "mixed">;
+
 export interface UsageLedgerRow {
   id: string;
   provider: string;
   model: string;
+  modelSource: ModelSource;
   operation: LLMOperation;
   /** M19: which named role (query/digest) made this call — null only for
    * ledger rows written before M19 introduced roles. */
@@ -40,10 +52,20 @@ export interface UsageLedgerRow {
   /** M19: which book this call was about, when there is one — the desk
    * notepad's extract() calls aren't tied to a single resource. */
   resourceId: string | null;
+  /** M22.5 H2: the answer this call produced, once it exists — null at the
+   * moment of logging (the message isn't persisted yet; see threads.ts's
+   * `persistExchange` ordering) and linked in afterward via
+   * `linkUsageToMessage`. Pre-M22.5 rows stay null forever. */
+  messageId: string | null;
+  /** M22.5 H5: which provider *profile* made this call — `provider` alone
+   * can't distinguish a local Ollama from a hosted OpenRouter, both
+   * `openai-compatible`. Null for pre-M22.5 rows. */
+  profileId: string | null;
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number | null;
   costUsd: number | null;
+  costBasis: RowCostBasis;
   provenance: UsageProvenance;
   durationMs: number;
   createdAt: string;
@@ -58,22 +80,74 @@ function estimateTokens(chars: number): number {
   return Math.max(0, Math.round(chars / CHARS_PER_TOKEN));
 }
 
+/** Writes one row and returns it in full (id + createdAt included) — the
+ * caller (`withUsageLedger`'s `onLogged`) needs the id to later link a
+ * message to it, which a void return couldn't support. */
 export function recordUsage(
   db: Database.Database,
   row: Omit<UsageLedgerRow, "id" | "createdAt">,
-): void {
-  db.prepare(
-    `INSERT INTO llm_usage
-       (id, provider, model, operation, role, resource_id, input_tokens, output_tokens,
-        cache_read_tokens, cost_usd, provenance, duration_ms, created_at)
-     VALUES
-       (@id, @provider, @model, @operation, @role, @resourceId, @inputTokens, @outputTokens,
-        @cacheReadTokens, @costUsd, @provenance, @durationMs, @createdAt)`,
-  ).run({
+): UsageLedgerRow {
+  const full: UsageLedgerRow = {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     ...row,
-  });
+  };
+  db.prepare(
+    `INSERT INTO llm_usage
+       (id, provider, model, model_source, operation, role, resource_id, message_id, profile_id,
+        input_tokens, output_tokens, cache_read_tokens, cost_usd, cost_basis, provenance,
+        duration_ms, created_at)
+     VALUES
+       (@id, @provider, @model, @modelSource, @operation, @role, @resourceId, @messageId, @profileId,
+        @inputTokens, @outputTokens, @cacheReadTokens, @costUsd, @costBasis, @provenance,
+        @durationMs, @createdAt)`,
+  ).run(full);
+  return full;
+}
+
+/** M22.5 H2: called once the answer a usage row paid for actually has an
+ * id — `recordUsage` runs inside the provider stream's own `finally`,
+ * before `persistExchange` creates the message (see threads.ts), so the
+ * link can only be written after the fact. A no-op if `usageId` doesn't
+ * exist (defensive; every real caller has just created the row). */
+export function linkUsageToMessage(db: Database.Database, usageId: string, messageId: string): void {
+  db.prepare("UPDATE llm_usage SET message_id = ? WHERE id = ?").run(messageId, usageId);
+}
+
+/** M22.5 H2: "which model actually answered" — the byline under an
+ * assistant message, built from its own ledger row rather than whatever
+ * the settings UI currently holds (a profile can be renamed/reconfigured
+ * after the fact). Shared by the live SSE `done` payload (threads.ts) and
+ * any future re-read of a persisted message. */
+export function buildMessageProvenance(
+  db: Database.Database,
+  row: Pick<UsageLedgerRow, "provider" | "model" | "profileId"> | null,
+): MessageProvenance | null {
+  if (!row) return null;
+  const profile = row.profileId ? getProviderProfile(db, row.profileId) : null;
+  return {
+    profileName: profile?.name ?? null,
+    provider: row.provider as LLMProviderId,
+    model: row.model,
+    endpointHost: endpointHostFor(row.provider, profile?.openaiBaseUrl ?? null),
+  };
+}
+
+/** Exported so `annotations/threads.ts` can reuse it for the JOIN-based
+ * read path — the SSE path above and the persisted-message read path
+ * (`listMessagesForThread`) must agree on what an "endpoint host" is. */
+export function endpointHostFor(provider: string, openaiBaseUrl: string | null): string | null {
+  if (provider === "anthropic") return "api.anthropic.com";
+  if (provider === "claude-agent") return "Claude Code (subscription)";
+  if (provider === "openai-compatible") {
+    if (!openaiBaseUrl) return null;
+    try {
+      return new URL(openaiBaseUrl).host;
+    } catch {
+      return openaiBaseUrl;
+    }
+  }
+  return null;
 }
 
 /** M17 "context-window readout": tokens spent on a single call over the
@@ -103,7 +177,10 @@ export function computeContextUsage(
 export interface UsageTotals {
   inputTokens: number;
   outputTokens: number;
-  costUsd: number;
+  /** M22.5 H4: split by basis, not one blended number — see
+   * `UsagePeriod.billedCostUsd`/`notionalCostUsd` in shared/src/schemas.ts. */
+  billedCostUsd: number;
+  notionalCostUsd: number;
   callCount: number;
 }
 
@@ -116,20 +193,23 @@ export function getUsageTotalsSince(db: Database.Database, sinceIso: string): Us
       `SELECT
          COALESCE(SUM(input_tokens), 0) AS input_tokens,
          COALESCE(SUM(output_tokens), 0) AS output_tokens,
-         COALESCE(SUM(cost_usd), 0) AS cost_usd,
+         COALESCE(SUM(CASE WHEN cost_basis = 'billed' THEN cost_usd ELSE 0 END), 0) AS billed_cost_usd,
+         COALESCE(SUM(CASE WHEN cost_basis = 'notional' THEN cost_usd ELSE 0 END), 0) AS notional_cost_usd,
          COUNT(*) AS call_count
        FROM llm_usage WHERE created_at >= ?`,
     )
     .get(sinceIso) as {
     input_tokens: number;
     output_tokens: number;
-    cost_usd: number;
+    billed_cost_usd: number;
+    notional_cost_usd: number;
     call_count: number;
   };
   return {
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
-    costUsd: row.cost_usd,
+    billedCostUsd: row.billed_cost_usd,
+    notionalCostUsd: row.notional_cost_usd,
     callCount: row.call_count,
   };
 }
@@ -139,17 +219,29 @@ export interface UsageBreakdownRow {
   resourceTitle: string | null;
   operation: LLMOperation;
   role: ProviderRole | null;
+  provider: LLMProviderId | null;
+  model: string | null;
+  profileId: string | null;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
+  durationMs: number;
   costUsd: number | null;
+  costBasis: RowCostBasis | "mixed";
   provenance: UsageProvenance | "mixed";
   callCount: number;
 }
 
-/** Rolls calls up by (book, operation) — the Usage divider's acceptance
- * criterion is "totals ... broken down by book and by operation". Provenance
- * is `mixed` when a group contains both reported and estimated calls, so the
- * UI never labels a blended number as either alone. */
+/**
+ * Rolls calls up by (book, operation, role, provider, model, profile) — a
+ * widening of the original (book, operation) grouping (M22.5 H5,
+ * decisions.md 2026-08-04: "nearly all of it is already recorded and
+ * thrown away"). The Usage divider still shows the by-book table from this
+ * same array; it additionally re-groups these rows by provider/model
+ * client-side rather than the server building a second, parallel query.
+ * `provenance`/`costBasis` are `mixed` when a group spans more than one
+ * value, so the UI never labels a blended figure as either alone.
+ */
 export function getUsageBreakdownSince(
   db: Database.Database,
   sinceIso: string,
@@ -161,16 +253,23 @@ export function getUsageBreakdownSince(
          r.title AS resource_title,
          u.operation AS operation,
          u.role AS role,
+         u.provider AS provider,
+         u.model AS model,
+         u.profile_id AS profile_id,
          COALESCE(SUM(u.input_tokens), 0) AS input_tokens,
          COALESCE(SUM(u.output_tokens), 0) AS output_tokens,
+         COALESCE(SUM(u.cache_read_tokens), 0) AS cache_read_tokens,
+         COALESCE(SUM(u.duration_ms), 0) AS duration_ms,
          SUM(u.cost_usd) AS cost_usd,
          COUNT(*) AS call_count,
          COUNT(DISTINCT u.provenance) AS provenance_count,
-         MIN(u.provenance) AS single_provenance
+         MIN(u.provenance) AS single_provenance,
+         COUNT(DISTINCT u.cost_basis) AS cost_basis_count,
+         MIN(u.cost_basis) AS single_cost_basis
        FROM llm_usage u
        LEFT JOIN resources r ON r.id = u.resource_id
        WHERE u.created_at >= ?
-       GROUP BY u.resource_id, u.operation, u.role
+       GROUP BY u.resource_id, u.operation, u.role, u.provider, u.model, u.profile_id
        ORDER BY input_tokens DESC`,
     )
     .all(sinceIso) as {
@@ -178,12 +277,19 @@ export function getUsageBreakdownSince(
     resource_title: string | null;
     operation: LLMOperation;
     role: ProviderRole | null;
+    provider: LLMProviderId | null;
+    model: string | null;
+    profile_id: string | null;
     input_tokens: number;
     output_tokens: number;
+    cache_read_tokens: number;
+    duration_ms: number;
     cost_usd: number | null;
     call_count: number;
     provenance_count: number;
     single_provenance: UsageProvenance;
+    cost_basis_count: number;
+    single_cost_basis: RowCostBasis;
   }[];
 
   return rows.map((row) => ({
@@ -191,9 +297,15 @@ export function getUsageBreakdownSince(
     resourceTitle: row.resource_title,
     operation: row.operation,
     role: row.role,
+    provider: row.provider,
+    model: row.model,
+    profileId: row.profile_id,
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
+    cacheReadTokens: row.cache_read_tokens,
+    durationMs: row.duration_ms,
     costUsd: row.cost_usd,
+    costBasis: row.cost_basis_count > 1 ? "mixed" : row.single_cost_basis,
     provenance: row.provenance_count > 1 ? "mixed" : row.single_provenance,
     callCount: row.call_count,
   }));
@@ -303,11 +415,15 @@ export function withUsageLedger(
   /** M19: the book this call is about, when there is one (the desk notepad's
    * extract() calls have none). */
   resourceId: string | null,
+  /** M22.5 H5: which profile resolved to this provider instance — the
+   * ledger's own answer to "is this local?" (via the profile's base URL),
+   * distinct from `provider` (which `openai-compatible` alone can't answer). */
+  profileId: string | null,
   /** M17 "context-window readout": fired synchronously right after the row
    * is written, so a caller (a route) can read back exactly what was logged
    * for *this* call — without a re-query, which would race concurrent
    * requests logging their own rows in between. */
-  onLogged?: (row: Omit<UsageLedgerRow, "id" | "createdAt">) => void,
+  onLogged?: (row: UsageLedgerRow) => void,
 ): LLMProvider {
   function inputCharsOf(req: LLMStreamRequest): number {
     return (
@@ -320,34 +436,44 @@ export function withUsageLedger(
   function log(inputChars: number, outputChars: number, startedAt: number): void {
     const durationMs = Date.now() - startedAt;
     const reported = provider.reportedUsage?.() ?? null;
-    const row: Omit<UsageLedgerRow, "id" | "createdAt"> = reported
-      ? {
-          provider: provider.id,
-          model,
-          operation,
-          role,
-          resourceId,
-          inputTokens: reported.inputTokens,
-          outputTokens: reported.outputTokens,
-          cacheReadTokens: reported.cacheReadTokens ?? null,
-          costUsd: reported.costUsd ?? null,
-          provenance: "reported",
-          durationMs,
-        }
-      : {
-          provider: provider.id,
-          model,
-          operation,
-          role,
-          resourceId,
-          inputTokens: estimateTokens(inputChars),
-          outputTokens: estimateTokens(outputChars),
-          cacheReadTokens: null,
-          costUsd: null,
-          provenance: "estimated",
-          durationMs,
-        };
-    recordUsage(db, row);
+    // M22.5 H1: the endpoint's own served-model string, when it echoed one —
+    // only openai-compatible responses do today. Recording *which* of the
+    // two this is (rather than silently preferring one) is the point.
+    const servedModel = provider.reportedModel?.() ?? null;
+    const recordedModel = servedModel ?? model;
+    const modelSource: ModelSource = servedModel ? "endpoint" : "configured";
+
+    const inputTokens = reported ? reported.inputTokens : estimateTokens(inputChars);
+    const outputTokens = reported ? reported.outputTokens : estimateTokens(outputChars);
+    const cacheReadTokens = reported?.cacheReadTokens ?? null;
+    const provenance: UsageProvenance = reported ? "reported" : "estimated";
+
+    const priced = priceCall(
+      provider.id,
+      recordedModel,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens ?? 0,
+      reported?.costUsd ?? null,
+    );
+
+    const row = recordUsage(db, {
+      provider: provider.id,
+      model: recordedModel,
+      modelSource,
+      operation,
+      role,
+      resourceId,
+      messageId: null,
+      profileId,
+      inputTokens,
+      outputTokens,
+      cacheReadTokens,
+      costUsd: priced.costUsd,
+      costBasis: priced.costBasis,
+      provenance,
+      durationMs,
+    });
     onLogged?.(row);
   }
 
@@ -380,6 +506,7 @@ export function withUsageLedger(
       }
     },
     reportedUsage: provider.reportedUsage?.bind(provider),
+    reportedModel: provider.reportedModel?.bind(provider),
     planLimits: provider.planLimits?.bind(provider),
   };
 }

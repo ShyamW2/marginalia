@@ -124,10 +124,53 @@ export function listCachedSpineIndices(resourceId: string, castHash: string, spi
   return spineIndices.filter((i) => isSectionCached(resourceId, castHash, i));
 }
 
+/** Sums the on-disk size of a cached section's segment files — file
+ * `stat`, never a stored byte count, for the same reason cache truth is
+ * file existence: a manifest's own numbers can outlive the bytes they
+ * describe. Zero for a section that isn't (fully) cached. */
+export function getSectionAudioSizeBytes(resourceId: string, castHash: string, spineIndex: number): number {
+  const manifest = getSectionManifest(resourceId, castHash, spineIndex);
+  if (!manifest) return 0;
+  const dir = sectionDir(resourceId, castHash, spineIndex);
+  let bytes = 0;
+  for (const seg of manifest.segments) {
+    try {
+      bytes += fs.statSync(path.join(dir, `${seg.n}.${seg.ext}`)).size;
+    } catch {
+      // Vanished between the manifest read and the stat — not cached after
+      // all; `getSectionManifest` already would have said so on a re-check,
+      // but this loop just skips the missing file rather than double-checking.
+    }
+  }
+  return bytes;
+}
+
+/** Per-section rendered/size for every spine index, under the current cast
+ * hash — the Digest's "what's rendered" column (M22.5 G). */
+export function getResourceAudioSections(
+  resourceId: string,
+  castHash: string,
+  spineIndices: number[],
+): { spineIndex: number; rendered: boolean; bytes: number }[] {
+  return spineIndices.map((spineIndex) => {
+    const rendered = isSectionCached(resourceId, castHash, spineIndex);
+    return { spineIndex, rendered, bytes: rendered ? getSectionAudioSizeBytes(resourceId, castHash, spineIndex) : 0 };
+  });
+}
+
 /** Deletes the whole rendered-audio tree for a resource (every cast hash) —
  * AUDIO.md: "safe to delete at any time." */
 export async function deleteResourceAudioCache(resourceId: string): Promise<void> {
   await fsp.rm(path.join(AUDIO_DIR, resourceId), { recursive: true, force: true });
+}
+
+/** Deletes one section's rendered audio under the current cast hash only
+ * (M22.5 G: "rendered audio only... per section"). The manifest file lives
+ * next to the section's directory, not inside it (`manifestPath` vs.
+ * `sectionDir`), so both are removed. */
+export async function deleteSectionAudioCache(resourceId: string, castHash: string, spineIndex: number): Promise<void> {
+  await fsp.rm(sectionDir(resourceId, castHash, spineIndex), { recursive: true, force: true });
+  await fsp.rm(manifestPath(resourceId, castHash, spineIndex), { force: true });
 }
 
 /**

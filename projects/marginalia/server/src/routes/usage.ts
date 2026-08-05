@@ -23,7 +23,10 @@ function period(db: ReturnType<typeof getDb>, sinceIso: string): UsagePeriod {
   return {
     inputTokens: totals.inputTokens,
     outputTokens: totals.outputTokens,
-    costUsd: totals.callCount > 0 ? totals.costUsd : null,
+    // M22.5 H4: billed and notional are reported separately — never summed
+    // into one figure a subscription-only week would misread as spend.
+    billedCostUsd: totals.billedCostUsd,
+    notionalCostUsd: totals.notionalCostUsd,
     callCount: totals.callCount,
     provenance: provenances.size > 1 ? "mixed" : ([...provenances][0] ?? "estimated"),
     byBookAndOperation: breakdown,

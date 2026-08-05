@@ -7,6 +7,7 @@ import type {
   HighlightImportance,
   HighlightKind,
   Message,
+  MessageProvenance,
   ThreadSummary,
   ThreadWithMessages,
 } from "@marginalia/shared";
@@ -37,6 +38,28 @@ import styles from "./ThreadPanel.module.css";
 function displayableQuestion(content: string): string {
   const match = /Their question: ([\s\S]*)$/.exec(content);
   return match ? match[1] : content;
+}
+
+const PROVIDER_LABEL: Record<string, string> = {
+  anthropic: "Anthropic",
+  "claude-agent": "Claude Code",
+  "openai-compatible": "local",
+};
+
+/** M22.5 H2: "profile name · provider · served model · endpoint host" —
+ * built from the answer's own ledger row (Message.provenance), never from
+ * whatever Settings currently holds, so it stays true after a rename or a
+ * mid-thread provider switch. Falls back gracefully piece by piece rather
+ * than hiding the whole byline when one field is unknown (pre-M22.5
+ * messages have none at all — `provenance` is null and nothing renders). */
+function formatProvenance(p: MessageProvenance): string {
+  const parts = [
+    p.profileName,
+    p.provider ? (PROVIDER_LABEL[p.provider] ?? p.provider) : null,
+    p.model,
+    p.endpointHost,
+  ].filter((part): part is string => Boolean(part));
+  return parts.join(" · ");
 }
 
 // M13: same debounce as the desk notepad (Notepad.tsx) — plain autosave,
@@ -477,6 +500,7 @@ export function ThreadPanel({
         contextDepth: null,
         contextChapters: [],
         createdAt: new Date().toISOString(),
+        provenance: null,
       };
       setMessages((prev) => [...prev, optimisticUser]);
     }
@@ -495,7 +519,7 @@ export function ThreadPanel({
           streamingTextRef.current += text;
           setStreamingText(streamingTextRef.current);
         },
-        onDone: (messageId, threadId, contextNote, contextUsage, contextDepth, contextChapters) => {
+        onDone: (messageId, threadId, contextNote, contextUsage, contextDepth, contextChapters, provenance) => {
           setMessages((prev) => [
             ...prev,
             {
@@ -507,6 +531,7 @@ export function ThreadPanel({
               contextDepth,
               contextChapters,
               createdAt: new Date().toISOString(),
+              provenance,
             },
           ]);
           if (contextUsage) {
@@ -684,6 +709,9 @@ export function ThreadPanel({
                     }`
                   : `context: ${message.contextDepth}`}
               </div>
+            )}
+            {message.role === "assistant" && message.provenance && (
+              <div className={styles.provenance}>{formatProvenance(message.provenance)}</div>
             )}
           </div>
         ))}

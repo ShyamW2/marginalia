@@ -7,6 +7,18 @@ import { z } from "zod";
  */
 
 // ---------------------------------------------------------------------------
+// LLM provider identity — hoisted above every schema that references it
+// (Message's provenance byline, provider profiles, the usage ledger).
+// ---------------------------------------------------------------------------
+
+export const LLMProviderIdSchema = z.enum([
+  "anthropic",
+  "openai-compatible",
+  "claude-agent",
+]);
+export type LLMProviderId = z.infer<typeof LLMProviderIdSchema>;
+
+// ---------------------------------------------------------------------------
 // Resource (an imported book)
 // ---------------------------------------------------------------------------
 
@@ -246,11 +258,29 @@ export type Thread = z.infer<typeof ThreadSchema>;
 export const MessageRoleSchema = z.enum(["user", "assistant"]);
 export type MessageRole = z.infer<typeof MessageRoleSchema>;
 
+/** M22.5 H: "which model actually answered, and what it really cost" — a
+ * quiet byline under each assistant message, derived from that message's
+ * own `llm_usage` row (never from whatever the settings UI currently
+ * holds — a profile can be renamed or reconfigured after the fact). Null
+ * for user messages and for messages predating the M22.5 migration that
+ * added `llm_usage.message_id` (no row to join). */
+export const MessageProvenanceSchema = z.object({
+  profileName: z.string().nullable(),
+  provider: LLMProviderIdSchema.nullable(),
+  /** What the endpoint actually served, when known — never the model a
+   * message merely *claims* to be (decisions.md 2026-08-04: "the model is
+   * not a source of truth about itself"). */
+  model: z.string().nullable(),
+  endpointHost: z.string().nullable(),
+});
+export type MessageProvenance = z.infer<typeof MessageProvenanceSchema>;
+
 export const MessageSchema = z.object({
   id: z.string(),
   threadId: z.string(),
   role: MessageRoleSchema,
   content: z.string(),
+  provenance: MessageProvenanceSchema.nullable(),
   // M17 "surface silent windowing": a short, human-readable note attached to
   // an assistant answer when it was grounded in a window of the book rather
   // than the whole text (or, later, a digest) — never set on user messages.
@@ -321,6 +351,11 @@ export const ThreadStreamEventSchema = z.union([
     contextUsage: ContextUsageSchema.nullable(),
     contextDepth: ContextLadderDepthSchema,
     contextChapters: z.array(z.number().int().nonnegative()),
+    // M22.5 H: computed server-side from the same usage-ledger row
+    // `contextUsage` reads, so the reader's byline needs no extra round
+    // trip — a client-constructed message from `onDone` alone can show it
+    // immediately, matching what a page reload would later show.
+    provenance: MessageProvenanceSchema.nullable(),
   }),
   z.object({ error: z.string() }),
 ]);
@@ -358,13 +393,6 @@ export type PublishResult = z.infer<typeof PublishResultSchema>;
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
-
-export const LLMProviderIdSchema = z.enum([
-  "anthropic",
-  "openai-compatible",
-  "claude-agent",
-]);
-export type LLMProviderId = z.infer<typeof LLMProviderIdSchema>;
 
 /**
  * Desk cursor prefs (DESIGN.md "Cursor system"): a custom cursor per room
@@ -569,14 +597,44 @@ export type UsageOperation = z.infer<typeof UsageOperationSchema>;
 export const UsageProvenanceSchema = z.enum(["reported", "measured", "estimated", "mixed"]);
 export type UsageProvenanceValue = z.infer<typeof UsageProvenanceSchema>;
 
+/** M22.5 H: "the one cost the ledger reports is the one you are not billed
+ * for" — `costUsd` alone can't say whether it's real spend. `billed` is the
+ * keyed Anthropic API (genuinely charged); `notional` is the Claude Agent
+ * SDK subscription's own "what this would have cost on the API" figure
+ * (never charged); `none` is a local model (openai-compatible), which is
+ * actually free; `unpriced` is a keyed call whose model isn't in the
+ * pricing table — real money, deliberately not guessed at. `mixed` appears
+ * only on a rolled-up group spanning more than one basis. */
+export const UsageCostBasisSchema = z.enum(["billed", "notional", "none", "unpriced", "mixed"]);
+export type UsageCostBasis = z.infer<typeof UsageCostBasisSchema>;
+
+/** M22.5 H1: which of the two strings a ledger row's `model` is — the
+ * endpoint's own echoed value, or (when it didn't echo one, or the
+ * provider is Anthropic-first-party/subscription, which don't substitute)
+ * the profile's configured string. */
+export const UsageModelSourceSchema = z.enum(["endpoint", "configured"]);
+export type UsageModelSource = z.infer<typeof UsageModelSourceSchema>;
+
 export const UsageBreakdownRowSchema = z.object({
   resourceId: z.string().nullable(),
   resourceTitle: z.string().nullable(),
   operation: UsageOperationSchema,
   role: ProviderRoleSchema.nullable(), // null for pre-M19 ledger rows
+  // M22.5 H5: "is this local?" needs the profile, not just the provider id
+  // (`openai-compatible` covers both a local Ollama and a hosted
+  // OpenRouter) — null for pre-M22.5 rows and rows whose profile was since
+  // deleted, both grouped as "unknown profile" rather than guessed at.
+  provider: LLMProviderIdSchema.nullable(),
+  model: z.string().nullable(),
+  profileId: z.string().nullable(),
   inputTokens: z.number(),
   outputTokens: z.number(),
+  cacheReadTokens: z.number(),
+  /** Sum of `duration_ms` across the group — with `outputTokens`, this is
+   * what a local model's tokens/sec is computed from (M22.5 H5). */
+  durationMs: z.number(),
   costUsd: z.number().nullable(),
+  costBasis: UsageCostBasisSchema,
   provenance: UsageProvenanceSchema,
   callCount: z.number(),
 });
@@ -585,7 +643,11 @@ export type UsageBreakdownRow = z.infer<typeof UsageBreakdownRowSchema>;
 export const UsagePeriodSchema = z.object({
   inputTokens: z.number(),
   outputTokens: z.number(),
-  costUsd: z.number().nullable(),
+  /** M22.5 H4: the total sums *billed* spend only — notional (subscription)
+   * and unpriced/free amounts never get added into it, so a subscription-
+   * only week reads as $0.00 rather than a phantom charge. */
+  billedCostUsd: z.number(),
+  notionalCostUsd: z.number(),
   callCount: z.number(),
   provenance: UsageProvenanceSchema,
   byBookAndOperation: z.array(UsageBreakdownRowSchema),
@@ -1138,6 +1200,24 @@ export type AudioSectionManifest = z.infer<typeof AudioSectionManifestSchema>;
  * an "audio-render" job and responds 202 with StartJobResponseSchema. */
 export const AudioSectionCachedResponseSchema = z.object({ cached: z.literal(true) });
 export type AudioSectionCachedResponse = z.infer<typeof AudioSectionCachedResponseSchema>;
+
+/** GET /api/resources/:id/audio/sections — M22.5 G's "what is rendered"
+ * column: per-section byte size for the *current* cast hash, plus a book
+ * total. Distinct from `AudioState.cachedSpineIndices`, which only says
+ * which sections are cached, not how large they are on disk. */
+export const AudioSectionInfoSchema = z.object({
+  spineIndex: z.number().int().nonnegative(),
+  rendered: z.boolean(),
+  bytes: z.number().int().nonnegative(),
+});
+export type AudioSectionInfo = z.infer<typeof AudioSectionInfoSchema>;
+
+export const AudioSectionsResponseSchema = z.object({
+  castHash: z.string(),
+  sections: z.array(AudioSectionInfoSchema),
+  totalBytes: z.number().int().nonnegative(),
+});
+export type AudioSectionsResponse = z.infer<typeof AudioSectionsResponseSchema>;
 
 /** POST /api/audio/test-voice — the audio equivalent of a provider's "Test
  * connection". `text` is optional; the server has its own default sentence. */

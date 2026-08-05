@@ -1,13 +1,23 @@
-import { useEffect, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation, useNavigate, type Location } from "react-router-dom";
-import type { DigestStatus, ThematicStatus } from "@marginalia/shared";
+import type { AudioSectionsResponse, DigestStatus, ThematicStatus } from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { useJobs } from "../jobs/JobsContext.js";
 import { startJobRequest } from "../jobs/jobsApi.js";
+import { deleteAllAudio, deleteSectionAudio, fetchAudioSections } from "../audio/audioApi.js";
 import styles from "./DigestPage.module.css";
+
+/** M22.5 G: "N MB"/"N KB" for the rendered-audio column — no existing
+ * formatter in the codebase to reuse. */
+function formatBytes(bytes: number): string {
+  if (bytes <= 0) return "0 KB";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1) return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
 
 function revealParams(revealed: Set<number>): URLSearchParams {
   const params = new URLSearchParams();
@@ -111,6 +121,9 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const [thematicError, setThematicError] = useState<string | null>(null);
   const [taggingJobId, setTaggingJobId] = useState<string | null>(null);
   const [taggingError, setTaggingError] = useState<string | null>(null);
+  const [audioSections, setAudioSections] = useState<AudioSectionsResponse | null>(null);
+  const [deletingSpine, setDeletingSpine] = useState<number | null>(null);
+  const [deletingAllAudio, setDeletingAllAudio] = useState(false);
   const { registerStarted, jobs } = useJobs();
 
   function load() {
@@ -127,6 +140,11 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     });
   }
 
+  function loadAudio() {
+    if (!id) return;
+    fetchAudioSections(id).then(setAudioSections);
+  }
+
   useEffect(() => {
     if (!id) return;
     setStatus(null);
@@ -134,7 +152,9 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     setNotFound(false);
     setRevealed(new Set());
     setRevealBook(false);
+    setAudioSections(null);
     load();
+    loadAudio();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -143,6 +163,27 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealed, revealBook]);
+
+  // M22.5 G "rides the live tray stream from D": a chapter-ahead render
+  // kicked off from the reader (or another tab) finishes with nobody on
+  // this page having started it — this page only learns about it through
+  // JobsContext's registry-wide stream, the same one the tray uses. Tracks
+  // each audio-render job's last-seen status so a re-fetch fires once per
+  // actual transition off "running", not on every progress tick.
+  const audioJobStatusesRef = useRef<Map<string, string>>(new Map());
+  useEffect(() => {
+    if (!id) return;
+    let finishedOne = false;
+    for (const job of jobs) {
+      if (job.kind !== "audio-render" || job.resourceId !== id) continue;
+      const prev = audioJobStatusesRef.current.get(job.id);
+      if (prev === job.status) continue;
+      audioJobStatusesRef.current.set(job.id, job.status);
+      if (job.status !== "running") finishedOne = true;
+    }
+    if (finishedOne) loadAudio();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs, id]);
 
   // M19.6 "`r` opens the reader" (decisions.md 2026-07-30 later): "the book
   // currently in focus" is unambiguous here — the book this digest is for —
@@ -217,6 +258,23 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     }
   }
 
+  async function handleDeleteSectionAudio(spineIndex: number) {
+    if (!id || deletingSpine !== null) return;
+    setDeletingSpine(spineIndex);
+    await deleteSectionAudio(id, spineIndex);
+    setDeletingSpine(null);
+    loadAudio();
+  }
+
+  async function handleDeleteAllAudio() {
+    if (!id || deletingAllAudio) return;
+    if (!window.confirm("Delete all rendered audio for this book? Playing a chapter again will re-render it.")) return;
+    setDeletingAllAudio(true);
+    await deleteAllAudio(id);
+    setDeletingAllAudio(false);
+    loadAudio();
+  }
+
   async function handleQuestionClick(spineIndex: number, text: string, quote: string) {
     if (!id) return;
     const highlight = await createChapterAnchor(id, spineIndex, quote);
@@ -236,6 +294,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   }
 
   const thematicByIndex = new Map((thematic?.chapters ?? []).map((c) => [c.spineIndex, c]));
+  const audioByIndex = new Map((audioSections?.sections ?? []).map((s) => [s.spineIndex, s]));
 
   return (
     <div className={`${styles.page} register-paper`}>
@@ -309,9 +368,27 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
             </section>
           )}
 
+          {audioSections && audioSections.sections.length > 0 && (
+            <section className={styles.audioSummary}>
+              <span className={styles.audioSummaryText}>
+                {audioSections.totalBytes > 0
+                  ? `Audio rendered: ${formatBytes(audioSections.totalBytes)} across ${
+                      audioSections.sections.filter((s) => s.rendered).length
+                    } of ${audioSections.sections.length} sections`
+                  : "No audio rendered yet"}
+              </span>
+              {audioSections.totalBytes > 0 && (
+                <Button variant="outline" size="sm" onClick={handleDeleteAllAudio} disabled={deletingAllAudio}>
+                  {deletingAllAudio ? "Deleting…" : "Delete all audio"}
+                </Button>
+              )}
+            </section>
+          )}
+
           <div className={styles.chapterList}>
             {status.chapters.map((c) => {
               const t = thematicByIndex.get(c.spineIndex);
+              const audio = audioByIndex.get(c.spineIndex);
               const chapterLabel = `S${c.chapterNumber} · ${formatRange(c.startPercent, c.lengthPercent)}`;
               return (
                 <article key={c.spineIndex} className={styles.chapterCard}>
@@ -319,6 +396,24 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                     {c.title ?? chapterLabel}
                     {c.title && <span className={styles.chapterMeta}> — {chapterLabel}</span>}
                   </h3>
+
+                  {audio && (
+                    <div className={styles.audioRow}>
+                      <span className={audio.rendered ? styles.audioBadgeRendered : styles.audioBadge}>
+                        {audio.rendered ? `Rendered · ${formatBytes(audio.bytes)}` : "Not rendered"}
+                      </span>
+                      {audio.rendered && (
+                        <button
+                          type="button"
+                          className={styles.audioDeleteButton}
+                          onClick={() => handleDeleteSectionAudio(c.spineIndex)}
+                          disabled={deletingSpine === c.spineIndex}
+                        >
+                          {deletingSpine === c.spineIndex ? "Deleting…" : "Delete audio"}
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   {!c.digested && <p className={styles.mutedNote}>Not yet digested.</p>}
 

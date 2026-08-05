@@ -538,4 +538,37 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE book_digest_snapshots ADD COLUMN narrator_gender TEXT NOT NULL DEFAULT 'unknown';
     `,
   },
+  {
+    // M22.5 H ("which model actually answered, and what it really cost",
+    // decisions.md 2026-08-04): four columns, all additive.
+    // `message_id`/`profile_id` are the actual size of the task — without
+    // them there's no way to join a ledger row to the answer it produced,
+    // or to tell a local Ollama profile apart from a hosted OpenRouter one
+    // (both `provider = 'openai-compatible'`). `model_source` records
+    // whether `model` is what the endpoint echoed or only what we asked
+    // for. `cost_basis` is the fix for "the one cost the ledger reports is
+    // the one you are not billed for": billed (keyed Anthropic API),
+    // notional (the Agent SDK's subscription figure — never charged), or
+    // none (local). Backfilled from `provider`, the only signal pre-
+    // migration rows have — a claude-agent row's non-null cost_usd was
+    // always notional; an anthropic row's null cost_usd was real, unpriced
+    // spend (anthropic.ts never populated it), not "free", so it backfills
+    // to 'unpriced' rather than 'none'.
+    version: 23,
+    sql: `
+      ALTER TABLE llm_usage ADD COLUMN message_id TEXT REFERENCES messages(id);
+      ALTER TABLE llm_usage ADD COLUMN profile_id TEXT REFERENCES provider_profiles(id);
+      ALTER TABLE llm_usage ADD COLUMN model_source TEXT NOT NULL DEFAULT 'configured';
+      ALTER TABLE llm_usage ADD COLUMN cost_basis TEXT NOT NULL DEFAULT 'none';
+
+      UPDATE llm_usage SET cost_basis = CASE
+        WHEN provider = 'claude-agent' THEN 'notional'
+        WHEN provider = 'anthropic' THEN 'unpriced'
+        ELSE 'none'
+      END;
+
+      CREATE INDEX idx_llm_usage_message ON llm_usage(message_id);
+      CREATE INDEX idx_llm_usage_profile ON llm_usage(profile_id);
+    `,
+  },
 ];

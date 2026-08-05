@@ -59,6 +59,14 @@ export interface ReportedUsage {
   costUsd?: number;
 }
 
+/** M22.5 H1 ("you cannot prove which model answered by asking the model"):
+ * the model string the endpoint actually reported serving, when it echoed
+ * one — distinct from `reportedUsage()`, which is about token counts, not
+ * identity. A misconfigured or silently-substituting OpenAI-compatible
+ * endpoint is otherwise invisible: the ledger would only ever show the
+ * string we *asked* for. */
+export type ReportedModel = string | null;
+
 /** One plan/quota utilization window (e.g. "5-hour", "7-day"). */
 export interface PlanLimitWindow {
   label: string;
@@ -82,6 +90,9 @@ export interface LLMProvider {
   // renders, never an error.
   /** Token/cost counts for the most recent stream()/extract() call. */
   reportedUsage?(): ReportedUsage | null;
+  /** The model the endpoint said it served on the most recent call, when it
+   * echoed one (M22.5 H1) — openai-compatible only, today. */
+  reportedModel?(): ReportedModel;
   /** Plan/quota utilization, when the provider exposes it (hosted only). */
   planLimits?(): Promise<PlanLimits | null>;
 }
@@ -107,14 +118,18 @@ export function getProvider(
   role: ProviderRole,
   operation: LLMOperation,
   resourceId: string | null = null,
-  onUsageLogged?: (row: Omit<UsageLedgerRow, "id" | "createdAt">) => void,
+  onUsageLogged?: (row: UsageLedgerRow) => void,
 ): LLMProvider | null {
   const profile = getRoleProfileRaw(db, role);
   if (!profile) return null;
   const maxResponseTokens = getRoleMaxResponseTokens(db, role);
+  // Hoisted below into a plain const — a nested `function` declaration
+  // capturing `profile` directly loses TS's null-narrowing on it (TS can't
+  // prove the closure only runs after the `if (!profile)` guard above).
+  const profileId = profile.id;
 
   function wrap(provider: LLMProvider, model: string): LLMProvider {
-    return withUsageLedger(provider, db, model, operation, role, resourceId, onUsageLogged);
+    return withUsageLedger(provider, db, model, operation, role, resourceId, profileId, onUsageLogged);
   }
 
   if (profile.provider === "anthropic") {

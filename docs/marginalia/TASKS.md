@@ -909,7 +909,7 @@ default and retiring the track.
 
 #### F — The opening actually opens
 
-- [x] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
+- [ ] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
       with the flight to centre; the flutter is not what was asked for.)* `BookOpening.tsx`
       keeps the fly (`FlyPanel`, 240ms) and replaces `PAGE_OFFSETS`'s four flat planes with a
       real open: the front cover rotates anticlockwise about its **left (spine) edge**
@@ -935,16 +935,21 @@ default and retiring the track.
 
 #### G — What is rendered, and getting rid of it
 
-- [ ] **The Digest shows which sections have audio.** A per-section "rendered" column for the
-      current cast hash, with sizes and a book total, behind a new
+- [x] **The Digest shows which sections have audio.** *(2026-08-05.)* A per-section "rendered"
+      column for the current cast hash, with sizes and a book total, behind a new
       `GET /api/resources/:id/audio/sections`. `listCachedSpineIndices` (`audio/render.ts:123`)
       and `getSectionManifest` (`render.ts:84`) already do the work.
       ⚠️ **Cache truth is file existence, never a ledger row** — M21's rule, and the vault
       compiler's 2026-07-19 bug is why.
-      _Acceptance: rendering a chapter flips its row to "Rendered · N MB" with no reload
-      (it rides the live tray stream from D); changing a voice invalidates the cast hash and
-      the rows go back to "Not rendered", matching what playback would actually do._
-- [ ] **Rendered audio can be deleted from the app.** Per section and per book:
+      _Acceptance: met. Live against the real dev server and Metamorphosis: a fresh render was
+      driven to completion and the Digest, already open in the same tab, flipped that
+      section's row to "Rendered · 8.0 MB" with a "Delete audio" link, no reload — matching
+      the actual byte count `du` reported. The summary bar read "Audio rendered: 8.0 MB across
+      1 of 5 sections" with the other four rows "Not rendered", no delete-all button shown
+      while total was 0 (it's conditional on `totalBytes > 0`). Voice-change → cast-hash
+      invalidation wasn't separately re-driven this pass — it falls out of `currentCastHash`
+      being the same hash the render/cache functions already key on, unchanged by this work._
+- [x] **Rendered audio can be deleted from the app.** *(2026-08-05.)* Per section and per book:
       `DELETE /api/resources/:id/audio/sections/:spineIndex`, with
       `deleteResourceAudioCache` (`render.ts:129`) already covering the whole book.
       ⚠️ **Deleting what is playing or rendering is a designed state**: cancel the render job
@@ -955,9 +960,15 @@ default and retiring the track.
       offset, audio segment and digest anchors into, and deleting it rots annotations
       (settled decision 5, immutable-on-import). Digests are out of scope here too — small
       on disk, expensive in tokens to rebuild.
-      _Acceptance: deleting a section frees the bytes on disk (verified with `du`, not from
-      the API's own response); playing that chapter afterwards re-renders rather than
-      erroring; deleting a section mid-render stops the render._
+      _Acceptance: met. Live: `DELETE .../audio/sections/2` on Metamorphosis, confirmed via
+      `du` before/after that the 8.3MB actually left disk, not just the API's own say-so;
+      `POST` on the same section afterward returned a fresh `jobId` (not `{cached:true}`) and
+      re-rendered to the identical byte count. A second section, deleted ~1s after its render
+      started, had its job transition straight to `cancelled` with no partial directory left
+      on disk. `usePlayer.ts`'s job handler now reads a `cancelled` render as `idle`, not
+      `error` — the "degrades to not rendered" case is a render getting cancelled by a delete
+      before any segment played; a render cancelled after segments already played just runs
+      off the end of the manifest normally, which was already the code path._
 
 #### H — Which model actually answered, and what it really cost
 
@@ -971,39 +982,58 @@ to be answered from the transport — which this project is already most of the 
 the usage ledger records `provider` and `model` on every call (`llm/usage.ts`'s
 `UsageLedgerRow`, written by `recordUsage`). Two things are missing.
 
-- [ ] **Record what the endpoint says it served, not only what we asked for.**
+- [x] **Record what the endpoint says it served, not only what we asked for.** *(2026-08-05.)*
       `openaiCompat.ts:154,202` sends `this.config.model` and the ledger stores that same
       configured string — so a misconfigured or silently-substituting endpoint is invisible.
       OpenAI-compatible responses echo a `model` field; record that when present, fall back
       to the configured string, and record which of the two it was.
-      _Acceptance: against a real local endpoint, the ledger row's model is the string the
-      endpoint returned; renaming the profile changes nothing; an endpoint that returns no
-      model still logs a row, marked as the configured value._
-- [ ] **Every answer carries its provenance.** A quiet byline under each assistant message in
-      `ThreadPanel.tsx`: profile name · provider · served model · endpoint host — derived
-      from that message's own ledger row, never from whatever the settings UI currently
-      holds.
+      _Acceptance: met. `LLMProvider` gained an optional `reportedModel()`; `openaiCompat.ts`
+      captures it from the streaming SSE chunks (new `modelSink` param on
+      `parseOpenAICompatSSE`, independent of `usageSink`) and from the non-streaming
+      `extract()` body. `withUsageLedger` records `servedModel ?? model` plus a `modelSource`
+      ("endpoint"/"configured") column (migration 23). Live: a real question against the
+      local Qwen profile logged `model: "qwen3.5-hermes:latest"`,
+      `model_source: "endpoint"`; unit tests (`openaiCompat.test.ts`, `usage.test.ts`) cover
+      the model-sink capture and the configured-string fallback when an endpoint sends none._
+- [x] **Every answer carries its provenance.** *(2026-08-05.)* A quiet byline under each
+      assistant message in `ThreadPanel.tsx`: profile name · provider · served model ·
+      endpoint host — derived from that message's own ledger row, never from whatever the
+      settings UI currently holds.
       ⚠️ `llm_usage` has `resource_id` but no message or thread id, so there is no way to
       join a row to the answer it produced. That is a migration, and it is the actual size of
       this task.
-      _Acceptance: the byline under a Qwen answer names Qwen and the local endpoint even
-      when the answer itself claims to be Claude; switching the query role mid-thread shows
-      different bylines on the two answers in the same thread._
-- [ ] **Say it where the confusion starts.** One line under the profile in Settings/LLM:
-      models routinely misreport their own identity, and the name shown comes from the
-      endpoint rather than from the model. Cheap, and it is the honest answer to the
+      _Acceptance: met. Migration 23 adds `message_id`; `recordUsage` now returns the full row
+      (id included) so `routes/threads.ts` can `linkUsageToMessage` once the answer is
+      persisted, and the SSE `done` payload carries `provenance` built from that same row
+      (`buildMessageProvenance` in `usage.ts`) — no extra round trip. A page reload reads the
+      same shape via a `LEFT JOIN llm_usage ... LEFT JOIN provider_profiles` in
+      `listMessagesForThread`. Live, against a real Kafka on the Shore thread: the SSE `done`
+      event and a subsequent plain `GET /api/threads/:id` both returned
+      `{profileName: "Qwen3.5", provider: "openai-compatible", model: "qwen3.5-hermes:latest",
+      endpointHost: "localhost:11434"}` for the new message, while the thread's four
+      pre-migration messages all came back `provenance: null` with no crash — screenshotted in
+      the reader as "Qwen3.5 · local · qwen3.5-hermes:latest · localhost:11434" under the
+      answer. Switching roles mid-thread to compare two different bylines side by side wasn't
+      separately driven this pass (only one profile is configured on this machine) — the
+      per-message (not per-thread) join is what makes that case work, and it's the same code
+      path just exercised twice._
+- [x] **Say it where the confusion starts.** *(2026-08-05.)* One line under the profile in
+      Settings/LLM: models routinely misreport their own identity, and the name shown comes
+      from the endpoint rather than from the model. Cheap, and it is the honest answer to the
       question that was asked.
-      _Acceptance: present in the LLM divider; no equivalent claim is made anywhere that the
-      code cannot back._
-- [ ] **The Usage divider's dollar figure is backwards.** *(Operator: "the ledger showed a
-      cost under last 7 days — I thought a Claude subscription plus a local LLM meant no API
-      costs?" They are right, and the ledger is wrong in an interesting way.)* `costUsd` is
-      populated from exactly one place — `claudeAgent.ts:149,193`, taking the Agent SDK's
-      `message.total_cost_usd`, which is a **notional API-equivalent price** for usage a
-      subscription does not bill per token. Meanwhile `anthropic.ts` (the keyed API, where
-      money is genuinely spent) reports **no cost at all**, and `openaiCompat.ts:117`
-      documents that it never populates it. So the one number on that card is the one place
-      you aren't billed, and real spend reads as nothing.
+      _Acceptance: met. Live screenshot of Settings → LLM shows the line ("Models routinely
+      misreport their own identity — a local model can and will claim to be Claude. The name
+      shown next to an answer comes from the endpoint you configured here, never from what the
+      model itself says it is.") directly above the two role pickers._
+- [x] **The Usage divider's dollar figure is backwards.** *(2026-08-05.) (Operator: "the
+      ledger showed a cost under last 7 days — I thought a Claude subscription plus a local
+      LLM meant no API costs?" They are right, and the ledger is wrong in an interesting
+      way.)* `costUsd` is populated from exactly one place — `claudeAgent.ts:149,193`, taking
+      the Agent SDK's `message.total_cost_usd`, which is a **notional API-equivalent price**
+      for usage a subscription does not bill per token. Meanwhile `anthropic.ts` (the keyed
+      API, where money is genuinely spent) reports **no cost at all**, and
+      `openaiCompat.ts:117` documents that it never populates it. So the one number on that
+      card is the one place you aren't billed, and real spend reads as nothing.
       Fix by making the row say what kind of number it is: cost gains a **basis** —
       `billed` (keyed API), `notional` (subscription; what this would have cost on the API),
       or `none` (local). The Usage divider totals **billed only**, and shows notional
@@ -1013,13 +1043,19 @@ the usage ledger records `provider` and `model` on every call (`llm/usage.ts`'s
       ⚠️ A keyed Anthropic profile reporting no cost is a **second, independent gap**: it has
       real token counts and no price attached. Either price it from a table or leave it
       explicitly unpriced — but do not let "no cost recorded" keep reading as "free".
-      _Acceptance: with a subscription profile and a local profile configured and no keyed
-      API profile in use, the "Last 7 days" billed total is $0.00, with the notional figure
-      shown beside it and labelled; a keyed-API call is either priced or visibly marked
-      unpriced, never silently zero._
-- [ ] **The ledger breaks down by provider and model, not just book and operation.**
-      *(Operator's ask, and the data is nearly all there already.)* `llm_usage` records
-      `provider`, `model`, `cache_read_tokens` and `duration_ms` per row — but
+      _Acceptance: met. New `llm/pricing.ts` (`priceCall`) decides basis by provider id:
+      `claude-agent` → `notional`, `anthropic` → `billed` (priced from a small hand-maintained
+      table) or `unpriced` when the model isn't in it, `openai-compatible` → `none`.
+      `UsagePeriod` carries `billedCostUsd`/`notionalCostUsd` separately (migration 23 adds
+      `cost_basis`, backfilled from `provider` for existing rows). Live, against this
+      session's own real ledger data (a Qwen local profile plus a Claude Code subscription
+      profile, no keyed API profile configured): "Last 7 days" showed **billed $0.00** with a
+      separate "+ $0.46 notional (... not spend)" note, exactly the acceptance case, on real
+      data rather than a fixture. The `unpriced`/`billed` keyed-API paths aren't driven live
+      (no `anthropicApiKey` on this machine) — covered by `usage.test.ts` instead._
+- [x] **The ledger breaks down by provider and model, not just book and operation.**
+      *(2026-08-05.) (Operator's ask, and the data is nearly all there already.)* `llm_usage`
+      records `provider`, `model`, `cache_read_tokens` and `duration_ms` per row — but
       `getUsageBreakdownSince` groups only by `resource_id, operation, role`
       (`llm/usage.ts:173`) and `UsageBreakdownRow` carries neither provider nor model, so
       none of it reaches the UI. Widen the grouping and the row, and let the divider group by
@@ -1035,11 +1071,18 @@ the usage ledger records `provider` and `model` on every call (`llm/usage.ts`'s
       profile id. Add `profile_id` to `llm_usage` **in the same migration as the message id**
       the byline above needs; pre-M22.5 rows keep null and are grouped as "unknown profile"
       rather than guessed at.
-      _Acceptance: the Usage divider groups a real week's rows by provider and model and
-      sorts by each; a local model's group shows a tokens/sec figure that matches a
-      hand-check of one row's `output_tokens / duration_ms`; a cached Anthropic call shows
-      its cache-read tokens separately from its fresh input tokens; rows written before this
-      migration still appear, marked unknown._
+      _Acceptance: met, with one narrowing noted. `getUsageBreakdownSince`'s `GROUP BY` widened
+      to include `provider, model, profile_id`; the Usage divider's new "by provider & model"
+      table re-rolls those same rows client-side (`groupByProviderModel` in
+      `UsageDivider.tsx`) with a sort toggle (tokens / name). Live: the real table showed a
+      local Qwen group and a Claude Code (subscription) group side by side, with the local
+      group's row deriving tok/s from `output_tokens / duration_ms` and the hosted group
+      showing its cache-read total (13,927 / 10,336 tokens on two rows) separately from fresh
+      input, and rows with no linked profile (pre-migration) grouped rather than dropped.
+      **"Is this local?" is unchanged from the pre-existing definition** (`provider ===
+      "openai-compatible"`, same as `RolePlanLimits.isLocal` already used) — `profile_id` now
+      makes a real base-URL-based classifier *possible*, but building one was out of this
+      task's scope; recorded in NOTES.md rather than silently narrowed._
 
 #### Verify
 

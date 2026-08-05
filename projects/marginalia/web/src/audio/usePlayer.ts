@@ -354,7 +354,17 @@ export function usePlayer({ resourceId, spineIndices, initialSpeed }: UsePlayerO
             sectionCompleteRef.current = true;
             if (!started) {
               if (job.status === "completed") advancePastEmptySection(spineIndex);
-              else {
+              else if (job.status === "cancelled") {
+                // M22.5 G: a render job is cancelled when its section's audio
+                // is deleted out from under it — that is "not rendered", not
+                // a failure. Settling here as idle (rather than "error")
+                // means starting listening again re-runs ensureSectionRendered
+                // and simply re-renders, instead of surfacing a scary error
+                // for what the delete route did on purpose.
+                setStatus("idle");
+                setErrorCode(null);
+                setCurrentSegment(null);
+              } else {
                 setStatus("error");
                 setErrorCode(job.error ?? "audio_render_failed");
               }

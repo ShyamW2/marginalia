@@ -97,4 +97,25 @@ describe("parseOpenAICompatSSE", () => {
     await collect(parseOpenAICompatSSE(fromChunks(chunks), usageSink));
     expect(usageSink.current).toBeNull();
   });
+
+  it("M22.5 H1: captures the served model into the optional sink, independent of the usage sink", async () => {
+    const chunks = [
+      'data: {"model":"llama3:8b-instruct-actually","choices":[{"delta":{"content":"hi"}}]}\n',
+      "data: [DONE]\n",
+    ];
+    const modelSink: { current: string | null } = { current: null };
+    const events = await collect(parseOpenAICompatSSE(fromChunks(chunks), undefined, modelSink));
+    expect(events).toEqual([{ text: "hi" }]);
+    expect(modelSink.current).toBe("llama3:8b-instruct-actually");
+  });
+
+  it("M22.5 H1: leaves the model sink null when the endpoint never echoes a model field", async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n',
+      "data: [DONE]\n",
+    ];
+    const modelSink: { current: string | null } = { current: null };
+    await collect(parseOpenAICompatSSE(fromChunks(chunks), undefined, modelSink));
+    expect(modelSink.current).toBeNull();
+  });
 });

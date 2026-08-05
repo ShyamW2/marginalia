@@ -1,9 +1,11 @@
 import {
   AudioSectionManifestSchema,
+  AudioSectionsResponseSchema,
   AudioStateSchema,
   BookCastMemberSchema,
   BookCastResponseSchema,
   type AudioSectionManifest,
+  type AudioSectionsResponse,
   type AudioState,
   type BookCastMember,
   type BookCastResponse,
@@ -91,6 +93,41 @@ export async function fetchSectionManifest(
 
 export function segmentAudioUrl(resourceId: string, spineIndex: number, n: number): string {
   return `/api/resources/${resourceId}/audio/sections/${spineIndex}/${n}`;
+}
+
+/** M22.5 G: the Digest's "what's rendered" column. */
+export async function fetchAudioSections(resourceId: string): Promise<AudioSectionsResponse | null> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/audio/sections`);
+    if (!res.ok) return null;
+    const parsed = AudioSectionsResponseSchema.safeParse(await res.json());
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+/** M22.5 G: deletes one section's rendered audio (frees disk space; the
+ * player re-renders it on next play, per `render.ts`'s cache-is-existence
+ * rule). */
+export async function deleteSectionAudio(resourceId: string, spineIndex: number): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/audio/sections/${spineIndex}`, { method: "DELETE" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** M22.5 G: deletes every rendered section for the whole book (all cast
+ * hashes) — `deleteResourceAudioCache` on the server. */
+export async function deleteAllAudio(resourceId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/audio`, { method: "DELETE" });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 export async function fetchBookCast(resourceId: string): Promise<BookCastResponse | null> {

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   AudioSectionManifestSchema,
+  AudioSectionsResponseSchema,
   AudioStateSchema,
   BookCastMemberSchema,
   BookCastResponseSchema,
@@ -22,14 +23,16 @@ import { listBookCast, saveCastScan, updateCastVoice, type BookCastMemberRow } f
 import {
   computeCastHash,
   deleteResourceAudioCache,
+  deleteSectionAudioCache,
   getPartialSectionManifest,
+  getResourceAudioSections,
   getSegmentFilePath,
   isSectionCached,
   listCachedSpineIndices,
   renderSection,
 } from "../audio/render.js";
 import { segmentSentences } from "../audio/segment.js";
-import { getJob, startJob } from "../jobs/registry.js";
+import { cancelJob, getJob, startJob } from "../jobs/registry.js";
 import { getProvider } from "../llm/provider.js";
 import { sectionRangeUiLabel, sectionUiLabel } from "../llm/context.js";
 import { runDigest } from "../digest/build.js";
@@ -127,16 +130,24 @@ function castMappingForHash(cast: BookCastMemberRow[]): { speakerId: string; voi
   return cast.filter((m) => m.voiceId).map((m) => ({ speakerId: m.id, voiceId: m.voiceId }));
 }
 
-function buildAudioState(resourceId: string): AudioState {
-  const db = getDb();
+/** The cast hash the current settings would render under — the one thing
+ * every route in this file that reasons about "is this cached?" needs, and
+ * previously computed by hand in three places. */
+function currentCastHash(db: ReturnType<typeof getDb>, resourceId: string): string {
   const row = getAudioState(db, resourceId);
   const { audioDefaultVoice, ttsEngine } = getRawSettings(db);
   const narratorVoice = row.narratorVoice || audioDefaultVoice;
   const cast = row.voiceMode === "multi" ? castMappingForHash(listBookCast(db, resourceId)) : [];
-  const castHash = computeCastHash(ttsEngine, narratorVoice, row.voiceMode, cast);
+  return computeCastHash(ttsEngine, narratorVoice, row.voiceMode, cast);
+}
+
+function buildAudioState(resourceId: string): AudioState {
+  const db = getDb();
+  const row = getAudioState(db, resourceId);
+  const castHash = currentCastHash(db, resourceId);
   const spineIndices = getResourceTextSections(db, resourceId).map((s) => s.spineIndex);
   return {
-    narratorVoice,
+    narratorVoice: row.narratorVoice || getRawSettings(db).audioDefaultVoice,
     voiceMode: row.voiceMode,
     speed: row.speed,
     castScannedAt: row.castScannedAt,
@@ -152,6 +163,28 @@ audioRouter.get("/:id/audio", (req, res) => {
     return;
   }
   res.json(AudioStateSchema.parse(buildAudioState(resource.id)));
+});
+
+/** M22.5 G: the Digest's "what's rendered" column — per-section byte size
+ * for the current cast hash, plus a book total. `cachedSpineIndices` above
+ * already says *which* sections are cached; this adds *how big*. */
+audioRouter.get("/:id/audio/sections", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const castHash = currentCastHash(db, resource.id);
+  const spineIndices = getResourceTextSections(db, resource.id).map((s) => s.spineIndex);
+  const sections = getResourceAudioSections(resource.id, castHash, spineIndices);
+  res.json(
+    AudioSectionsResponseSchema.parse({
+      castHash,
+      sections,
+      totalBytes: sections.reduce((sum, s) => sum + s.bytes, 0),
+    }),
+  );
 });
 
 audioRouter.put("/:id/audio", (req, res) => {
@@ -415,6 +448,26 @@ audioRouter.post("/:id/audio/sections/:spineIndex", (req, res) => {
   }, sectionUiLabel(sections, spineIndex, resource.metadata.chapterTitles));
   inFlightRenders.set(key, job.id);
   res.status(202).json({ jobId: job.id });
+});
+
+/**
+ * M22.5 G: deletes one section's rendered audio to free disk space.
+ * "Deleting what is rendering is a designed state" (the task's own words) —
+ * an in-flight render job for this exact resource/cast/section is cancelled
+ * first, so the render actually stops instead of racing the delete and
+ * writing a manifest for files that are about to vanish.
+ */
+audioRouter.delete("/:id/audio/sections/:spineIndex", async (req, res) => {
+  const ctx = resolveSectionContext(req.params.id, req.params.spineIndex);
+  if (!ctx.ok) {
+    res.status(ctx.status).json(ctx.body);
+    return;
+  }
+  const key = renderKey(ctx.resource.id, ctx.castHash, ctx.spineIndex);
+  const jobId = inFlightRenders.get(key);
+  if (jobId) cancelJob(jobId);
+  await deleteSectionAudioCache(ctx.resource.id, ctx.castHash, ctx.spineIndex);
+  res.status(204).end();
 });
 
 /**

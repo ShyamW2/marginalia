@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import type { UsagePeriod, UsageProvenanceValue, UsageSummary } from "@marginalia/shared";
+import { useEffect, useMemo, useState } from "react";
+import type { UsageBreakdownRow, UsageCostBasis, UsagePeriod, UsageProvenanceValue, UsageSummary } from "@marginalia/shared";
 import styles from "./UsageDivider.module.css";
 
 async function fetchUsageSummary(): Promise<UsageSummary | null> {
@@ -41,6 +41,26 @@ function ProvenanceBadge({ provenance }: { provenance: UsageProvenanceValue }) {
   );
 }
 
+/** M22.5 H4: "the one cost the ledger reports is the one you are not billed
+ * for" — this badge is the one place a dollar figure says what kind of
+ * number it is, so `$0.42` never reads the same whether it's real spend or
+ * a subscription's own notional estimate. */
+const COST_BASIS_LABEL: Record<UsageCostBasis, string> = {
+  billed: "billed",
+  notional: "notional — not billed",
+  none: "local — free",
+  unpriced: "unpriced",
+  mixed: "mixed basis",
+};
+
+function CostBasisBadge({ basis }: { basis: UsageCostBasis }) {
+  return (
+    <span className={`${styles.badge} ${basis === "billed" ? styles.badgeReported : styles.badgeEstimated}`}>
+      {COST_BASIS_LABEL[basis]}
+    </span>
+  );
+}
+
 function PeriodSummary({ title, period }: { title: string; period: UsagePeriod }) {
   return (
     <div className={styles.periodCard}>
@@ -58,14 +78,20 @@ function PeriodSummary({ title, period }: { title: string; period: UsagePeriod }
           <span className={styles.statLabel}>output tokens</span>
         </div>
         <div className={styles.stat}>
-          <span className={styles.statValue}>{formatCost(period.costUsd)}</span>
-          <span className={styles.statLabel}>cost</span>
+          <span className={styles.statValue}>{formatCost(period.billedCostUsd)}</span>
+          <span className={styles.statLabel}>billed</span>
         </div>
         <div className={styles.stat}>
           <span className={styles.statValue}>{period.callCount}</span>
           <span className={styles.statLabel}>calls</span>
         </div>
       </div>
+      {period.notionalCostUsd > 0 && (
+        <p className={styles.notionalNote}>
+          + {formatCost(period.notionalCostUsd)} notional (what a subscription's usage would have cost on the
+          API — not spend)
+        </p>
+      )}
 
       {period.byBookAndOperation.length === 0 ? (
         <p className={styles.emptyRow}>Nothing logged yet.</p>
@@ -81,19 +107,147 @@ function PeriodSummary({ title, period }: { title: string; period: UsagePeriod }
           </thead>
           <tbody>
             {period.byBookAndOperation.map((row, i) => (
-              <tr key={`${row.resourceId ?? "none"}-${row.operation}-${row.role ?? "none"}-${i}`}>
+              <tr key={`${row.resourceId ?? "none"}-${row.operation}-${row.role ?? "none"}-${row.model ?? "none"}-${i}`}>
                 <td>{row.resourceTitle ?? "(desk)"}</td>
                 <td>{row.operation}</td>
                 <td>
                   {formatTokens(row.inputTokens + row.outputTokens)}{" "}
                   <ProvenanceBadge provenance={row.provenance} />
                 </td>
-                <td>{formatCost(row.costUsd)}</td>
+                <td>
+                  {formatCost(row.costUsd)} <CostBasisBadge basis={row.costBasis} />
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
+    </div>
+  );
+}
+
+interface ProviderModelGroup {
+  key: string;
+  provider: string | null;
+  model: string | null;
+  isLocal: boolean;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  durationMs: number;
+  costUsd: number;
+  costBasis: UsageCostBasis;
+  callCount: number;
+}
+
+/** M22.5 H5: re-rolls the same rows the by-book table already has into
+ * groups by (provider, model) — a widening of the server's query, not a
+ * second endpoint (decisions.md 2026-08-04: "nearly all of it is already
+ * recorded and thrown away"). */
+function groupByProviderModel(rows: UsageBreakdownRow[]): ProviderModelGroup[] {
+  const map = new Map<string, ProviderModelGroup>();
+  for (const row of rows) {
+    const key = `${row.provider ?? "unknown"}::${row.model ?? "unknown"}`;
+    const costUsd = row.costUsd ?? 0;
+    const existing = map.get(key);
+    if (existing) {
+      existing.inputTokens += row.inputTokens;
+      existing.outputTokens += row.outputTokens;
+      existing.cacheReadTokens += row.cacheReadTokens;
+      existing.durationMs += row.durationMs;
+      existing.costUsd += costUsd;
+      existing.callCount += row.callCount;
+      if (existing.costBasis !== row.costBasis) existing.costBasis = "mixed";
+    } else {
+      map.set(key, {
+        key,
+        provider: row.provider,
+        model: row.model,
+        // Matches the definition `RolePlanLimits.isLocal` already uses for
+        // "Plan utilization" below — openai-compatible covers both a local
+        // Ollama and a hosted OpenRouter (decisions.md's own named gap),
+        // so this reads as "the tok/s branch applies", not a verified fact.
+        isLocal: row.provider === "openai-compatible",
+        inputTokens: row.inputTokens,
+        outputTokens: row.outputTokens,
+        cacheReadTokens: row.cacheReadTokens,
+        durationMs: row.durationMs,
+        costUsd,
+        costBasis: row.costBasis,
+        callCount: row.callCount,
+      });
+    }
+  }
+  return [...map.values()];
+}
+
+type SortMode = "tokens" | "name";
+
+function sortGroups(groups: ProviderModelGroup[], mode: SortMode): ProviderModelGroup[] {
+  const sorted = [...groups];
+  if (mode === "name") {
+    sorted.sort((a, b) => `${a.provider}${a.model}`.localeCompare(`${b.provider}${b.model}`));
+  } else {
+    sorted.sort((a, b) => b.inputTokens + b.outputTokens - (a.inputTokens + a.outputTokens));
+  }
+  return sorted;
+}
+
+function ProviderModelBreakdown({ period }: { period: UsagePeriod }) {
+  const [sortMode, setSortMode] = useState<SortMode>("tokens");
+  const groups = useMemo(
+    () => sortGroups(groupByProviderModel(period.byBookAndOperation), sortMode),
+    [period, sortMode],
+  );
+
+  if (groups.length === 0) return null;
+
+  return (
+    <div className={styles.section}>
+      <div className={styles.periodHeader}>
+        <h4 className={styles.sectionTitle}>Last 7 days, by provider &amp; model</h4>
+        <button
+          type="button"
+          className={styles.sortToggle}
+          onClick={() => setSortMode((m) => (m === "tokens" ? "name" : "tokens"))}
+        >
+          sort: {sortMode === "tokens" ? "tokens" : "name"}
+        </button>
+      </div>
+      <table className={styles.table}>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Model</th>
+            <th>Tokens</th>
+            <th>Cache read</th>
+            <th>Speed / cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <tr key={g.key}>
+              <td>{g.provider ?? "unknown profile"}</td>
+              <td>{g.model ?? "—"}</td>
+              <td>{formatTokens(g.inputTokens + g.outputTokens)}</td>
+              <td>{g.cacheReadTokens > 0 ? formatTokens(g.cacheReadTokens) : "—"}</td>
+              <td>
+                {g.isLocal ? (
+                  g.durationMs > 0 ? (
+                    `${(g.outputTokens / (g.durationMs / 1000)).toFixed(0)} tok/s`
+                  ) : (
+                    "—"
+                  )
+                ) : (
+                  <>
+                    {formatCost(g.costUsd)} <CostBasisBadge basis={g.costBasis} />
+                  </>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -120,11 +274,13 @@ export function UsageDivider() {
     <div className={styles.page}>
       <p className={styles.hint}>
         What your reading has cost, broken down by book and by operation. Every figure says
-        whether it's reported by the provider or estimated locally.
+        whether it's reported by the provider or estimated locally — and every dollar figure says
+        whether it's real spend, a subscription's notional estimate, or genuinely free.
       </p>
 
       <PeriodSummary title="Today" period={summary.today} />
       <PeriodSummary title="Last 7 days" period={summary.last7Days} />
+      <ProviderModelBreakdown period={summary.last7Days} />
 
       <div className={styles.section}>
         <h4 className={styles.sectionTitle}>Last digest run</h4>

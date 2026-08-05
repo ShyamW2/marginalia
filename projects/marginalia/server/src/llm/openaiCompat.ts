@@ -53,10 +53,16 @@ export async function* sseLines(
  * carries a `usage` field — the last one wins, which is the final chunk when
  * the request set `stream_options: {include_usage: true}`. Endpoints that
  * ignore that option simply never populate it, and the sink stays untouched.
+ *
+ * `modelSink`, when given, records the `model` field every chunk that has
+ * one echoes (M22.5 H1: "record what the endpoint says it served, not only
+ * what we asked for") — independent of `usageSink`, since a model string
+ * can arrive on endpoints that never send usage numbers at all.
  */
 export async function* parseOpenAICompatSSE(
   chunks: AsyncIterable<string>,
   usageSink?: { current: OpenAIUsage | null },
+  modelSink?: { current: string | null },
 ): AsyncGenerator<{ text: string }> {
   for await (const line of sseLines(chunks)) {
     if (!line.startsWith("data:")) continue;
@@ -74,6 +80,9 @@ export async function* parseOpenAICompatSSE(
     const body = parsed as Record<string, unknown> | null;
     if (usageSink && body?.usage) {
       usageSink.current = body.usage as OpenAIUsage;
+    }
+    if (modelSink && typeof body?.model === "string" && body.model.length > 0) {
+      modelSink.current = body.model;
     }
 
     const text = body?.choices as { delta?: { content?: unknown } }[] | undefined;
@@ -116,6 +125,9 @@ export class OpenAICompatProvider implements LLMProvider {
   // extract() call. No standard cost field exists across arbitrary
   // OpenAI-compatible servers, so `costUsd` is never populated here.
   private lastUsage: ReportedUsage | null = null;
+  // M22.5 H1: the `model` field the response itself echoed, when it did —
+  // null on every call until an endpoint actually sends one.
+  private lastServedModel: string | null = null;
 
   constructor(config: OpenAICompatConfig) {
     this.config = config;
@@ -127,6 +139,10 @@ export class OpenAICompatProvider implements LLMProvider {
 
   reportedUsage(): ReportedUsage | null {
     return this.lastUsage;
+  }
+
+  reportedModel(): string | null {
+    return this.lastServedModel;
   }
 
   private headers(): Record<string, string> {
@@ -177,10 +193,12 @@ export class OpenAICompatProvider implements LLMProvider {
     }
 
     const usageSink: { current: OpenAIUsage | null } = { current: null };
+    const modelSink: { current: string | null } = { current: null };
     try {
-      yield* parseOpenAICompatSSE(webStreamToStrings(response.body), usageSink);
+      yield* parseOpenAICompatSSE(webStreamToStrings(response.body), usageSink, modelSink);
     } finally {
       this.lastUsage = toReportedUsage(usageSink.current ?? undefined);
+      this.lastServedModel = modelSink.current;
     }
   }
 
@@ -219,8 +237,10 @@ export class OpenAICompatProvider implements LLMProvider {
     const body = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
       usage?: OpenAIUsage;
+      model?: string;
     };
     this.lastUsage = toReportedUsage(body.usage);
+    this.lastServedModel = typeof body.model === "string" && body.model.length > 0 ? body.model : null;
     const content = body.choices?.[0]?.message?.content;
 
     let candidate: unknown;

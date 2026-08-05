@@ -48,8 +48,24 @@ const ROLES: ProviderRoleAssignment[] = [
 ];
 
 const USAGE_SUMMARY: UsageSummary = {
-  today: { inputTokens: 0, outputTokens: 0, costUsd: null, callCount: 0, provenance: "estimated", byBookAndOperation: [] },
-  last7Days: { inputTokens: 0, outputTokens: 0, costUsd: null, callCount: 0, provenance: "estimated", byBookAndOperation: [] },
+  today: {
+    inputTokens: 0,
+    outputTokens: 0,
+    billedCostUsd: 0,
+    notionalCostUsd: 0,
+    callCount: 0,
+    provenance: "estimated",
+    byBookAndOperation: [],
+  },
+  last7Days: {
+    inputTokens: 0,
+    outputTokens: 0,
+    billedCostUsd: 0,
+    notionalCostUsd: 0,
+    callCount: 0,
+    provenance: "estimated",
+    byBookAndOperation: [],
+  },
   lastDigest: null,
   planLimits: [],
 };

@@ -81,6 +81,29 @@
   margin: 0;
 }
 
+/* M22.5 H4: the subscription's own "what this would have cost" figure —
+   distinct from the billed stat above it, never summed into it. */
+.notionalNote {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+  margin: 0 0 0.75rem;
+}
+
+.sortToggle {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.sortToggle:hover {
+  color: var(--color-text);
+}
+
 .badge {
   font-size: 0.68rem;
   padding: 0.12rem 0.45rem;

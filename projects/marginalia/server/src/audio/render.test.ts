@@ -14,8 +14,18 @@ vi.mock("../paths.js", async () => {
   return { ...actual, get AUDIO_DIR() { return tmpRoot; } };
 });
 
-const { computeCastHash, isSectionCached, renderSection, getSectionManifest, getSegmentFilePath, listCachedSpineIndices, deleteResourceAudioCache } =
-  await import("./render.js");
+const {
+  computeCastHash,
+  isSectionCached,
+  renderSection,
+  getSectionManifest,
+  getSegmentFilePath,
+  listCachedSpineIndices,
+  deleteResourceAudioCache,
+  deleteSectionAudioCache,
+  getSectionAudioSizeBytes,
+  getResourceAudioSections,
+} = await import("./render.js");
 
 function fakeEngine(): TTSEngine {
   return {
@@ -164,5 +174,40 @@ describe("section render + cache", () => {
     expect(isSectionCached("res-1", castHash, 0)).toBe(true);
     await deleteResourceAudioCache("res-1");
     expect(isSectionCached("res-1", castHash, 0)).toBe(false);
+  });
+
+  it("getSectionAudioSizeBytes sums real file sizes, zero when not rendered", async () => {
+    const engine = fakeEngine();
+    const castHash = computeCastHash("kokoro", "af_heart");
+    expect(getSectionAudioSizeBytes("res-1", castHash, 0)).toBe(0);
+    await renderSection(engine, "res-1", 0, "Hello there. It is a fine day today.", castHash, "af_heart", 1, new AbortController().signal, () => {});
+    expect(getSectionAudioSizeBytes("res-1", castHash, 0)).toBeGreaterThan(0);
+  });
+
+  it("getResourceAudioSections reports rendered/bytes per spine index, under the given cast hash only", async () => {
+    const engine = fakeEngine();
+    const castHash = computeCastHash("kokoro", "af_heart");
+    await renderSection(engine, "res-1", 0, "Hello there. It is a fine day today.", castHash, "af_heart", 1, new AbortController().signal, () => {});
+    const sections = getResourceAudioSections("res-1", castHash, [0, 1]);
+    expect(sections).toEqual([
+      { spineIndex: 0, rendered: true, bytes: expect.any(Number) },
+      { spineIndex: 1, rendered: false, bytes: 0 },
+    ]);
+    expect(sections[0].bytes).toBeGreaterThan(0);
+  });
+
+  it("deleteSectionAudioCache removes only the given section, leaving the rest of the book cached", async () => {
+    const engine = fakeEngine();
+    const castHash = computeCastHash("kokoro", "af_heart");
+    await renderSection(engine, "res-1", 0, "Hello there. It is a fine day today.", castHash, "af_heart", 1, new AbortController().signal, () => {});
+    await renderSection(engine, "res-1", 1, "A second section entirely.", castHash, "af_heart", 1, new AbortController().signal, () => {});
+    expect(isSectionCached("res-1", castHash, 0)).toBe(true);
+    expect(isSectionCached("res-1", castHash, 1)).toBe(true);
+
+    await deleteSectionAudioCache("res-1", castHash, 0);
+
+    expect(isSectionCached("res-1", castHash, 0)).toBe(false);
+    expect(isSectionCached("res-1", castHash, 1)).toBe(true);
+    expect(getSectionManifest("res-1", castHash, 0)).toBeNull();
   });
 });
