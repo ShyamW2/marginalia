@@ -893,7 +893,7 @@ default and retiring the track.
 
 #### E — `d` for the Desk, `l` for the Library
 
-- [ ] **Both keys work from anywhere, including from on top of an instrument.** New entries
+- [x] **Both keys work from anywhere, including from on top of an instrument.** New entries
       in `SHORTCUT_KEYS`; `d` lands on the Desk in desk view, `l` on the Desk in list view.
       ⚠️ **They are the same route.** `/` is `DeskPage`, and the view mode is local state
       seeded from `localStorage` (`DeskPage.tsx:14-19`) — so these keys must *set the mode*,

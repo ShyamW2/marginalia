@@ -9,15 +9,10 @@ import { Button } from "../controls/Button.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { DeskCanvas } from "./DeskCanvas.js";
+import { loadDeskViewMode, onDeskViewMode, persistDeskViewMode, type DeskViewMode } from "./deskViewBus.js";
 import styles from "./DeskPage.module.css";
 
-type ViewMode = "desk" | "list";
-const VIEW_MODE_KEY = "marginalia:desk-view-mode";
-
-function loadViewMode(): ViewMode {
-  if (typeof localStorage === "undefined") return "desk";
-  return localStorage.getItem(VIEW_MODE_KEY) === "list" ? "list" : "desk";
-}
+type ViewMode = DeskViewMode;
 
 interface DeskPageProps {
   /** M22.5: true when the Desk is mounted only as the hidden background
@@ -50,7 +45,7 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
     handleDragOver,
   } = useLibrary();
 
-  const [mode, setMode] = useState<ViewMode>(loadViewMode);
+  const [mode, setMode] = useState<ViewMode>(loadDeskViewMode);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleChoice>("custom");
   const [cursorTrailEnabled, setCursorTrailEnabled] = useState(true);
   const reducedMotion = Boolean(useReducedMotion());
@@ -67,8 +62,17 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
   ]);
 
   useEffect(() => {
-    localStorage.setItem(VIEW_MODE_KEY, mode);
+    persistDeskViewMode(mode);
   }, [mode]);
+
+  // M22.5: `d`/`l`, registered globally in NavCluster so they work from any
+  // room or instrument, reach this already-mounted DeskPage (visible or the
+  // hidden background behind an overlay) through the bus. A `DeskPage` that
+  // isn't mounted yet (the reader is a full room, not an overlay, so
+  // there's nothing here to notify) picks the mode up instead from
+  // `loadDeskViewMode` above, which `emitDeskViewMode` persists to before
+  // this component ever mounts — see deskViewBus.ts.
+  useEffect(() => onDeskViewMode(setMode), []);
 
   useEffect(() => {
     fetch("/api/settings")

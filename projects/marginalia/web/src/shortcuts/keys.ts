@@ -16,6 +16,12 @@ export const SHORTCUT_KEYS = {
   settings: "s",
   reader: "r",
   scan: "q",
+  tasksTray: "t",
+  // M22.5 "d for the Desk, l for the Library": both land on "/" — the same
+  // route, DeskPage — but set its local view mode, so they need their own
+  // keys rather than reusing `reader`'s.
+  desk: "d",
+  list: "l",
   // M21: play/pause reuses prevPage/nextPage's own key for skip-sentence,
   // distinguished by shift (AUDIO.md: "space", "shift+←/→").
   playPause: " ",
