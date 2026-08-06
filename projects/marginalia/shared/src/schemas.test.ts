@@ -48,6 +48,26 @@ describe("schemas smoke test", () => {
         contextUsage: null,
         contextDepth: "full",
         contextChapters: [],
+        // M22.5 H: the byline the reader shows without a second round trip.
+        // Nullable, but required — a done event that omits it is a bug.
+        provenance: {
+          profileName: "Default",
+          provider: "anthropic",
+          model: "claude-opus-4-8",
+          endpointHost: null,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      ThreadStreamEventSchema.safeParse({
+        done: true,
+        messageId: "m1",
+        threadId: "t1",
+        contextNote: null,
+        contextUsage: null,
+        contextDepth: "full",
+        contextChapters: [],
+        provenance: null,
       }).success,
     ).toBe(true);
     expect(
@@ -55,16 +75,11 @@ describe("schemas smoke test", () => {
     ).toBe(true);
   });
 
-  it("requires numeric openaiContextTokens on settings", () => {
+  // M19 moved provider configuration out of Settings into provider *profiles*;
+  // M21 merged AudioSettingsSchema in. Settings is now "everything that isn't
+  // about which LLM answers what", plus the audio block.
+  it("parses settings carrying the merged audio block", () => {
     const result = SettingsSchema.safeParse({
-      provider: "anthropic",
-      anthropicModel: "claude-opus-4-8",
-      anthropicApiKey: "***",
-      claudeAgentModel: "claude-sonnet-5",
-      openaiBaseUrl: "",
-      openaiModel: "",
-      openaiApiKey: "",
-      openaiContextTokens: 32768,
       vaultPath: "",
       cursorStyle: "custom",
       cursorTrailEnabled: true,
@@ -75,10 +90,30 @@ describe("schemas smoke test", () => {
       scanCrtIntensity: 0.6,
       pageNumberMode: "off",
       readerPaneWidth: 0,
-      maxResponseTokens: 8192,
       digestTokenBudget: 0,
+      ttsEngine: "kokoro",
+      ttsModelPath: "/tmp/models",
+      audioDefaultVoice: "af_heart",
+      audioAutoTurnPages: true,
     });
     expect(result.success).toBe(true);
+  });
+
+  it("rejects settings missing the audio block", () => {
+    const result = SettingsSchema.safeParse({
+      vaultPath: "",
+      cursorStyle: "custom",
+      cursorTrailEnabled: true,
+      spreadMode: "single",
+      pageTransition: "slide",
+      readerMargin: "normal",
+      readerFontScale: 1,
+      scanCrtIntensity: 0.6,
+      pageNumberMode: "off",
+      readerPaneWidth: 0,
+      digestTokenBudget: 0,
+    });
+    expect(result.success).toBe(false);
   });
 
   it("parses a highlight with an empty note (M13 default) and rejects a missing one", () => {

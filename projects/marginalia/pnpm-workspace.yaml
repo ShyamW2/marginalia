@@ -6,6 +6,18 @@ packages:
 # Native modules pnpm 10 must be allowed to compile/relink on install.
 # Without this, better-sqlite3's build script is silently skipped and the
 # server crashes at startup with ERR_DLOPEN_FAILED / a missing bindings file.
+#
+# ⚠️ This list must live in exactly one place. pnpm does NOT merge it with a
+# `pnpm.onlyBuiltDependencies` field in package.json — whichever package.json
+# declares one *replaces* this list wholesale. Splitting the natives across
+# both files (2026-08-06) silently dropped better-sqlite3 and esbuild from the
+# allowed set. It survives a naive check because better-sqlite3 binds lazily:
+# `import('better-sqlite3')` still resolves, and only `new Database()` fails
+# with "Could not locate the bindings file". Add natives here, never there.
 onlyBuiltDependencies:
   - better-sqlite3
   - esbuild
+  # TTS stack (M21): kokoro-js → @huggingface/transformers → onnxruntime-node.
+  - onnxruntime-node
+  - protobufjs
+  - sharp

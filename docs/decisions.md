@@ -3,6 +3,69 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-06 — Rung 1 prep: the repo goes public under MIT
+
+SHIPPING.md's rung 1 stops being a shape and becomes work. The document ranked costs but
+deliberately chose nothing; this entry chooses.
+
+- **License: MIT.** SHIPPING.md's recommendation, taken. A dependency audit generated with
+  `pnpm licenses list --json` (not asserted from memory) found nothing that constrains it:
+  326 MIT, 30 ISC, 18 BSD-3, 17 Apache-2.0, and one copyleft — LGPL-3.0-or-later in
+  `@img/sharp-libvips-*`, transitive and not redistributed by a source repo. It becomes
+  load-bearing at rung 2, where an Electron bundle *would* redistribute the binary.
+- **The docs get published, including the AI-assisted process.** Also SHIPPING.md's
+  recommendation. Noted while confirming it: the choice was already partly made and easy
+  to miss — 83 of 126 commits carry `Co-Authored-By: Claude` trailers that GitHub renders
+  as co-authors. Published deliberately rather than discovered later.
+- **The Metamorphosis fixture is removed, not "checked".** SHIPPING.md flagged the
+  translation as unverified. It was verified and it failed: PG #5200 is the David Wyllie
+  translation, whose own metadata says `Copyrighted`, hosted by the translator's
+  permission — which is not ours to rely on. The title has no clean route: the Muir
+  translation is in copyright until 2029, Johnston's is non-commercial-only. Replaced with
+  `jekyll-and-hyde.epub` (PG #43, 1886, no translator, public domain in the USA).
+  **The blob is in history since M0 (`f4e7b9d`), so deleting the file is insufficient** —
+  the purge rides along with the commit-identity rewrite below, in one pass, before the
+  first push.
+- **Commit identity is rewritten, not just fixed going forward.** SHIPPING.md called the
+  rewrite optional. Making it public flips that: GitHub attributes by email, so all 126
+  commits authored `…@MacBook-Air.local` would attribute to nobody and miss the
+  contribution graph entirely. The security angle is the weaker one — an mDNS hostname is
+  not routable and is not a credential. Rewriting to
+  `212300859+ShyamW2@users.noreply.github.com` attributes without publishing an address,
+  and **the window closes at first push** because GitHub keeps force-pushed objects
+  reachable. Verified on a throwaway clone: the rewrite changes the email and every SHA
+  and nothing else — author *and* committer dates identical across all 126, HEAD tree hash
+  unchanged, all trailers intact.
+- **What the README is allowed to claim.** `claude-agent`, `codex-cli` and the whole TTS
+  stack have never run anywhere but the operator's machines, and a cold install skips
+  `onnxruntime-node`'s and `sharp`'s build scripts. The README states these as untested
+  rather than implying they work, and discloses that
+  `@anthropic-ai/claude-agent-sdk` is proprietary (`© Anthropic PBC. All rights
+  reserved.`) despite being a required runtime dependency. Rung 1's product is a repo a
+  stranger can trust, and an honest limitation costs less than a discovered one.
+
+**Found while checking, unrelated to publishing:** `pnpm test` was red on `main` and had
+been for a while — two stale assertions in `shared/src/schemas.test.ts` left by M21's
+audio merge and M22.5's `provenance` field. It stayed invisible because `pnpm -r test`
+bails on the first failing package, so 443 downstream tests never ran. Now
+`pnpm -r --no-bail test`. Recorded because the mechanism generalises: a suite that hides
+its own failures is worse than a slow one.
+
+**`onlyBuiltDependencies` must live in exactly one file.** Enabling the TTS natives by
+adding a `pnpm.onlyBuiltDependencies` block to `package.json` while
+`pnpm-workspace.yaml` already declared one did not merge the two lists — the
+package.json field *replaced* the yaml's, silently dropping `better-sqlite3` and
+`esbuild` from the allowed set. Two properties made this dangerous rather than merely
+wrong: it is invisible on a machine whose `node_modules` is already built, so it only
+breaks strangers; and it survives a naive check, because better-sqlite3 binds lazily —
+`import('better-sqlite3')` still resolves and only `new Database()` fails with "Could not
+locate the bindings file". Both lists now live in `pnpm-workspace.yaml` with a comment
+saying why, and the natives are verified against a **cold pnpm store with the
+side-effects cache disabled**, since a warm store restores build output that a stranger
+would have to generate. Exactly the rung-1 failure mode SHIPPING.md predicted: the
+two-machine setup produces silent `better-sqlite3` breakage and a stranger has nobody to
+diagnose it.
+
 ## 2026-08-04 — The revision pass (M22.5)
 
 Operator feedback after living with M20.5–M22: a list of small things, grouped here into one

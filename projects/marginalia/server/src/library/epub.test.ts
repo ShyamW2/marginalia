@@ -7,8 +7,13 @@ import { WORKSPACE_ROOT } from "../paths.js";
 const aliceBuffer = fs.readFileSync(
   path.join(WORKSPACE_ROOT, "fixtures", "alice-in-wonderland.epub"),
 );
-const metamorphosisBuffer = fs.readFileSync(
-  path.join(WORKSPACE_ROOT, "fixtures", "metamorphosis.epub"),
+// The second fixture is a *different* book on purpose — several tests below
+// only mean something across two distinct files. Both fixtures are Project
+// Gutenberg texts marked "Public domain in the USA" (SHIPPING.md rung 1
+// step 3); nothing here may use a fixture whose translation is still in
+// copyright.
+const jekyllBuffer = fs.readFileSync(
+  path.join(WORKSPACE_ROOT, "fixtures", "jekyll-and-hyde.epub"),
 );
 
 describe("extractEpub", () => {
@@ -35,11 +40,13 @@ describe("extractEpub", () => {
     expect(combined).toContain("White Rabbit");
   });
 
-  it("extracts title, author, and spine for Metamorphosis", () => {
-    const result = extractEpub(metamorphosisBuffer);
-    expect(result.title).toBe("Metamorphosis");
-    expect(result.author).toBe("Franz Kafka");
-    expect(result.spine).toHaveLength(5);
+  it("extracts title, author, and spine for Jekyll and Hyde", () => {
+    const result = extractEpub(jekyllBuffer);
+    // Lowercase "strange" is what the file's own dc:title says — asserting
+    // the metadata as published, not as we'd like it capitalised.
+    expect(result.title).toBe("The strange case of Dr. Jekyll and Mr. Hyde");
+    expect(result.author).toBe("Robert Louis Stevenson");
+    expect(result.spine).toHaveLength(13);
     // The cover page (spine item 0) is an image-only wrapper with no text.
     for (const item of result.spine.slice(1)) {
       expect(item.text.length).toBeGreaterThan(0);
@@ -53,19 +60,29 @@ describe("extractEpub", () => {
   });
 
   it("extracts chapter titles from the NCX, keyed by spine index, one per href", () => {
-    const result = extractEpub(metamorphosisBuffer);
-    // The real toc.ncx has 6 navPoints but only 4 distinct spine hrefs — two
-    // pairs (title/subtitle, and chapter III/the license) share an href via
-    // different #fragments, so the first navPoint's label wins each href.
+    const result = extractEpub(jekyllBuffer);
+    // The real toc.ncx has 13 navPoints but only 12 distinct spine hrefs:
+    // the title page and "Contents" share one href via different #fragments
+    // (#pgepubid00000 / #pgepubid00001), so the first navPoint's label wins
+    // that href and "Contents" never appears. That collision is the point of
+    // this test — a replacement fixture without one would not exercise it.
     expect(result.metadata.chapterTitles).toEqual({
-      "1": "Metamorphosis",
-      "2": "I",
-      "3": "II",
-      "4": "III",
+      "1": "The Strange Case Of Dr. Jekyll And Mr. Hyde",
+      "2": "STORY OF THE DOOR",
+      "3": "SEARCH FOR MR. HYDE",
+      "4": "DR. JEKYLL WAS QUITE AT EASE",
+      "5": "THE CAREW MURDER CASE",
+      "6": "INCIDENT OF THE LETTER",
+      "7": "INCIDENT OF DR. LANYON",
+      "8": "INCIDENT AT THE WINDOW",
+      "9": "THE LAST NIGHT",
+      "10": "DR. LANYON’S NARRATIVE",
+      "11": "HENRY JEKYLL’S FULL STATEMENT OF THE CASE",
+      "12": "THE FULL PROJECT GUTENBERG™ LICENSE",
     });
   });
 
-  it("Alice's real chapter titles resolve too, not just Metamorphosis's", () => {
+  it("Alice's real chapter titles resolve too, not just Jekyll and Hyde's", () => {
     const result = extractEpub(aliceBuffer);
     expect(result.metadata.chapterTitles).toBeDefined();
     expect(Object.keys(result.metadata.chapterTitles!).length).toBeGreaterThan(0);
@@ -78,10 +95,10 @@ describe("extractEpub", () => {
 
 describe("extractCoverImage", () => {
   const aliceFilePath = path.join(WORKSPACE_ROOT, "fixtures", "alice-in-wonderland.epub");
-  const metamorphosisFilePath = path.join(
+  const jekyllFilePath = path.join(
     WORKSPACE_ROOT,
     "fixtures",
-    "metamorphosis.epub",
+    "jekyll-and-hyde.epub",
   );
 
   it("reads the declared cover's real bytes out of the archive", () => {
@@ -98,16 +115,16 @@ describe("extractCoverImage", () => {
 
   it("is deterministic and file-specific across two different books", () => {
     const alice = extractEpub(aliceBuffer);
-    const metamorphosis = extractEpub(metamorphosisBuffer);
+    const jekyll = extractEpub(jekyllBuffer);
 
     const aliceCover = extractCoverImage(aliceFilePath, alice.metadata.coverHref!);
-    const metamorphosisCover = extractCoverImage(
-      metamorphosisFilePath,
-      metamorphosis.metadata.coverHref!,
+    const jekyllCover = extractCoverImage(
+      jekyllFilePath,
+      jekyll.metadata.coverHref!,
     );
 
     expect(aliceCover).toEqual(extractCoverImage(aliceFilePath, alice.metadata.coverHref!));
-    expect(aliceCover).not.toEqual(metamorphosisCover);
+    expect(aliceCover).not.toEqual(jekyllCover);
   });
 
   it("returns undefined for a cover path absent from the archive", () => {

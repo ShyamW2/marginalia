@@ -81,30 +81,57 @@ nobody to diagnose it.
 
 Logistics, in order:
 
-1. **Choose a license.** No license means "all rights reserved" — nobody may legally use
-   it, which is a decision made by default rather than on purpose. MIT if the goal is a
-   portfolio piece people can learn from; AGPL if you want to stop someone hosting it as
-   a product without sharing changes; "source-available, no license" only if you
-   genuinely want look-don't-touch. **Recommendation: MIT.** The realistic risk here is
-   obscurity, not exploitation.
-2. **Audit third-party licenses before publishing** — `epubjs`, `better-sqlite3`,
-   `express`, `motion`, `html2canvas`, the Anthropic SDKs. Do not assert their terms from
-   memory; generate the list (`pnpm licenses list`) and read it. A copyleft dependency
-   would constrain rung 1's license choice.
-3. **Confirm the fixtures are distributable.** `alice-in-wonderland.epub` and
-   `metamorphosis.epub` are the only book files ever committed. Carroll is public domain;
-   *Metamorphosis* is public domain in the original German and for pre-1930 translations,
-   but **the specific translation in that file has not been checked**. Check it or swap
-   it before the repo goes public.
-4. **Secrets history: verified clean (2026-07-30).** No `.env`, `.sqlite`, `.db` or key
-   file has ever been added in the 80-commit history; the only key-shaped strings are
-   `sk-ant-test` placeholders in `providers.test.ts`. `.gitignore` covers
+1. **Choose a license. — DONE 2026-08-06: MIT.** No license means "all rights reserved" —
+   nobody may legally use it, which is a decision made by default rather than on purpose.
+   MIT if the goal is a portfolio piece people can learn from; AGPL if you want to stop
+   someone hosting it as a product without sharing changes; "source-available, no license"
+   only if you genuinely want look-don't-touch. **MIT was chosen** — the realistic risk
+   here is obscurity, not exploitation. `LICENSE` is at the repo root.
+2. **Audit third-party licenses before publishing. — DONE 2026-08-06, nothing blocks MIT.**
+   Generated with `pnpm licenses list --json`, not asserted from memory: 326 MIT, 30 ISC,
+   18 BSD-3-Clause, 17 Apache-2.0, 7 BSD-2-Clause, plus singletons. The only copyleft is
+   **LGPL-3.0-or-later in `@img/sharp-libvips-*`** — transitive (under
+   `@huggingface/transformers`), unmodified, and not redistributed by a source repo, so it
+   is inert at rung 1. ⚠️ **It stops being inert at rung 2**, where an Electron bundle
+   *does* redistribute the binary and LGPL's relinking obligation attaches. Re-run the
+   audit there rather than trusting this line.
+3. ⚠️ **Fixtures: the check was run on 2026-08-06 and *failed*.** `metamorphosis.epub` was
+   the David Wyllie translation from Project Gutenberg #5200, whose own metadata reads
+   `<dc:rights>Copyrighted. Read the copyright notice inside this book for details.</dc:rights>`
+   and whose front matter says `*** This is a COPYRIGHTED Project Gutenberg eBook. ***`.
+   PG hosts it by the translator's permission; that permission does not extend to us.
+   **Metamorphosis is a dead end in every direction** — Wyllie is permission-only, the
+   Muir translation is in copyright until 1 January 2029 (Standard Ebooks lists it as
+   pending for exactly that reason), and Ian Johnston's is non-commercial-use-only.
+   **Replaced with `jekyll-and-hyde.epub`** (PG #43, Stevenson 1886, no translator,
+   `<dc:rights>Public domain in the USA.</dc:rights>`) — same provenance as the Alice
+   fixture. The swap is a code change, not a file move: `epub.test.ts` asserts real
+   parsed values, and its cover test structurally requires *two distinct books*.
+   The replacement was chosen partly because its NCX has the same 13-navPoints/12-hrefs
+   fragment collision the chapter-title test exists to prove; a fixture without one
+   would have silently gutted that test.
+   ⚠️ **Deleting the file is not sufficient.** The blob has been in history since M0
+   (`f4e7b9d`, 2026-07-13), so a public repo would still serve it via `git log`. The
+   purge must happen in the same history rewrite as step 5.
+4. **Secrets history: re-verified clean 2026-08-06** at `99bba6c`, 126 commits (was
+   2026-07-30 at 80 commits). No `.env`, `.sqlite`, `.db`, `.pem`, `.key` or credential
+   file has ever been added; a full `git log -p` scan for live key shapes
+   (`sk-ant-api`, `sk-proj-`, `ghp_`, `AKIA…`, PEM blocks) returns nothing; the only
+   key-shaped strings remain `sk-ant-test` placeholders in `providers.test.ts`. No
+   personal emails or home-directory paths in tracked files. `.gitignore` covers
    `projects/marginalia/data/` and `.env*`. **Re-run this check immediately before making
    the repo public** — it is cheap and the failure is unrecoverable.
-5. **Commit identity.** Every commit is authored as
-   `shyamwijayakumaran@MacBook-Air.local`. Publishing broadcasts a machine name and an
-   address that will not receive mail. Set a real `user.email` before going public
-   (rewriting history is optional; future commits matter more).
+5. **Commit identity — and the rewrite window closes at first push.** All 126 commits are
+   authored `shyamwijayakumaran@MacBook-Air.local`. The exposure is mild (an mDNS
+   hostname is not routable and not a credential), but the *attribution* cost is not:
+   GitHub matches commits to accounts by email, so none of the 126 would attribute to
+   the account, carry an avatar, or land on the contribution graph. Rewrite to
+   `212300859+ShyamW2@users.noreply.github.com`, which attributes without publishing a
+   real address. Verified on a throwaway clone 2026-08-06: an `--env-filter` rewrite
+   changes the email and every SHA, and changes **nothing else** — all 126 author *and*
+   committer dates identical, HEAD's tree hash identical (`baa043d…`), all 83
+   `Co-Authored-By: Claude` trailers intact. Do it **before the first push**: GitHub keeps
+   force-pushed objects reachable forever. Fold step 3's blob purge into the same pass.
 6. **A README that is a runbook, not a pitch.** Node major, pnpm version, the
    `onlyBuiltDependencies` trap, `pnpm dev`, where `data/` appears, how to point it at a
    provider, and how to import the fixture. The existing docs are written for *sessions
@@ -113,12 +140,45 @@ Logistics, in order:
    `SONNET_PROMPT.md` and `decisions.md` make the AI-assisted process completely legible,
    including the operator-feedback quotes. That is unusually honest and arguably the most
    interesting thing in the repo — but it is a *choice*, and it should be a conscious one.
-   **Recommendation: publish them.** They are the differentiator.
+   **Recommendation: publish them.** They are the differentiator. Note that the choice is
+   already half-made in a place that is easy to miss: 83 of 126 commits carry
+   `Co-Authored-By: Claude <model>` trailers, which GitHub renders as co-authors. Publish
+   deliberately or strip them in the step 5 rewrite; do not discover them afterwards.
+8. **Disclose the proprietary dependency.** `@anthropic-ai/claude-agent-sdk` ships
+   `LICENSE.md` reading `© Anthropic PBC. All rights reserved.` — it is not open source,
+   and it is a *required* runtime dependency of `server`. This does not constrain MIT on
+   our own code, but a stranger running `pnpm install` acquires a proprietary package and
+   is entitled to know before they do. Say so in the README rather than in a footnote.
+9. **State what is unverified rather than implying it works.** Three subsystems have
+   never run on a machine that is not the operator's: the `claude-agent` provider (needs
+   a local Claude Code login), `codex-cli` (shells out to a local binary), and the TTS
+   stack. A cold `pnpm install` prints `Ignored build scripts: … onnxruntime-node …
+   sharp` because `onlyBuiltDependencies` lists only `better-sqlite3` and `esbuild`, and
+   the audio tests pass without those natives because they never touch the real ONNX
+   path — so "audio works elsewhere" is *unproven*, not proven. Kokoro also downloads
+   model weights into `data/models` on first use, an undocumented first-run network and
+   disk cost. The README describes these as untested-elsewhere until someone tests them.
+10. **The suite must be green at the moment of publication.** On 2026-08-06 `pnpm test`
+   was **red on main** — two stale assertions in `shared/src/schemas.test.ts` left behind
+   by M21 and M22.5 — and had been for some time, because `pnpm -r test` bailed on the
+   first failing package and hid 443 downstream tests. Both are fixed (the script is now
+   `pnpm -r --no-bail test`), but the lesson generalises: a red suite is the first thing
+   a stranger sees, and rule 6's "re-run at the moment of publication" applies to
+   `pnpm test` exactly as it does to the secrets and license checks.
 
 **Acceptance criterion (can fail):** a person who has never seen the repo, on a machine
 with a different Node major, gets from `git clone` to a rendered page of *Alice* in under
 15 minutes using only `README.md` — verified by actually watching someone do it, not by
 re-reading the README.
+
+**Half of that criterion was executed on 2026-08-06** and passed: a clone into a scratch
+directory on Node 24 / pnpm 10 ran `pnpm install` (with `better-sqlite3` compiling
+correctly), `pnpm build`, 264 server + 179 web tests, then booted
+`NODE_ENV=production node server/dist/index.js`, served the built SPA, imported
+*Alice* over the API and wrote `data/library/` — in about two minutes, not fifteen.
+**The other half cannot be simulated.** The machine half proves the install path; only a
+real person proves the README, and no README existed when this was run. Do not read the
+green result as the criterion being met.
 
 **What rung 1 does not give you:** users. A repo is distribution to people who already
 run dev tooling. If the goal is "my friend reads a book in this", skip to rung 2.
