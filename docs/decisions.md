@@ -23,7 +23,7 @@ deliberately chose nothing; this entry chooses.
   permission — which is not ours to rely on. The title has no clean route: the Muir
   translation is in copyright until 2029, Johnston's is non-commercial-only. Replaced with
   `jekyll-and-hyde.epub` (PG #43, 1886, no translator, public domain in the USA).
-  **The blob is in history since M0 (`f4e7b9d`), so deleting the file is insufficient** —
+  **The blob is in history since M0 (`12547f5`), so deleting the file is insufficient** —
   the purge rides along with the commit-identity rewrite below, in one pass, before the
   first push.
 - **Commit identity is rewritten, not just fixed going forward.** SHIPPING.md called the

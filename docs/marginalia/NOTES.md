@@ -233,7 +233,7 @@ correctly switched to the surviving highlight. Full suite 81/81
 (`pnpm test`), `pnpm build` clean. Also fixed an unrelated pre-existing test
 break found while running the suite: `shared/schemas.test.ts`'s smoke test
 never got updated with `lastReadAt` when the M7 library-polish commit
-(`e1239b3`) added that field to `ResourceSummarySchema`.
+(`f991ddb`) added that field to `ResourceSummarySchema`.
 
 **Next task:** dark mode audit (M7, next unchecked box in TASKS.md).
 
@@ -621,7 +621,7 @@ directly against fabricated `ReportedUsage`.
 > subsequently run, verified, and committed as M1. Kept for history only.
 
 Picking up in a fresh chat window. Everything below is **uncommitted**, on top
-of commit `f4e7b9d` (M0). The session was interrupted mid-task, right before
+of commit `12547f5` (M0). The session was interrupted mid-task, right before
 running the server test suite for the first time against this new code — so
 **none of it has been run or verified yet**. Do that first.
 
@@ -3409,7 +3409,7 @@ before touching anything, per `docs/REFACTORING.md`'s method — the 2026-07-29 
 TASKS.md quotes (1,865 lines / 64 hooks) are now stale; M19.6 round 4 and all of M19.7
 landed on top of them.
 
-**Before table (2026-08-01, `git log` at `aa4b3fa`):**
+**Before table (2026-08-01, `git log` at `0dcd829`):**
 
 | Metric | 2026-07-29 (TASKS.md) | 2026-08-01 (actual, before) |
 |---|---|---|

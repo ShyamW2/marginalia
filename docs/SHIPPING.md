@@ -110,10 +110,12 @@ Logistics, in order:
    The replacement was chosen partly because its NCX has the same 13-navPoints/12-hrefs
    fragment collision the chapter-title test exists to prove; a fixture without one
    would have silently gutted that test.
-   ⚠️ **Deleting the file is not sufficient.** The blob has been in history since M0
-   (`f4e7b9d`, 2026-07-13), so a public repo would still serve it via `git log`. The
-   purge must happen in the same history rewrite as step 5.
-4. **Secrets history: re-verified clean 2026-08-06** at `99bba6c`, 126 commits (was
+   ⚠️ **Deleting the file is not sufficient.** The blob had been in history since M0
+   (`12547f5`, 2026-07-13), so a public repo would still have served it via `git log`.
+   **Purged 2026-08-06** in the same rewrite as step 5, via `--index-filter`. Verified:
+   zero commits on `main` reference the path and the blob is unreachable from `main`.
+   It survives only under `refs/original/`, which is local and is never pushed.
+4. **Secrets history: re-verified clean 2026-08-06** at `200b2d5`, 126 commits (was
    2026-07-30 at 80 commits). No `.env`, `.sqlite`, `.db`, `.pem`, `.key` or credential
    file has ever been added; a full `git log -p` scan for live key shapes
    (`sk-ant-api`, `sk-proj-`, `ghp_`, `AKIA…`, PEM blocks) returns nothing; the only
@@ -121,17 +123,21 @@ Logistics, in order:
    personal emails or home-directory paths in tracked files. `.gitignore` covers
    `projects/marginalia/data/` and `.env*`. **Re-run this check immediately before making
    the repo public** — it is cheap and the failure is unrecoverable.
-5. **Commit identity — and the rewrite window closes at first push.** All 126 commits are
-   authored `shyamwijayakumaran@MacBook-Air.local`. The exposure is mild (an mDNS
-   hostname is not routable and not a credential), but the *attribution* cost is not:
-   GitHub matches commits to accounts by email, so none of the 126 would attribute to
-   the account, carry an avatar, or land on the contribution graph. Rewrite to
+5. **Commit identity. — DONE 2026-08-06, before any push.** All 127 commits were authored
+   `shyamwijayakumaran@MacBook-Air.local`. The exposure was mild (an mDNS hostname is not
+   routable and is not a credential); the *attribution* cost was the real one, since
+   GitHub matches commits to accounts by email and none of them would have attributed to
+   the account, carried an avatar, or landed on the contribution graph. Rewritten to
    `212300859+ShyamW2@users.noreply.github.com`, which attributes without publishing a
-   real address. Verified on a throwaway clone 2026-08-06: an `--env-filter` rewrite
-   changes the email and every SHA, and changes **nothing else** — all 126 author *and*
-   committer dates identical, HEAD's tree hash identical (`baa043d…`), all 83
-   `Co-Authored-By: Claude` trailers intact. Do it **before the first push**: GitHub keeps
-   force-pushed objects reachable forever. Fold step 3's blob purge into the same pass.
+   real address. **Verified after the fact, not just before:** 127/127 commits carry the
+   new address, all 127 author dates and subjects are byte-identical to the pre-rewrite
+   log, the count is unchanged, and all 84 `Co-Authored-By: Claude` trailers survive.
+   Timing mattered — GitHub keeps force-pushed objects reachable forever, so this was
+   only free while the repo had never been pushed.
+   ⚠️ **Rewriting invalidates every SHA, including the ones quoted in these docs.** Four
+   commit references across `decisions.md`, `SHIPPING.md` and `NOTES.md` were remapped by
+   matching author-date + subject across the rewrite. Any future rewrite must do the same
+   sweep, or the docs quietly start citing commits that do not exist.
 6. **A README that is a runbook, not a pitch.** Node major, pnpm version, the
    `onlyBuiltDependencies` trap, `pnpm dev`, where `data/` appears, how to point it at a
    provider, and how to import the fixture. The existing docs are written for *sessions
