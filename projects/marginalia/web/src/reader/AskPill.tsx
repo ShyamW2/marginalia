@@ -2,6 +2,8 @@ import { motion, useReducedMotion } from "motion/react";
 import type { HighlightKind } from "@marginalia/shared";
 import { HIGHLIGHT_KINDS, KIND_LABELS } from "./highlightKinds.js";
 import { Button } from "../controls/Button.js";
+import { IconButton } from "../controls/IconButton.js";
+import { AudioTransportIcon } from "./AudioTransportIcon.js";
 import styles from "./AskPill.module.css";
 
 interface AskPillProps {
@@ -9,16 +11,20 @@ interface AskPillProps {
   top: number;
   onPickKind: (kind: HighlightKind) => void;
   onAsk: () => void;
+  /** M22.6 C "'Play from here' joins the selection pill": starts listening
+   * at the selected sentence rather than the section's first. */
+  onPlayFromHere: () => void;
 }
 
 /**
  * The selection pill: four kind dots (mark the passage as rose/sage/
- * honey/slate, no thread opened) plus "Ask" (always creates a slate
- * highlight and opens the thread panel — docs/decisions.md 2026-07-19).
- * Pops in with a spring (DESIGN.md: springs for anything the user
- * "touches") — a plain fade under reduced motion.
+ * honey/slate, no thread opened), "Play from here" (starts listening at
+ * this sentence), and "Ask" (always creates a slate highlight and opens the
+ * thread panel — docs/decisions.md 2026-07-19). Pops in with a spring
+ * (DESIGN.md: springs for anything the user "touches") — a plain fade under
+ * reduced motion.
  */
-export function AskPill({ left, top, onPickKind, onAsk }: AskPillProps) {
+export function AskPill({ left, top, onPickKind, onAsk, onPlayFromHere }: AskPillProps) {
   const reducedMotion = useReducedMotion();
 
   return (
@@ -49,6 +55,13 @@ export function AskPill({ left, top, onPickKind, onAsk }: AskPillProps) {
             onClick={() => onPickKind(kind)}
           />
         ))}
+        <IconButton
+          icon={<AudioTransportIcon kind="play-from" size={14} />}
+          label="Play from here"
+          size="sm"
+          className={styles.playFromButton}
+          onClick={onPlayFromHere}
+        />
         <Button variant="solid" size="sm" className={styles.askButton} onClick={onAsk}>
           Ask
         </Button>

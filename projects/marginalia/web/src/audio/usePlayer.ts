@@ -25,6 +25,11 @@ export interface AudioPlayer {
   /** Begins listening at `spineIndex`, sentence 0 — used by "Listen" entry
    * points and by skip-chapter. */
   startListening: (spineIndex: number) => void;
+  /** Begins listening at `spineIndex`, a specific sentence — M22.6 C's
+   * "play from here" pill action. Same `loadAndPlay` race as
+   * `startListening` (an unrendered section still starts in seconds), just
+   * without the sentence-0 assumption. */
+  playFrom: (spineIndex: number, sentenceIndex: number) => void;
   pause: () => void;
   resume: () => void;
   toggle: () => void;
@@ -409,6 +414,10 @@ export function usePlayer({ resourceId, spineIndices, initialSpeed }: UsePlayerO
     loadAndPlayRef.current(spineIndex, 0);
   }, []);
 
+  const playFrom = useCallback((spineIndex: number, sentenceIndex: number) => {
+    loadAndPlayRef.current(spineIndex, sentenceIndex);
+  }, []);
+
   const pause = useCallback(() => {
     audioElRef.current?.pause();
     setStatus((s) => (s === "playing" || s === "loading" ? "paused" : s));
@@ -480,6 +489,7 @@ export function usePlayer({ resourceId, spineIndices, initialSpeed }: UsePlayerO
     currentSegment,
     speed,
     startListening,
+    playFrom,
     pause,
     resume,
     toggle,

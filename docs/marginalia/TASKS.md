@@ -1178,7 +1178,7 @@ Fix all three; any one alone still reads as wrong.
 
 #### C — The voice you can walk away from
 
-- [ ] **Traversal during playback stops being overridden.** `ReaderView.tsx:984-1006`
+- [x] **Traversal during playback stops being overridden.** `ReaderView.tsx:984-1006`
       drags the view back to the sounding section whenever the two differ. Introduce an
       explicit **detached** state: once the reader navigates deliberately (chapter nav,
       TOC, page turns past a section boundary), the follow-the-voice jump stops firing
@@ -1193,16 +1193,16 @@ Fix all three; any one alone still reads as wrong.
       _Acceptance: play in chapter 1, jump to chapter 3 from the chapter nav, and the view
       stays in chapter 3 with audio still sounding chapter 1; with the setting off,
       nothing about the detached state changes; re-engaging returns to the voice._
-- [ ] **A "back to the voice" control sits with the transport**, visible only while
+- [x] **A "back to the voice" control sits with the transport**, visible only while
       detached, and returns the view to the sounding sentence.
       _Acceptance: the control appears only when view and voice have diverged, and one
       press lands on the playing sentence with the tint restored._
-- [ ] **Leaving playback returns to the reader, not to the Desk.** Today the only exit
+- [x] **Leaving playback returns to the reader, not to the Desk.** Today the only exit
       from the listening view is out to the Desk and back into the book — which loses the
       reading position the operator was already looking at.
       _Acceptance: exiting playback from anywhere in the book leaves you on the page you
       were reading, in the same book, with no round trip through `/`._
-- [ ] **"Play from here" joins the selection pill.** An arrow-into-play icon in
+- [x] **"Play from here" joins the selection pill.** An arrow-into-play icon in
       `AskPill.tsx`, starting playback at the selected sentence rather than the section's
       first. The machinery exists: `loadAndPlay(spineIndex, sentenceIndex)` already takes
       a sentence index, the manifest carries `charStart`/`charEnd` per segment, and

@@ -49,7 +49,8 @@ import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
 import { audioTintStyle, hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
 import { usePlayer, type AudioPlayer } from "../audio/usePlayer.js";
-import { updateAudioState } from "../audio/audioApi.js";
+import { fetchSectionManifest, updateAudioState } from "../audio/audioApi.js";
+import { resolveSegmentIndexForOffset } from "../audio/segmentLookup.js";
 import { CastingModal } from "../audio/CastingModal.js";
 import { captureOverlayOrigin, type OverlayOrigin } from "../controls/overlayOrigin.js";
 import { cursorPastPageText } from "./pageTextEdge.js";
@@ -657,6 +658,20 @@ export function ReaderView({
   useEffect(() => {
     audioAutoTurnPagesRef.current = audioAutoTurnPages;
   }, [audioAutoTurnPages]);
+  // M22.6 C "the voice you can walk away from": true once the reader has
+  // traversed away from the sounding section on purpose (chapter nav, TOC,
+  // or a manual page turn across a section boundary — see handleRelocated's
+  // own comment on how those are told apart from the follow-the-voice jump
+  // correcting itself). While true, the tint effect's cross-section jump
+  // stays put; audio keeps playing regardless. Landing back on the sounding
+  // section — by the "back to the voice" control or by paging there again —
+  // clears it.
+  const [detached, setDetached] = useState(false);
+  // True only for the span of the tint effect's own corrective
+  // `turnPageSlideToSectionGuarded` call — lets `handleRelocated` tell "the
+  // follow jump just landed here" apart from "the reader just navigated
+  // here", which is what it's actually watching for (see below).
+  const followJumpActiveRef = useRef(false);
   // M14: persisted, but must take effect live while this component stays
   // mounted underneath the settings modal (M11) — settingsBus is how a
   // save reaches this component without a reload or a remount.
@@ -1005,9 +1020,18 @@ export function ReaderView({
       // reported "keeps jumping forward and back constantly" — each step
       // re-triggered this effect, racing a concurrent manual turn (see that
       // helper's own comment).
+      //
+      // M22.6 C: `detached` gates this specific jump, and only this one —
+      // the reader asked to look elsewhere while the voice keeps going. The
+      // tint still clears above regardless (never lie about where the voice
+      // actually is), and `handleRelocated` is what flips `detached` back
+      // off once the view and the voice agree again.
       setAudioTint(null);
-      if (audioAutoTurnPagesRef.current) {
-        void turnPageSlideToSectionGuarded(segment.spineIndex);
+      if (audioAutoTurnPagesRef.current && !detached) {
+        followJumpActiveRef.current = true;
+        void turnPageSlideToSectionGuarded(segment.spineIndex).finally(() => {
+          followJumpActiveRef.current = false;
+        });
       }
       return;
     }
@@ -1060,8 +1084,13 @@ export function ReaderView({
         if (!visible) void turnPageSlideGuarded("next");
       }
     }
+    // `detached` is a real dependency (not just read through a ref, unlike
+    // audioAutoTurnPagesRef): re-engaging must re-run this effect so the
+    // corrective jump above actually fires the moment it flips back to
+    // false, rather than waiting on the next unrelated segment/turnTick
+    // change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [player.currentSegment, turnTick]);
+  }, [player.currentSegment, turnTick, detached]);
 
   // AUDIO.md: "making a selection, opening a thread, or opening the
   // annotations overview pauses [playback]; it does not stop. You cannot
@@ -1073,6 +1102,12 @@ export function ReaderView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingSelection, expandedThread, showAnnotations]);
+
+  // M22.6 C: a stopped session has no voice left to be detached from —
+  // clears the leash so the next "Listen" starts fresh and following.
+  useEffect(() => {
+    if (player.status === "idle") setDetached(false);
+  }, [player.status]);
 
   // M21 "Listen" entry point: once the book has actually opened (a real
   // spine index is known), start listening from wherever it opened — the
@@ -1454,6 +1489,18 @@ export function ReaderView({
       // turned" even *within* the same spine section (currentSpineIndex
       // alone wouldn't change) — a plain counter is the cheapest signal.
       setTurnTick((t) => t + 1);
+
+      // M22.6 C: every relocation — a manual turn, a chapter-nav/TOC jump,
+      // or the follow-the-voice effect's own corrective jump — comes through
+      // here, so this is the one place that can tell them apart. Landing
+      // exactly on the sounding section re-engages (however it happened);
+      // landing anywhere else *without* the follow jump being the one doing
+      // it means the reader just navigated away on purpose.
+      const sounding = playerRef.current.currentSegment;
+      if (sounding) {
+        if (location.start.index === sounding.spineIndex) setDetached(false);
+        else if (!followJumpActiveRef.current) setDetached(true);
+      }
       const pct = location.start.percentage;
 
       const usedPageBasedPercent = publishPageNumbers(location.start.index);
@@ -2082,6 +2129,22 @@ export function ReaderView({
     }
   }
 
+  // M22.6 C "a back to the voice control sits with the transport": clearing
+  // `detached` alone re-runs the tint effect (it's a real dependency there),
+  // which is what actually performs the jump — this just asks for it.
+  function handleReturnToVoice() {
+    setDetached(false);
+  }
+
+  // M22.6 C "leaving playback returns to the reader, not the Desk": today's
+  // only way to end a listening session is to leave the book entirely and
+  // come back — a round trip through `/` whose debounced position-save can
+  // lose whatever page was on screen. A real stop, wired to the transport,
+  // ends the session without navigating anywhere.
+  function handleStopListening() {
+    player.stop();
+  }
+
   const SPEED_STEPS = [0.75, 1, 1.25, 1.5, 2];
   function handleCycleSpeed() {
     const i = SPEED_STEPS.indexOf(player.speed);
@@ -2143,6 +2206,26 @@ export function ReaderView({
 
   function handleAsk() {
     void createHighlightFromSelection("slate", true);
+  }
+
+  // M22.6 C "'Play from here' joins the selection pill": starts listening
+  // at the selected sentence instead of the section's first. Doesn't create
+  // a highlight — this is a playback action, not a marking one — so it
+  // clears the pill itself rather than routing through
+  // createHighlightFromSelection.
+  async function handlePlayFromSelection() {
+    if (!pendingSelection) return;
+    const { spineIndex, contents, exact, prefix, suffix } = pendingSelection;
+    const sectionText = contents.document.body.textContent ?? "";
+    const match = findAnchorInText(sectionText, { exact, prefix, suffix });
+    let sentenceIndex = 0;
+    if (match) {
+      const manifest = await fetchSectionManifest(resourceId, spineIndex);
+      if (manifest) sentenceIndex = resolveSegmentIndexForOffset(sectionText, match.start, manifest.segments);
+    }
+    player.playFrom(spineIndex, sentenceIndex);
+    contents.window.getSelection()?.removeAllRanges();
+    setPendingSelection(null);
   }
 
   async function handleDeleteHighlight(highlight: HighlightWithThread) {
@@ -2397,6 +2480,16 @@ export function ReaderView({
               disabled={player.status === "idle"}
               onClick={() => player.skipSentence(1)}
             />
+            {/* M22.6 C: only ever shown while the view has actually
+                wandered from the sounding section — pressing it is the
+                other half of what put it there. */}
+            {player.status !== "idle" && detached && (
+              <IconButton
+                icon={<AudioTransportIcon kind="locate" />}
+                label="Back to the voice"
+                onClick={handleReturnToVoice}
+              />
+            )}
             {player.status !== "idle" && (
               <Button
                 variant="ghost"
@@ -2407,6 +2500,13 @@ export function ReaderView({
               >
                 {player.speed}×
               </Button>
+            )}
+            {player.status !== "idle" && (
+              <IconButton
+                icon={<AudioTransportIcon kind="stop" />}
+                label="Stop listening"
+                onClick={handleStopListening}
+              />
             )}
             {player.status === "error" && (
               <span className={styles.audioError} role="status">
@@ -2539,6 +2639,7 @@ export function ReaderView({
                 top={pendingSelection.top}
                 onPickKind={handlePickKind}
                 onAsk={handleAsk}
+                onPlayFromHere={() => void handlePlayFromSelection()}
               />
             )}
           </AnimatePresence>

@@ -54,6 +54,11 @@
   background: var(--kind-slate);
 }
 
+.playFromButton {
+  margin-left: 0.15rem;
+  min-height: 0;
+}
+
 /* Sizing/colour/focus all come from Button's own solid variant now (M19.7) —
    only the pill's own spacing is left to override. */
 .askButton {
