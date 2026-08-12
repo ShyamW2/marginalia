@@ -248,7 +248,7 @@ page *is* mirror-reversed when you fold the sheet toward you; only the sampled b
 So this is a capture-and-sampling job, it is independent of (c) and (d), and it can be done
 without ever revisiting the fold's shape. Ruling and the two open ⚠️s (capture timing, and
 re-tuning `SHOW_THROUGH`/`backOfSheet`/`sheenScale` against real content) are in decisions.md
-2026-08-03 "sign-off"; the work is TASKS.md M25.
+2026-08-03 "sign-off"; the work is TASKS.md M27 (M25 before the 2026-08-12 renumbering).
 
 ---
 

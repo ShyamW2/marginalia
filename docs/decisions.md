@@ -79,8 +79,9 @@ corrections are recorded *first* — they are the reason several tasks are small
    that is the decision. **What it costs, stated once:** a real dependency and a new
    rendering seam; and every one of these surfaces now needs its own reduced-motion path and
    accessibility fallback built deliberately, where CSS 3D would have degraded on its own.
-   M25's approval of WebGL for the page fold is the precedent that makes this consistent
-   rather than novel — but the two renderers must not become two ad-hoc call sites.
+   M27's approval of WebGL for the page fold (M25 before ruling 11's renumbering) is the
+   precedent that makes this consistent rather than novel — but the two renderers must
+   not become two ad-hoc call sites.
 6. **The 3D shelf is a third Desk view mode, not a replacement for the list.** DESIGN.md:
    "Keyboard/screen-reader path *is* the list", and `LibraryGrid` is the Desk's only such
    path. The shelf is pure enhancement on its own key; `l` keeps working and keeps its
@@ -97,21 +98,45 @@ corrections are recorded *first* — they are the reason several tasks are small
    DESIGN.md's ~400ms bound governs *input blocking*, and this overlay is `pointer-events:
    none` throughout, so lengthening it breaks no rule. Escape-cancellability and the
    `contentReady` gate are what actually constrain it, and both stay.
-9. **Order: fixes, then the 3D arc, then search.** M22.6 (below) is inserted before M23;
-   the 3D arc and the reader-search design pass are **appended** as M26 and M27 rather than
-   renumbered in, per OPUS.md's renumbering rule. The operator's intended sequence is
-   **M22.6 → M26 → M27**, with the pre-existing M23 (web search) and M24 (Codex CLI)
-   deferred behind them. Recorded here because "work strictly in order" would otherwise
-   imply the opposite.
+9. **Order: fixes, then the 3D arc, then search.** M22.6 (below) is inserted before the
+   3D arc; the 3D arc and the reader-search design pass were originally **appended** as
+   M26 and M27 rather than renumbered in, per OPUS.md's renumbering rule, with the
+   pre-existing M23 (web search) and M24 (Codex CLI) deferred behind them. The operator's
+   intended sequence — **M22.6 → the 3D arc → the search design pass**, with web search
+   and Codex CLI deferred behind both — is unchanged; what changed is ruling 11 below,
+   which actually carries out the renumbering this ruling had deliberately deferred.
+   Recorded here because "work strictly in order" would otherwise imply the opposite of
+   what shipped first.
 10. **Reader search gets a design pass before it gets tasks.** There is no search endpoint
     or search UI anywhere in the codebase today — this is genuinely new, and the operator
     said as much ("needs further conceptualisation"). The framing to design against, and the
     reason the Scan feels less useful than intended: **the Scan is a spatial instrument
     (where a thing sits in the book); search is a retrieval one.** The working hypothesis for
-    M27 is that Cmd+F is a true in-book text find that never leaves the reader, and that a
-    thematic search *hands off into the Scan as a filter* rather than growing a competing
-    result list — which would also give the Scan the job it is currently missing. Not
-    settled; that is what M27 is for.
+    M24 (search design pass; M27 before ruling 11's renumbering) is that Cmd+F is a true
+    in-book text find that never leaves the reader, and that a thematic search *hands off
+    into the Scan as a filter* rather than growing a competing result list — which would
+    also give the Scan the job it is currently missing. Not settled; that is what M24 is
+    for.
+11. **Milestones M23–M27 are renumbered into the operator's actual working order**, later
+    the same day, on the operator's explicit request rather than left appended (which
+    ruling 9 had chosen specifically to avoid this cost). Per OPUS.md's renumbering rule
+    ("reorder only for a real dependency, and when you do: leave a mapping table, and fix
+    every cross-reference in the same pass") — the real dependency is ruling 9 itself: the
+    file no longer reads in the order it is worked unless the numbers match. Mapping:
+
+    | Old | New | Milestone |
+    |---|---|---|
+    | M26 | **M23** | The rooms become solid (three.js) |
+    | M27 | **M24** | Search, designed before it is built |
+    | M23 | **M25** | Web search |
+    | M24 | **M26** | Other (incorporating other LLMs / Codex CLI) |
+    | M25 | **M27** | The paper fold, finished (parked) |
+
+    Applied in TASKS.md, TASKS_DONE.md, CLAUDE.md and PAGE_CURL.md — the five documents
+    OPUS.md's rule warns about, SONNET_PROMPT.md included by inspection (no milestone
+    numbers in this range appear there). Entries in this log dated before 2026-08-12 keep
+    their original numbers as written — they describe what was true when they were
+    written — and should be read against the table above rather than edited to match.
 
 ## 2026-08-06 — Rung 1 prep: the repo goes public under MIT
 

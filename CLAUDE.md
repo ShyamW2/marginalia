@@ -22,7 +22,8 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/SONNET_PROMPT.md` — kickoff prompt + operator notes for implementation sessions
 - `docs/marginalia/M20_STEP4_PROMPT.md` — the kickoff prompt that ran the over-the-spine /
   WebGL design session on 2026-08-03. **Spent** — its question is answered (decisions.md
-  2026-08-03 step 4) and the work it opened is now TASKS.md **M25**, parked. Kept as the
+  2026-08-03 step 4) and the work it opened is now TASKS.md **M27** (M25 at the time this
+  note was written; renumbered 2026-08-12, see decisions.md), parked. Kept as the
   worked example of a design session that opens with a measurement gate; that gate found
   that the fold's own guard had been misreading it twice over.
 - `docs/marginalia/NOTES.md` — running log of spec gaps, friction, blockers (create on first use)
@@ -79,9 +80,9 @@ doc), never by drift.
    Kokoro in-process via ONNX — no cloud TTS, no Python sidecar. A more expressive
    GPU engine later is a second implementation, not new call sites.
 10. **Local-first, with one named exception per cloud dependency.** The LLM endpoint was
-   the only one. Web search (M23) is the second — permitted per-provider, **off by
-   default, never silently on**. Any further exception is a decisions.md entry, not a
-   pull request.
+   the only one. Web search (M25, was M23 before the 2026-08-12 renumbering) is the
+   second — permitted per-provider, **off by default, never silently on**. Any further
+   exception is a decisions.md entry, not a pull request.
 11. **The model never returns positions.** An extension of decision 2, learned at
    casting: the LLM returns *text* (a quoted string, a concept name) and code locates
    it. Never ask a model for char offsets, indices, or counts and then trust them.
@@ -96,14 +97,16 @@ doc), never by drift.
    Annotations are instruments you put *on* what you're in — popups over a background
    location, keeping their real routes. "No fourth room" still holds; an instrument is
    not a room. The cost was the airlock's full-screen form, recorded in DESIGN.md.
-14. **One 3D substrate, behind one seam** (2026-08-12, M26). The Desk, the bookshelf, the
+14. **One 3D substrate, behind one seam** (2026-08-12, M23 — decided as M26 that same
+   day, renumbered to M23 in the same-day reorder that also moved this milestone ahead of
+   web search and Codex CLI; see decisions.md). The Desk, the bookshelf, the
    turntable and the book opening are **three.js / React Three Fiber**, sharing a single
    renderer, canvas lifecycle and book asset — not four independent 3D implementations, and
    not a mix of CSS 3D and WebGL across surfaces that sit next to each other. No three.js
    type leaks past that seam. The cost was accepted with eyes open: WebGL does not degrade
    on its own, so **every 3D surface owes a deliberate reduced-motion path and an
    accessibility fallback**, and those are acceptance criteria rather than polish. The
-   page fold's own WebGL renderer (M25) is the precedent that makes this consistent; the
+   page fold's own WebGL renderer (M27, was M25) is the precedent that makes this consistent; the
    two must not become two ad-hoc call sites. *A CSS-3D-first alternative was recommended
    and rejected — see decisions.md 2026-08-12 for the reasoning on both sides.*
 15. **The list view is the library's accessibility floor** (2026-08-12, restating
@@ -136,7 +139,7 @@ doc), never by drift.
   (zod). A parse failure is a handled state, never a crash.
 - **Local-first.** Everything — library, annotations, vault, TTS — is files/SQLite on
   this machine and survives offline. Cloud dependencies are enumerated, not assumed:
-  the LLM endpoint, and web search (M23, off by default). See settled decision 10.
+  the LLM endpoint, and web search (M25, off by default). See settled decision 10.
 - **Boring core, expressive surface.** Server code stays plain and obvious; spend the
   creativity budget on the UI.
 

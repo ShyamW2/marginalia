@@ -5,614 +5,6 @@ each task (small, focused commits). Each milestone ends with a **Verify** step �
 for real (run the app, click the thing) before moving on; if verification fails, fix
 before proceeding. Rules of engagement: docs/marginalia/SONNET_PROMPT.md.
 
-### M20 — The paper fold (Apple Books curl)
-
-_(Carried over unchanged — was M15 in the v1.6 pass, then M16 in v1.7.)_
-
-The hardest item; isolated so it can take the time it needs. **Read the 2026-07-20
-decisions entry first** — the geometry is specified there and is not open for
-re-derivation.
-
-- [x] **Fold geometry on canvas.** Replace `PageCurl.tsx`'s rigid spine hinge
-      (`rotateY` about `transformOrigin 100%/50%`) with the perpendicular-bisector
-      fold: given the grabbed corner `C` and the pointer `P`, the sheet folds about
-      the perpendicular bisector of `CP`. Draw in **canvas 2D**, no three.js: clip to
-      the fold half-plane, draw the departing page's existing snapshot bitmap, then
-      draw the folded portion through a reflection matrix about the fold line —
-      dimmed, as the back of the sheet — with a short gradient rounding the crease
-      and a soft shadow cast onto the page beneath.
-      _Acceptance: the whole page is drawn (not a strip), the back face is visibly
-      the mirrored page, the live page beneath shows through the opening, and the
-      fold line tracks the pointer continuously._
-- [x] **Grab anywhere in the outer band.** Retire the 18px `edgeGrab` strips; the
-      M11 semicircular zones become the grab surface, and the fold anchors to
-      whichever corner is nearest the grab point (so grabbing low-right folds the
-      bottom-right corner up, not the whole right edge). **Keep
-      `setPointerCapture`** — see the M10 notes and NOTES.md: without it a drag
-      crossing into the sandboxed epub.js iframe crashed the tab outright. This is a
-      real, reproduced crash, not a theoretical one.
-      _Acceptance: folds initiate from any corner region; a drag that travels across
-      the iframe never leaks events into it; release still commits past threshold or
-      springs back below it._
-- [x] **Spread-aware.** In two-page mode the fold canvas is sized and positioned to
-      the **near leaf only**, not the whole stage.
-      _Acceptance: in spread mode the right leaf folds away revealing the next leaf,
-      while the left page stays flat and undisturbed._
-      ⚠️ **Retired 2026-08-03 by the step 4 decisions entry, not failed.** Over-the-spine
-      overturns "the near leaf only": the canvas becomes stage-wide, `nearLeafRect` keeps
-      only its "which half of the snapshot is turning" job, and **the far leaf stops being
-      flat and undisturbed** — it takes the turning sheet's shadow. Kept here, struck through
-      rather than deleted, because it shipped and was verified as written.
-- [x] **Perf & fallbacks.** One canvas, redraw only while a fold is live, target
-      60fps; keep the existing reduced-motion and low-fps slide fallbacks and the
-      snapshot-capture timeout (a stalled capture must never freeze reading — see
-      M10). Log any new epub.js/html2canvas quirks in NOTES.md.
-      _Acceptance: sustained 60fps through a fold on the dev machine; reduced motion
-      still renders zero canvas/fold elements; a failed snapshot degrades to a slide._
-- [x] **Verify:** page through a chapter by folding from several different corners,
-      with notes attached and in both single and spread modes — the paper reads as
-      paper, notes ride the folding sheet as they do today, and reading with the
-      effect on still feels calm.
-      _(Verified live 2026-08-01 against the Alice's Adventures in Wonderland fixture —
-      see NOTES.md for the full pass, including a real overshoot bug found and fixed
-      this way. Not separately confirmed: an exhaustive light/dark reading-theme
-      comparison and a highlighted page specifically mid-fold — flagged in NOTES.md,
-      low risk, unrelated to the fold's own logic.)_
-
-#### M20 revisited — the roll (2026-08-01)
-
-Operator review of the shipped fold: "it looks nothing like how I'd like it to look."
-The premise held and the fault was in the **geometry decision**, not the
-implementation — **read the 2026-08-01 decisions entry**, which amends 2026-07-20's
-perpendicular-bisector fold to a rolled sheet, and then
-**`docs/marginalia/PAGE_CURL.md`** for the working detail: the model, the invariants any
-rewrite must keep, the dead ends already ruled out, and the harness to iterate in. Done in
-the same pass:
-
-- [x] **The sheet rolls instead of creasing.** `pageFold.ts` rewritten around the roll
-      (flat → half-turn roll with ramping curvature → flat mirrored tail); the bisector
-      fold is the zero-arc degenerate case and is pinned by a test. Back of the sheet is
-      a material — paper sampled from the snapshot, faint show-through, its own
-      lighting — composited on a scratch layer so it lands on back-facing pixels only.
-      _Acceptance: the leading edge is a rounded, shaded roll rather than a crease; the
-      grabbed corner still lands exactly under the pointer at every corner and drag depth
-      (tested, not eyeballed)._
-- [x] **The fold works in any reading theme.** Paper colour is read back out of the
-      snapshot, so nothing here knows which theme is on. Dark themes invert the depth
-      cue — the sheet lifts toward grey and the roll's edge is a sheen, because a black
-      shadow between two near-black surfaces is nothing.
-      _Acceptance: paper, sepia and ink all read as a lifted sheet; verified in the
-      harness, all three._
-- [x] **Spread mode shows the right page on the sheet.** Real bug the flat fold shipped
-      with: the snapshot covers the whole stage, which in spread mode is two leaves, and
-      the whole thing was being squeezed onto the one leaf that turns. The fold now takes
-      the near leaf's slice (`leafSourceRect`).
-      _Acceptance: the turning leaf carries its own text, not both pages at half width;
-      pinned by a test and confirmed live in spread mode._
-- [x] **Per-frame cost measured and cut.** Band count chosen per frame from the roll's
-      size on screen, and every `source-atop` pass bounded to its own rect: 39ms → 15ms
-      per frame in a software rasterizer. The M10 low-fps downgrade is unchanged.
-      _Acceptance: no visible difference between the tuned band density and 4x it,
-      side by side._
-- [x] **Operator sign-off on a real machine.** *(Given 2026-08-03 on the Mac — see the
-      2026-08-03 "sign-off" decisions entry.)* **Passes.** The curl happens on every turn
-      (the guard latch is genuinely fixed), the dark theme reads as a lifted sheet, the
-      mirrored text is on the sheet, the margin is right, and it does not get stuck.
-      Two carried forward to M25, neither a defect in this task: **stutter is "less bad", not
-      gone** — consistent with the measured 27.8ms peak frame at dpr 2 against a 33ms
-      threshold, and the second reason the low-fps guard needs to move to the p90 — and the
-      operator wants the back of the sheet to show the leaf's real other side rather than a
-      mirror.
-
-#### M20 — the capture (2026-08-02)
-
-**Read the 2026-08-02 decisions entry and PAGE_CURL.md §5 before touching
-`pageSnapshot.ts`.** Four of its lines exist because of a failure that renders a
-plausible-looking but wrong bitmap.
-
-- [x] **The snapshot carries the actual page.** html2canvas retired: an SVG rendered as
-      an image cannot host a nested browsing context, so the epub.js iframe contributed
-      zero pixels on every browser and platform — every "verified live" M20 screenshot to
-      date was a fold drawn over an empty bitmap. `pageSnapshot.ts` now serializes the
-      same-origin section document into the `foreignObject` itself, inlining the blob
-      stylesheets and `url()` assets and translating by `scrollLeft`. Highlight overlays
-      composite as a second pass. html2canvas removed from the dependency list.
-      _Acceptance: pixel diff against a screenshot of the same rect scores 0 differing
-      pixels and a mean channel delta of 0, with and without highlights on the page; a
-      real drag in the live app shows the sheet carrying its own mirrored text. Both done._
-
-#### M20 — the card, the reveal, the edge peel (2026-08-02, step 2 of 3)
-
-**Read the second 2026-08-02 decisions entry**, then NOTES.md "M20 — the card, the
-reveal, and the edge peel" for the two measurement traps (the capture scale is 1.5 and
-the display is 2; `samplePaperColor` cannot be used for the margin fill) and for why a
-scripted drag under reduced motion hangs the browser.
-
-- [x] **The fold canvas is misregistered by one reader margin.** `PageCurl`'s wrap is
-      positioned inside `.pageClip` (`inset: 0`) but was sized and offset from
-      `containerRef`, which sits inside `.marginWrapper`'s padding — so the fold was drawn
-      shifted up-and-left by one margin, in a rect two margins short. `nearLeafRect` now
-      takes the card's box (the spread decision still takes the *content* width, which is
-      the only width epub.js sees).
-      _Acceptance: the curl's grabbed corner is the corner of the reading pane, and the
-      sheet's edges track the card's edges. Measured live: canvas rect exactly the card's
-      half in spread mode and exactly the card in single-page mode._
-- [x] **The turning sheet is the paper card, not the text column**, so the reader margin
-      folds with the page. The card bitmap is the page snapshot composited into a larger
-      canvas over the card's own background colour (`cardSnapshot.ts`) — the extra area is
-      flat paper, and nothing re-serializes the app's CSS. Handed to `PageCurl` as a
-      canvas rather than a data URL.
-      _Acceptance: mid-drag, the turning leaf's unpeeled area is pixel-identical to the
-      pre-drag screenshot even though the live DOM has advanced. At dpr 1: 0 differing
-      pixels, mean delta 0.00008; inner-edge strip 0; no ink below the text block._
-- [x] **The drag reveals the next page.** `handleGrabPointerDown` only advanced the
-      rendition on commit, so throughout the drag the opening revealed a pixel-identical
-      copy of the page being peeled. It now advances at grab time (as `turnPageCurl`
-      already does) and steps back on spring-back — *before* the spring-back animation,
-      because the fold paints nothing once the pointer is back on its anchor.
-      _Acceptance: mid-drag the revealed area is the page being turned to; a short drag
-      springs back to the page it started on (22 → 23 → 22), a long one commits._
-- [x] **An edge peel alongside the corner pinch.** Grabbing the middle third of an edge
-      lifts the whole edge with the crease parallel to the spine, instead of snapping to
-      the nearer corner and tracking the pointer's y. `computeFold` takes a `FoldAnchor`
-      and asks it for a point; the crease stays vertical because the *fold* pointer's y is
-      pinned to the anchor's, while drag progress still follows the real cursor.
-      _Acceptance: "lands the grabbed anchor exactly under the pointer" and "fully covers
-      the leaf by progress 1" both hold for edge anchors too (tested); verified live._
-
-#### M20 step 3 — the turn never gets stuck, and the reader picks the transition (2026-08-03)
-
-Operator report: the curl sometimes freezes mid-peel when a drag doesn't go far enough;
-when it does, page turns stop responding to the cursor until you click; and a plain slide
-should be available as an alternative to the curl. **Read the 2026-08-03 decisions
-entry**, then PAGE_CURL.md §3 (the invariants) and §9 (the failure path). Items 1 and 2
-are one bug wearing two faces and should be done together, before the setting.
-
-- [ ] **Still catch the original trigger.** The structural fixes below landed 2026-08-03
-      without it, and they bound *every* failure of this shape — but the specific thing
-      the operator hit is still unnamed, and knowing it would tell us whether anything
-      else is wrong. The trigger is not identified: a short drag springs back correctly in every scripted run (22 → 23 →
-      22). Add a dev-only trace of the gesture's transitions (grab → capture → advance →
-      release → settle → clear, with timings) and drive the real app until a stuck fold
-      is caught with its trace. Whatever the trigger turns out to be, the two fixes below
-      are the fix; the trace tells us which await was holding.
-      _Acceptance: one captured trace of a stuck gesture, in NOTES.md._
-      ➡️ *Moved to M25, 2026-08-03. Downgraded from blocker to loose end: the operator's
-      sign-off reports it "doesn't really get stuck", and ~4 held drags and ~30 keyboard turns
-      that day did not reproduce it either.*
-- [x] **The gesture gets exactly one exit, and it always runs.** *(Applied 2026-08-03.)* The release path unmounts
-      the fold and clears `turnLockRef` as its last two statements, after unguarded
-      `await`s (the capture, an `animate`, and since 2026-08-02 `rendition.prev()`/
-      `next()`); anything that rejects or never settles strands both. Move them into a
-      `finally`, give the turn lock a maximum lifetime, and add a watchdog that **springs
-      the fold back through the same animation a real release uses** — the operator asked
-      for the page to fall closed, not to blink out.
-      _Acceptance: with `rendition.next` stubbed to reject, and separately to never
-      settle, a drag still springs back, the canvas unmounts, and the next arrow-key turn
-      works. Both as tests against the hook, not only live._
-- [x] **A release that never arrives is still a release.** *(Applied 2026-08-03: the grab
-      surface stays mounted while `gestureActive`, `lostpointercapture` is a release, and
-      a poll on `hasPointerCapture` catches the case where the listener died with the
-      element. Verified against the reproduction — the fold now springs back on its own
-      and the next arrow-key turn works, with no click.)* Reproduced: remove the grab
-      surface mid-drag (which React does whenever a re-pagination flips `status` to
-      `loading`) and pointer capture is lost to the sandboxed epub.js iframe — the page
-      stops receiving pointer input, the `window` release never fires, and the stale
-      listener only runs on the reader's *next* click ("you have to click to undo"). Keep
-      the grab surface mounted for the life of a gesture, and treat `lostpointercapture`
-      as a release.
-      _Acceptance: unmounting the grab surface mid-drag springs the fold back on its own,
-      with no click needed._
-- [x] **Step back by CFI, not by `prev()`.** *(Applied 2026-08-03.)* Record the location at grab time and display
-      it back on spring-back, so a step that epub.js disagrees with at a section boundary
-      cannot strand the reader a page off from where they started.
-      _Acceptance: a spring-back at the first page of a section lands exactly where the
-      drag began, chapter and page._
-- [x] **`pageTransition` = `curl | slide`, in Reading settings.** *(2026-08-03. Defaults to
-      **slide**, which is the one setting here that is not "today's behavior unchanged" —
-      see the decisions entry.)* New enum in `shared/src/schemas.ts` beside
-      `SpreadModeSchema`, a `page_transition` default and key mapping in the server's
-      settings store, a "Page turn — Curl / Slide" toggle group in `ReadingTab.tsx`, and
-      local state in `ReaderView` fed by the settings fetch and `onSettingsSaved` — *not*
-      a prop like `spreadMode`, which is a prop only because epub.js needs it before
-      mount. The whole ladder lives in one function (`resolveRenderer`) with the setting
-      checked *before* the low-fps guard, which is what makes it a ceiling.
-      _Acceptance: both met, live. Flipped Curl → Slide through the real Settings modal
-      over a live reader — the reader's iframe never remounted, and the very next keyboard
-      turn ran with max 0 canvases across 122 sampled frames (the same turn under Curl
-      mounts 1). Sampled every frame through four drags and several keyboard turns in
-      single-page and spread, paper and ink: max 0 throughout._
-- [x] **The slide is a drag, not just a click animation.** *(2026-08-03.)* The departing
-      card is a still `<img>` under the stage — the same capture as the curl, minus the
-      canvas composite — and `.marginWrapper`, the live DOM already stepped to the next
-      page, translates in over it. Same grab surface, same advance-at-grab, same 0.35
-      threshold, same watchdog, same one exit; `useSlide` forks at exactly three points.
-      In spread mode the whole stage slides (v1, stated in NOTES.md and the decisions
-      entry). The slide steps back *after* its spring-back animation, the opposite of the
-      fold, because its snapshot covers the whole card at progress 0.
-      _Acceptance: met, live. Mid-drag at half a card (`translate3d(375.1px)` on a 754px
-      card) the incoming page is in under the pointer with the departing one held still
-      behind its leading edge; `prev` is the mirror. A 42%-of-card drag commits (7 → 8), a
-      7% one springs back across a section boundary (8-of-8 → 1-of-7 → 8-of-8, by CFI).
-      Keyboard turns play the same slide (`turnPage` → `turnPageCardSlide`); the click
-      path is the same function and was **not** separately driven, because a scripted
-      click lands on the epub.js iframe._
-- [x] **The low-fps guard was measuring the display, not the fold.** *(2026-08-03, from an
-      operator bug: "Curl curls the first page, then slides the remainder of the time.")*
-      The guard tested the mean frame *interval* over the fold canvas's whole mount — a
-      window that starts before `turnPageCurl` awaits its rendition step, against a 33ms
-      threshold, when a healthy 60fps frame is 16.7ms. Measured: 16.6ms on a clean turn
-      while the fold's own drawing cost 0.7ms. It now measures the median cost of one
-      `drawPageFold` call over at least 12 drawn frames, and traces that number in dev
-      builds.
-      _Acceptance: four consecutive Curl turns all mount a canvas, reporting median
-      0.7-0.9ms over 25-26 frames. Not confirmed on the operator's own machine — the dev
-      trace exists so the next report carries its own number._
-- [ ] **Two things the slide left open** (small, and neither blocks anything): the settle
-      durations are the curl's 0.16s/0.18s unexamined, which is a different amount of
-      travel; and no one has clicked a turn zone by hand under Slide.
-      ➡️ *Moved to M25 with the rest of the fold's leftovers, 2026-08-03. Left listed here so
-      step 3's record stays complete.*
-
-#### M20 step 4 — over the spine (the WebGL question) — **designed, then parked**
-
-The design is done and settled (decisions.md 2026-08-03 step 4: WebGL is approved, and the
-proof that a spine hinge is a cone the 2D model cannot express). **The operator parked the
-implementation on 2026-08-03 after signing off the curl**, so it has moved out of M20
-wholesale rather than sitting here half-checked.
-
-➡️ **It is now `M25 — The paper fold, finished`, at the end of this file**, together with the
-back-of-sheet ask and the two slide leftovers. Nothing was dropped and nothing needs
-re-deciding; M25 is directly executable when it is picked up.
-
-**M20 is complete** — signed off on the Mac 2026-08-03. The two unchecked boxes left above
-are step 3's leftovers, both moved to M25 and both explicitly non-blocking; they are left in
-place so step 3's record reads whole.
-
-
-### M20.5 — The instrument case (the Scan and the Digest become instruments)
-
-*(Complete. The "next up" marker moved on 2026-08-04 to **M22.5**, below M22.)* This is an
-implementation milestone: everything below is decided, and a Sonnet session executes it
-without re-deciding any of it.
-
-**Read the 2026-07-30 decisions entry's "Scan and Digest stop being rooms" section
-first.** This changes DESIGN.md's thesis from three rooms to **two rooms and four
-instruments**, deliberately and by amendment — and it spends the airlock's full-screen
-form. That is settled; do not re-derive it, and do not try to keep both.
-
-**Every dependency this milestone leans on was verified present on 2026-08-03** — checked in
-the source, not assumed, because half these tasks are phrased as "reuse the thing M19.7
-built" and a missing one would turn a reuse into a rewrite:
-
-| Needed by | Exists | Where |
-|---|---|---|
-| the shared control set (`Button`, `IconButton`, `Slider`, `FlyPanel`) | ✅ | `web/src/controls/` |
-| the two registers (paper / glass) | ✅ | `controls/registers.css` |
-| fly-from-the-caller entrance | ✅ | `controls/overlayOrigin.ts`, `FlyPanel.tsx` |
-| the `Slider` drag gesture the dials build on | ✅ | `controls/Slider.tsx`, `sliderMath.ts` (+ tests) |
-| the shortcut registry (`q`) | ✅ | `web/src/shortcuts/useShortcuts.ts`, `keys.ts` |
-| background-location routing (the pattern Settings uses) | ✅ | `app/App.tsx` — `NavigationState.background` |
-| `ProviderPickerPopover`, already mounted once in the reader | ✅ | `settings/ProviderPickerPopover.tsx` |
-| the one warp knob | ✅ | `scan/warp.ts` — `MAX_PULL_PX = 22` |
-| the zoom domain transform to move labels onto | ✅ | `scan/zoom.ts` — `fractionToView()` |
-| **the CSS `scaleX` to delete** | ✅ | `scan/HeatStrip.tsx:208` — the exact line |
-
-Nothing here needs building from scratch. If a task below seems to call for a new component,
-that is the signal to stop and check the table — settled decision 12 says a new control
-belongs to a register and nothing gets a bespoke one again.
-
-- [x] **The Scan becomes a popup in a CRT television.** The existing scan panel renders
-      inside a retro TV bezel over whatever room you were in, using the **same background-
-      location routing Settings already uses** — `/scan/:id` stays a real bookmarkable URL
-      with a Desk fallback on a deep link. The blackout airlock is replaced by the M19.7
-      fly-from-the-caller entrance; the *band materialisation* half of the airlock
-      survives inside the panel.
-      ⚠️ **The bezel must not warp.** It is a sibling of the filtered wrapper, never a
-      child — a bending television reads as broken. Keep the frame slim; the panel needs
-      the room more than the frame does.
-      _Acceptance: opening the scan from the reader and from the desk both leave the room
-      visible behind it; a hard refresh on `/scan/:id` still works; every existing scan
-      behaviour (filters, search, stars, tags, both heat layers, the jump into the reader)
-      is unchanged; the bezel's edges stay straight at every CRT intensity._
-- [x] **`q` opens the scan** for the book in focus, through M19.7's registry. Larger base
-      type throughout the panel — it is smaller than a full page now and was already at the
-      edge of comfortable.
-      _Acceptance: `q` types "q" in a text field; the scan's smallest readout passes
-      contrast and is legible at the popup's default size, warped, at full CRT intensity._
-- [x] **Barrel distortion scales further with CRT intensity.** Raise `MAX_PULL_PX` in
-      `warp.ts` — the single knob, by design, and everything that must land where it looks
-      (heat bands, hit targets, the torch's successor) already derives from it.
-      ⚠️ M18's legibility bound is **not** repealed: contrast still passes, and intensity 0
-      still means zero displacement. Larger type pays for some of the extra warp; it does
-      not license unbounded warp.
-      _Acceptance: at maximum intensity every readout is still legible and clicking a band
-      near a **corner** (not the centre) still selects that band — verified with
-      `elementFromPoint`, per the M18 note, not bounding-box math._
-- [x] **Rebuild zoom as a domain transform, and add scroll-to-zoom.** Delete the CSS
-      `scaleX` on `.zoomContent` — it is what stretches the axis text and the heat bitmap.
-      Labels position through `fractionToView()` like the book bands already do, and the
-      heat canvas is redrawn at the zoomed domain. Then wheel-over-the-strip zooms about
-      the cursor, with the existing buttons kept and enlarged as the keyboard/pointer-free
-      path.
-      _Acceptance: axis labels are pixel-identical in shape at every zoom level; the heat
-      field is sharp when zoomed in, not stretched; wheel-zoom keeps the domain point under
-      the cursor fixed; zooming does not scroll the page behind the popup._
-- [x] **The digest range picker becomes analog dials.** Replace the torch with FROM/TO
-      dials in the scan's glass register — click-drag hides the cursor and scrolls a
-      vertical chapter list past a needle, with the section label beneath, built on M19.7's
-      `Slider` gesture rather than a second bespoke one.
-      ⚠️ Unchanged constraints from 2026-07-29: the range still resolves to **whole
-      sections** (the digest's storage unit), the **numeric FROM/TO boxes stay** as the
-      precise input and the canonical keyboard path, and the chapter dropdown stays. The
-      dials are the charm on top, never the only way in.
-      _Acceptance: dialling FROM past TO is impossible or self-correcting, never a silent
-      invalid range; a change made in the numeric boxes moves the dials and vice versa; the
-      whole range can be set without a pointer._
-- [x] **The Digest becomes a popup too, with honest labels.** `/digest/:id` renders over the
-      current room with an expand-to-fullscreen control, same routing pattern. Every chapter
-      is labelled **`S<n> · <title>`** — the number is the section ordinal the code already
-      computes, and calling it a chapter is what produced "Chapter 5" for the real Chapter 1.
-      ⚠️ `S<n>` is the **only** number that appears in any UI. If a surface still prints
-      `spineIndex`, change it in this pass — two numbering schemes side by side is worse
-      than the wrong one alone. Spoiler gating on titles (M19.5) is unchanged.
-      _Acceptance: the same section shows the same `S` number in the digest, the scan axis,
-      the range dials and the reader's chapter nav; no surface anywhere shows `spineIndex`._
-- [x] **The reader's digest button gets the treatment.** M19.7's icon button, with the
-      **existing** `ProviderPickerPopover` mounted on it for the `digest` role on hover
-      (the query-role picker is already mounted in the reader top row — this is a second
-      mount of a built component, not a new picker).
-      _Acceptance: the digest role can be changed from the reader and the change is
-      immediately reflected in settings and on the scan; the popover is reachable by
-      keyboard and does not assume hover exists._
-- [x] **Verify:** open the scan and the digest as popups from every room that can open
-      them, run a real digest range from the dials, zoom and pan the strip with wheel and
-      buttons, and jump into the reader from a band. Both themes, reduced motion, and at
-      CRT intensity 0 and 1.
-
-### M20.6 — Work in the background (jobs, not spinners)
-
-**Read the 2026-07-30 decisions entry's "Background work is a job model" section first.**
-This was asked for as a popup and is architecture: today's digest is one blocking request
-with no id, no progress and no cancellation, and the cancel the UI appears to offer
-abandons the response while the server keeps working. **Placed before M21 on purpose** —
-audio rendering and the cast scan are the same shape, and AUDIO.md already specs an SSE
-progress endpoint. Building this twice is exactly the duplication M19 removed for
-provider pickers.
-
-- [x] **The job registry.** One server-side registry — id, kind, resource, status,
-      progress, started/finished — with an `AbortController` per job, an SSE progress
-      stream, and a real cancel endpoint. The `LLMProvider` seam already accepts an
-      `AbortSignal`; threading it through the digest loop is the actual work.
-      ⚠️ Use `res.on("close")`, never `req.on("close")`, for disconnect detection — the
-      latter fires as soon as the request body is parsed and cost this project a long
-      debugging session in M5 (NOTES.md).
-      _Acceptance: start a multi-chapter digest, cancel it, and watch the work **actually
-      stop** (ledger rows stop appearing / the provider process exits) rather than the
-      request merely returning; completed chapters are kept and no half-written chapter
-      exists; a client that disconnects without cancelling does not kill the job._
-- [x] **The tasks tray.** A dismissible progress popup per running job, and a persistent
-      tray button (browser-downloads-style) listing running and recently finished work with
-      per-job cancel.
-      ⚠️ **Dismissing a popup must never cancel the job.** They are different verbs, and
-      conflating them is how someone loses a forty-chapter digest.
-      _Acceptance: dismiss the popup, navigate to another room, and the tray still shows
-      the job advancing; cancel from the tray and it stops; a job that finishes while the
-      tray is closed is visible in it afterwards._
-- [x] **Every long operation goes through it.** Chapter digest (reader), range digest
-      (scan), thematic re-run, theme tagging. No surface keeps a bespoke blocking spinner.
-      _Acceptance: each of the four can be started, watched, and cancelled from the tray;
-      starting one from the reader and cancelling it from the scan works._
-- [x] **Verify:** run two jobs at once on a real book, cancel one, let the other finish,
-      reload the page mid-run, and confirm the tray tells the truth throughout.
-
-### M20.7 — The desk and the opening
-
-- [x] **A desk you'd want to work at.** Wood grain on the surface, a paper-textured
-      notepad, and a desk that is **taller** — `DeskCanvas.module.css` pins
-      `min-height: 640px`, which is why it sprawls sideways and never goes down the page.
-      Size it to the viewport with room to scroll.
-      _Acceptance: on a tall window the desk fills the height; existing per-book shelf
-      coordinates still place books where the operator left them (they are stored in px —
-      confirm nothing re-lays-out on first load); the grain is a texture, not an image
-      request that blocks first paint._
-- [x] **The opening.** DESIGN.md's signature transition, finally built: the clicked book's
-      title/cover moves to centre, the book opens, and the view zooms into the reader with
-      the page filling the pane.
-      ⚠️ Under reduced motion this is a plain crossfade, and it must be **interruptible** —
-      Escape backs out at any point (DESIGN.md's motion rules). Nothing may block input for
-      more than ~400ms.
-      _Acceptance: opening a book from the desk lands on the saved position with no flash of
-      an unstyled or wrong page; interrupting mid-animation leaves the app in a coherent
-      state, never half-transitioned._
-- [x] **Per-room cursors, including the reader's.** DESIGN.md already specifies the cursor
-      system and the `cursorStyle` setting already exists — this builds it: hand/grab on the
-      desk, a fine nib or pen in the reader, reticle in the scan, selectable in settings with
-      a "system" opt-out.
-      ⚠️ The reader's cursor is written onto the epub.js iframe's own body (the one thing we
-      are allowed to touch in there) and must not fight the existing turn-zone `w-resize`/
-      `e-resize` cursors — decide the precedence and write it down.
-      _Acceptance: the cursor changes at every room boundary and reverts on "system"; the
-      turn zones still show their directional cursor; nothing leaks a cursor into a
-      neighbouring surface after the pointer leaves._
-- [x] **Verify:** open three different books from the desk, drag them around, write in the
-      notepad, and go desk → reader → scan → desk in one pass. Both themes, reduced motion.
-
-### M21 — Audio I: one voice, end to end
-
-**Read `docs/marginalia/AUDIO.md` before starting — it is binding for M21 and M22**,
-the way SPEC.md is for the core. The vertical-slice rule applies: a book you can listen
-to in one voice, with the page following along, before any casting exists.
-
-- [x] **The `TTSEngine` seam + Kokoro implementation.** `server/src/audio/engine.ts`
-      exactly per AUDIO.md's interface — nothing engine-specific escapes it — plus
-      `kokoro.ts` using `kokoro-js` (ONNX, Node; **no Python sidecar**). Model weights
-      download on first use into `data/models/` with streamed progress and a designed
-      failure state; `TTSError` codes per the spec. Settings gets an audio section
-      (engine, model path, default narrator voice) and a "Test voice" button that speaks
-      one sentence — the audio equivalent of the provider "Test connection" button.
-      _Acceptance: `voices()` returns the real voice list from the loaded model;
-      `synthesize()` returns playable audio and a duration that matches it within ~5%;
-      a missing/corrupt model surfaces `model_unavailable` as a designed state, never a
-      crash; unit tests cover the registry and error mapping (synthesis itself is
-      exercised live, not in unit tests)._
-- [x] **Sentence segmentation.** `server/src/audio/segment.ts` per AUDIO.md: operates on
-      `resource_text` per spine index and returns char offsets **into that exact
-      string** (the same coordinate system `annotations/position.ts` already uses).
-      `Intl.Segmenter` with the book-specific fixes — abbreviations, initials, and
-      ellipses must not split; short sentences merge; over-long ones split at a clause.
-      _Acceptance: unit tests per AUDIO.md's list, including the offset round-trip
-      (`text.slice(charStart, charEnd) === segment.text`) on real fixture chapters._
-- [x] **Render pipeline + cache.** Section renderer writing
-      `data/audio/<resourceId>/<castHash>/<spineIndex>/` plus its manifest, keyed by the
-      cast hash so nothing stale can ever be served; chapter-ahead scheduling (render the
-      current section, keep one ahead warm), cancellable, with the SSE progress endpoint.
-      Cache hits are decided by **file existence**, not a ledger row (the vault
-      compiler's 2026-07-19 bug is the precedent). Plus `audio_state` migration and the
-      audio API routes from AUDIO.md that this milestone needs.
-      _Acceptance: rendering a chapter twice does no synthesis the second time; deleting
-      `data/audio/` mid-session re-renders rather than erroring; navigating away aborts
-      in-flight synthesis (verified by watching it actually stop, not by reading the
-      code); a 10-minute chapter renders without exhausting memory._
-- [x] **Player + follow-along in the reader.** Sequential segment playback in the
-      browser; the playing sentence tinted via the existing anchor machinery
-      (`anchorResolution.ts`) in a style quieter than all four highlight kinds; auto page
-      turn using the **slide, not M10's curl**; transport controls as reader chrome
-      (play/pause on `space` with the existing `isTyping` guard, skip sentence
-      `shift+←/→`, skip chapter reusing `[`/`]`, speed); a "Listen" action in the desk
-      hover strip and the list view. Selecting text or opening a thread pauses playback.
-      Position saves through the **existing** reading-position path — one position per
-      book, not two. `f` hides the tint like any other annotation-layer effect.
-      _Acceptance: listen to a real chapter end to end — the tint tracks the audio, pages
-      turn themselves, a chapter boundary doesn't stutter; an unresolvable sentence is
-      skipped silently with audio continuing; highlighting mid-listen pauses, and asking
-      a question works exactly as it does when reading; stopping and reopening the book
-      with your eyes lands where the audio left off._
-- [x] **Verify:** listen to 15 minutes of a real fixture book in one voice while doing
-      normal reading things — pause, highlight, ask, turn back a page, resume. Note
-      friction in NOTES.md. Both themes, reduced motion, and focus mode.
-
-### M22 — Audio II: the cast
-
-- [x] **Cast scan (pass 1).** *(2026-08-04.)* User-initiated `POST /api/resources/:id/cast/scan`
-      running AUDIO.md's `CastSchema` extract through the **existing** LLM seam and
-      context builder — no new provider code — then persisting the cast (`book_cast`
-      migration). Deterministic code-side voice assignment from `engine.voices()`:
-      narrator first, then by line-count hint and appearance order, matching gender/age,
-      never reusing a voice while an unused compatible one remains.
-      Goes through the **M20.6 job registry** (`kind: "cast-scan"`), not a bespoke SSE
-      endpoint — same deviation the M21 render pipeline already made from AUDIO.md's
-      HTTP table, for the same reason (the job registry generalizes it). Pass 1 itself
-      is the digest's own book-level reduce (decisions.md 2026-07-28: "it *is* pass 1 of
-      the audio cast scan"), extended with `aliases`/`gender`/`ageHint`/`lineCountHint`/
-      `narratorGender` (`digest/build.ts`'s `BookReduceSchema`) — one pipeline, two
-      consumers, as specified. Ensures/resumes a full-book digest first; anything short
-      of `"completed"` (paused on a rate limit, a failed chapter) aborts the scan with no
-      cast written, matching the half-written-cast guarantee.
-      ⚠️ `ageHint` is matched by nothing — `Voice` has no age dimension at all
-      (`// SPEC-GAP`, NOTES.md) — and a re-scanned character whose name the model
-      rewords creates a new row rather than updating the old one (also `// SPEC-GAP`,
-      NOTES.md, confirmed live: reserving *stale* rows' voices, not just locked ones',
-      was a real bug this surfaced and fixed).
-      _Acceptance: met. Verified live against the real Metamorphosis fixture on a local
-      Ollama model — a full scan produced 6 distinct characters with 6 distinct voices
-      correctly matched by gender; killing the dev server mid-digest (a real, unplanned
-      failure, not simulated) left zero `book_cast` rows, confirming no half-written
-      cast; re-scanning kept the four name-stable principal characters' ids and voice
-      assignments byte-identical across three separate runs. Unit tests cover
-      determinism, gender-compatibility fallback, never-reuse-while-unused-compatible-
-      remains, and locked-voice survival across a re-scan._
-- [x] **Attribution (pass 2) + multi-voice rendering.** *(2026-08-04.)* Per-section
-      `AttributionSchema` extract (`audio/attribution.ts`), on demand — cached
-      implicitly, by riding the same `castHash`-keyed render cache the audio itself
-      uses (no separate attribution cache/table, matching AUDIO.md's "not a table").
-      **The model returns the quoted string; code locates it** by exact search — never
-      offsets from the model (CLAUDE.md settled decision 2). Unlocatable quote, unknown
-      speaker, or a failed call all degrade to the narrator voice
-      (`assignSentenceVoices`), and a whole failed section degrades to single-voice
-      without blocking playback (`resolveSectionVoices`). `computeCastHash` now also
-      hashes `voiceMode` and the cast's voice mapping (`render.ts`), so switching
-      single→multi or changing a character's voice always invalidates old audio rather
-      than silently serving it.
-      ⚠️ Live verification against the real Metamorphosis fixture found and fixed a real
-      bug — the source's typographic quotes/apostrophes (`“”’`) don't survive the
-      model's JSON output verbatim (it straightens them), so every span failed to
-      locate until `attribution.ts` normalizes both sides before matching (same
-      length-preserving-swap trick as `segment.ts`'s isolated-newline fix). Also found,
-      *not* a defect: quote-boundary imprecision (a model-added comma not in the
-      source) and `EXTRACT_MAX_TOKENS` overflow on a very dialogue-dense whole-chapter
-      call both degrade exactly as designed — see NOTES.md for the full account,
-      including why the token-budget case is a logged `// SPEC-GAP` rather than fixed
-      here (needs a chunking design, not a guess).
-      _Acceptance: met. Live: a real attribution call against real book text produced
-      correct per-character spans; the quote-normalization fix confirmed against the
-      actual failing text; a full 293-sentence real render of a whole chapter completed
-      end-to-end without blocking when attribution failed outright (the token-overflow
-      case above, discovered before the quote-normalization fix existed) — proving the
-      non-blocking-degradation path live, not simulated. Provider-failure- and
-      cancellation-mid-attribution are covered by `attribution.test.ts` instead of a
-      third live repro, using the same mechanism (`try`/`catch`, rethrow only on abort)
-      the digest and cast-scan jobs already prove live elsewhere in this project.
-      Unit tests cover verbatim match, repeated identical quotes resolving in order,
-      the unlocatable case, alias matching, ambiguous-sentence-keeps-first, and the
-      curly-quote regression pinned from the live find._
-- [x] **Casting UI.** *(2026-08-04.)* `PUT /api/cast/:castId` added (route + schema +
-      `castStore.ts`'s `updateCastVoice`, top-level per AUDIO.md's HTTP table, not
-      `/api/resources/:id/...`) — always sets `voice_locked`, matching `saveCastScan`'s
-      existing lock check, so an override survives a re-scan with no extra code. Cast
-      list with per-character voice pickers, a preview button per row and for the
-      narrator (`POST /api/audio/test-voice`, reused — `AudioTab.tsx`'s "Test voice" now
-      shares the same `previewVoice` helper instead of a second copy), and the
-      single/multi voice-mode toggle, all in `CastingModal.tsx`.
-      ⚠️ `// SPEC-GAP` (NOTES.md): AUDIO.md doesn't say where the casting UI lives.
-      Boring choice made: not a fifth routed instrument (decisions.md 2026-07-30 names
-      exactly four — Scan, Digest, Settings, Annotations), so it mounts locally from a
-      new "Cast" icon in the reader's transport row, sharing SettingsModal's own dialog
-      shell (backdrop + `FlyPanel` + `useDialogA11y`) rather than a new one.
-      _Acceptance: met. Live against the real Metamorphosis fixture and its real
-      11-member cast (the same stale-duplicate-name cast NOTES.md's M22 pass-1 entry
-      found): overrode Gregor Samsa's voice via the API and Grete Samsa's via the actual
-      UI select — both persisted, both show "Locked", and `castHash` picked up the
-      change (confirmed via `book_cast`/`audio_state` reads). Toggled single→multi→single
-      through the UI, confirmed via `GET /audio` each time. Changed the narrator voice;
-      persisted. Preview played with no console errors. One real bug found this way and
-      not this code's own: a long-running `audio-render` job's synchronous Kokoro
-      synthesis stalls unrelated API requests on the same process — starved the
-      voice-mode PUT for over a minute in one run. Not fixed here (pre-existing engine
-      characteristic, AUDIO.md's known native-binding/perf hazard, not new in M22);
-      logged in NOTES.md. Both light and dark themes screenshotted and legible._
-- [x] **The desk tool.** *(2026-08-04.)* `ListeningTool.tsx`: a real `<button>` (not a
-      div) with `aria-pressed` and an accessible name, lit with a warm glow + pulsing
-      needle-tip while engaged (pulse removed under reduced motion, per
-      `@media (prefers-reduced-motion: reduce)` — the glow itself, not just the
-      animation, is the actual "is it on" signal, so function survives). Session-only
-      state in `DeskPage.tsx` (`// SPEC-GAP`, NOTES.md: DESIGN.md gives no persistence
-      rule; not persisting is the safer boring default — an always-lit tool from a
-      forgotten prior session is worse than a reset one), wired through `DeskCanvas` to
-      `BookObject.open()` and through to `LibraryGrid`'s plain link so both view modes
-      honour it; the explicit "Listen" actions (info-strip button, list-view button) are
-      unconditional either way, per "the tool is the charm, not the gate." Escape
-      disengages via the shared shortcut registry.
-      _Acceptance: met, live (screenshots + `aria-pressed` reads, both themes). Click
-      engages (`aria-pressed: false → true`), Escape disengages
-      (`aria-pressed: true → false`) from anywhere on the desk, not just while the tool
-      has focus. Engaged + click a book → reader opens with playback already running
-      (transport button read "Pause listening" immediately). Confirmed reduced motion
-      removes the needle's `animation-name` (`pulse` → `none`) while `aria-pressed`
-      still flips — the toggle still works, only the motion is gone._
-- [x] **Verify:** *(2026-08-04, against the real Metamorphosis fixture and its real
-      cast — see the two entries above for the detailed live traces.)* Not separately
-      re-driven: a fresh cast scan (the fixture's cast was already scanned and verified
-      live in the pass-1 entry above; re-running one here would spend real LLM calls to
-      re-prove logic `castStore.test.ts` already pins) and a full multi-voice chapter
-      listen-through with the M17 tint/auto-turn/pause-on-interaction/position checklist
-      (unchanged code path — `resolveSectionVoices`/`assignSentenceVoices` were M22 pass
-      2's own live-verified surface, not touched by this task). What *was* newly driven:
-      engaging the tool, opening a book into listening mode from the desk, opening the
-      Casting popup from inside that listening session, and overriding a voice — the
-      exact seam connecting this task's two pieces to M21/M22 pass 1–2's already-verified
-      core.
-
 ### M22.5 — The revision pass (controls, chrome, and telling the truth)
 
 **Next up.** Operator feedback from 2026-08-04, after living with M20.5–M22. Numbered
@@ -911,11 +303,12 @@ default and retiring the track.
 
 - [ ] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
       with the flight to centre; the flutter is not what was asked for.)*
-      ⚠️ **Absorbed into M26 §E on 2026-08-12, not failed and not abandoned.** Most of it is
+      ⚠️ **Absorbed into M23 §E on 2026-08-12, not failed and not abandoned** (M23 was M26
+      until the same-day renumbering — see decisions.md). Most of it is
       built (`BookOpening.tsx` already flies, rotates about the spine and lands); the
       remaining defect is that `.spread` is cover-width and creased down its middle. Since
-      M26 moves the opening onto three.js, finishing it here would build it twice in two
-      substrates. **Two things below change under M26 and must be read there, not here:**
+      M23 moves the opening onto three.js, finishing it here would build it twice in two
+      substrates. **Two things below change under M23 and must be read there, not here:**
       the ≤2px spine-edge criterion is rescoped to the scene's local coordinates (the book
       now deliberately recentres on screen), and the sequence is deliberately slowed. Kept
       in place because its four ⚠️ warnings below are still live and still correct.
@@ -1388,7 +781,170 @@ gated on authentication. A task justified by "so my highlights sync" belongs the
       `better_sqlite3.node` and confirm the banner names the fix; kill the server with the
       browser open and confirm the UI says so; run `pnpm sync` twice.
 
-### M23 — Web search
+### M23 — The rooms become solid (three.js)
+
+**Read decisions.md 2026-08-12 first**, rulings 5-8. The substrate question is settled:
+**three.js / React Three Fiber, for all four surfaces.** Nothing below re-decides it, and
+the recommendation that lost (CSS 3D first) is recorded there so it is not re-argued from
+scratch either.
+
+Renumbered into this position on 2026-08-12 (was M26; see the mapping table in
+decisions.md's 2026-08-12 entry) so the file reads in the order it is actually worked:
+**M22.6 → M23 → M24**, with web search and Codex CLI following behind as M25 and M26.
+
+**The cost this milestone is paying, stated up front so it is budgeted and not
+discovered:** CSS 3D degrades on its own and WebGL does not. Every surface here needs its
+reduced-motion path and its accessibility fallback built **deliberately**, and those are
+acceptance criteria, not polish. A beautiful shelf with no keyboard path is not done.
+
+#### A — The seam, before any of the four surfaces
+
+- [ ] **One 3D seam, not four call sites.** A single module owns the renderer, the canvas
+      lifecycle, the shared book geometry/material, and the reduced-motion and
+      context-lost exits. The Desk, shelf, turntable and opening are *consumers*. This is
+      settled decision "one narrow seam per subsystem" applied to a renderer.
+      ⚠️ **A lost context is a designed state**, exactly as M27 rules for the fold:
+      `webglcontextlost` degrades to the existing 2D presentation of that surface. It does
+      not get a bespoke escape hatch per surface.
+      ⚠️ **Do not let three.js types leak past this seam** into `desk/`, `library/` or
+      `reader/` components — the same rule that keeps `LLMProvider` honest.
+      _Acceptance: exactly one `<canvas>` exists no matter how many 3D surfaces are
+      mounted; killing the context (`WEBGL_lose_context`) on each surface leaves a
+      usable, non-blank room; `grep` finds no three.js import outside the seam._
+- [ ] **One book object, used by all three surfaces.** Cover, spine, page block, openable
+      front cover — authored once and consumed by the desk, the shelf and the opening.
+      Covers come from the existing `BookCover` image path as a texture.
+      ⚠️ **Price the texture upload before designing around it.** M27 measured
+      `texImage2D` from a card canvas at ~56ms and could not tell a GPU upload from a CPU
+      pixel path. A shelf uploads *dozens*. Measure with real covers at real count and
+      write the number into NOTES.md **before** choosing resolutions.
+      _Acceptance: the same book asset renders in all three surfaces with no per-surface
+      fork of its geometry; a book with no cover art still renders legibly._
+- [ ] **Reduced motion renders zero canvases, everywhere.** The existing 2D Desk, the
+      list, and the crossfade opening remain the reduced-motion presentation.
+      _Acceptance: with reduced motion on, `document.querySelectorAll("canvas").length ===
+      0` on the Desk, the shelf route and through a whole book opening._
+
+#### B — The Desk, looking down
+
+- [ ] **A top-down desk with real depth.** A book centred under the camera reads as flat
+      cover-only; moved off-centre it reveals binder and page edges, as a real object seen
+      from above would. Smoothly animated, not stepped.
+      ⚠️ **Existing per-book shelf coordinates are stored in px and must keep placing
+      books where the operator left them** — the same constraint M20.7 already carried.
+      A camera change must not silently re-lay-out the desk.
+      _Acceptance: dragging a book from centre to a corner continuously reveals its
+      thickness; every book is where it was before this task; drag/drop hit-testing still
+      lands on the book under the cursor at every position (⚠️ a projected 3D surface is
+      where hit-testing breaks — test the corners, not the centre)._
+- [ ] **A desk that looks like a desk.** Beyond the current zone-with-lines: surface
+      material, edge, and the depth cues a top-down view earns. Creative latitude is
+      granted here by the operator; DESIGN.md's anti-goals still bind.
+      _Acceptance: judged live in both themes and at two window sizes; the notepad and
+      the books still read as the foreground, never the surface._
+
+#### C — The turntable
+
+- [ ] **The listening tool becomes a 3D turntable**, replacing `ListeningTool.tsx`'s SVG,
+      sitting in a corner of the desk.
+      ⚠️ **It is the charm, never the gate** — AUDIO.md and the existing component's own
+      docstring. It stays a real focusable control with a pressed state and an accessible
+      name; the list view's "Listen" and the book card's action keep working untouched.
+      _Acceptance: keyboard-reachable, correctly labelled, and toggling it by keyboard
+      does what clicking it does; unplugging the 3D path entirely still leaves listening
+      fully operable._
+- [ ] **Dragging a book onto the turntable opens it in player mode.** The desk's existing
+      drag gesture is the input; the turntable is a drop target.
+      ⚠️ The drag already has an owner (`dragGesture.ts` / `BookObject.tsx`) and a
+      `stopPropagation` subtlety caught live. Extend that gesture; do not start a second
+      drag system for 3D.
+      _Acceptance: dropping a book on the platter starts that book listening; dropping it
+      anywhere else still just places it; a drag that ends outside the window leaves no
+      book stuck to the cursor._
+
+#### D — The shelf (a third view mode)
+
+- [ ] **A scrollable 3D bookshelf as a third Desk view**, on its own key alongside
+      `d` (desk) and `l` (list) — add it to `shortcuts/keys.ts`; `b` is free. Hovering a
+      book lifts it slightly; the reworked action card (M22.6 §D) floats above it; the
+      book itself is clickable as well as its actions.
+      ⚠️ **`l` and `LibraryGrid` are untouched and remain the keyboard/screen-reader
+      path** (DESIGN.md:67-68, decisions.md 2026-08-12 ruling 6). This task adds a view;
+      it does not replace one. A shelf that becomes the only library is a failed task.
+      ⚠️ Reference is the operator's (aiwithremy.com) for *feel* — lift, depth, spine
+      typography — not for copying.
+      _Acceptance: `d`/`l`/`b` reach three distinct views; the shelf holds 60fps while
+      scrolling with the full fixture library; hover lift and the action card both work
+      from keyboard focus, not hover alone; every book reachable by Tab._
+
+#### E — The opening, finished in 3D
+
+**Absorbs M22.5 §F** (see the note there). Build it once, here, in the new substrate —
+not twice in two.
+
+- [ ] **From the desk: the spread is twice the cover's width, creased at the hinge.**
+      The front cover opens about its spine edge; the revealed spread is **2× cover
+      width** with the crease at the **hinge (left) edge**, not down the middle of a
+      cover-width plane — today's defect (`BookOpening.module.css`'s `.spread` is
+      `inset: 0`, split 50/50). The scene then translates so the crease sits centred,
+      and grows to meet the reading pane.
+      ⚠️ **The old ≤2px spine criterion is rescoped, not dropped** (decisions.md
+      2026-08-12, ruling 7): the hinge must not slide *within the book's own
+      coordinates*; the recentring is a separate, deliberate phase in screen coordinates.
+      Do not treat a moving spine on screen as a regression.
+      ⚠️ **Blank paper planes, never real page text** — DESIGN.md rules the opening's
+      pages fake, and PAGE_CURL.md records what real paper motion costs.
+      ⚠️ **Keep the `contentReady` gate and Escape-cancels-at-any-phase.** They are the
+      only things standing between the reveal and a flash of "Loading book…".
+      _Acceptance: the crease lands on the hinge and the open spread is twice the cover's
+      width (measured, not eyeballed); the final rect matches the reader pane within a few
+      px; Escape during any phase leaves no overlay mounted._
+- [ ] **The whole sequence slows down.** Currently 540ms (240 fly + 140 open + 160
+      landing). Lengthening is explicitly permitted: the overlay is `pointer-events: none`
+      throughout, so DESIGN.md's ~400ms bound (which governs *input blocking*) is not in
+      play — decisions.md 2026-08-12, ruling 8.
+      _Acceptance: the open reads as deliberate rather than snapped, judged live by the
+      operator; input is never blocked at any point, verified by clicking through it._
+- [ ] **From the shelf: the book comes out, turns side-on, then opens.** The clicked book
+      translates toward the camera out of the shelf, rotates to a side-on view, and from
+      there **reuses the desk opening above** — one opening, two approaches.
+      _Acceptance: the shelf and desk openings share the open/land phases in code, not by
+      copy; interrupting at any phase from either entry point leaves a coherent app._
+
+#### Verify
+
+- [ ] **Operator sign-off across all four surfaces**, in both themes, at two window sizes,
+      and with reduced motion on for a full second pass. Specifically: does the desk still
+      feel like a place to work rather than a demo, and does the slower opening read as
+      deliberate rather than sluggish?
+
+### M24 — Search, designed before it is built
+
+A **design pass**, not an implementation milestone — its output is a spec and a task
+list, exactly as OPUS.md describes. Do not start building from this section.
+
+Grounding, verified 2026-08-12: **there is no search endpoint and no search UI anywhere
+in the codebase.** This is genuinely new, and the operator flagged it as needing
+conceptualisation. The working hypothesis to design against (decisions.md 2026-08-12,
+ruling 10) — not yet settled:
+
+- The **Scan is spatial** (where a thing sits in the book); **search is retrieval**. The
+  overlap the operator feels is these two jobs competing in one surface.
+- **Cmd+F is an in-book text find that never leaves the reader.** Text search is invoked
+  where the text is.
+- **Thematic/annotation search hands off *into* the Scan as a filter**, rather than
+  growing a second result list beside it — which would also give the Scan the job it is
+  currently missing.
+
+- [ ] **Decide and write down**: where text search lives and how results anchor (the
+      existing CFI/quote-plus-context anchoring is the obvious reuse — confirm it before
+      assuming it); whether thematic search is library-wide or per-book; what the Scan
+      becomes once it is a filter target; and whether any of this needs the parked
+      concept-tagging work (TASKS.md "Parked", decisions.md 2026-07-19) as a prerequisite.
+      _Acceptance: a spec an implementation session can execute without re-deciding
+      anything, and a task list whose criteria can fail._
+
+### M25 — Web search
 
 Scoped out of M17 deliberately (decisions.md 2026-07-28 later): it needs its own seam,
 not a flag, and it is a **second cloud dependency** — which amends CLAUDE.md's
@@ -1415,7 +971,7 @@ per-provider, **off by default, never silently on**.
 - [ ] **Verify:** ask a question needing outside knowledge on each provider path, with
       web off and on; confirm off costs nothing extra and on is fully attributed.
 
-### M24 Other
+### M26 — Other (Incorporating other LLMs)
 - [ ] **Codex CLI as a fourth provider.** `server/src/llm/codexCli.ts` behind the existing
       seam — no new call sites — spawning `codex exec --json` with `--output-schema` for
       `extract()`. **Caged, and the cage is part of the provider:** `--sandbox read-only`,
@@ -1437,15 +993,16 @@ per-provider, **off by default, never silently on**.
       confirming it cannot; usage lands in the ledger with honest provenance (`estimated`
       if the CLI reports no tokens)._
 
-### M25 — The paper fold, finished (parked 2026-08-03)
+### M27 — The paper fold, finished (parked 2026-08-03)
 
 **Parked by the operator on 2026-08-03**, immediately after signing off the shipped curl —
 "happy to park the remaining M20 refinements for a later stage". Nothing here is undecided
 and nothing here blocks anything else; it is the fold's remaining ambition, kept in one place
 so it can be picked up cold.
 
-Placed at the end deliberately: appending costs nothing, and renumbering M20.5-M24 to make
-room would invalidate cross-references in five documents (OPUS.md's rule).
+Renumbered to M27 on 2026-08-12 as part of the operator's fixes → 3D → search reordering
+(mapping table in decisions.md's 2026-08-12 entry); still parked and still last — the
+renumbering doesn't change that.
 
 #### The operator's own ask, and the cheapest thing here
 
@@ -1562,168 +1119,6 @@ a painter being retired); RTL reading direction.
       is the stutter gone, and does the real back of the sheet read better than the mirror did
       (it is not obviously true — more information on that surface could read as noise).
 
-
-### M26 — The rooms become solid (three.js)
-
-**Read decisions.md 2026-08-12 first**, rulings 5-8. The substrate question is settled:
-**three.js / React Three Fiber, for all four surfaces.** Nothing below re-decides it, and
-the recommendation that lost (CSS 3D first) is recorded there so it is not re-argued from
-scratch either.
-
-Appended rather than inserted, per OPUS.md's renumbering rule. The operator's order is
-**M22.6 → M26 → M27**; M23 and M24 are deferred behind them.
-
-**The cost this milestone is paying, stated up front so it is budgeted and not
-discovered:** CSS 3D degrades on its own and WebGL does not. Every surface here needs its
-reduced-motion path and its accessibility fallback built **deliberately**, and those are
-acceptance criteria, not polish. A beautiful shelf with no keyboard path is not done.
-
-#### A — The seam, before any of the four surfaces
-
-- [ ] **One 3D seam, not four call sites.** A single module owns the renderer, the canvas
-      lifecycle, the shared book geometry/material, and the reduced-motion and
-      context-lost exits. The Desk, shelf, turntable and opening are *consumers*. This is
-      settled decision "one narrow seam per subsystem" applied to a renderer.
-      ⚠️ **A lost context is a designed state**, exactly as M25 rules for the fold:
-      `webglcontextlost` degrades to the existing 2D presentation of that surface. It does
-      not get a bespoke escape hatch per surface.
-      ⚠️ **Do not let three.js types leak past this seam** into `desk/`, `library/` or
-      `reader/` components — the same rule that keeps `LLMProvider` honest.
-      _Acceptance: exactly one `<canvas>` exists no matter how many 3D surfaces are
-      mounted; killing the context (`WEBGL_lose_context`) on each surface leaves a
-      usable, non-blank room; `grep` finds no three.js import outside the seam._
-- [ ] **One book object, used by all three surfaces.** Cover, spine, page block, openable
-      front cover — authored once and consumed by the desk, the shelf and the opening.
-      Covers come from the existing `BookCover` image path as a texture.
-      ⚠️ **Price the texture upload before designing around it.** M25 measured
-      `texImage2D` from a card canvas at ~56ms and could not tell a GPU upload from a CPU
-      pixel path. A shelf uploads *dozens*. Measure with real covers at real count and
-      write the number into NOTES.md **before** choosing resolutions.
-      _Acceptance: the same book asset renders in all three surfaces with no per-surface
-      fork of its geometry; a book with no cover art still renders legibly._
-- [ ] **Reduced motion renders zero canvases, everywhere.** The existing 2D Desk, the
-      list, and the crossfade opening remain the reduced-motion presentation.
-      _Acceptance: with reduced motion on, `document.querySelectorAll("canvas").length ===
-      0` on the Desk, the shelf route and through a whole book opening._
-
-#### B — The Desk, looking down
-
-- [ ] **A top-down desk with real depth.** A book centred under the camera reads as flat
-      cover-only; moved off-centre it reveals binder and page edges, as a real object seen
-      from above would. Smoothly animated, not stepped.
-      ⚠️ **Existing per-book shelf coordinates are stored in px and must keep placing
-      books where the operator left them** — the same constraint M20.7 already carried.
-      A camera change must not silently re-lay-out the desk.
-      _Acceptance: dragging a book from centre to a corner continuously reveals its
-      thickness; every book is where it was before this task; drag/drop hit-testing still
-      lands on the book under the cursor at every position (⚠️ a projected 3D surface is
-      where hit-testing breaks — test the corners, not the centre)._
-- [ ] **A desk that looks like a desk.** Beyond the current zone-with-lines: surface
-      material, edge, and the depth cues a top-down view earns. Creative latitude is
-      granted here by the operator; DESIGN.md's anti-goals still bind.
-      _Acceptance: judged live in both themes and at two window sizes; the notepad and
-      the books still read as the foreground, never the surface._
-
-#### C — The turntable
-
-- [ ] **The listening tool becomes a 3D turntable**, replacing `ListeningTool.tsx`'s SVG,
-      sitting in a corner of the desk.
-      ⚠️ **It is the charm, never the gate** — AUDIO.md and the existing component's own
-      docstring. It stays a real focusable control with a pressed state and an accessible
-      name; the list view's "Listen" and the book card's action keep working untouched.
-      _Acceptance: keyboard-reachable, correctly labelled, and toggling it by keyboard
-      does what clicking it does; unplugging the 3D path entirely still leaves listening
-      fully operable._
-- [ ] **Dragging a book onto the turntable opens it in player mode.** The desk's existing
-      drag gesture is the input; the turntable is a drop target.
-      ⚠️ The drag already has an owner (`dragGesture.ts` / `BookObject.tsx`) and a
-      `stopPropagation` subtlety caught live. Extend that gesture; do not start a second
-      drag system for 3D.
-      _Acceptance: dropping a book on the platter starts that book listening; dropping it
-      anywhere else still just places it; a drag that ends outside the window leaves no
-      book stuck to the cursor._
-
-#### D — The shelf (a third view mode)
-
-- [ ] **A scrollable 3D bookshelf as a third Desk view**, on its own key alongside
-      `d` (desk) and `l` (list) — add it to `shortcuts/keys.ts`; `b` is free. Hovering a
-      book lifts it slightly; the reworked action card (M22.6 §D) floats above it; the
-      book itself is clickable as well as its actions.
-      ⚠️ **`l` and `LibraryGrid` are untouched and remain the keyboard/screen-reader
-      path** (DESIGN.md:67-68, decisions.md 2026-08-12 ruling 6). This task adds a view;
-      it does not replace one. A shelf that becomes the only library is a failed task.
-      ⚠️ Reference is the operator's (aiwithremy.com) for *feel* — lift, depth, spine
-      typography — not for copying.
-      _Acceptance: `d`/`l`/`b` reach three distinct views; the shelf holds 60fps while
-      scrolling with the full fixture library; hover lift and the action card both work
-      from keyboard focus, not hover alone; every book reachable by Tab._
-
-#### E — The opening, finished in 3D
-
-**Absorbs M22.5 §F** (see the note there). Build it once, here, in the new substrate —
-not twice in two.
-
-- [ ] **From the desk: the spread is twice the cover's width, creased at the hinge.**
-      The front cover opens about its spine edge; the revealed spread is **2× cover
-      width** with the crease at the **hinge (left) edge**, not down the middle of a
-      cover-width plane — today's defect (`BookOpening.module.css`'s `.spread` is
-      `inset: 0`, split 50/50). The scene then translates so the crease sits centred,
-      and grows to meet the reading pane.
-      ⚠️ **The old ≤2px spine criterion is rescoped, not dropped** (decisions.md
-      2026-08-12, ruling 7): the hinge must not slide *within the book's own
-      coordinates*; the recentring is a separate, deliberate phase in screen coordinates.
-      Do not treat a moving spine on screen as a regression.
-      ⚠️ **Blank paper planes, never real page text** — DESIGN.md rules the opening's
-      pages fake, and PAGE_CURL.md records what real paper motion costs.
-      ⚠️ **Keep the `contentReady` gate and Escape-cancels-at-any-phase.** They are the
-      only things standing between the reveal and a flash of "Loading book…".
-      _Acceptance: the crease lands on the hinge and the open spread is twice the cover's
-      width (measured, not eyeballed); the final rect matches the reader pane within a few
-      px; Escape during any phase leaves no overlay mounted._
-- [ ] **The whole sequence slows down.** Currently 540ms (240 fly + 140 open + 160
-      landing). Lengthening is explicitly permitted: the overlay is `pointer-events: none`
-      throughout, so DESIGN.md's ~400ms bound (which governs *input blocking*) is not in
-      play — decisions.md 2026-08-12, ruling 8.
-      _Acceptance: the open reads as deliberate rather than snapped, judged live by the
-      operator; input is never blocked at any point, verified by clicking through it._
-- [ ] **From the shelf: the book comes out, turns side-on, then opens.** The clicked book
-      translates toward the camera out of the shelf, rotates to a side-on view, and from
-      there **reuses the desk opening above** — one opening, two approaches.
-      _Acceptance: the shelf and desk openings share the open/land phases in code, not by
-      copy; interrupting at any phase from either entry point leaves a coherent app._
-
-#### Verify
-
-- [ ] **Operator sign-off across all four surfaces**, in both themes, at two window sizes,
-      and with reduced motion on for a full second pass. Specifically: does the desk still
-      feel like a place to work rather than a demo, and does the slower opening read as
-      deliberate rather than sluggish?
-
-### M27 — Search, designed before it is built
-
-A **design pass**, not an implementation milestone — its output is a spec and a task
-list, exactly as OPUS.md describes. Do not start building from this section.
-
-Grounding, verified 2026-08-12: **there is no search endpoint and no search UI anywhere
-in the codebase.** This is genuinely new, and the operator flagged it as needing
-conceptualisation. The working hypothesis to design against (decisions.md 2026-08-12,
-ruling 10) — not yet settled:
-
-- The **Scan is spatial** (where a thing sits in the book); **search is retrieval**. The
-  overlap the operator feels is these two jobs competing in one surface.
-- **Cmd+F is an in-book text find that never leaves the reader.** Text search is invoked
-  where the text is.
-- **Thematic/annotation search hands off *into* the Scan as a filter**, rather than
-  growing a second result list beside it — which would also give the Scan the job it is
-  currently missing.
-
-- [ ] **Decide and write down**: where text search lives and how results anchor (the
-      existing CFI/quote-plus-context anchoring is the obvious reuse — confirm it before
-      assuming it); whether thematic search is library-wide or per-book; what the Scan
-      becomes once it is a filter target; and whether any of this needs the parked
-      concept-tagging work (TASKS.md "Parked", decisions.md 2026-07-19) as a prerequisite.
-      _Acceptance: a spec an implementation session can execute without re-deciding
-      anything, and a task list whose criteria can fail._
 
 ## Parked (post-v1.5) — recorded so they aren't relitigated
 
