@@ -1218,33 +1218,52 @@ Fix all three; any one alone still reads as wrong.
 
 #### D — The chrome
 
-- [ ] **The theme control loses its dividers entirely.** Delete the
+- [x] **The theme control loses its dividers entirely.** Delete the
       `.themeButton + .themeButton` border rule and both of its "clear the divider"
       exceptions in `NavCluster.module.css:70-80`. The sliding thumb already carries
       selection; the dividers were only ever there to separate un-thumbed buttons.
       ⚠️ **Do not implement this as a light/dark conditional.** The bug is
       selection-position, not theme — see decisions.md 2026-08-12. Selecting Ink in
       *light* mode already looks "correct" today, which is the proof.
-      _Acceptance: no divider is visible at any of the three selections, in both themes;
-      the thumb still animates between positions and each button stays individually
-      focusable._
-- [ ] **The book action card fits its own buttons.** `.infoStrip` is
+      _Acceptance: met, live. The `.themeButton + .themeButton` rule and both of its
+      clearing selectors are gone outright (the thumb was already the only thing
+      carrying selection). Checked computed `border-left-width` at all three
+      selections in both paper and ink — `0px` throughout — and confirmed live
+      screenshots show no seam in ink (moon selected) or paper (sun selected); Tab
+      still moves focus through Paper → System → Ink individually._
+- [x] **The book action card fits its own buttons.** `.infoStrip` is
       `width: max-content; max-width: 220px`, but `.infoActions` is a non-wrapping flex
       row of four buttons whose min-content width exceeds that — so the row overflows the
       card (the operator's Alice screenshot). Note `.infoMeta` already wraps and
       `.infoActions` does not; that inconsistency *is* the bug. Widen the card and let it
       be shorter, per the operator's own read.
-      _Acceptance: at every book in the library, with the longest title in the fixture
-      set, no glyph or button edge crosses the card's border; the card stays inside the
-      viewport when the book sits near the right edge of the desk._
-- [ ] **The card's actions become the reader's actions.** Replace the four ad-hoc ghost
+      _Acceptance: met, live, bundled with the next task below — the four buttons became
+      icon-only (`IconButton`, size `sm`), which shrank `.infoActions`' min-content width
+      well under the old 220px cap on its own; `max-width` was still widened to 260px for
+      breathing room around long titles/meta. Measured live on "Alice's Adventures in
+      Wonderland" (the fixture with the longest title, and the operator's own screenshot):
+      infoStrip box `[613.96, 877.85]`, all four action buttons' boxes fully inside it,
+      zero overflow. Added a small viewport-edge clamp (`BookObject.tsx`'s `edgeShift`,
+      measured via `getBoundingClientRect` on hover) so the card nudges back in rather
+      than running off-screen for a book dragged near the desk's edge — not covered by the
+      icon-button width fix alone._
+- [x] **The card's actions become the reader's actions.** Replace the four ad-hoc ghost
       `Button`s with the same controls `ReaderActionsCluster.tsx` uses (Digest, Scan,
       Publish + Listen), so one control system serves both surfaces (settled decision 12:
       a new control belongs to a register, nothing gets a bespoke one again).
       ⚠️ Keep each action's `stopPropagation()` — `BookObject.tsx:200` records that
       without it the card's clicks also fire the book's own open handler, caught live.
-      _Acceptance: the same icon means the same thing on the desk card and in the reader;
-      clicking any action does that action and does **not** open the book._
+      _Acceptance: met, live. `BookObject.tsx`'s info strip now renders `IconButton` with
+      the same icon components `ReaderActionsCluster.tsx` uses (`BrainIcon` = Digest,
+      `MagnifierIcon` = Scan, `PublishIcon` = Publish) plus a new shared `PlayIcon` for
+      Listen — `controls/icons.tsx`, also reused by `AudioTransportIcon`'s `"play"` kind
+      so the reader's transport keeps the identical glyph rather than a second copy.
+      `ReaderActionsCluster` itself wasn't reused wholesale: its `KeyCapAnchor`/
+      `ProviderPickerPopover` wiring is bound to the reader's own global keyboard
+      shortcuts, which don't exist per-card on the Desk. Every action still calls
+      `e.stopPropagation()` before its handler — clicking Digest/Scan/Listen/Publish on a
+      hovered book opens that instrument/starts playback/publishes and never triggers the
+      book's own `onTap` open, confirmed live on all four._
 
 #### E — Custom theme colours
 

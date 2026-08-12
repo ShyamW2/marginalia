@@ -31,6 +31,17 @@ export function MagnifierIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** The transport triangle — shared so "Listen" means the same glyph on the
+ * desk card (BookObject) and the reader's transport (AudioTransportIcon's
+ * "play", which delegates here rather than keeping a second copy). */
+export function PlayIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7 5l12 7-12 7V5z" fill="currentColor" />
+    </svg>
+  );
+}
+
 /**
  * M19.7 "the nav bar becomes a floating cluster": the three icons that
  * replace the old text header (library/settings/theme).

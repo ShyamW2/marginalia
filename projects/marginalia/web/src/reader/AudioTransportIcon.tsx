@@ -1,3 +1,5 @@
+import { PlayIcon } from "../controls/icons.js";
+
 /** Same stroke-icon language as ChevronIcon — the reader's transport
  * controls (M21) get their own small icon set rather than borrowing emoji,
  * which render inconsistently across platforms/fonts. */
@@ -20,11 +22,7 @@ export function AudioTransportIcon({ kind, size = 16 }: AudioTransportIconProps)
     );
   }
   if (kind === "play") {
-    return (
-      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M7 5l12 7-12 7V5z" fill="currentColor" />
-      </svg>
-    );
+    return <PlayIcon size={size} />;
   }
   if (kind === "pause") {
     return (

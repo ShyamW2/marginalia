@@ -65,7 +65,13 @@
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
-  max-width: 220px;
+  /* M22.6 §D: widened from 220px, which was narrower than the four-button
+   * .infoActions row's min-content width — the row overflowed the card
+   * (the operator's Alice screenshot) while .infoMeta, which does wrap,
+   * looked fine. Icon buttons make the row itself much narrower, but the
+   * card stays wide enough to hold a long title/meta line on one or two
+   * lines rather than many. */
+  max-width: 260px;
   background: var(--color-bg-raised);
   border: 1px solid var(--color-border);
   border-radius: 8px;
@@ -92,20 +98,8 @@
 
 .infoActions {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.35rem;
   margin-top: 0.4rem;
   padding-top: 0.35rem;
   border-top: 1px solid var(--color-border);
-}
-
-.infoAction {
-  min-height: 0;
-  padding: 0.1rem 0.3rem;
-  color: var(--color-accent);
-  font-size: 0.75rem;
-  text-decoration: none;
-}
-
-.infoAction:hover {
-  text-decoration: underline;
 }

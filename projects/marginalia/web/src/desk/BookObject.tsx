@@ -1,11 +1,12 @@
-import { useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { motion, useMotionValue, type PanInfo } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
-import { Button } from "../controls/Button.js";
+import { IconButton } from "../controls/IconButton.js";
+import { BrainIcon, MagnifierIcon, PlayIcon, PublishIcon } from "../controls/icons.js";
 import styles from "./BookObject.module.css";
 
 // Total accumulated |wheel delta| needed to "wind the crown" all the way in.
@@ -13,6 +14,9 @@ const CROWN_THRESHOLD = 260;
 // A pointer that moved less than this during a drag gesture is a click, not
 // a rearrangement — open the book instead of persisting a near-zero move.
 const DRAG_CLICK_THRESHOLD = 4;
+// M22.6 §D: how close the info strip is allowed to sit to the viewport edge
+// before it gets nudged back in.
+const EDGE_MARGIN = 8;
 
 function relativeLastRead(iso: string | null): string {
   if (!iso) return "never opened";
@@ -68,6 +72,30 @@ export function BookObject({
   const dragDistance = useRef(0);
   const openedRef = useRef(false);
   const coverRef = useRef<HTMLDivElement>(null);
+  const infoStripRef = useRef<HTMLDivElement>(null);
+  const [edgeShift, setEdgeShift] = useState(0);
+
+  // M22.6 §D: the strip is centred on the book by default (left: 50%,
+  // transform: translateX(-50%)), which pushes it off-screen for a book
+  // dragged near the desk's left or right edge — nothing clamps drag
+  // position today. Measured after it mounts, since centring depends on its
+  // own rendered width.
+  useEffect(() => {
+    if (!isHovering) {
+      setEdgeShift(0);
+      return;
+    }
+    const strip = infoStripRef.current;
+    if (!strip) return;
+    const rect = strip.getBoundingClientRect();
+    if (rect.right > window.innerWidth - EDGE_MARGIN) {
+      setEdgeShift(window.innerWidth - EDGE_MARGIN - rect.right);
+    } else if (rect.left < EDGE_MARGIN) {
+      setEdgeShift(EDGE_MARGIN - rect.left);
+    } else {
+      setEdgeShift(0);
+    }
+  }, [isHovering]);
 
   function open() {
     if (openedRef.current) return;
@@ -246,7 +274,12 @@ export function BookObject({
       </motion.div>
 
       {isHovering && !isDragging && (
-        <div className={styles.infoStrip} role="note">
+        <div
+          ref={infoStripRef}
+          className={styles.infoStrip}
+          role="note"
+          style={edgeShift ? { transform: `translateX(calc(-50% + ${edgeShift}px))` } : undefined}
+        >
           <div className={styles.infoTitle}>{resource.title}</div>
           <div className={styles.infoMeta}>
             {resource.author && <span>{resource.author}</span>}
@@ -258,52 +291,54 @@ export function BookObject({
               {resource.highlightCount} highlight{resource.highlightCount === 1 ? "" : "s"}
             </span>
           </div>
+          {/* M22.6 §D: the same control system as the reader's own action
+              row (ReaderActionsCluster) — IconButton plus the same icon
+              components — so a control means the same thing on both
+              surfaces (settled decision 12). stopPropagation stays on every
+              one: without it the card's own click also opens the book
+              (BookObject.tsx's onTap handler), caught live. */}
           <div className={styles.infoActions}>
-            <Button
+            <IconButton
               variant="ghost"
               size="sm"
-              className={styles.infoAction}
-              onClick={(e) => {
-                e.stopPropagation();
-                openScan(e);
-              }}
-            >
-              Open scan
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={styles.infoAction}
+              icon={<BrainIcon size={16} />}
+              label="Read digest"
               onClick={(e) => {
                 e.stopPropagation();
                 openDigest(e);
               }}
-            >
-              Read digest
-            </Button>
-            <Button
+            />
+            <IconButton
               variant="ghost"
               size="sm"
-              className={styles.infoAction}
+              icon={<MagnifierIcon size={16} />}
+              label="Open scan"
+              onClick={(e) => {
+                e.stopPropagation();
+                openScan(e);
+              }}
+            />
+            <IconButton
+              variant="ghost"
+              size="sm"
+              icon={<PlayIcon size={16} />}
+              label="Listen"
               onClick={(e) => {
                 e.stopPropagation();
                 openListen();
               }}
-            >
-              Listen
-            </Button>
-            <Button
+            />
+            <IconButton
               variant="ghost"
               size="sm"
-              className={styles.infoAction}
+              icon={<PublishIcon size={16} />}
+              label={publishing ? "Publishing…" : "Publish"}
               disabled={publishing}
               onClick={(e) => {
                 e.stopPropagation();
                 onPublish(resource.id);
               }}
-            >
-              {publishing ? "Publishing…" : "Publish"}
-            </Button>
+            />
           </div>
         </div>
       )}
