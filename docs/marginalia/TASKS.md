@@ -1269,6 +1269,69 @@ paper tinting is a separate task and the Scan is out of bounds.
       _Acceptance: tinting paper never changes a single pixel of the Scan; body text
       contrast stays at or above AA at every reachable tint._
 
+#### F — Updating on a second machine without a mystery
+
+Now that the repo is public (SHIPPING.md rung 1, 2026-08-06), the two-machine loop is
+`git pull` on the other box — and *most of the time that is genuinely all it takes*:
+`tsx watch` restarts the server, Vite hot-reloads the client, and `getDb()` applies
+pending migrations at boot (`index.ts:22`). Only two changes need a human, and both fail
+in the same bad way.
+
+⚠️ **The failure is not silent because the error is quiet — it is silent because the app
+still looks like it is running.** `getDb()` is a bare top-level call, so a native-module
+failure is an unhandled throw at import time and the server dies instantly. Vite is a
+*separate process*: it keeps serving, the browser renders the whole UI, and every API
+call fails. `/api/health` exists and no client has ever called it. This is the crash
+already recorded against the Mac/Linux split; the goal here is that it can never again
+cost more than the ten seconds it takes to read a message.
+
+⚠️ **Out of scope, and must not be smuggled in:** `data/` is per-machine and gitignored,
+so libraries, highlights and reading position **do not follow you between machines** and
+nothing here changes that. One server, many clients is SHIPPING.md **rung 2.5** and is
+gated on authentication. A task justified by "so my highlights sync" belongs there.
+
+- [x] **A native-module failure explains itself.** Wrap the startup `getDb()` and
+      translate the known shapes into one legible banner naming the exact fix: an ABI
+      mismatch (`NODE_MODULE_VERSION`, from upgrading Node without rebuilding), a skipped
+      build (`Could not locate the bindings file`), and a wrong-platform binary
+      (`invalid ELF header`, from a `node_modules` copied between machines). Put the
+      translation behind a pure function so it can be unit-tested against real error
+      shapes rather than by breaking an install.
+      ⚠️ Keep the process **exiting non-zero**. The goal is a legible death, not a
+      server that limps on without a database.
+      ⚠️ **The command is `pnpm rebuild -r better-sqlite3`, and the `-r` is load-bearing.**
+      Found by breaking a real install: better-sqlite3 belongs to the `server` workspace
+      package, not the root, so a root-level `pnpm rebuild better-sqlite3` matches nothing
+      and exits **0 with no output** — it looks like it worked and the binding is still
+      missing. Any advice printed to a human must carry the flag, or it sends them in a
+      circle.
+      _Acceptance: a deliberately broken native module produces a banner naming
+      `pnpm rebuild better-sqlite3`, not a bare stack trace; an unrelated startup error
+      is still re-thrown untouched._
+- [x] **The browser says when the server is gone.** Poll `/api/health` and show a
+      banner over the app when it stops answering. This is the half of the fix that
+      catches *every* server death, not just the native one — the current UI's silence is
+      what turns a ten-second fix into twenty minutes.
+      ⚠️ Do not let it flap: require consecutive failures before showing, and clear on
+      the first success. A banner that blinks during a normal `tsx watch` restart is
+      worse than none, because it trains you to ignore it.
+      _Acceptance: killing the server shows the banner within a few seconds; restarting
+      clears it without a reload; a routine watch-restart never shows it._
+- [x] **`pnpm sync` — one command that is always correct.** Pull, reinstall only if the
+      lockfile actually changed, rebuild natives only if the Node ABI moved, and report
+      which of those it did. The value is not the typing saved; it is never having to work
+      out *which* of the four cases you are in.
+      ⚠️ Stamp against `node_modules/`, not `data/` — the stamp must die when
+      `node_modules` is deleted, and must never live in the data directory.
+      _Acceptance: run twice in a row, the second is a no-op that says so; after a Node
+      major change it rebuilds without being asked; with uncommitted local changes it
+      refuses cleanly instead of half-updating._
+- [x] **`.nvmrc`, so the majors stop drifting.** `packageManager` already pins pnpm;
+      nothing pins Node, which is the upstream cause of every ABI rebuild. A pin is a
+      recommendation rather than an enforcement — the preflight above is the real
+      protection — but it costs two lines and it helps strangers at rung 1 too.
+      _Acceptance: `nvm use` in the repo root selects the pinned major with no argument._
+
 #### Verify
 
 - [ ] **Drive it, don't read it.** Open a real book: toggle all four instruments by key
@@ -1277,6 +1340,9 @@ paper tinting is a separate task and the Scan is out of bounds.
       via the new control, then exit playback; hover a book on the desk in both themes;
       pick three accents including a deliberately pale one. Reduced motion for the whole
       pass.
+- [x] **F is verified by breaking things, not by reading them.** Rename the built
+      `better_sqlite3.node` and confirm the banner names the fix; kill the server with the
+      browser open and confirm the UI says so; run `pnpm sync` twice.
 
 ### M23 — Web search
 

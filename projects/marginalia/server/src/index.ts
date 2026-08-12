@@ -3,6 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import multer from "multer";
 import { getDb } from "./db.js";
+import { diagnoseNativeFailure, formatNativeFailure } from "./startupDiagnosis.js";
 import { WORKSPACE_ROOT } from "./paths.js";
 import { resourcesRouter } from "./routes/resources.js";
 import { highlightsRouter } from "./routes/highlights.js";
@@ -19,7 +20,19 @@ import { audioRouter, castRouter, ttsRouter } from "./routes/audio.js";
 const PORT = Number(process.env.PORT ?? 5175);
 
 // Touch the DB at startup so migrations run before we accept requests.
-getDb();
+// M22.6 F: a native-module failure here is fatal by design, but its default
+// presentation is a stack trace lost in `concurrently`'s interleaved output while Vite
+// keeps serving a UI that looks alive. Translate the known shapes into the one command
+// that fixes them; re-throw anything we cannot explain rather than guess.
+try {
+  getDb();
+} catch (error) {
+  const failure = diagnoseNativeFailure(error);
+  if (!failure) throw error;
+  // eslint-disable-next-line no-console
+  console.error(formatNativeFailure(failure));
+  process.exit(1);
+}
 
 const app = express();
 app.use(express.json());

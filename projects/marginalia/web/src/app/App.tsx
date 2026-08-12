@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { AnimatePresence } from "motion/react";
 import { Route, Routes, matchPath, useLocation, useNavigate, type Location } from "react-router-dom";
 import { NavCluster } from "./NavCluster.js";
+import { ServerStatusBanner } from "./ServerStatusBanner.js";
 import { ChromeSlotProvider } from "./chromeSlot.js";
 import { JobsProvider } from "../jobs/JobsContext.js";
 import { JobToastStack } from "../jobs/JobToastStack.js";
@@ -130,6 +131,9 @@ export function App() {
     <JobsProvider>
       <ChromeSlotProvider>
         <div className={`${styles.shell} register-paper`}>
+          {/* M22.6 F: outside <main> and above every overlay — the server being gone
+              outranks whatever room or instrument is currently on screen. */}
+          <ServerStatusBanner />
           <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
           <main className={styles.main}>
             <Suspense fallback={<div className={styles.routeFallback} />}>
