@@ -26,7 +26,7 @@ See [What is not verified](#what-is-not-verified) before assuming a feature work
 
 | | |
 |---|---|
-| **Node** | 20 or newer. Developed on 20 and 24. |
+| **Node** | 20 or newer. `.nvmrc` pins 24, so `nvm use` picks the developed-against version. |
 | **pnpm** | 10.x. `corepack enable` will pick up the pinned version automatically. |
 | **Disk** | ~500MB for `node_modules`, plus your books. Audio adds a large one-time model download on first use. |
 
@@ -62,16 +62,82 @@ warn — it crashes at startup with `ERR_DLOPEN_FAILED` or a missing bindings fi
 
 This is already handled by `onlyBuiltDependencies` in `pnpm-workspace.yaml`, so a normal
 `pnpm install` is fine. It is documented here because if you ever see that crash, this is
-why, and the fix is `pnpm rebuild better-sqlite3` rather than anything to do with your
-code.
+why — and because the server now catches it and prints the fix rather than dying in a
+stack trace.
 
-A related warning is expected and harmless at install time:
+⚠️ **If you fix it by hand, the `-r` is not optional:**
+
+```bash
+pnpm rebuild -r better-sqlite3
+```
+
+`better-sqlite3` belongs to the `server` workspace package, not the root, so a root-level
+`pnpm rebuild better-sqlite3` **matches nothing and exits 0 with no output.** It looks
+like it worked and the module is still broken. `pnpm sync` (below) does this correctly.
+
+One warning at install time is expected and harmless:
 
 ```
-Ignored build scripts: core-js, es5-ext, onnxruntime-node, protobufjs, sharp.
+Ignored build scripts: core-js, es5-ext.
 ```
 
-Those belong to the text-to-speech stack. Everything except audio works without them.
+Both are postinstall scripts that only print donation notices. Nothing needs them.
+
+## Updating
+
+```bash
+cd projects/marginalia     # the cd matters — see below
+pnpm sync
+```
+
+That is the whole thing. It pulls, and then does only what is actually needed:
+
+| It checks | And acts only if |
+|---|---|
+| the lockfile hash | it changed → `pnpm install` |
+| the Node ABI | you changed Node major → rebuilds the native modules |
+
+It prints what it did, and running it twice tells you the second run did nothing. Use
+`pnpm sync --no-pull` if you have already pulled, or you are offline.
+
+⚠️ **Run it from `projects/marginalia`, not the repository root.** There is no
+`package.json` at the root, so pnpm finds no script by that name and falls through to
+the **`sync` command that ships with your OS** — which prints `Usage: sync [OPTION]...`
+and exits 0. It looks like it ran and nothing happened.
+
+**You usually don't even need that.** `pnpm dev` watches the filesystem, so a plain
+`git pull` is normally enough on its own: the server restarts, the browser hot-reloads,
+and any new database migrations apply automatically the next time the server boots. You
+do not need to stop `pnpm dev`, and you do not need to re-run it.
+
+`pnpm sync` exists for the two cases where that is *not* enough — a changed dependency
+and a changed Node version — because both of them fail by killing the server at startup,
+and neither announces which one it was.
+
+### If something looks broken after an update
+
+The old failure mode was confusing: the server would die, but Vite kept serving, so the
+app still rendered and only the API calls failed. It looked like it was running.
+
+That no longer happens quietly:
+
+- **The browser** shows a banner when the server stops answering, and clears it by itself
+  when the server comes back. A normal watch-restart will not trigger it.
+- **The terminal** prints what is wrong and the exact command that fixes it, instead of a
+  stack trace — whether the native module was never compiled, was built for a different
+  Node version, or came from a different machine.
+
+In nearly every case the answer is `pnpm sync`.
+
+### ⚠️ Your library does not travel with you
+
+Updating the *code* on a second machine does not bring your *books* with it. `data/` is
+per-machine and gitignored, so libraries, highlights, threads and reading position are
+entirely separate on each install. Highlighting a passage on one machine will not show up
+on another.
+
+That is a deliberate limitation, not a bug — see
+[docs/SHIPPING.md](docs/SHIPPING.md) for what changing it would take.
 
 ## Your first book
 
@@ -167,11 +233,12 @@ author's machines:
 - **The `claude-agent` provider** requires Claude Code installed and logged in locally.
   It deliberately scrubs `ANTHROPIC_API_KEY` from its environment to force subscription
   auth, so it will not silently fall back to an API key.
-- **Text-to-speech** runs Kokoro in-process via ONNX. Its native dependencies are among
-  the skipped build scripts noted above, and the automated tests do not exercise the real
-  ONNX path — so audio is *untested* outside the author's machines, not *known working*.
-  First use downloads the `onnx-community/Kokoro-82M-v1.0-ONNX` weights into
-  `data/models/`; expect a large one-time download before the first sentence plays.
+- **Text-to-speech** runs Kokoro in-process via ONNX. Its native dependencies now build
+  and load correctly on install (verified on Linux/x64), but the automated tests never
+  exercise the real ONNX path, so *synthesis itself* is untested outside the author's
+  machines rather than known working. First use downloads the
+  `onnx-community/Kokoro-82M-v1.0-ONNX` weights into `data/models/`; expect a large
+  one-time download before the first sentence plays.
 - **Windows.** Developed on macOS and Linux only. No reason it should fail; nobody has
   tried.
 
@@ -190,7 +257,7 @@ projects/marginalia/
 docs/         design docs and decision log
 ```
 
-`pnpm test` runs all three packages (about 456 tests).
+`pnpm test` runs all three packages (about 471 tests).
 
 ## Documentation
 
@@ -209,7 +276,7 @@ out to be wrong.
 
 Marginalia was built with heavy AI assistance, and the repo does not hide it: design
 sessions and implementation sessions are separated, the prompts are committed, the
-decision log records what was rejected, and 83 of the commits carry
+decision log records what was rejected, and 90 of the commits carry
 `Co-Authored-By: Claude` trailers. If you are interested in what that workflow actually
 looks like over a few hundred commits rather than in a demo, `docs/` is the more
 interesting half of this repository.
