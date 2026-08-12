@@ -1270,7 +1270,7 @@ Fix all three; any one alone still reads as wrong.
 Scope and the contrast rule are set in decisions.md 2026-08-12, ruling 4. Accent first;
 paper tinting is a separate task and the Scan is out of bounds.
 
-- [ ] **An accent picker in the Arc shape.** A field where x is hue and y is lightness,
+- [x] **An accent picker in the Arc shape.** A field where x is hue and y is lightness,
       with a saturation slider, stored as an HSL triple in settings and applied over
       `--color-accent`. (The reference's rotating dial is explicitly not built.)
       ⚠️ **`--color-accent-text` is derived, never picked** — computed from the chosen
@@ -1279,14 +1279,39 @@ paper tinting is a separate task and the Scan is out of bounds.
       ⚠️ The accent is load-bearing beyond decoration: DESIGN.md:90 gives it to the
       highlight dot, the thread panel's spine **and the scan's heat-band hue**. Check all
       three, not just buttons.
-      _Acceptance: choosing any point in the field leaves every accent-on-accent-text
-      pairing at or above WCAG AA; the choice survives a reload; "reset to default"
-      restores the shipped accent exactly._
-- [ ] **Paper tinting, `paper` register only.** Background/paper hue for the Desk, Book,
+      _Acceptance: met. New `settings/tabs/AppearanceTab.tsx` (Settings gets a seventh
+      divider) renders `controls/ColorField.tsx` (the hue/lightness field) plus a
+      `Slider` for saturation, backed by `app/useAccent.ts` (localStorage, same
+      client-only persistence `useTheme.ts` already uses — survives a reload by
+      construction). `--color-accent-text` is derived by `colorMath.ts`'s
+      `accentTextFor`, never a second stored value: it picks whichever of pure black/white
+      contrasts higher against the accent, which is provably ≥4.58:1 for *any* input color
+      (the two curves' minimum crossing, at relative luminance ≈0.179) — proven, not
+      spot-checked, by `colorMath.test.ts` sweeping every hue/saturation/lightness the
+      field can produce and asserting ≥4.5:1 throughout; all pass. Checked all three
+      consumers named in the warning — `MarginRail`/`ThreadPanel`/`HeatStrip` all key off
+      `--color-accent`, so the CSS-variable-override approach reaches them for free, no
+      extra call sites. Live: picked a point in the field, watched `--color-accent` (
+      `#8a5a3b` → `#d9a6d4`) and the Settings binder's active-tab pill and "Reset" button
+      recolor immediately; "Reset accent to default" restored `#8a5a3b` exactly; the
+      button is disabled (verified via `disabled={!accent}`) until a custom accent is
+      actually chosen._
+- [x] **Paper tinting, `paper` register only.** Background/paper hue for the Desk, Book,
       Digest and Settings. The Scan's `glass` register keeps its fixed CRT phosphor
       palette — skinning is by material, not by room (settled decision 12).
-      _Acceptance: tinting paper never changes a single pixel of the Scan; body text
-      contrast stays at or above AA at every reachable tint._
+      _Acceptance: met. `app/usePaperTint.ts` re-hues the *current* `--color-bg`/
+      `--color-bg-raised` (read via `getComputedStyle`, own override stripped first) at a
+      fixed 12% saturation, so it works under either theme without duplicating theme.css's
+      literal colors; `colorMath.test.ts` sweeps every hue at that saturation against both
+      themes' real body-text colors and asserts ≥4.5:1 throughout. Never reaches the Scan
+      by construction, not by a special case: `ScanPage.module.css`'s `.page` already
+      hardcodes its own `--color-bg`/`--color-bg-raised` as a fixed CRT palette, which
+      shadows any `:root` override the instant it's inherited into that subtree. Verified
+      live, not just read: opened the Scan with a strong paper tint active (hue pushed
+      +200° via 20 keyboard steps) — the Desk visible behind the Scan overlay is
+      distinctly blue-tinted while the Scan itself renders its unchanged dark phosphor
+      palette; closing back to a clean Desk view showed the same tint with body text still
+      crisp._
 
 #### F — Updating on a second machine without a mystery
 

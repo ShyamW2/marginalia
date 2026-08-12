@@ -4,6 +4,8 @@ import { Route, Routes, matchPath, useLocation, useNavigate, type Location } fro
 import { NavCluster } from "./NavCluster.js";
 import { ServerStatusBanner } from "./ServerStatusBanner.js";
 import { ChromeSlotProvider } from "./chromeSlot.js";
+import { useAccent } from "./useAccent.js";
+import { usePaperTint } from "./usePaperTint.js";
 import { JobsProvider } from "../jobs/JobsContext.js";
 import { JobToastStack } from "../jobs/JobToastStack.js";
 import type { TabId } from "../settings/SettingsPage.js";
@@ -86,6 +88,14 @@ function settingsTabForRoom(pathname: string): TabId {
 export function App() {
   const location = useLocation();
   const navigate = useNavigate();
+
+  // M22.6 §E: applies whatever custom accent/paper tint is already stored
+  // (localStorage, same client-only persistence as useTheme.ts) the moment
+  // the app mounts, independent of Settings ever being opened this session
+  // — the picker in AppearanceTab is a second, self-contained instance of
+  // each hook that edits the same stored value, not this app-wide one.
+  useAccent();
+  usePaperTint();
 
   // "Background location" pattern (M11: settings is an overlay, not a
   // route): when settings is opened from within another room, that room's

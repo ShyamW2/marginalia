@@ -9,12 +9,13 @@ import { UsageDivider } from "./UsageDivider.js";
 import { ScanTab } from "./tabs/ScanTab.js";
 import { AudioTab } from "./tabs/AudioTab.js";
 import { DeskTab } from "./tabs/DeskTab.js";
+import { AppearanceTab } from "./tabs/AppearanceTab.js";
 import { Button } from "../controls/Button.js";
 import styles from "./SettingsPage.module.css";
 
 type FormState = Settings;
 
-export type TabId = "reading" | "llm" | "usage" | "scan" | "audio" | "desk";
+export type TabId = "reading" | "llm" | "usage" | "scan" | "audio" | "desk" | "appearance";
 
 /** The book/binder shell (TASKS.md M19: "tabbed dividers down the side").
  * Reading/Scan/Desk are still one shared Settings form + Save button, same
@@ -28,6 +29,7 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "scan", label: "Scan" },
   { id: "audio", label: "Audio" },
   { id: "desk", label: "Desk" },
+  { id: "appearance", label: "Appearance" },
 ];
 
 const SAVES_VIA_FORM: ReadonlySet<TabId> = new Set(["reading", "scan", "desk", "audio"]);
@@ -206,6 +208,7 @@ export function SettingsPage({ titleId }: SettingsPageProps = {}) {
                   update={update}
                 />
               )}
+              {activeTab === "appearance" && <AppearanceTab />}
             </motion.div>
           </AnimatePresence>
 

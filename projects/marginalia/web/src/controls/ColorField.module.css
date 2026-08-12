@@ -1,0 +1,29 @@
+.field {
+  position: relative;
+  width: 100%;
+  max-width: 280px;
+  height: 160px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-panel);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.field:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-panel), 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
+}
+
+.puck {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}

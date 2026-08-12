@@ -99,7 +99,7 @@ beforeEach(() => {
 });
 
 describe("SettingsPage binder", () => {
-  it("renders a real tablist with all six dividers", async () => {
+  it("renders a real tablist with all seven dividers", async () => {
     render(
       <MemoryRouter initialEntries={["/settings"]}>
         <SettingsPage />
@@ -108,7 +108,15 @@ describe("SettingsPage binder", () => {
 
     const tablist = await screen.findByRole("tablist", { name: "Settings sections" });
     const tabs = within(tablist).getAllByRole("tab");
-    expect(tabs.map((t) => t.textContent)).toEqual(["Reading", "LLM", "Usage", "Scan", "Audio", "Desk"]);
+    expect(tabs.map((t) => t.textContent)).toEqual([
+      "Reading",
+      "LLM",
+      "Usage",
+      "Scan",
+      "Audio",
+      "Desk",
+      "Appearance",
+    ]);
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(tabs[0].getAttribute("tabIndex") ?? tabs[0].tabIndex).not.toBe(-1);
   });
