@@ -117,6 +117,47 @@ describe("runDigest", () => {
     db.close();
   });
 
+  // M22.6 B (decisions.md 2026-08-12 ruling 2): three defects behind one
+  // screenshot — a raw spine index leaking into the UI, "Current" naming
+  // the chapter that just finished instead of the one in flight, and the
+  // final reduce call leaving the last chapter's label standing.
+  it("reports each chapter's UI label before its own call, and names the reduce phase", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource({ metadata: { chapterTitles: { "0": "The Storm" } } });
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text." },
+      { spineIndex: 1, href: "b", text: "Chapter two text." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider((req) => {
+      if (req.input.includes("Chapter one")) return { summary: "Ch1", themes: [], characters: [] };
+      if (req.input.includes("Chapter two")) return { summary: "Ch2", themes: [], characters: [] };
+      return { synopsis: "Book", cast: [], narratorGender: "unknown", themes: [] };
+    });
+
+    const calls: [number, number, string | null][] = [];
+    await runDigest(db, provider, resource, sections, 0, 1, undefined, (current, total, message) =>
+      calls.push([current, total, message]),
+    );
+
+    // sectionLabel's raw "section <spineIndex>" form is for the prompt only
+    // and must never reach a progress message.
+    for (const [, , message] of calls) {
+      if (message !== null) expect(message).not.toMatch(/^section \d/);
+    }
+    // Chapter 1's label is the first one reported — i.e. before its own
+    // `digestChapter` call resolves, not after (the bug: it used to only
+    // appear once chapter 2 was already the one actually in flight).
+    const firstLabeled = calls.find(([, , message]) => message !== null);
+    expect(firstLabeled?.[2]).toBe("S1 · The Storm");
+    // The reduce call — `total`'s "+1" — gets its own label instead of
+    // leaving chapter 2's behind while it's what's actually running.
+    expect(calls.some(([, , message]) => message === "Composing the book digest")).toBe(true);
+    db.close();
+  });
+
   it("re-digesting a chapter replaces exactly that row and leaves neighbours untouched", async () => {
     const db = createDb(":memory:");
     const resource = makeResource();

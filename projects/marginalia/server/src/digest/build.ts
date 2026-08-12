@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type { Resource } from "@marginalia/shared";
 import { LLMError, type LLMProvider } from "../llm/provider.js";
-import { sectionLabel } from "../llm/context.js";
+import { sectionLabel, sectionUiLabel } from "../llm/context.js";
 import type { ResourceTextSection } from "../library/store.js";
 import {
   getBookDigestSnapshot,
@@ -389,7 +389,17 @@ export async function runDigest(
     // a cancelled run from starting one more chapter after that.
     if (signal?.aborted) return persistRun("failed", null, "Cancelled");
 
+    // The prompt-facing label (raw, 0-based spineIndex) stays separate from
+    // the UI-facing one (M20.5's `S<n>`, decisions.md 2026-08-12 ruling 2:
+    // "sectionLabel is for model prompts and may never reach a surface").
     const chapterLabel = sectionLabel(section.spineIndex, resource.metadata.chapterTitles);
+    const chapterUiLabel = sectionUiLabel(sections, section.spineIndex, resource.metadata.chapterTitles);
+    // Reported before the await, not after — the model audio/render.ts:221
+    // already follows: `current` still names how many chapters are *done*,
+    // so the label of the one now starting is what's current while it's the
+    // slow part in flight, instead of the previous chapter's label sitting
+    // there stale for the whole call (decisions.md 2026-08-12 ruling 2).
+    onProgress?.(current, total, chapterUiLabel);
     try {
       const part = await digestChapter(
         provider,
@@ -403,7 +413,6 @@ export async function runDigest(
       if (part === null) {
         failedSpineIndices.add(section.spineIndex);
         current++;
-        onProgress?.(current, total, chapterLabel);
         continue;
       }
       putChapterDigest(db, {
@@ -417,7 +426,6 @@ export async function runDigest(
       });
       failedSpineIndices.delete(section.spineIndex);
       current++;
-      onProgress?.(current, total, chapterLabel);
     } catch (err) {
       if (err instanceof LLMError && err.code === "rate_limit") {
         const resumesAt = new Date(
@@ -432,6 +440,11 @@ export async function runDigest(
 
   const allChapters = listChapterDigests(db, resource.id);
   if (allChapters.length > 0) {
+    // The `total = pending.length + 1`'s "+1" is this call — named, so it
+    // doesn't read as the previous chapter's label left standing while the
+    // slowest part of the run is what's actually in flight (decisions.md
+    // 2026-08-12 ruling 2).
+    onProgress?.(current, total, "Composing the book digest");
     try {
       const reduced = await reduceBookDigest(
         provider,

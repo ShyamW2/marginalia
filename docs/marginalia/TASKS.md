@@ -1142,7 +1142,7 @@ it has been misread.
 Three independent defects behind one screenshot (decisions.md 2026-08-12, ruling 2).
 Fix all three; any one alone still reads as wrong.
 
-- [ ] **The UI never shows a raw spine index.** `digest/build.ts:406,420` passes
+- [x] **The UI never shows a raw spine index.** `digest/build.ts:406,420` passes
       `sectionLabel(...)` — the *prompt-facing* label, `"section 2: …"`, 0-based — into
       `onProgress`, which lands in the tray's "Current" line beside a `detail` built by
       `sectionUiLabel` as `"S3 · …"`. Same chapter, two numbering systems, and
@@ -1150,14 +1150,14 @@ Fix all three; any one alone still reads as wrong.
       Pass the UI label; `sectionLabel` stays for prompts only.
       _Acceptance: for a one-section digest run, "Range" and "Current" name the same
       chapter with the same number; no surface anywhere prints `section <spineIndex>`._
-- [ ] **"Current" names the chapter being worked on, not the one just finished.**
+- [x] **"Current" names the chapter being worked on, not the one just finished.**
       `onProgress` currently fires only *after* each `digestChapter` await, so mid-chapter
       the tray shows the previous chapter's label (and `null` for the first). Report the
       label **before** the await — which is exactly what `audio/render.ts:221` already
       does correctly, and is the model to copy.
       _Acceptance: within a second of a chapter starting, "Current" names **that**
       chapter; at no point does it name a chapter whose work has completed._
-- [ ] **The reduce phase is named, so an honest 50% stops reading as a lie.**
+- [x] **The reduce phase is named, so an honest 50% stops reading as a lie.**
       `total = pending.length + 1` is correct and stays. The final unit is the whole-book
       reduce and must say so — the tray shows something like "Composing the book digest"
       for that last step instead of leaving the previous chapter's label standing.
