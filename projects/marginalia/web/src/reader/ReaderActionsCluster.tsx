@@ -2,6 +2,8 @@ import type { MouseEvent, ReactNode, RefObject } from "react";
 import { BrainIcon, MagnifierIcon, PublishIcon } from "../controls/icons.js";
 import { IconButton } from "../controls/IconButton.js";
 import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
+import { KeyCapAnchor } from "../shortcuts/KeyCap.js";
+import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import styles from "./ReaderActionsCluster.module.css";
 
 interface ReaderActionsClusterProps {
@@ -11,6 +13,7 @@ interface ReaderActionsClusterProps {
   onPublish: () => void;
   publishing: boolean;
   scanButtonRef: RefObject<HTMLButtonElement>;
+  digestButtonRef: RefObject<HTMLButtonElement>;
 }
 
 /** Icon-only at rest; hovering or focusing the icon reveals its label,
@@ -44,15 +47,20 @@ export function ReaderActionsCluster({
   onPublish,
   publishing,
   scanButtonRef,
+  digestButtonRef,
 }: ReaderActionsClusterProps) {
   return (
     <div className={styles.row}>
       <ActionAnchor label="Digest">
-        <IconButton icon={<BrainIcon size={16} />} label="Digest" onClick={onOpenDigest} />
+        <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.digest}>
+          <IconButton ref={digestButtonRef} icon={<BrainIcon size={16} />} label="Digest" onClick={onOpenDigest} />
+        </KeyCapAnchor>
       </ActionAnchor>
       <ProviderPickerPopover role="digest" label="Digest provider" onNavigateToSettings={onNavigateToSettings} />
       <ActionAnchor label="Scan">
-        <IconButton ref={scanButtonRef} icon={<MagnifierIcon size={16} />} label="Scan" onClick={onOpenScan} />
+        <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.scan}>
+          <IconButton ref={scanButtonRef} icon={<MagnifierIcon size={16} />} label="Scan" onClick={onOpenScan} />
+        </KeyCapAnchor>
       </ActionAnchor>
       <ActionAnchor label={publishing ? "Publishing…" : "Publish"}>
         <IconButton

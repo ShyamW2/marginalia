@@ -29,7 +29,19 @@ interface ReaderLocationState {
   listenOnOpen?: boolean;
 }
 
-export function ReaderPage() {
+interface ReaderPageProps {
+  /** Whether the Scan/Digest this room opened is still showing above it —
+   * computed by `App.tsx` from the real, un-remapped location (see the
+   * comment at this route's `element`). Undefined on any render path that
+   * doesn't come through that route (there is none today, but the prop
+   * stays optional rather than assumed). */
+  scanOpen?: boolean;
+  digestOpen?: boolean;
+  onCloseScan?: () => void;
+  onCloseDigest?: () => void;
+}
+
+export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }: ReaderPageProps) {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -69,6 +81,7 @@ export function ReaderPage() {
     () => location.state as ReaderLocationState | null,
   );
   const scanButtonRef = useRef<HTMLButtonElement>(null);
+  const digestButtonRef = useRef<HTMLButtonElement>(null);
   // M20.7 "the opening": read once at mount, the same click-time-rect
   // handoff the Scan/Digest overlays use (App.tsx's "background location"
   // pattern doesn't apply here — the reader is a full room, not a popup —
@@ -129,22 +142,46 @@ export function ReaderPage() {
   // M20.5 "the Digest becomes a popup too": the exact same background-
   // location pattern as the Scan above, now that Digest is a second
   // instrument rather than a plain routed page.
-  function handleOpenDigest(event: MouseEvent<HTMLElement>) {
+  function openDigestFrom(el: Element) {
     if (!id) return;
-    setPendingOverlayOrigin(captureOverlayOrigin(event.currentTarget));
+    setPendingOverlayOrigin(captureOverlayOrigin(el));
     navigate(`/digest/${id}`, { state: { background: location } });
+  }
+
+  function handleOpenDigest(event: MouseEvent<HTMLElement>) {
+    openDigestFrom(event.currentTarget);
   }
 
   // M20.5 "`q` opens the scan for the book in focus": unambiguous here — the
   // book this reader has open — through the M19.7 shared registry. Focuses
   // the Scan button first (there's no click target for a keyboard trigger),
-  // matching NavCluster's identical "s" -> settings pattern.
+  // matching NavCluster's identical "s" -> settings pattern. M22.6 "`q`
+  // closes the Scan it opened": `scanOpen`/`digestOpen` (threaded down from
+  // App.tsx, which can see the real location this room's own can't — see the
+  // route's comment) turn the same key into the close, reusing App.tsx's
+  // existing `closeScan`/`closeDigest` rather than a second already-open
+  // check.
   useShortcuts([
     {
       key: SHORTCUT_KEYS.scan,
       handler: () => {
+        if (scanOpen) {
+          onCloseScan?.();
+          return;
+        }
         scanButtonRef.current?.focus();
         if (scanButtonRef.current) openScanFrom(scanButtonRef.current);
+      },
+    },
+    {
+      key: SHORTCUT_KEYS.digest,
+      handler: () => {
+        if (digestOpen) {
+          onCloseDigest?.();
+          return;
+        }
+        digestButtonRef.current?.focus();
+        if (digestButtonRef.current) openDigestFrom(digestButtonRef.current);
       },
     },
   ]);
@@ -213,6 +250,7 @@ export function ReaderPage() {
             onPublish={handlePublish}
             publishing={publishing}
             scanButtonRef={scanButtonRef}
+            digestButtonRef={digestButtonRef}
             stageRef={readerStageRef}
           />
         </>

@@ -135,7 +135,27 @@ export function App() {
             <Suspense fallback={<div className={styles.routeFallback} />}>
               <Routes location={roomLocation(location)}>
                 <Route path="/" element={<DeskPage overlayOpen={overlayOpen} />} />
-                <Route path="/read/:id" element={<ReaderPage />} />
+                <Route
+                  path="/read/:id"
+                  element={
+                    // The room's own `useLocation()` is remapped by this
+                    // `<Routes location>` override to its own path (never
+                    // "/scan/:id"/"/digest/:id"), so it can't tell on its own
+                    // whether an overlay it opened is still showing above it
+                    // — the same reason DeskPage takes `overlayOpen` as a
+                    // prop instead of computing it. `scanOpen`/`digestOpen`
+                    // and the matching close functions are threaded down so
+                    // ReaderPage's `q`/`g` can toggle rather than re-open
+                    // (decisions.md 2026-08-12 ruling 1): one already-open
+                    // check, reused, not a second copy of it.
+                    <ReaderPage
+                      scanOpen={scanId !== null}
+                      digestOpen={digestId !== null}
+                      onCloseScan={closeScan}
+                      onCloseDigest={closeDigest}
+                    />
+                  }
+                />
                 {/* Deep link / hard refresh straight at an overlay path has no
                     background room to fall back on — the Desk stands in, per
                     TASKS.md ("/settings ... renders the desk with the modal

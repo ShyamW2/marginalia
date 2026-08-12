@@ -16,6 +16,7 @@ export const SHORTCUT_KEYS = {
   settings: "s",
   reader: "r",
   scan: "q",
+  digest: "g",
   tasksTray: "t",
   // M22.5 "d for the Desk, l for the Library": both land on "/" — the same
   // route, DeskPage — but set its local view mode, so they need their own

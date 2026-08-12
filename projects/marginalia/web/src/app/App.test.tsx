@@ -70,6 +70,44 @@ describe("App", () => {
       expect(await screen.findByText("Your library is empty")).toBeTruthy();
     },
   );
+
+  // M22.6 "`q` closes the Scan it opened, and the Digest gets `g`": before
+  // this fix, a bare `q`/`g` press fell through the Scan/Digest overlay's
+  // Escape-only scope to ReaderPage's still-mounted binding, which always
+  // navigated forward — pushing scan-over-scan instead of closing. Each case
+  // below is opened exactly as `openScanFrom`/`openDigestFrom` open it: a
+  // real `background` location so `App.tsx`'s `closeScan`/`closeDigest` has
+  // something to `navigate(-1)` back to.
+  it.each([
+    { key: SHORTCUT_KEYS.scan, prefix: "scan", dialogName: "Scan" },
+    { key: SHORTCUT_KEYS.digest, prefix: "digest", dialogName: "Digest" },
+  ])("`$key` closes the $dialogName it opened, back to the reader underneath (M22.6)", async ({ key, prefix, dialogName }) => {
+    render(
+      <MemoryRouter
+        initialEntries={[
+          { pathname: "/read/book-1" },
+          { pathname: `/${prefix}/book-1`, state: { background: { pathname: "/read/book-1" } } },
+        ]}
+        initialIndex={1}
+      >
+        <App />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("dialog", { name: dialogName })).toBeTruthy();
+    // `ReaderPage` (the room underneath) and the overlay are separate
+    // code-split chunks — waiting for the dialog alone doesn't guarantee the
+    // reader has also finished mounting (and registering its own shortcut
+    // scope) by the time the key is pressed. "Back to library" only ever
+    // comes from `ReaderPage`'s own not-found branch, so it's the signal
+    // that the room underneath is really there too.
+    await screen.findByText("Back to library");
+
+    fireEvent.keyDown(window, { key });
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: dialogName })).toBeNull());
+    // Proves the reader room, not the Desk: still there once the overlay closes.
+    expect(screen.getByText("Back to library")).toBeTruthy();
+  });
 });
 
 describe("findOverlayPathname", () => {

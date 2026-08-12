@@ -1115,7 +1115,7 @@ it has been misread.
 
 #### A — Instruments toggle, and every instrument has a key
 
-- [ ] **`q` closes the Scan it opened, and the Digest gets `g`.** Add `digest: "g"` to
+- [x] **`q` closes the Scan it opened, and the Digest gets `g`.** Add `digest: "g"` to
       `shortcuts/keys.ts` (`d` and `l` are taken by Desk/list). The Scan's binding in
       `ReaderPage.tsx:144` currently always navigates, so a second `q` pushes
       scan-over-scan — **the identical defect fixed for Settings on 2026-08-04**.
@@ -1130,7 +1130,7 @@ it has been misread.
       reader (not to a second Scan, and not to the Desk); same for `g` and the Digest;
       `s` and `t` still toggle exactly as they do today; every one of the four is
       reachable from both the Desk and the reader._
-- [ ] **Each of the four keycaps is advertised where its control is.** `KeyCapAnchor`
+- [x] **Each of the four keycaps is advertised where its control is.** `KeyCapAnchor`
       already exists and the Tasks/Settings icons already use it; the Scan and Digest
       controls in `ReaderActionsCluster.tsx` do not. Keycaps import from
       `SHORTCUT_KEYS` (M19.7's "keycaps that cannot lie") — never a typed letter.

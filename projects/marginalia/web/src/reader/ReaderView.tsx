@@ -399,6 +399,10 @@ interface ReaderViewProps {
   onPublish: () => void;
   publishing: boolean;
   scanButtonRef: RefObject<HTMLButtonElement>;
+  /** M22.6 "each of the four keycaps is advertised where its control is":
+   * `q`'s focus-before-open target already existed as `scanButtonRef`; `g`
+   * gets the same treatment now that the Digest has a binding too. */
+  digestButtonRef: RefObject<HTMLButtonElement>;
   /** M22.5 "the opening actually opens": exposes the `.stage` node —
    * the reading pane's own rect — so `BookOpening` can measure it once the
    * reader has landed and animate the revealed spread onto it. Optional:
@@ -421,6 +425,7 @@ export function ReaderView({
   onPublish,
   publishing,
   scanButtonRef,
+  digestButtonRef,
   stageRef: externalStageRef,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
@@ -2630,6 +2635,7 @@ export function ReaderView({
               onPublish={onPublish}
               publishing={publishing}
               scanButtonRef={scanButtonRef}
+              digestButtonRef={digestButtonRef}
             />
           </div>
         )}
@@ -2677,6 +2683,7 @@ export function ReaderView({
             onPublish={onPublish}
             publishing={publishing}
             scanButtonRef={scanButtonRef}
+            digestButtonRef={digestButtonRef}
           />
         )}
       </div>
@@ -2695,6 +2702,7 @@ export function ReaderView({
             onPublish={onPublish}
             publishing={publishing}
             scanButtonRef={scanButtonRef}
+            digestButtonRef={digestButtonRef}
           />
         </div>
       )}
