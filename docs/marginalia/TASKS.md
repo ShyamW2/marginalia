@@ -1164,7 +1164,7 @@ Fix all three; any one alone still reads as wrong.
       _Acceptance: a single-section digest shows 50% with the chapter named, then a
       distinctly-labelled final step, then done — and a reader watching it can say what
       the machine is doing at every moment without knowing the code._
-- [ ] **Find out why the TTS bar isn't showing; do not build a second one.**
+- [x] **Find out why the TTS bar isn't showing; do not build a second one.**
       ⚠️ **This is a diagnostic task.** `audio/render.ts:221` already reports
       `(n, sentences.length, sentence.text.slice(0, 48))` before every sentence, and
       `TasksTray.tsx:100` already draws a determinate bar whenever `total > 0`, with the

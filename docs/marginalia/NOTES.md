@@ -4895,3 +4895,66 @@ cross-tab claim rests on the stream being registry-wide with no per-client state
 `registry.test.ts` establishes directly). No screenshots were saved outside the session
 scratch directory — the app's real book covers are in them, so they weren't published
 anywhere.
+
+## M22.6 B, task 4 — the TTS progress bar diagnostic: confirmed working, not fixed — 2026-08-12
+
+**This is the "an actual digest/audio-render job in flight" gap the M22.5 C+D entry above
+named as undriven — this pass drove exactly that.** Task text: "find out why the TTS bar
+isn't showing; do not build a second one," with the explicit fallback that the operator's
+memory could be of a *more prominent* presentation rather than a genuine break — a design
+question, not a bug. No `chromium-cli` in this environment either, so this was driven from
+the server/transport side rather than a screenshot of the rendered tray; see the reasoning
+below for why that's still a real answer, not a lesser one.
+
+**What was actually driven, against the real library (no fixture needed — `data/` already
+had five imported books):** started both dev servers (`tsx watch` on :5175, Vite on :5173,
+neither already running — checked with `lsof` first per the standing data/ caution), then
+`POST /api/resources/<Kafka-on-the-Shore-id>/audio/sections/<spineIndex>` against several
+never-rendered chapters to force real, uncached Kokoro synthesis (a cache hit responds
+`{"cached": true}` with no job at all, which would have made this a non-test). Watched
+`GET /api/jobs/events` with `curl -sN`, twice — once straight at :5175, once through Vite's
+`/api` proxy at :5173 — while a render was genuinely in flight.
+
+**Every event was correct and prompt, on both connections.** A `data:` frame per sentence,
+each with `progress.current`/`.total` advancing by exactly one, `progress.message` the next
+sentence's own text (never the previous one — this file's `audio/render.ts:221` model,
+confirmed live, not just read), and `detail` holding the fixed `S<n> · <title>` range label
+the whole time. Two concurrently-running jobs' events interleaved correctly on the one shared
+stream, matching the registry's "one registry-wide stream" design. The Vite proxy did not
+buffer or delay the stream — events arrived through it exactly as fast as direct, which rules
+out the one dev-only difference that could plausibly have hidden this from the operator
+without touching production.
+
+**Reading `TasksTray.module.css` against this data settles the client side without needing a
+browser.** `.progressTrack` (the bar itself) is a plain sibling inside `.row`, gated only on
+`job.status === "running"` — unlike `.rowDetail` (the "Current" sentence text, along with
+Kind/Book/Range/Started/Elapsed), which is deliberately hover/focus-revealed per the M22.5
+comment already on it. `KIND_LABEL` in `TasksTray.tsx` already has an `"audio-render"` entry
+("Rendering audio") — no kind-based filtering anywhere hides it from the list. So: the bar
+*would* be on screen, unconditionally, the moment the tray is opened while a render is
+running; only the live sentence text specifically needs a hover.
+
+**Conclusion, per the task's own fallback: confirmed working, not a bug.** Every layer —
+`render.ts`'s per-sentence report, the registry's global/per-job listeners, both SSE routes,
+and the tray's own render logic — does exactly what M21/M22.5 built it to do. The most likely
+explanation for the operator's memory is the two-step disclosure this already has by design:
+the bar only appears once the tray is *opened* (a click or `t`, same as any other job — nothing
+audio-specific), and the *sentence-level* detail only appears once a row is hovered or
+focused on top of that. A render kicked off silently by `usePlayer`'s chapter-ahead warming
+(never calling `registerStarted`, so no toast either — deliberate, per its own comment) gives
+no on-screen cue at all *to open the tray in the first place* unless the reader is actually
+stalled waiting for it (`player.status === "loading"`) — which is a real, once-per-hover gap
+in discoverability, but a design question about prominence, not the wiring defect the task
+asked to find. Left unfixed per the task's own instruction ("do not build a second one");
+worth a design-session line if the operator still wants the tray to self-open, or the bar to
+surface somewhere less hidden, for an audio-render job specifically.
+
+**Cleanup:** every job started for this (six `audio-render` jobs, one deliberately left
+running to observe, the rest cancelled immediately after their first event confirmed the
+same behaviour) was cancelled via `POST /api/jobs/:id/cancel` before finishing — real Kokoro
+synthesis time wasn't worth spending past the first few sentences per section. Both dev
+servers were stopped by `kill`ing the exact PIDs `lsof -ti:PORT` returned, not a broad
+`pkill`, and the port check before launch confirmed neither was already serving someone
+else's session. The synthesized audio cached under `data/` from the render that did run a
+little further (Chapter 26) is real, valid cache — left in place rather than deleted, since
+it's indistinguishable from a listener actually having reached that chapter.
