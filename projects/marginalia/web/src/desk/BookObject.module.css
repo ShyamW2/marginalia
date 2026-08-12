@@ -28,6 +28,11 @@
   transition: box-shadow var(--duration-standard) var(--ease-standard);
 }
 
+.coverArtHidden {
+  opacity: 0;
+  transition: opacity var(--duration-standard) var(--ease-standard);
+}
+
 .lifted {
   box-shadow: 0 18px 34px rgba(20, 14, 6, 0.32);
 }

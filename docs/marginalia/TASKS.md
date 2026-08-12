@@ -827,7 +827,7 @@ acceptance criteria, not polish. A beautiful shelf with no keyboard path is not 
 
 #### B — The Desk, looking down
 
-- [ ] **A top-down desk with real depth.** A book centred under the camera reads as flat
+- [x] **A top-down desk with real depth.** A book centred under the camera reads as flat
       cover-only; moved off-centre it reveals binder and page edges, as a real object seen
       from above would. Smoothly animated, not stepped.
       ⚠️ **Existing per-book shelf coordinates are stored in px and must keep placing
@@ -837,7 +837,7 @@ acceptance criteria, not polish. A beautiful shelf with no keyboard path is not 
       thickness; every book is where it was before this task; drag/drop hit-testing still
       lands on the book under the cursor at every position (⚠️ a projected 3D surface is
       where hit-testing breaks — test the corners, not the centre)._
-- [ ] **A desk that looks like a desk.** Beyond the current zone-with-lines: surface
+- [x] **A desk that looks like a desk.** Beyond the current zone-with-lines: surface
       material, edge, and the depth cues a top-down view earns. Creative latitude is
       granted here by the operator; DESIGN.md's anti-goals still bind.
       _Acceptance: judged live in both themes and at two window sizes; the notepad and

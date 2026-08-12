@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { motion, useMotionValue, type PanInfo } from "motion/react";
+import { motion, type MotionValue, type PanInfo } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { BookCover } from "../library/BookCover.js";
@@ -32,6 +32,11 @@ function relativeLastRead(iso: string | null): string {
 interface BookObjectProps {
   resource: ResourceSummary;
   position: ShelfState;
+  /** Owned by `DeskCanvas.tsx`, not this component (M23 §B) — the desk's 3D
+   * depth layer follows these same values every frame so it moves with an
+   * in-progress drag instead of only updating once it commits. */
+  x: MotionValue<number>;
+  y: MotionValue<number>;
   reducedMotion: boolean;
   cursorStyle: CursorStyleChoice;
   onBringToFront: (resourceId: string) => number;
@@ -42,6 +47,11 @@ interface BookObjectProps {
    * wheel-wound crown) opens the book listening — the explicit "Listen"
    * action in the info strip does this unconditionally regardless. */
   listeningEngaged: boolean;
+  /** M23 §B: the desk's 3D depth layer is rendering this book — hide the
+   * flat 2D cover image so the tilted 3D one shows through instead. The DOM
+   * element stays exactly where it was (opacity only): it's still the real
+   * drag/drop hit target and still in the accessibility tree. */
+  show3D: boolean;
 }
 
 /**
@@ -53,6 +63,8 @@ interface BookObjectProps {
 export function BookObject({
   resource,
   position,
+  x,
+  y,
   reducedMotion,
   cursorStyle,
   onBringToFront,
@@ -60,11 +72,10 @@ export function BookObject({
   onPublish,
   publishing,
   listeningEngaged,
+  show3D,
 }: BookObjectProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const x = useMotionValue(position.x);
-  const y = useMotionValue(position.y);
   const [zOrder, setZOrder] = useState(position.zOrder);
   const [isDragging, setIsDragging] = useState(false);
   const [isHovering, setIsHovering] = useState(false);
@@ -263,7 +274,14 @@ export function BookObject({
           className={`${styles.coverWrap} ${isDragging ? styles.lifted : ""}`}
           layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
         >
-          <BookCover resourceId={resource.id} title={resource.title} />
+          {/* M23 §B: while the desk's 3D layer is drawing this book, the
+              flat cover art underneath is redundant with (and would double
+              up the shadow of) the tilted 3D one — hidden rather than
+              unmounted, so the element stays the same size for `layoutId`'s
+              doorway transition and stays in the accessibility tree. */}
+          <div className={show3D ? styles.coverArtHidden : undefined}>
+            <BookCover resourceId={resource.id} title={resource.title} />
+          </div>
           {resource.threadCount > 0 && (
             <span className={styles.threadBadge}>{resource.threadCount}</span>
           )}

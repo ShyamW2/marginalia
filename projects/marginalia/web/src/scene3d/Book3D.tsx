@@ -76,7 +76,7 @@ export function Book3D({ resourceId, width = 1, height = 1.5, thickness = 0.12, 
       </mesh>
       {/* The front cover: hinged at the spine (local x = 0). */}
       <group position={[0, 0, thickness / 2 - coverThickness / 2]} rotation={[0, angle, 0]}>
-        <mesh position={[width / 2, 0, 0]} castShadow>
+        <mesh key={coverMaterial.uuid} position={[width / 2, 0, 0]} castShadow>
           <boxGeometry args={[width, height, coverThickness]} />
           <primitive object={edgeMaterial} attach="material-0" />
           <primitive object={edgeMaterial} attach="material-1" />

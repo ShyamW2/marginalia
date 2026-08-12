@@ -73,7 +73,21 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
       {children}
       {shouldMount && (
         <div className={styles.canvasLayer} aria-hidden="true">
-          <Canvas onCreated={handleCreated} dpr={[1, 2]}>
+          {/* R3F's own wrapping div sets `pointerEvents: "auto"` inline
+              unless told otherwise (its default assumption is that *it* is
+              the event source) — CSS on `.canvasLayer` alone can't win
+              against that, since it's an inline style on a *child* div, not
+              inherited from this one. Without this override, a mounted 3D
+              layer silently ate every click and drag on the page underneath
+              it — caught live once §B was the first consumer to ever make
+              `shouldMount` true; §A's canvas never actually rendered. */}
+          <Canvas onCreated={handleCreated} dpr={[1, 2]} shadows style={{ pointerEvents: "none" }}>
+            {/* Shared across every consumer — a surface registering its own
+                lights would double them up the moment two are ever mounted
+                together, which the seam's own "one narrow seam" rule
+                (CLAUDE.md) says belongs here, not per-surface. */}
+            <ambientLight intensity={0.75} />
+            <directionalLight position={[280, 520, 200]} intensity={0.65} castShadow />
             {layerIds.map((id) => (
               <group key={id}>{layers[id]}</group>
             ))}

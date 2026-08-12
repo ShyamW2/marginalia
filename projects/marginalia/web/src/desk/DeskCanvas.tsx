@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { motion } from "motion/react";
+import { motion, motionValue, type MotionValue } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
+import { useScene3DAvailable, useScene3DLayer } from "../scene3d/Scene3D.js";
 import { BookObject } from "./BookObject.js";
 import { Notepad } from "./Notepad.js";
 import { CursorTrail } from "./CursorTrail.js";
 import { ListeningTool } from "./ListeningTool.js";
 import { useDeskParallax } from "./useDeskParallax.js";
 import { defaultShelfState } from "./shelfDefaults.js";
+import { DeskScene3D, type DeskBookPlacement } from "./DeskScene3D.js";
 import styles from "./DeskCanvas.module.css";
 
 // BookCover.module.css fixes the cover at 168px wide, 2:3 — a book's own
@@ -49,9 +51,18 @@ export function DeskCanvas({
   onToggleListening,
 }: DeskCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const tiltLayerRef = useRef<HTMLDivElement>(null);
   const [positions, setPositions] = useState<Record<string, ShelfState>>({});
   const zCounter = useRef(0);
   const { rotateX, rotateY, onPointerMove, onPointerLeave } = useDeskParallax(!reducedMotion);
+  const show3D = useScene3DAvailable();
+
+  // M23 §B: one x/y `MotionValue` pair per book, owned here rather than
+  // inside `BookObject` so the desk's 3D depth layer (`DeskScene3D.tsx`) can
+  // read the same live values every frame and follow an in-progress drag —
+  // if each `BookObject` kept its own via `useMotionValue`, the 3D layer
+  // would have no way to see a drag before it commits to `positions` state.
+  const motionValues = useRef(new Map<string, { x: MotionValue<number>; y: MotionValue<number> }>()).current;
 
   // Books are absolutely positioned, so they never contribute to the
   // surface's natural height — without this, arranging enough books to
@@ -85,7 +96,20 @@ export function DeskCanvas({
       return Math.max(max, z);
     }, 0);
     zCounter.current = Math.max(zCounter.current, maxZ);
-  }, [resources]);
+
+    // Keep the motion-value map in step with the resource list — a plain
+    // side effect, not folded into the `setPositions` updater above, since
+    // that updater must stay pure (React may invoke it more than once).
+    const activeIds = new Set(resources.map((r) => r.id));
+    resources.forEach((resource, index) => {
+      if (motionValues.has(resource.id)) return;
+      const seed = resource.shelf ?? defaultShelfState(resource.id, index);
+      motionValues.set(resource.id, { x: motionValue(seed.x), y: motionValue(seed.y) });
+    });
+    for (const id of motionValues.keys()) {
+      if (!activeIds.has(id)) motionValues.delete(id);
+    }
+  }, [resources, motionValues]);
 
   function bringToFront(resourceId: string): number {
     zCounter.current += 1;
@@ -108,6 +132,22 @@ export function DeskCanvas({
     });
   }
 
+  const deskBooks: DeskBookPlacement[] = useMemo(
+    () =>
+      resources.flatMap((resource) => {
+        const position = positions[resource.id];
+        const values = motionValues.get(resource.id);
+        if (!position || !values) return [];
+        return [{ resourceId: resource.id, rotationDeg: position.rotation, zOrder: position.zOrder, ...values }];
+      }),
+    [resources, positions, motionValues],
+  );
+  const deskSceneNode = useMemo(
+    () => <DeskScene3D books={deskBooks} deskRef={tiltLayerRef} />,
+    [deskBooks],
+  );
+  useScene3DLayer("desk", deskSceneNode);
+
   return (
     <motion.div
       ref={containerRef}
@@ -117,15 +157,18 @@ export function DeskCanvas({
       onPointerLeave={onPointerLeave}
     >
       <div className={styles.grain} aria-hidden="true" />
-      <div className={styles.tiltLayer}>
+      <div className={styles.tiltLayer} ref={tiltLayerRef}>
         {resources.map((resource) => {
           const position = positions[resource.id];
-          if (!position) return null;
+          const values = motionValues.get(resource.id);
+          if (!position || !values) return null;
           return (
             <BookObject
               key={resource.id}
               resource={resource}
               position={position}
+              x={values.x}
+              y={values.y}
               reducedMotion={reducedMotion}
               cursorStyle={cursorStyle}
               onBringToFront={bringToFront}
@@ -133,6 +176,7 @@ export function DeskCanvas({
               onPublish={onPublish}
               publishing={publishingId === resource.id}
               listeningEngaged={listeningEngaged}
+              show3D={show3D}
             />
           );
         })}

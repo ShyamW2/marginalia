@@ -5034,3 +5034,82 @@ needed yet, and adding one without a shown problem would be exactly the "hypothe
 future requirement" CLAUDE.md warns against. If §D's real shelf (real GPU, real 40+ book
 library) shows this mattering, the fix is almost certainly "load textures as scrolled into
 view," not a resolution cap — flagged here rather than decided.
+
+## M23 §B — the Desk, looking down — 2026-08-13
+
+**The design.** `desk/DeskScene3D.tsx` registers as the `"desk"` layer: a straight-down
+`OrthographicCamera` (`DeskCameraRig`, `camera.manual = true` — R3F's own resize handling
+otherwise silently overwrites a custom frustum on every size change, found live as a
+keystoned book shape that turned out to have nothing to do with tilt) whose frustum maps
+world units to viewport pixels **1:1**, refitted every frame from the desk's own
+`getBoundingClientRect()`. That 1:1 mapping is the whole point (SPEC-GAP, `deskDepthMath.ts`'s
+own doc comment): TASKS.md's own warning that "a projected 3D surface is where hit-testing
+breaks" steers away from a literal perspective camera, whose foreshortening would move a
+book's *visual* position away from its stored px coordinates and the DOM `BookObject` that
+still owns drag/drop. Depth is faked instead — `bookTilt()` rotates each book proportional
+to its distance from the viewport's centre — on top of an orthographic camera that never
+distorts DOM/3D alignment, including at the corners (verified live below).
+
+**Three real bugs, found only once real fixture books rendered** (Book3D's own §A note
+already flagged its geometry as unverified beyond a bench — this is that verification):
+
+1. **The reveal read as a warped wedge, not a book**, at any non-trivial tilt. Root
+   cause: `bookTilt`'s axis was the free diagonal perpendicular to the pivot-to-book
+   direction. A box tilted around an axis *not* parallel to one of its own edges reveals a
+   *non-uniform* sliver of its side face — wider at one corner than the other — and that
+   sliver's silhouette, unioned with the top face's own (still mathematically perfect)
+   parallelogram, is what read as a taper. Proven with a plain debug box before touching
+   Book3D at all, ruling out the compound geometry as the cause. Fixed by snapping the axis
+   to whichever of the book's two edges (world X or world Z) dominates the offset — a hard
+   snap at the diagonal rather than a smooth blend, which is fine: a real spine doesn't
+   allow a diagonal reveal either. `deskDepthMath.ts`'s doc comment on `bookTilt` carries
+   the full reasoning; `deskDepthMath.test.ts` pins the snapped-axis contract.
+2. **Cover textures rendered on the wrong book.** All three fixture covers loaded
+   correctly (confirmed via `useCoverTexture` in isolation and via the network log — three
+   distinct 200s, no errors) but Metamorphosis's art appeared on Kafka on the Shore's mesh
+   while Kafka's and Alice's own slots sat at the flat fallback colour. The 2D DOM
+   `<img>`s were unaffected (each showed its own correct cover), confirming this was a
+   three.js/R3F-side bug, not upstream data. Fixed in `Book3D.tsx` by keying the cover
+   mesh on `coverMaterial.uuid`, forcing React to remount the mesh (and its `attach`
+   bindings) instead of reconciling `attach="material-4"` in place when the material
+   identity changes from the shared fallback to a fresh per-book instance — whatever R3F's
+   own attach-reconciliation was doing across sibling fibers updating at different times
+   (async texture loads staggered per book), a full remount sidesteps it. Root cause not
+   fully isolated beyond that; flagged here in case §D's larger book count reproduces it
+   more legibly.
+3. **The whole Desk stopped accepting clicks and drags** the moment any 3D layer actually
+   mounted — invisible until now because §A's own canvas literally never rendered before
+   this task (`shouldMount` was always false with nothing registered). Two independent
+   layers of `pointer-events: auto` were fighting the fix: `Scene3D.module.css`'s
+   `.canvasLayer` (a `position: fixed`, full-viewport div with an explicit `z-index`, which
+   per CSS stacking rules paints — and hit-tests — above ordinary non-positioned page
+   content regardless of DOM order) needed `pointer-events: none`; separately, R3F's own
+   `<Canvas>` renders an *internal* wrapper div with an inline `pointerEvents: "auto"`
+   default (its own assumption that it, not something underneath, is the event source),
+   which no amount of outer CSS can override since it's inline and not inherited from a
+   `none` ancestor once set explicitly. Fixed both: the CSS layer for documentation/defense
+   in depth, and `style={{ pointerEvents: "none" }}` passed directly to `<Canvas>` for the
+   one that actually mattered. This is a real §A seam bug, not something §B introduced —
+   worth a one-line flag back to that milestone's own doc for whoever reads it next.
+
+**Verified live**, both dev servers, real Playwright + the same cached headless Chromium
+build M23 §A used (`--use-gl=swiftshader`), against the three real fixture books:
+- Both themes (Paper and Ink) and two window sizes (1400×900, 1000×700) screenshot with
+  correct covers, clean parallelogram silhouettes, and a visible desk surface + raised
+  edge that reads as a bounded surface without overpowering the books/notepad foreground.
+- `document.querySelectorAll("canvas").length` is 2 under normal motion (the pre-existing
+  `CursorTrail` canvas + the one shared Scene3D canvas) and **0** under
+  `reducedMotion: "reduce"`, with the plain 2D Desk (real cover art, flat) as the fallback.
+- A real pointer drag (`page.mouse`) from a book's centre to the desk's bottom-right
+  corner: the DOM position updates, the 3D render follows it exactly there, and hovering
+  at the corner still surfaces the info strip — hit-testing holds at the corner, the case
+  TASKS.md's own warning called out. A plain click still navigates to `/read/:id`.
+- Every book is still exactly where `defaultShelfState`/persisted `shelf` puts it — the
+  camera is fitted from the desk's own rect every frame and never re-lays anything out.
+
+Not yet covered by this pass: the desk's own ~1.6° ambient CSS parallax tilt
+(`useDeskParallax`) is a *separate*, pre-existing 2D effect on the DOM `.surface` that the
+3D layer doesn't share (the 3D camera is fixed) — at rest they agree exactly (verified: 0°
+tilt at pointer rest), and diverge by at most a few px at the DOM layer's own extreme tilt
+while the pointer is actively over the surface; not worth chasing further without a shown
+problem. §C–E still need their own live verification once built.

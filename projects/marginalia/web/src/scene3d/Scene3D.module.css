@@ -2,6 +2,14 @@
   position: fixed;
   inset: 0;
   z-index: 0;
+  /* Purely decorative — every 3D surface's real interaction (drag, click,
+     focus) stays on the DOM elements underneath (M23 §B). Without this, a
+     fixed full-viewport div with an explicit z-index paints (and, worse,
+     hit-tests) above ordinary non-positioned page content regardless of DOM
+     order, silently swallowing every pointer event on any page with a
+     mounted 3D layer — invisible until §B was the first consumer to ever
+     make `shouldMount` true; §A's own canvas never actually rendered. */
+  pointer-events: none;
 }
 
 .canvasLayer canvas {
