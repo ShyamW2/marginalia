@@ -8,6 +8,7 @@ import { useAccent } from "./useAccent.js";
 import { usePaperTint } from "./usePaperTint.js";
 import { JobsProvider } from "../jobs/JobsContext.js";
 import { JobToastStack } from "../jobs/JobToastStack.js";
+import { Scene3DProvider } from "../scene3d/Scene3D.js";
 import type { TabId } from "../settings/SettingsPage.js";
 import styles from "./App.module.css";
 
@@ -140,69 +141,71 @@ export function App() {
   return (
     <JobsProvider>
       <ChromeSlotProvider>
-        <div className={`${styles.shell} register-paper`}>
-          {/* M22.6 F: outside <main> and above every overlay — the server being gone
-              outranks whatever room or instrument is currently on screen. */}
-          <ServerStatusBanner />
-          <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
-          <main className={styles.main}>
-            <Suspense fallback={<div className={styles.routeFallback} />}>
-              <Routes location={roomLocation(location)}>
-                <Route path="/" element={<DeskPage overlayOpen={overlayOpen} />} />
-                <Route
-                  path="/read/:id"
-                  element={
-                    // The room's own `useLocation()` is remapped by this
-                    // `<Routes location>` override to its own path (never
-                    // "/scan/:id"/"/digest/:id"), so it can't tell on its own
-                    // whether an overlay it opened is still showing above it
-                    // — the same reason DeskPage takes `overlayOpen` as a
-                    // prop instead of computing it. `scanOpen`/`digestOpen`
-                    // and the matching close functions are threaded down so
-                    // ReaderPage's `q`/`g` can toggle rather than re-open
-                    // (decisions.md 2026-08-12 ruling 1): one already-open
-                    // check, reused, not a second copy of it.
-                    <ReaderPage
-                      scanOpen={scanId !== null}
-                      digestOpen={digestId !== null}
-                      onCloseScan={closeScan}
-                      onCloseDigest={closeDigest}
-                    />
-                  }
-                />
-                {/* Deep link / hard refresh straight at an overlay path has no
-                    background room to fall back on — the Desk stands in, per
-                    TASKS.md ("/settings ... renders the desk with the modal
-                    open"). */}
-                <Route path="/settings" element={<DeskPage overlayOpen={overlayOpen} />} />
-                <Route path="/scan/:id" element={<DeskPage overlayOpen={overlayOpen} />} />
-                <Route path="/digest/:id" element={<DeskPage overlayOpen={overlayOpen} />} />
-              </Routes>
-            </Suspense>
-            <AnimatePresence>
-              {scanId && (
-                <Suspense key="scan-overlay-suspense" fallback={null}>
-                  <ScanOverlay key="scan-overlay" resourceId={scanId} onClose={closeScan} />
-                </Suspense>
-              )}
-            </AnimatePresence>
-            <AnimatePresence>
-              {digestId && (
-                <Suspense key="digest-overlay-suspense" fallback={null}>
-                  <DigestOverlay key="digest-overlay" resourceId={digestId} onClose={closeDigest} />
-                </Suspense>
-              )}
-            </AnimatePresence>
-            <AnimatePresence>
-              {settingsOpen && (
-                <Suspense fallback={null}>
-                  <SettingsModal key="settings-modal" onClose={closeSettings} />
-                </Suspense>
-              )}
-            </AnimatePresence>
-          </main>
-          <JobToastStack />
-        </div>
+        <Scene3DProvider>
+          <div className={`${styles.shell} register-paper`}>
+            {/* M22.6 F: outside <main> and above every overlay — the server being gone
+                outranks whatever room or instrument is currently on screen. */}
+            <ServerStatusBanner />
+            <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
+            <main className={styles.main}>
+              <Suspense fallback={<div className={styles.routeFallback} />}>
+                <Routes location={roomLocation(location)}>
+                  <Route path="/" element={<DeskPage overlayOpen={overlayOpen} />} />
+                  <Route
+                    path="/read/:id"
+                    element={
+                      // The room's own `useLocation()` is remapped by this
+                      // `<Routes location>` override to its own path (never
+                      // "/scan/:id"/"/digest/:id"), so it can't tell on its own
+                      // whether an overlay it opened is still showing above it
+                      // — the same reason DeskPage takes `overlayOpen` as a
+                      // prop instead of computing it. `scanOpen`/`digestOpen`
+                      // and the matching close functions are threaded down so
+                      // ReaderPage's `q`/`g` can toggle rather than re-open
+                      // (decisions.md 2026-08-12 ruling 1): one already-open
+                      // check, reused, not a second copy of it.
+                      <ReaderPage
+                        scanOpen={scanId !== null}
+                        digestOpen={digestId !== null}
+                        onCloseScan={closeScan}
+                        onCloseDigest={closeDigest}
+                      />
+                    }
+                  />
+                  {/* Deep link / hard refresh straight at an overlay path has no
+                      background room to fall back on — the Desk stands in, per
+                      TASKS.md ("/settings ... renders the desk with the modal
+                      open"). */}
+                  <Route path="/settings" element={<DeskPage overlayOpen={overlayOpen} />} />
+                  <Route path="/scan/:id" element={<DeskPage overlayOpen={overlayOpen} />} />
+                  <Route path="/digest/:id" element={<DeskPage overlayOpen={overlayOpen} />} />
+                </Routes>
+              </Suspense>
+              <AnimatePresence>
+                {scanId && (
+                  <Suspense key="scan-overlay-suspense" fallback={null}>
+                    <ScanOverlay key="scan-overlay" resourceId={scanId} onClose={closeScan} />
+                  </Suspense>
+                )}
+              </AnimatePresence>
+              <AnimatePresence>
+                {digestId && (
+                  <Suspense key="digest-overlay-suspense" fallback={null}>
+                    <DigestOverlay key="digest-overlay" resourceId={digestId} onClose={closeDigest} />
+                  </Suspense>
+                )}
+              </AnimatePresence>
+              <AnimatePresence>
+                {settingsOpen && (
+                  <Suspense fallback={null}>
+                    <SettingsModal key="settings-modal" onClose={closeSettings} />
+                  </Suspense>
+                )}
+              </AnimatePresence>
+            </main>
+            <JobToastStack />
+          </div>
+        </Scene3DProvider>
       </ChromeSlotProvider>
     </JobsProvider>
   );

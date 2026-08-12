@@ -4958,3 +4958,79 @@ servers were stopped by `kill`ing the exact PIDs `lsof -ti:PORT` returned, not a
 else's session. The synthesized audio cached under `data/` from the render that did run a
 little further (Chapter 26) is real, valid cache — left in place rather than deleted, since
 it's indistinguishable from a listener actually having reached that chapter.
+
+## M23 §A — the seam, and the texture-upload price — 2026-08-13
+
+**The seam.** `web/src/scene3d/Scene3D.tsx`: one `Scene3DProvider`, mounted once in
+`App.tsx` alongside `ChromeSlotProvider`, owns the single `<Canvas>`
+(`@react-three/fiber`) the whole app ever creates. Consumers register content via
+`useScene3DLayer(id, node)` — a keyed slot in a plain object, rendered as `<group>`
+children inside the one `Canvas` — rather than mounting their own. `useScene3DAvailable()`
+is `false` under reduced motion or after a lost context, so a consumer degrades to its
+existing 2D presentation without a bespoke escape hatch, matching M25/M27's rule for the
+page fold. No consumer exists yet (the Desk, shelf, turntable and opening are still their
+2026-08-12-era 2D/CSS selves — that's §B–E, not built this pass), so today the canvas
+never actually mounts in the running app; confirmed live rather than assumed (below).
+
+**Dependency note.** `@react-three/fiber@9` requires React 19; this repo is pinned to
+React 18.3.1 (no plan to move it for this milestone). Installed `@react-three/fiber@8.18.0`
+instead, whose peers are `react >=18 <19` — no peer-dependency warnings. Anyone picking up
+§B onward should not `pnpm up` this package without re-checking that constraint.
+
+**Driven live**, both dev servers running for real (no `chromium-cli` in this environment;
+used a cached Playwright + headless Chromium install found under
+`~/.cache/ms-playwright/chromium-1234` instead, `--use-gl=swiftshader`): the Desk with the
+three real fixture books, and opening Metamorphosis into the reader, both screenshot with
+zero unexpected console errors (the one 404 is pre-existing and unrelated — present before
+this change too). `document.querySelectorAll("canvas").length` was 1 on the Desk both
+before and after this change — that canvas is `CursorTrail.tsx`'s pre-existing plain-2D
+ink-trail canvas, not `Scene3DProvider`'s (which correctly contributes zero, since nothing
+registers a layer yet). Under `reducedMotion: "reduce"`, canvas count was 0. The seam's
+own mechanics (one canvas no matter how many surfaces register; unmounts once the last
+layer unregisters; reduced motion and a simulated `webglcontextlost` both drop it to zero
+canvases) are unit-tested against a mocked `Canvas` in `Scene3D.test.tsx` — jsdom has no
+real WebGL, so those five tests prove the seam's own state machine, not anything about a
+real GPU.
+
+**The book object.** `web/src/scene3d/Book3D.tsx` + `useCoverTexture.ts`: page block,
+spine and a front cover hinged at the spine edge (`x=0` in local space), authored once.
+Cover art loads from the same `GET /api/resources/:id/cover` endpoint `BookCover.tsx`
+already uses, with the same fallback contract — a 404 resolves to a plain fallback-colored
+face rather than a broken texture or a thrown error, mirrored from `BookCover`'s own
+onError path. Flat-color materials (spine, page block, cover edges, fallback face) are
+five shared `MeshStandardMaterial` instances reused across every book, not allocated per
+instance; the one true per-book material (a texture map) disposes itself on unmount since
+it's attached via `<primitive>` and R3F's own dispose-on-unmount doesn't reach primitives.
+Not yet wired into any surface — §B–E do that — so this is unverified in an actual scene
+composition beyond the bench below; visual geometry correctness (is it recognizably a
+book, does the hinge look right) wasn't separately screenshotted this pass.
+
+**Texture-upload price, measured before any resolution choice** (the task's explicit
+gate, echoing M25/M27's `texImage2D` pricing for the page fold). Built a throwaway bench —
+`web/bench.html` + `web/benchEntry.tsx`, a standalone Vite entry outside the app's own
+routing, 40 planes each loading a real cover image through a `?bench=n`-suffixed URL (the
+id itself is untouched and still resolves to real cover bytes; only three distinct fixture
+covers exist in this library, so the query string exists purely to stop three.js's own
+`TextureLoader` cache from collapsing 40 loads down to 3 — it does not fake the image
+data, which is real in all 40 cases) — then deleted both files once the number was in hand,
+per "don't leave scaffolding beyond what's needed." Instrumented via `page.addInitScript`
+patching `texImage2D`/`texSubImage2D`/`texStorage2D`/`compressedTexImage2D` on both
+`WebGLRenderingContext` and `WebGL2RenderingContext` with `performance.now()` timing.
+**First attempt only patched `texImage2D` and undercounted (7 calls instead of dozens)** —
+this three.js/WebGL2 path uploads via `texStorage2D` (immutable allocation) +
+`texSubImage2D` (the data), not `texImage2D`; patching all four brought the count in line
+with what the screenshot already showed (all 40 covers visibly rendered, distinct real
+thumbnails, not solid-color fallbacks).
+
+**Result: 87 GL calls, 774.20ms total, ~8.9ms mean per call, ~19.4ms per book** across 40
+real-cover texture uploads. ⚠️ **Measured on SwiftShader (`--use-gl=swiftshader`) in
+headless Chromium — the same caveat PAGE_CURL.md/M25 already recorded for `texImage2D`:
+this cannot distinguish a real GPU upload from a CPU pixel path**, so treat this as an
+upper bound, not the number a real machine would see. At face value it says a ~40-book
+shelf uploading every cover at once costs on the order of ~0.8s of GL work — not
+free, but not the ~56ms-per-texture-times-dozens catastrophe the warning was guarding
+against either. No resolution cap or downscaling was added — nothing here showed one is
+needed yet, and adding one without a shown problem would be exactly the "hypothetical
+future requirement" CLAUDE.md warns against. If §D's real shelf (real GPU, real 40+ book
+library) shows this mattering, the fix is almost certainly "load textures as scrolled into
+view," not a resolution cap — flagged here rather than decided.
