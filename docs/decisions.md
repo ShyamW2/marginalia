@@ -3,6 +3,116 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-12 — The graphics-and-fixes pass, and the move to a real 3D substrate
+
+Operator review after rung 1 went public: nine areas, mixing small irritations with a
+wholesale rework of how the Desk and Library look. Five of the nine reported causes were
+wrong in ways that would have sent an implementation session somewhere useless, so the
+corrections are recorded *first* — they are the reason several tasks are small.
+
+### Premises corrected before anything was designed
+
+- **"The theme slider's dividers are a light-mode bug."** They are not mode-dependent at
+  all. `NavCluster.module.css` puts each divider on a button's own `border-left`, then
+  tries to clear the one to the *right* of the active thumb with
+  `.themeButton:has(+ .themeButton[aria-pressed="true"])` — which selects the button
+  *before* the active one and clears the divider on *its* left, two positions away. Ink is
+  the last of three, so selecting it happens to blank both dividers; Paper is the first, so
+  it blanks neither. The dark screenshot was Ink-selected and the light one Paper-selected;
+  the theme was a coincidence. Recorded because the *reported* fix ("make light mode behave
+  like dark mode") would have been implemented as a theme conditional and preserved the bug.
+- **"The digest job thinks it's on its second section, so it says 50%."** It does not.
+  `build.ts` sets `total = pending.length + 1`, the `+1` being the final whole-book reduce,
+  precisely so the bar does not sit at 100% while the slowest call is still running. One
+  section really is 1-of-2 done. The number is honest and the *label* is missing.
+- **"You can't have a progress bar for TTS."** You can, and it has existed since M21:
+  `render.ts` reports `(n, sentences.length, <the sentence's first 48 chars>)` **before**
+  synthesizing each sentence, and the tray already draws a determinate bar whenever
+  `total > 0`. The live words the operator remembers are `job.progress.message`, shown
+  under "Current" in the hover detail. This is therefore a **diagnostic, not a feature** —
+  find out why a wired path isn't showing, and do not build a second one.
+- **"Chapter jump during playback jumps back to chapter 1."** True, and the cause is a
+  deliberate leash: `ReaderView.tsx`'s tint effect calls
+  `turnPageSlideToSectionGuarded(segment.spineIndex)` whenever the visible section differs
+  from the sounding one. The apparently contradictory half of the report — "but pressing
+  next page repeatedly does get me there" — is the same mechanism: that call goes through
+  `withTurnLock`, so a manual turn holding the lock makes the yank-back a no-op. Note also
+  that `[` / `]` already work while playing (they route to `player.skipChapter`); it is the
+  chapter-nav/TOC path that gets leashed.
+- **"The book should open into a wider spread with the crease at the hinge."** Correct, and
+  it is **already a written, unstarted task** — M22.5 §F — whose implementation is mostly
+  present in `BookOpening.tsx`. The defect is exactly locatable: `.spread` is `inset: 0`
+  (cover-width) split `50/50`, so the gutter lands mid-cover. This is a refinement of an
+  existing task, not new work.
+
+### Rulings
+
+1. **Every instrument is a toggle, and the toggle lives in exactly one branch.** `s` and
+   `t` already toggle; `q` (Scan) does not and will push scan-over-scan — the *same* defect
+   already fixed for Settings on 2026-08-04, whose one-branch fix in `openSettings` is the
+   pattern to reuse rather than copy. The Digest has no binding at all and gets `g` (`d` and
+   `l` are taken by Desk/list). **Rule, so it settles cases nobody has hit yet:** an
+   instrument's open path and its keyboard path funnel through one function that owns the
+   already-open case; a second copy of that check is a bug in waiting.
+2. **The tasks tray tells the truth.** Three independent defects, not one: the prompt-facing
+   `sectionLabel` (raw 0-based `spineIndex`) is leaking into the UI where the M20.5 rule
+   binds `sectionUiLabel`'s 1-based `S<n>`; the "Current" line names the chapter that just
+   *finished* because `onProgress` fires only after the await; and the reduce phase is
+   unnamed, which is what makes an honest 50% read as a lie. **Rule:** `sectionLabel` is for
+   model prompts and may never reach a surface.
+3. **The voice gets a leash the reader can slip.** Traversal during playback is free; the
+   leash only re-engages on request. A "return to the voice" control sits with the transport,
+   and leaving playback returns to the reader — not to the Desk. Adopted as the operator
+   proposed it, because the diagnosis above confirms the shape.
+4. **Custom theme is accent-first, and contrast is derived, never chosen.** The Arc-style
+   field maps to HSL (x = hue, y = lightness, the wave slider = saturation) and is stored as
+   a triple. `--color-accent-text` is *computed* from the chosen accent, so no picker
+   position can produce unreadable text. Paper/background tinting is a **second** step,
+   bounded to the `paper` register only: the Scan's `glass` register keeps its fixed CRT
+   phosphor palette, because DESIGN.md skins by material and a user-chosen background would
+   dissolve the one distinction the two registers exist to make.
+5. **The 3D substrate is three.js / React Three Fiber, for all four surfaces.** The Desk,
+   the shelf, the turntable and the opening share one renderer or the rooms visibly
+   disagree. *Disagreement preserved:* the recommendation in the room was CSS 3D first
+   (no new dependency, the opening already works that way, spike WebGL only if a ~40-book
+   shelf misses 60fps). The operator chose three.js outright for material fidelity, and
+   that is the decision. **What it costs, stated once:** a real dependency and a new
+   rendering seam; and every one of these surfaces now needs its own reduced-motion path and
+   accessibility fallback built deliberately, where CSS 3D would have degraded on its own.
+   M25's approval of WebGL for the page fold is the precedent that makes this consistent
+   rather than novel — but the two renderers must not become two ad-hoc call sites.
+6. **The 3D shelf is a third Desk view mode, not a replacement for the list.** DESIGN.md:
+   "Keyboard/screen-reader path *is* the list", and `LibraryGrid` is the Desk's only such
+   path. The shelf is pure enhancement on its own key; `l` keeps working and keeps its
+   guarantee. No amendment to DESIGN.md is needed, which is the point of choosing this
+   option.
+7. **The opening's spread is twice the cover's width with the crease at the hinge, and the
+   scene translates to recentre it.** ⚠️ This **contradicts M22.5 §F's acceptance criterion**
+   as written ("the spine edge's x moves less than 2px through the whole rotation"). Resolved
+   rather than dropped: the ≤2px criterion is **rescoped to the scene's local coordinates**
+   (the hinge does not slide *within the book* — that is what made it a good test), and the
+   recentring becomes its own explicit phase in screen coordinates. An implementer who hits
+   the old criterion mid-task would otherwise guess, and guess wrong.
+8. **The opening may be slower.** Currently 540ms (240 fly + 140 open + 160 landing).
+   DESIGN.md's ~400ms bound governs *input blocking*, and this overlay is `pointer-events:
+   none` throughout, so lengthening it breaks no rule. Escape-cancellability and the
+   `contentReady` gate are what actually constrain it, and both stay.
+9. **Order: fixes, then the 3D arc, then search.** M22.6 (below) is inserted before M23;
+   the 3D arc and the reader-search design pass are **appended** as M26 and M27 rather than
+   renumbered in, per OPUS.md's renumbering rule. The operator's intended sequence is
+   **M22.6 → M26 → M27**, with the pre-existing M23 (web search) and M24 (Codex CLI)
+   deferred behind them. Recorded here because "work strictly in order" would otherwise
+   imply the opposite.
+10. **Reader search gets a design pass before it gets tasks.** There is no search endpoint
+    or search UI anywhere in the codebase today — this is genuinely new, and the operator
+    said as much ("needs further conceptualisation"). The framing to design against, and the
+    reason the Scan feels less useful than intended: **the Scan is a spatial instrument
+    (where a thing sits in the book); search is a retrieval one.** The working hypothesis for
+    M27 is that Cmd+F is a true in-book text find that never leaves the reader, and that a
+    thematic search *hands off into the Scan as a filter* rather than growing a competing
+    result list — which would also give the Scan the job it is currently missing. Not
+    settled; that is what M27 is for.
+
 ## 2026-08-06 — Rung 1 prep: the repo goes public under MIT
 
 SHIPPING.md's rung 1 stops being a shape and becomes work. The document ranked costs but

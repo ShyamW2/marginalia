@@ -96,6 +96,21 @@ doc), never by drift.
    Annotations are instruments you put *on* what you're in — popups over a background
    location, keeping their real routes. "No fourth room" still holds; an instrument is
    not a room. The cost was the airlock's full-screen form, recorded in DESIGN.md.
+14. **One 3D substrate, behind one seam** (2026-08-12, M26). The Desk, the bookshelf, the
+   turntable and the book opening are **three.js / React Three Fiber**, sharing a single
+   renderer, canvas lifecycle and book asset — not four independent 3D implementations, and
+   not a mix of CSS 3D and WebGL across surfaces that sit next to each other. No three.js
+   type leaks past that seam. The cost was accepted with eyes open: WebGL does not degrade
+   on its own, so **every 3D surface owes a deliberate reduced-motion path and an
+   accessibility fallback**, and those are acceptance criteria rather than polish. The
+   page fold's own WebGL renderer (M25) is the precedent that makes this consistent; the
+   two must not become two ad-hoc call sites. *A CSS-3D-first alternative was recommended
+   and rejected — see decisions.md 2026-08-12 for the reasoning on both sides.*
+15. **The list view is the library's accessibility floor** (2026-08-12, restating
+   DESIGN.md:67-68 as an invariant because a milestone came close to overturning it by
+   accident). `LibraryGrid` is the keyboard/screen-reader path for the Desk. New library
+   presentations — the 3D shelf, or anything after it — are **additional view modes**, never
+   replacements. A library you cannot Tab through is a regression regardless of how it looks.
 
 ## Discipline
 

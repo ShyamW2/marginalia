@@ -910,7 +910,16 @@ default and retiring the track.
 #### F — The opening actually opens
 
 - [ ] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
-      with the flight to centre; the flutter is not what was asked for.)* `BookOpening.tsx`
+      with the flight to centre; the flutter is not what was asked for.)*
+      ⚠️ **Absorbed into M26 §E on 2026-08-12, not failed and not abandoned.** Most of it is
+      built (`BookOpening.tsx` already flies, rotates about the spine and lands); the
+      remaining defect is that `.spread` is cover-width and creased down its middle. Since
+      M26 moves the opening onto three.js, finishing it here would build it twice in two
+      substrates. **Two things below change under M26 and must be read there, not here:**
+      the ≤2px spine-edge criterion is rescoped to the scene's local coordinates (the book
+      now deliberately recentres on screen), and the sequence is deliberately slowed. Kept
+      in place because its four ⚠️ warnings below are still live and still correct.
+      `BookOpening.tsx`
       keeps the fly (`FlyPanel`, 240ms) and replaces `PAGE_OFFSETS`'s four flat planes with a
       real open: the front cover rotates anticlockwise about its **left (spine) edge**
       toward the viewer, revealing a two-page spread beneath, which then scales and
@@ -1086,13 +1095,188 @@ the usage ledger records `provider` and `model` on every call (`llm/usage.ts`'s
 
 #### Verify
 
-- [ ] **Drive it, don't read it.** Every slider dragged, typed, arrow-stepped and snapped in
+- [x] **Drive it, don't read it.** Every slider dragged, typed, arrow-stepped and snapped in
       the real app; `s`/`t`/`d`/`l`/`q` pressed from every room and from on top of every
       instrument, and each one typed into a text field to prove the guard; a book opened from
       the desk in both themes and under reduced motion; a chapter played from cold to watch
       the render job appear in the tray unprompted, then deleted and played again. Both
       themes, reduced motion, and at CRT intensity 0 and 1. Log what was driven and what was
       only read, per OPUS.md.
+
+### M22.6 — Telling the truth, and slipping the leash (2026-08-12)
+
+Inserted here rather than appended: it is the operator's chosen next work
+(decisions.md 2026-08-12, ruling 9), and inserting a new number in an existing gap
+renumbers nothing. **Read that entry first** — five of these tasks are small
+specifically because the reported cause was wrong, and the corrections are there.
+
+Nothing in this milestone needs a new dependency. If a task here seems to require one,
+it has been misread.
+
+#### A — Instruments toggle, and every instrument has a key
+
+- [ ] **`q` closes the Scan it opened, and the Digest gets `g`.** Add `digest: "g"` to
+      `shortcuts/keys.ts` (`d` and `l` are taken by Desk/list). The Scan's binding in
+      `ReaderPage.tsx:144` currently always navigates, so a second `q` pushes
+      scan-over-scan — **the identical defect fixed for Settings on 2026-08-04**.
+      ⚠️ **Reuse `NavCluster.tsx`'s `openSettings` shape; do not write a second
+      already-open check.** That function is the one branch that owns "we are already
+      there" (`navigate(-1)` when a background location exists, else `navigate("/")`),
+      and the whole point of the 2026-08-04 fix was that this check exists once.
+      ⚠️ The Scan and Digest overlays claim only Escape (`useDialogA11y`), so a bare `q`
+      pressed *while the Scan is open* falls through the scope stack to `ReaderPage`'s
+      still-mounted binding — that is the path that must close, not re-open.
+      _Acceptance: from the reader, `q` opens the Scan and `q` again returns to the
+      reader (not to a second Scan, and not to the Desk); same for `g` and the Digest;
+      `s` and `t` still toggle exactly as they do today; every one of the four is
+      reachable from both the Desk and the reader._
+- [ ] **Each of the four keycaps is advertised where its control is.** `KeyCapAnchor`
+      already exists and the Tasks/Settings icons already use it; the Scan and Digest
+      controls in `ReaderActionsCluster.tsx` do not. Keycaps import from
+      `SHORTCUT_KEYS` (M19.7's "keycaps that cannot lie") — never a typed letter.
+      _Acceptance: hovering or focusing each of the four controls shows its real binding;
+      changing a letter in `keys.ts` changes every hint with no other edit._
+
+#### B — The tasks tray tells the truth
+
+Three independent defects behind one screenshot (decisions.md 2026-08-12, ruling 2).
+Fix all three; any one alone still reads as wrong.
+
+- [ ] **The UI never shows a raw spine index.** `digest/build.ts:406,420` passes
+      `sectionLabel(...)` — the *prompt-facing* label, `"section 2: …"`, 0-based — into
+      `onProgress`, which lands in the tray's "Current" line beside a `detail` built by
+      `sectionUiLabel` as `"S3 · …"`. Same chapter, two numbering systems, and
+      `sectionUiLabel`'s own docstring already binds the UI to the 1-based form (M20.5).
+      Pass the UI label; `sectionLabel` stays for prompts only.
+      _Acceptance: for a one-section digest run, "Range" and "Current" name the same
+      chapter with the same number; no surface anywhere prints `section <spineIndex>`._
+- [ ] **"Current" names the chapter being worked on, not the one just finished.**
+      `onProgress` currently fires only *after* each `digestChapter` await, so mid-chapter
+      the tray shows the previous chapter's label (and `null` for the first). Report the
+      label **before** the await — which is exactly what `audio/render.ts:221` already
+      does correctly, and is the model to copy.
+      _Acceptance: within a second of a chapter starting, "Current" names **that**
+      chapter; at no point does it name a chapter whose work has completed._
+- [ ] **The reduce phase is named, so an honest 50% stops reading as a lie.**
+      `total = pending.length + 1` is correct and stays. The final unit is the whole-book
+      reduce and must say so — the tray shows something like "Composing the book digest"
+      for that last step instead of leaving the previous chapter's label standing.
+      _Acceptance: a single-section digest shows 50% with the chapter named, then a
+      distinctly-labelled final step, then done — and a reader watching it can say what
+      the machine is doing at every moment without knowing the code._
+- [ ] **Find out why the TTS bar isn't showing; do not build a second one.**
+      ⚠️ **This is a diagnostic task.** `audio/render.ts:221` already reports
+      `(n, sentences.length, sentence.text.slice(0, 48))` before every sentence, and
+      `TasksTray.tsx:100` already draws a determinate bar whenever `total > 0`, with the
+      live sentence under "Current" in the hover detail. Both paths exist. Drive a real
+      render and find where the chain actually breaks (or confirm it works and the
+      operator's memory is of a *more prominent* presentation, which is a design change,
+      not a fix). **Write what you found in NOTES.md before changing anything.**
+      _Acceptance: a live section render shows a bar that advances per sentence and a
+      "Current" line whose text changes as the words are synthesized — or NOTES.md
+      records exactly why it cannot, with the measurement that proves it._
+
+#### C — The voice you can walk away from
+
+- [ ] **Traversal during playback stops being overridden.** `ReaderView.tsx:984-1006`
+      drags the view back to the sounding section whenever the two differ. Introduce an
+      explicit **detached** state: once the reader navigates deliberately (chapter nav,
+      TOC, page turns past a section boundary), the follow-the-voice jump stops firing
+      until re-engaged. Audio keeps playing throughout — detaching the *view* must never
+      pause the *voice*.
+      ⚠️ **The tint must not lie while detached.** When the sounding sentence is not in
+      the visible section there is nothing to tint; clear it rather than leaving a stale
+      highlight on wrong-section text (the effect already handles this — keep it).
+      ⚠️ Do not "fix" this by removing the jump. Auto-advance while *following* is the
+      feature (`audioAutoTurnPages`, a real setting); this adds a state, it does not
+      delete a behaviour.
+      _Acceptance: play in chapter 1, jump to chapter 3 from the chapter nav, and the view
+      stays in chapter 3 with audio still sounding chapter 1; with the setting off,
+      nothing about the detached state changes; re-engaging returns to the voice._
+- [ ] **A "back to the voice" control sits with the transport**, visible only while
+      detached, and returns the view to the sounding sentence.
+      _Acceptance: the control appears only when view and voice have diverged, and one
+      press lands on the playing sentence with the tint restored._
+- [ ] **Leaving playback returns to the reader, not to the Desk.** Today the only exit
+      from the listening view is out to the Desk and back into the book — which loses the
+      reading position the operator was already looking at.
+      _Acceptance: exiting playback from anywhere in the book leaves you on the page you
+      were reading, in the same book, with no round trip through `/`._
+- [ ] **"Play from here" joins the selection pill.** An arrow-into-play icon in
+      `AskPill.tsx`, starting playback at the selected sentence rather than the section's
+      first. The machinery exists: `loadAndPlay(spineIndex, sentenceIndex)` already takes
+      a sentence index, the manifest carries `charStart`/`charEnd` per segment, and
+      highlights already anchor in that same `resource_text` char space — so this is a
+      char-offset → segment-index lookup, not new plumbing.
+      ⚠️ **The section may not be rendered yet.** Reuse the existing
+      `ensureSectionRendered` race (`usePlayer.ts`'s `loadAndPlay`) so "play from here"
+      on an unrendered chapter starts in seconds like every other entry point, rather
+      than appearing to do nothing.
+      _Acceptance: selecting a sentence mid-chapter and pressing it starts speaking that
+      sentence, not the chapter's first; doing it on an unrendered section shows the same
+      render-then-start behaviour as the Listen action._
+
+#### D — The chrome
+
+- [ ] **The theme control loses its dividers entirely.** Delete the
+      `.themeButton + .themeButton` border rule and both of its "clear the divider"
+      exceptions in `NavCluster.module.css:70-80`. The sliding thumb already carries
+      selection; the dividers were only ever there to separate un-thumbed buttons.
+      ⚠️ **Do not implement this as a light/dark conditional.** The bug is
+      selection-position, not theme — see decisions.md 2026-08-12. Selecting Ink in
+      *light* mode already looks "correct" today, which is the proof.
+      _Acceptance: no divider is visible at any of the three selections, in both themes;
+      the thumb still animates between positions and each button stays individually
+      focusable._
+- [ ] **The book action card fits its own buttons.** `.infoStrip` is
+      `width: max-content; max-width: 220px`, but `.infoActions` is a non-wrapping flex
+      row of four buttons whose min-content width exceeds that — so the row overflows the
+      card (the operator's Alice screenshot). Note `.infoMeta` already wraps and
+      `.infoActions` does not; that inconsistency *is* the bug. Widen the card and let it
+      be shorter, per the operator's own read.
+      _Acceptance: at every book in the library, with the longest title in the fixture
+      set, no glyph or button edge crosses the card's border; the card stays inside the
+      viewport when the book sits near the right edge of the desk._
+- [ ] **The card's actions become the reader's actions.** Replace the four ad-hoc ghost
+      `Button`s with the same controls `ReaderActionsCluster.tsx` uses (Digest, Scan,
+      Publish + Listen), so one control system serves both surfaces (settled decision 12:
+      a new control belongs to a register, nothing gets a bespoke one again).
+      ⚠️ Keep each action's `stopPropagation()` — `BookObject.tsx:200` records that
+      without it the card's clicks also fire the book's own open handler, caught live.
+      _Acceptance: the same icon means the same thing on the desk card and in the reader;
+      clicking any action does that action and does **not** open the book._
+
+#### E — Custom theme colours
+
+Scope and the contrast rule are set in decisions.md 2026-08-12, ruling 4. Accent first;
+paper tinting is a separate task and the Scan is out of bounds.
+
+- [ ] **An accent picker in the Arc shape.** A field where x is hue and y is lightness,
+      with a saturation slider, stored as an HSL triple in settings and applied over
+      `--color-accent`. (The reference's rotating dial is explicitly not built.)
+      ⚠️ **`--color-accent-text` is derived, never picked** — computed from the chosen
+      accent so that no position in the field can produce unreadable text on an accent
+      fill. This is the whole reason the picker is bounded this way.
+      ⚠️ The accent is load-bearing beyond decoration: DESIGN.md:90 gives it to the
+      highlight dot, the thread panel's spine **and the scan's heat-band hue**. Check all
+      three, not just buttons.
+      _Acceptance: choosing any point in the field leaves every accent-on-accent-text
+      pairing at or above WCAG AA; the choice survives a reload; "reset to default"
+      restores the shipped accent exactly._
+- [ ] **Paper tinting, `paper` register only.** Background/paper hue for the Desk, Book,
+      Digest and Settings. The Scan's `glass` register keeps its fixed CRT phosphor
+      palette — skinning is by material, not by room (settled decision 12).
+      _Acceptance: tinting paper never changes a single pixel of the Scan; body text
+      contrast stays at or above AA at every reachable tint._
+
+#### Verify
+
+- [ ] **Drive it, don't read it.** Open a real book: toggle all four instruments by key
+      from both the Desk and the reader; run a one-section digest and watch the tray
+      through all three of its states; start playback, jump two chapters away, come back
+      via the new control, then exit playback; hover a book on the desk in both themes;
+      pick three accents including a deliberately pale one. Reduced motion for the whole
+      pass.
 
 ### M23 — Web search
 
@@ -1268,6 +1452,168 @@ a painter being retired); RTL reading direction.
       is the stutter gone, and does the real back of the sheet read better than the mirror did
       (it is not obviously true — more information on that surface could read as noise).
 
+
+### M26 — The rooms become solid (three.js)
+
+**Read decisions.md 2026-08-12 first**, rulings 5-8. The substrate question is settled:
+**three.js / React Three Fiber, for all four surfaces.** Nothing below re-decides it, and
+the recommendation that lost (CSS 3D first) is recorded there so it is not re-argued from
+scratch either.
+
+Appended rather than inserted, per OPUS.md's renumbering rule. The operator's order is
+**M22.6 → M26 → M27**; M23 and M24 are deferred behind them.
+
+**The cost this milestone is paying, stated up front so it is budgeted and not
+discovered:** CSS 3D degrades on its own and WebGL does not. Every surface here needs its
+reduced-motion path and its accessibility fallback built **deliberately**, and those are
+acceptance criteria, not polish. A beautiful shelf with no keyboard path is not done.
+
+#### A — The seam, before any of the four surfaces
+
+- [ ] **One 3D seam, not four call sites.** A single module owns the renderer, the canvas
+      lifecycle, the shared book geometry/material, and the reduced-motion and
+      context-lost exits. The Desk, shelf, turntable and opening are *consumers*. This is
+      settled decision "one narrow seam per subsystem" applied to a renderer.
+      ⚠️ **A lost context is a designed state**, exactly as M25 rules for the fold:
+      `webglcontextlost` degrades to the existing 2D presentation of that surface. It does
+      not get a bespoke escape hatch per surface.
+      ⚠️ **Do not let three.js types leak past this seam** into `desk/`, `library/` or
+      `reader/` components — the same rule that keeps `LLMProvider` honest.
+      _Acceptance: exactly one `<canvas>` exists no matter how many 3D surfaces are
+      mounted; killing the context (`WEBGL_lose_context`) on each surface leaves a
+      usable, non-blank room; `grep` finds no three.js import outside the seam._
+- [ ] **One book object, used by all three surfaces.** Cover, spine, page block, openable
+      front cover — authored once and consumed by the desk, the shelf and the opening.
+      Covers come from the existing `BookCover` image path as a texture.
+      ⚠️ **Price the texture upload before designing around it.** M25 measured
+      `texImage2D` from a card canvas at ~56ms and could not tell a GPU upload from a CPU
+      pixel path. A shelf uploads *dozens*. Measure with real covers at real count and
+      write the number into NOTES.md **before** choosing resolutions.
+      _Acceptance: the same book asset renders in all three surfaces with no per-surface
+      fork of its geometry; a book with no cover art still renders legibly._
+- [ ] **Reduced motion renders zero canvases, everywhere.** The existing 2D Desk, the
+      list, and the crossfade opening remain the reduced-motion presentation.
+      _Acceptance: with reduced motion on, `document.querySelectorAll("canvas").length ===
+      0` on the Desk, the shelf route and through a whole book opening._
+
+#### B — The Desk, looking down
+
+- [ ] **A top-down desk with real depth.** A book centred under the camera reads as flat
+      cover-only; moved off-centre it reveals binder and page edges, as a real object seen
+      from above would. Smoothly animated, not stepped.
+      ⚠️ **Existing per-book shelf coordinates are stored in px and must keep placing
+      books where the operator left them** — the same constraint M20.7 already carried.
+      A camera change must not silently re-lay-out the desk.
+      _Acceptance: dragging a book from centre to a corner continuously reveals its
+      thickness; every book is where it was before this task; drag/drop hit-testing still
+      lands on the book under the cursor at every position (⚠️ a projected 3D surface is
+      where hit-testing breaks — test the corners, not the centre)._
+- [ ] **A desk that looks like a desk.** Beyond the current zone-with-lines: surface
+      material, edge, and the depth cues a top-down view earns. Creative latitude is
+      granted here by the operator; DESIGN.md's anti-goals still bind.
+      _Acceptance: judged live in both themes and at two window sizes; the notepad and
+      the books still read as the foreground, never the surface._
+
+#### C — The turntable
+
+- [ ] **The listening tool becomes a 3D turntable**, replacing `ListeningTool.tsx`'s SVG,
+      sitting in a corner of the desk.
+      ⚠️ **It is the charm, never the gate** — AUDIO.md and the existing component's own
+      docstring. It stays a real focusable control with a pressed state and an accessible
+      name; the list view's "Listen" and the book card's action keep working untouched.
+      _Acceptance: keyboard-reachable, correctly labelled, and toggling it by keyboard
+      does what clicking it does; unplugging the 3D path entirely still leaves listening
+      fully operable._
+- [ ] **Dragging a book onto the turntable opens it in player mode.** The desk's existing
+      drag gesture is the input; the turntable is a drop target.
+      ⚠️ The drag already has an owner (`dragGesture.ts` / `BookObject.tsx`) and a
+      `stopPropagation` subtlety caught live. Extend that gesture; do not start a second
+      drag system for 3D.
+      _Acceptance: dropping a book on the platter starts that book listening; dropping it
+      anywhere else still just places it; a drag that ends outside the window leaves no
+      book stuck to the cursor._
+
+#### D — The shelf (a third view mode)
+
+- [ ] **A scrollable 3D bookshelf as a third Desk view**, on its own key alongside
+      `d` (desk) and `l` (list) — add it to `shortcuts/keys.ts`; `b` is free. Hovering a
+      book lifts it slightly; the reworked action card (M22.6 §D) floats above it; the
+      book itself is clickable as well as its actions.
+      ⚠️ **`l` and `LibraryGrid` are untouched and remain the keyboard/screen-reader
+      path** (DESIGN.md:67-68, decisions.md 2026-08-12 ruling 6). This task adds a view;
+      it does not replace one. A shelf that becomes the only library is a failed task.
+      ⚠️ Reference is the operator's (aiwithremy.com) for *feel* — lift, depth, spine
+      typography — not for copying.
+      _Acceptance: `d`/`l`/`b` reach three distinct views; the shelf holds 60fps while
+      scrolling with the full fixture library; hover lift and the action card both work
+      from keyboard focus, not hover alone; every book reachable by Tab._
+
+#### E — The opening, finished in 3D
+
+**Absorbs M22.5 §F** (see the note there). Build it once, here, in the new substrate —
+not twice in two.
+
+- [ ] **From the desk: the spread is twice the cover's width, creased at the hinge.**
+      The front cover opens about its spine edge; the revealed spread is **2× cover
+      width** with the crease at the **hinge (left) edge**, not down the middle of a
+      cover-width plane — today's defect (`BookOpening.module.css`'s `.spread` is
+      `inset: 0`, split 50/50). The scene then translates so the crease sits centred,
+      and grows to meet the reading pane.
+      ⚠️ **The old ≤2px spine criterion is rescoped, not dropped** (decisions.md
+      2026-08-12, ruling 7): the hinge must not slide *within the book's own
+      coordinates*; the recentring is a separate, deliberate phase in screen coordinates.
+      Do not treat a moving spine on screen as a regression.
+      ⚠️ **Blank paper planes, never real page text** — DESIGN.md rules the opening's
+      pages fake, and PAGE_CURL.md records what real paper motion costs.
+      ⚠️ **Keep the `contentReady` gate and Escape-cancels-at-any-phase.** They are the
+      only things standing between the reveal and a flash of "Loading book…".
+      _Acceptance: the crease lands on the hinge and the open spread is twice the cover's
+      width (measured, not eyeballed); the final rect matches the reader pane within a few
+      px; Escape during any phase leaves no overlay mounted._
+- [ ] **The whole sequence slows down.** Currently 540ms (240 fly + 140 open + 160
+      landing). Lengthening is explicitly permitted: the overlay is `pointer-events: none`
+      throughout, so DESIGN.md's ~400ms bound (which governs *input blocking*) is not in
+      play — decisions.md 2026-08-12, ruling 8.
+      _Acceptance: the open reads as deliberate rather than snapped, judged live by the
+      operator; input is never blocked at any point, verified by clicking through it._
+- [ ] **From the shelf: the book comes out, turns side-on, then opens.** The clicked book
+      translates toward the camera out of the shelf, rotates to a side-on view, and from
+      there **reuses the desk opening above** — one opening, two approaches.
+      _Acceptance: the shelf and desk openings share the open/land phases in code, not by
+      copy; interrupting at any phase from either entry point leaves a coherent app._
+
+#### Verify
+
+- [ ] **Operator sign-off across all four surfaces**, in both themes, at two window sizes,
+      and with reduced motion on for a full second pass. Specifically: does the desk still
+      feel like a place to work rather than a demo, and does the slower opening read as
+      deliberate rather than sluggish?
+
+### M27 — Search, designed before it is built
+
+A **design pass**, not an implementation milestone — its output is a spec and a task
+list, exactly as OPUS.md describes. Do not start building from this section.
+
+Grounding, verified 2026-08-12: **there is no search endpoint and no search UI anywhere
+in the codebase.** This is genuinely new, and the operator flagged it as needing
+conceptualisation. The working hypothesis to design against (decisions.md 2026-08-12,
+ruling 10) — not yet settled:
+
+- The **Scan is spatial** (where a thing sits in the book); **search is retrieval**. The
+  overlap the operator feels is these two jobs competing in one surface.
+- **Cmd+F is an in-book text find that never leaves the reader.** Text search is invoked
+  where the text is.
+- **Thematic/annotation search hands off *into* the Scan as a filter**, rather than
+  growing a second result list beside it — which would also give the Scan the job it is
+  currently missing.
+
+- [ ] **Decide and write down**: where text search lives and how results anchor (the
+      existing CFI/quote-plus-context anchoring is the obvious reuse — confirm it before
+      assuming it); whether thematic search is library-wide or per-book; what the Scan
+      becomes once it is a filter target; and whether any of this needs the parked
+      concept-tagging work (TASKS.md "Parked", decisions.md 2026-07-19) as a prerequisite.
+      _Acceptance: a spec an implementation session can execute without re-deciding
+      anything, and a task list whose criteria can fail._
 
 ## Parked (post-v1.5) — recorded so they aren't relitigated
 
