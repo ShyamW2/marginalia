@@ -14,6 +14,7 @@ import {
 import type { MotionValue } from "motion/react";
 import { Book3D } from "../scene3d/Book3D.js";
 import { bookThickness, deskCameraFrame, deskPerspectiveDistance, stackElevation } from "./deskDepthMath.js";
+import { Turntable3D, type Turntable3DProps } from "./Turntable3D.js";
 import { useDeskThemeColors } from "./useDeskThemeColors.js";
 
 // BookObject.module.css/DeskCanvas.tsx's own footprint: 168px cover, 2:3.
@@ -60,7 +61,17 @@ interface Origin {
  * values `DeskCanvas.tsx` owns) — it never writes back to the desk's layout
  * state, so no camera or material change here can re-lay-out the desk.
  */
-export function DeskScene3D({ books, deskRef }: { books: DeskBookPlacement[]; deskRef: RefObject<HTMLElement> }) {
+export function DeskScene3D({
+  books,
+  deskRef,
+  turntable,
+}: {
+  books: DeskBookPlacement[];
+  deskRef: RefObject<HTMLElement>;
+  /** M23 §C. Optional so the desk's scene stays renderable without it — the
+   * turntable is an object standing on this surface, not part of it. */
+  turntable?: Turntable3DProps;
+}) {
   const originRef = useRef<Origin>({ x: 0, z: 0 });
 
   useFrame(() => {
@@ -77,6 +88,7 @@ export function DeskScene3D({ books, deskRef }: { books: DeskBookPlacement[]; de
     <>
       <DeskCameraRig />
       <DeskSurface deskRef={deskRef} originRef={originRef} />
+      {turntable && <Turntable3D {...turntable} />}
       {books.map((book) => (
         <DeskBook3D
           key={book.resourceId}

@@ -860,7 +860,7 @@ under the canvas, and which fell back to 2D permanently after one visit to the r
 
 #### C — The turntable
 
-- [ ] **The listening tool becomes a 3D turntable**, replacing `ListeningTool.tsx`'s SVG,
+- [x] **The listening tool becomes a 3D turntable**, replacing `ListeningTool.tsx`'s SVG,
       sitting in a corner of the desk.
       ⚠️ **It is the charm, never the gate** — AUDIO.md and the existing component's own
       docstring. It stays a real focusable control with a pressed state and an accessible
@@ -868,7 +868,7 @@ under the canvas, and which fell back to 2D permanently after one visit to the r
       _Acceptance: keyboard-reachable, correctly labelled, and toggling it by keyboard
       does what clicking it does; unplugging the 3D path entirely still leaves listening
       fully operable._
-- [ ] **Dragging a book onto the turntable opens it in player mode.** The desk's existing
+- [x] **Dragging a book onto the turntable opens it in player mode.** The desk's existing
       drag gesture is the input; the turntable is a drop target.
       ⚠️ The drag already has an owner (`dragGesture.ts` / `BookObject.tsx`) and a
       `stopPropagation` subtlety caught live. Extend that gesture; do not start a second

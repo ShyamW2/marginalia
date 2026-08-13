@@ -85,3 +85,78 @@
     animation: none;
   }
 }
+
+/* ── M23 §C: the deck ──────────────────────────────────────────────────────
+   While the 3D layer is drawing the turntable (`Turntable3D.tsx`), this button
+   keeps its box, its hit target, its focus ring and its label, and gives up
+   only its paint — the same trade `DeskCanvas.module.css`'s `.surfaceIs3D`
+   makes for the desk itself, and the reason the tool stays fully operable when
+   the canvas goes away under reduced motion or a lost context.
+
+   The size is not decoration: `Turntable3D` reads *this element's rect* every
+   frame and lays the whole deck out from it, so this rule is what decides how
+   big the drawn object is. A deck the size of the old 30px icon would be a
+   smudge from a top-down camera. */
+.is3D {
+  width: 152px;
+  height: 132px;
+  padding: 0;
+  justify-content: flex-end;
+  border-color: transparent;
+  background: none;
+  box-shadow: none;
+}
+
+/* The label rides on the cabinet's front panel, like the badge on a real deck.
+   It is the only part of the control that still paints, so it carries its own
+   contrast rather than borrowing the (now absent) button background. */
+.is3D .label {
+  padding-bottom: 0.5rem;
+  color: #ded3bd;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.75);
+}
+
+.is3D:hover {
+  transform: none;
+}
+
+.is3D.engaged {
+  box-shadow: none;
+}
+
+.is3D.engaged .label {
+  color: var(--color-accent);
+}
+
+/* A book is over the platter. In 3D the deck grows its own lit ring, so this
+   is the 2D presentation's version of the same cue — and the focus-visible
+   outline is deliberately *not* reused: this is not focus, and a control that
+   says "focused" when it means "drop here" lies to anyone reading the ring. */
+.dropTarget {
+  box-shadow:
+    0 6px 16px rgba(30, 22, 10, 0.18),
+    0 0 0 2px var(--color-accent),
+    0 0 22px 4px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* ⚠️ The 3D deck grows its own lit ring around the platter, and under a real
+   drop that ring is *invisible*: the book being dragged is lifted 34px and
+   drawn in the same canvas, so it covers the deck it is being dropped onto.
+   The cue that has to survive that is a DOM one — this element sits above the
+   canvas (Scene3D.module.css's layering contract), so its ring draws over the
+   book. Caught live; the 3D ring stays for the approach, when the book has not
+   yet reached the deck. */
+.is3D.dropTarget {
+  border-radius: 10px;
+  /* A wash as well as a ring: over a book cover, an outline alone is one more
+     rectangle among several and reads as chrome. The wash is what says "this
+     region is the target" while the thing being dropped is covering it. */
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow:
+    0 0 0 3px var(--color-accent),
+    0 0 30px 8px color-mix(in srgb, var(--color-accent) 50%, transparent);
+}
+
+.is3D.dropTarget .label {
+  color: var(--color-accent);
+}

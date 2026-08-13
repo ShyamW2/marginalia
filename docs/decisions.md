@@ -59,6 +59,14 @@ camera"). Two of the outcomes are rules rather than fixes, so they are recorded 
    while the card was invisible under an opaque 3D surface. Checks on anything sharing a
    viewport with a canvas use `document.elementFromPoint`.
 
+   ⚠️ Second corollary, from M23 §C: **an affordance for a gesture that involves a 3D
+   object cannot itself live in the canvas.** The turntable's drop cue was a lit ring
+   around its platter, and it was invisible at the only moment it mattered — the book
+   being dropped is a 3D object in the same canvas, lifted above the deck, and it simply
+   covers it. Anything that must be seen *while* a 3D object is over it belongs in the
+   DOM layer above. The in-canvas cue is still worth having for the approach; it is not
+   worth trusting for the drop.
+
 ## 2026-08-12 — The graphics-and-fixes pass, and the move to a real 3D substrate
 
 Operator review after rung 1 went public: nine areas, mixing small irritations with a

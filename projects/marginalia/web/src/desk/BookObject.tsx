@@ -57,6 +57,14 @@ interface BookObjectProps {
    * element stays exactly where it was (opacity only): it's still the real
    * drag/drop hit target and still in the accessibility tree. */
   show3D: boolean;
+  /** M23 §C: where the book's cover is right now, mid-drag, so the desk can
+   * light a drop target under it. `null` when the drag ends. This component
+   * reports its own rect and knows nothing about what may be under it — the
+   * desk owns the targets (`DeskCanvas.tsx`). */
+  onDragOver?: (coverRect: DOMRect | null) => void;
+  /** Offer the released book to the desk's drop targets. `true` means one took
+   * it, and this book is *not* placed here: it is on its way somewhere. */
+  onDrop?: (coverRect: DOMRect) => boolean;
 }
 
 /**
@@ -79,6 +87,8 @@ export function BookObject({
   publishing,
   listeningEngaged,
   show3D,
+  onDragOver,
+  onDrop,
 }: BookObjectProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -182,12 +192,24 @@ export function BookObject({
 
   function handleDrag(_event: unknown, info: PanInfo) {
     dragDistance.current += Math.abs(info.delta.x) + Math.abs(info.delta.y);
+    // The *cover's* rect, not the whole draggable element's: the cover is the
+    // book, and the element around it carries the hover info strip.
+    if (coverRef.current) onDragOver?.(coverRef.current.getBoundingClientRect());
   }
 
   function handleDragEnd() {
     setIsDragging(false);
+    onDragOver?.(null);
     if (dragDistance.current < DRAG_CLICK_THRESHOLD) {
       open();
+      return;
+    }
+    // M23 §C: offered to the desk's drop targets before it is placed. A book
+    // dropped on the turntable is being *played*, not arranged, so its shelf
+    // position stays where it was — nothing is persisted on this path, and
+    // coming back from the reader finds the book where it was left.
+    if (coverRef.current && onDrop?.(coverRef.current.getBoundingClientRect())) {
+      openListen();
       return;
     }
     onPositionChange(resource.id, {

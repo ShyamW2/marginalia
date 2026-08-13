@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { motion, motionValue, type MotionValue } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
 import { useScene3DAvailable, useScene3DLayer } from "../scene3d/Scene3D.js";
@@ -9,6 +9,7 @@ import { ListeningTool } from "./ListeningTool.js";
 import { useDeskParallax } from "./useDeskParallax.js";
 import { defaultShelfState } from "./shelfDefaults.js";
 import { DeskScene3D, type DeskBookPlacement } from "./DeskScene3D.js";
+import { isOverPlatter } from "./turntableMath.js";
 import styles from "./DeskCanvas.module.css";
 
 // BookCover.module.css fixes the cover at 168px wide, 2:3 — a book's own
@@ -52,7 +53,12 @@ export function DeskCanvas({
 }: DeskCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const tiltLayerRef = useRef<HTMLDivElement>(null);
+  const turntableRef = useRef<HTMLButtonElement>(null);
   const [positions, setPositions] = useState<Record<string, ShelfState>>({});
+  // M23 §C: a book is currently over the turntable. Owned here rather than in
+  // `BookObject` because the *desk* knows what its drop targets are — a book
+  // only ever reports where it is.
+  const [dropOnTurntable, setDropOnTurntable] = useState(false);
   const zCounter = useRef(0);
   const show3D = useScene3DAvailable();
   // ⚠️ The ambient CSS parallax is a *2D* effect on this DOM subtree, and the
@@ -142,6 +148,30 @@ export function DeskCanvas({
     });
   }
 
+  /** Is a book's cover, right now, over the turntable's platter? */
+  const overTurntable = useCallback((coverRect: DOMRect | null): boolean => {
+    const tool = turntableRef.current?.getBoundingClientRect();
+    return !!coverRect && !!tool && isOverPlatter(coverRect, tool);
+  }, []);
+
+  const handleDragOver = useCallback(
+    (coverRect: DOMRect | null) => {
+      // Called on every frame of a drag, so it must not re-render on every
+      // frame of a drag.
+      const over = overTurntable(coverRect);
+      setDropOnTurntable((prev) => (prev === over ? prev : over));
+    },
+    [overTurntable],
+  );
+
+  const handleDrop = useCallback(
+    (coverRect: DOMRect) => {
+      setDropOnTurntable(false);
+      return overTurntable(coverRect);
+    },
+    [overTurntable],
+  );
+
   const deskBooks: DeskBookPlacement[] = useMemo(
     () =>
       resources.flatMap((resource) => {
@@ -153,8 +183,14 @@ export function DeskCanvas({
     [resources, positions, motionValues],
   );
   const deskSceneNode = useMemo(
-    () => <DeskScene3D books={deskBooks} deskRef={tiltLayerRef} />,
-    [deskBooks],
+    () => (
+      <DeskScene3D
+        books={deskBooks}
+        deskRef={tiltLayerRef}
+        turntable={{ toolRef: turntableRef, engaged: listeningEngaged, dropActive: dropOnTurntable }}
+      />
+    ),
+    [deskBooks, listeningEngaged, dropOnTurntable],
   );
   useScene3DLayer("desk", deskSceneNode);
 
@@ -190,11 +226,19 @@ export function DeskCanvas({
               publishing={publishingId === resource.id}
               listeningEngaged={listeningEngaged}
               show3D={show3D}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
             />
           );
         })}
         <Notepad onToast={onToast} />
-        <ListeningTool engaged={listeningEngaged} onToggle={onToggleListening} />
+        <ListeningTool
+          toolRef={turntableRef}
+          engaged={listeningEngaged}
+          onToggle={onToggleListening}
+          show3D={show3D}
+          dropActive={dropOnTurntable}
+        />
       </div>
       <CursorTrail containerRef={containerRef} enabled={cursorTrailEnabled && !reducedMotion} />
     </motion.div>

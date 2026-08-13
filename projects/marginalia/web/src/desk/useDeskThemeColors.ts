@@ -7,12 +7,25 @@ export interface DeskThemeColors {
   grain: string;
   /** The raised lip around the desk's edge. */
   rim: string;
+  /** The turntable's cabinet (M23 §C). */
+  plinth: string;
+  /** Its spindle, arm and trim. */
+  metal: string;
+  /** The room's accent, for anything that lights up. */
+  accent: string;
 }
 
 // Read before the stylesheet has applied (or in a test environment with no
 // theme.css at all), `getComputedStyle` returns "" for a custom property.
 // Feeding "" to three.js's Color.set throws, so every read has a floor.
-const FALLBACK: DeskThemeColors = { surface: "#eee6d6", grain: "#dccfb5", rim: "#c3b092" };
+const FALLBACK: DeskThemeColors = {
+  surface: "#eee6d6",
+  grain: "#dccfb5",
+  rim: "#c3b092",
+  plinth: "#3a322a",
+  metal: "#b9ac93",
+  accent: "#c98b3a",
+};
 
 function readDeskColors(): DeskThemeColors {
   const style = getComputedStyle(document.documentElement);
@@ -21,6 +34,9 @@ function readDeskColors(): DeskThemeColors {
     surface: v("--desk-surface", FALLBACK.surface),
     grain: v("--desk-grain", FALLBACK.grain),
     rim: v("--desk-rim", FALLBACK.rim),
+    plinth: v("--turntable-plinth", FALLBACK.plinth),
+    metal: v("--turntable-metal", FALLBACK.metal),
+    accent: v("--color-accent", FALLBACK.accent),
   };
 }
 
@@ -39,8 +55,10 @@ export function useDeskThemeColors(): DeskThemeColors {
         const next = readDeskColors();
         // Referential stability matters: this object is an effect dependency
         // in `DeskScene3D`'s surface, where a new identity repaints the grain
-        // texture and re-uploads it.
-        return prev.surface === next.surface && prev.grain === next.grain && prev.rim === next.rim ? prev : next;
+        // texture and re-uploads it. Compared key-by-key rather than field-by-
+        // field so adding a colour can't silently opt it out of the check.
+        const keys = Object.keys(next) as (keyof DeskThemeColors)[];
+        return keys.every((key) => prev[key] === next[key]) ? prev : next;
       });
     update();
     const observer = new MutationObserver(update);

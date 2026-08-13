@@ -5322,3 +5322,76 @@ binder at the left edge, the right edge, and three mid-drag positions: the cream
 gone and the spine reads as one solid rounded band. Ten frames of a held, lifted book at the
 desk's left edge are **byte-identical**. The fore edge still shows board / pages / board.
 Corner hit-testing, the ink theme, and reduced motion (0 canvases) all unchanged.
+
+## M23 §C — the turntable — 2026-08-13
+
+Both §C tasks: the listening tool is a real deck standing on the desk, and dragging a book
+onto its platter opens that book listening.
+
+### The tool did not become 3D; it grew a 3D presentation
+
+`ListeningTool.tsx` is still the whole control. It keeps the click, the focus ring, the
+accessible name, `aria-pressed` and its label; under 3D it gives up only its paint and its
+SVG, the same trade `.surfaceIs3D` makes for the desk. `Turntable3D.tsx` handles **no input
+at all** — it reads that button's rect every frame and is driven entirely by props the
+button owns. Deleting it leaves listening working exactly as before, which is what actually
+happens under reduced motion and after a lost context.
+
+One consequence worth stating, because it is the opposite of how a 3D object usually gets
+sized: **`ListeningTool.module.css`'s `.is3D { width: 152px; height: 132px }` is what
+decides how big the drawn deck is.** The layout is derived from the live rect, so the
+stylesheet is the single source of the object's size and its hit target at once. The old
+30px icon's footprint would have been a smudge from a top-down camera.
+
+### The tonearm's angles are solved, not chosen
+
+`turntableMath.ts` lays the deck out in *ratios* of the tool's rect, which makes a
+hand-picked pair of arm angles a latent bug: they would be right only for the proportions
+they were eyed at. So the angles come out of the geometry — "put the stylus this far from
+the spindle" — by solving `|p + L·d(θ)|² = target²` for θ. That equation has two roots, and
+**taking the wrong one is not subtle**: the other root reaches the same groove by swinging
+the arm across the record from behind, which reads as a broken machine. The module always
+takes `φ − acos(k/R)`, which keeps the arm on its own side and makes park → play → run-out a
+single monotonic sweep. The tests assert the property rather than the numbers — parked is
+*clear of the record*, playing is in its *outer third* — at three deck proportions.
+
+### Two things found by looking at it
+
+- **A dragged book covers the deck it is being dropped on**, so the 3D drop cue (a lit ring
+  around the platter) is invisible at exactly the moment it matters: the book is lifted 34px
+  and drawn in the same canvas, and it wins. The cue that survives is a **DOM** one — the
+  button sits above the canvas per the layering contract, so its ring and wash draw over the
+  book. The 3D ring stays for the approach, before the book reaches the deck.
+  ⚠️ Generalisation for §D/§E: *a 3D affordance for a gesture involving another 3D object
+  cannot be in the canvas*, because the moving object is in there too.
+- **The record ran under the control's own text label.** The label is DOM painted over the
+  canvas, so the words lay across the grooves. The platter is now set back (and slightly
+  smaller), leaving the cabinet a clear front panel for its badge.
+
+### The drop is the existing drag, extended
+
+No second drag system. `BookObject` reports its **cover's** rect on each drag frame and once
+more on release; `DeskCanvas` owns the targets and answers. A consumed drop opens the book
+listening and **does not persist a position** — the book was being played, not arranged, so
+coming back from the reader finds it where it was left.
+
+The target is a **circle**, not the button's rect: the platter is what you aim at, and a
+rectangle would accept a corner the deck visibly does not occupy. It is measured against the
+book's centre, not the cursor — the book is the thing being placed, and the cursor sits
+wherever it happened to be grabbed.
+
+### Verified live
+Playwright + SwiftShader, real fixture books, **zero console or page errors**:
+- Deck parked and playing, in both themes: arm swings in, platter spins up, lamp lights.
+- Keyboard: focus lands on the tool, **Enter and Space both toggle it**, `aria-pressed`
+  follows, and the label reads "Listen"/"Listening".
+- Dropping a book on the platter reaches `/read/<id>` and the reader shows **"Pause
+  listening" / "Stop listening"** — probed against the hover card's own "Listen" action and
+  the two are identical.
+- A drag that ends anywhere else still just places the book; a drag released at the very
+  edge of the window leaves the book where it was released, not on the cursor.
+- The deck follows the page scroll, still landing exactly on its button's rect.
+- Reduced motion: **0 canvases**, the SVG tool at its own smaller size, still toggling.
+- The list view still carries its own "Listen" action, untouched.
+- The shelf state each run touched was read before and written back after, and verified
+  identical.

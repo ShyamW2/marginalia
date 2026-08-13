@@ -34,6 +34,13 @@
   --desk-grain: #dccfb5;
   --desk-rim: #c3b092;
 
+  /* The turntable (M23 §C). Darker than anything else on the desk on
+   * purpose: it is a machine sitting on a board, and the one object in the
+   * room allowed to read as manufactured rather than as paper or timber.
+   * Its lit state borrows --color-accent, like every other "this is on". */
+  --turntable-plinth: #3a322a;
+  --turntable-metal: #b9ac93;
+
   /*
    * Highlight kinds (docs/marginalia/DESIGN.md, docs/decisions.md
    * 2026-07-19): rose = revisit/general, sage = definition, honey = quote,
@@ -79,6 +86,8 @@
   --desk-surface: #2b2721;
   --desk-grain: #211e19;
   --desk-rim: #453e33;
+  --turntable-plinth: #171512;
+  --turntable-metal: #8d8272;
 
   --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
@@ -101,6 +110,8 @@
     --desk-surface: #2b2721;
     --desk-grain: #211e19;
     --desk-rim: #453e33;
+    --turntable-plinth: #171512;
+    --turntable-metal: #8d8272;
 
     --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.4);
   }
