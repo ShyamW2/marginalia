@@ -56,6 +56,14 @@ function Registrar({ id }: { id: string }) {
   return null;
 }
 
+/** The provider's own fixed full-viewport wrapper around the canvas — the
+ * element that carries the visibility the idle case turns off. Found through
+ * the canvas rather than by class name, since CSS modules aren't processed
+ * under vitest. */
+function canvasLayer(): HTMLElement | null {
+  return document.querySelector("canvas")?.parentElement ?? null;
+}
+
 function AvailabilityProbe() {
   const available = useScene3DAvailable();
   return <div data-testid="available">{String(available)}</div>;
@@ -96,16 +104,23 @@ describe("Scene3DProvider", () => {
     const { rerender } = render(<Toggle show={true} />);
     await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
     expect(document.querySelector("canvas")?.dataset.frameloop).toBe("always");
+    expect(canvasLayer()?.style.visibility).toBe("visible");
 
     rerender(<Toggle show={false} />);
     await waitFor(() => expect(document.querySelector("canvas")?.dataset.frameloop).toBe("never"));
     expect(document.querySelectorAll("canvas")).toHaveLength(1);
+    // ⚠️ And it is *hidden* while idle. An idle canvas still displays the last
+    // frame it drew, so a canvas that merely stops rendering leaves the Desk
+    // painted over the reader and the list — the room you navigate to appears
+    // not to open at all.
+    expect(canvasLayer()?.style.visibility).toBe("hidden");
 
     // And picks straight back up when a surface returns — the round trip the
     // bug above broke.
     rerender(<Toggle show={true} />);
     await waitFor(() => expect(document.querySelector("canvas")?.dataset.frameloop).toBe("always"));
     expect(document.querySelectorAll("canvas")).toHaveLength(1);
+    expect(canvasLayer()?.style.visibility).toBe("visible");
   });
 
   it("ignores the context-loss event its own teardown fires", async () => {

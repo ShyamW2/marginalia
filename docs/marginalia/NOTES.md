@@ -5395,3 +5395,30 @@ Playwright + SwiftShader, real fixture books, **zero console or page errors**:
 - The list view still carries its own "Listen" action, untouched.
 - The shelf state each run touched was read before and written back after, and verified
   identical.
+
+## M23 — the Desk followed you out of the room — 2026-08-13
+
+Operator report after §A–§C: "the desk is persistent (so reader view does not open, neither
+does library)". Reproduced live in the first minute: click **List**, and the *desk* is still
+there — wood, rim, books at their desk positions — with the Library grid rendering
+invisibly underneath it. Same on `/read/:id`.
+
+**Cause: an idle WebGL canvas keeps showing its last frame.** §A's canvas is deliberately
+sticky — it stays mounted for the session and drops to `frameloop="never"` when no surface
+has content registered, because tying its lifetime to `hasLayers` made R3F's unmount path
+fire `webglcontextlost` and permanently degrade every 3D surface (documented in
+`Scene3D.tsx`). What "idle" was not doing is *clearing*. The drawing buffer is not wiped
+because nothing is drawing into it; with the frameloop stopped, nothing ever will be. So the
+Desk's final frame stayed painted on a `position: fixed; inset: 0; z-index: 0` layer, over
+every room the user went to next — and rooms whose own DOM does not claim a stacking context
+(the reader, `LibraryGrid`) render *below* it and appear not to have opened at all.
+
+**Fix:** the canvas layer is `visibility: hidden` while no layer is registered. The canvas,
+and therefore the GL context and every uploaded cover texture, stays alive — the stickiness
+is the whole point — it simply stops being shown. One line, and a regression test in
+`Scene3D.test.tsx` that asserts it alongside the `frameloop` it already checked.
+
+**The general lesson, for §D and §E:** the layering contract in `Scene3D.module.css` covers
+*where* the canvas paints. It did not cover *when*. A 3D layer that has stopped rendering is
+not the same thing as a 3D layer that is gone, and only the second one is safe to leave over
+another room.

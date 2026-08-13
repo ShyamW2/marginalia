@@ -139,7 +139,21 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
     <Scene3DContext.Provider value={{ setLayer, contextLost }}>
       {children}
       {shouldMount && (
-        <div className={styles.canvasLayer} aria-hidden="true">
+        <div
+          className={styles.canvasLayer}
+          aria-hidden="true"
+          // ⚠️ **A sticky canvas keeps showing its last frame.** WebGL does not
+          // clear a drawing buffer just because nothing is drawing into it, and
+          // `frameloop="never"` below means nothing will: the moment the Desk
+          // unregisters, R3F stops rendering and the desk's final frame — wood,
+          // rim, books and all — stays painted on a fixed, full-viewport layer
+          // over whatever room comes next. Live symptom: leave the Desk and the
+          // reader and the list "don't open", because they render *underneath* a
+          // photograph of the desk you just left. Hiding the layer (rather than
+          // unmounting the canvas) keeps the context alive, which is the whole
+          // point of the stickiness documented above.
+          style={{ visibility: hasLayers ? "visible" : "hidden" }}
+        >
           {/* R3F's own wrapping div sets `pointerEvents: "auto"` inline
               unless told otherwise (its default assumption is that *it* is
               the event source) — CSS on `.canvasLayer` alone can't win
