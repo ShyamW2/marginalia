@@ -71,7 +71,8 @@ export function NavCluster({ settingsTab, floating = true, className }: NavClust
     navigate("/settings", { state: { background: location, settingsTab } });
   }
 
-  // M22.5 "d for the Desk, l for the Library": lives here rather than on
+  // M22.5 "d for the Desk, l for the Library", and M23 §D's "b for the
+  // bookshelf": lives here rather than on
   // DeskPage because the keys must work from anywhere, including from on
   // top of an open Scan/Digest — those overlays claim only Escape
   // (useDialogA11y), so a bare-letter key they don't recognise falls
@@ -101,6 +102,7 @@ export function NavCluster({ settingsTab, floating = true, className }: NavClust
     },
     { key: SHORTCUT_KEYS.desk, handler: () => goToDesk("desk") },
     { key: SHORTCUT_KEYS.list, handler: () => goToDesk("list") },
+    { key: SHORTCUT_KEYS.shelf, handler: () => goToDesk("shelf") },
   ]);
 
   return (

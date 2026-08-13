@@ -1,0 +1,54 @@
+.card {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  /* M22.6 §D: widened from 220px, which was narrower than the four-button
+   * .actions row's min-content width — the row overflowed the card (the
+   * operator's Alice screenshot) while .meta, which does wrap, looked fine.
+   * Icon buttons make the row itself much narrower, but the card stays wide
+   * enough to hold a long title/meta line on one or two lines rather than
+   * many. */
+  max-width: 260px;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 0.5rem 0.65rem;
+  box-shadow: var(--shadow-panel);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  z-index: 10000;
+  pointer-events: auto;
+}
+
+/* The Desk hangs the card off the bottom of a cover seen from above; the
+   shelf floats it over the head of a book standing on a plank, where "below"
+   would put it inside the plank. */
+.below {
+  top: calc(100% + 0.4rem);
+}
+
+.above {
+  bottom: calc(100% + 0.5rem);
+}
+
+.title {
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  color: var(--color-text);
+  margin-bottom: 0.15rem;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--color-border);
+}

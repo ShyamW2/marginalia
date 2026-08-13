@@ -1,0 +1,108 @@
+.room {
+  position: relative;
+  /* ⚠️ The layering contract every 3D consumer owes (`Scene3D.module.css`):
+     the shared canvas is a fixed `z-index: 0` layer that paints over ordinary
+     page content, so this surface's own DOM has to claim a stacking context
+     above it or it renders underneath the shelf it is supposed to be driving. */
+  z-index: 1;
+  width: 100%;
+}
+
+.rail {
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Momentum scrolling lands the strip anywhere, and the 3D layer follows the
+     strip's live rect every frame — there is no snap to fight it with. */
+  scrollbar-width: thin;
+}
+
+.strip {
+  position: relative;
+}
+
+/* One book's spine: the hit target, the focus ring, and — while 3D is off —
+   the whole presentation. Kept in the DOM in both cases so the shelf is the
+   same keyboard surface either way. */
+.slot {
+  position: absolute;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.slot:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
+
+.spine {
+  width: 100%;
+  height: 100%;
+  border-radius: 3px 3px 2px 2px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12%;
+  box-shadow: inset -3px 0 6px rgba(0, 0, 0, 0.28), inset 3px 0 5px rgba(255, 255, 255, 0.07),
+    0 10px 18px rgba(20, 14, 6, 0.22);
+  transition: transform var(--duration-standard) var(--ease-standard);
+}
+
+.spineTitle {
+  /* Reads head to tail, which is how the 3D spine is lettered
+     (`spineTexture.ts`) and how an English-language book is bound. */
+  writing-mode: vertical-rl;
+  font-family: var(--font-serif);
+  /* Size comes from the slot's own width, set inline — see ShelfView.tsx. */
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  max-height: 78%;
+  text-overflow: ellipsis;
+}
+
+.lifted .spine {
+  transform: translateY(-14px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The lift still happens — it is what says "this one" — it just stops being
+     animated. */
+  .spine {
+    transition: none;
+  }
+}
+
+/* While the 3D layer is drawing this book, the flat spine underneath is
+   redundant with it — hidden rather than unmounted, exactly as the Desk hides
+   its 2D cover art (`BookObject.module.css`), so the element keeps its size,
+   its focus ring and its place in the accessibility tree. */
+.spineIs3D {
+  opacity: 0;
+  box-shadow: none;
+  transform: none;
+}
+
+.lifted .spineIs3D {
+  transform: none;
+}
+
+/* The plank, for the presentation that has no 3D one. Without it the fallback
+   is a row of coloured bars floating on the page — legible, which is the bar
+   an accessibility path has to clear, but not recognisably the same room. */
+.plank {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--desk-rim, #c3b092);
+  box-shadow: 0 8px 16px rgba(20, 14, 6, 0.16);
+}
+
+.empty {
+  padding: 3rem 0;
+  color: var(--color-text-muted);
+}

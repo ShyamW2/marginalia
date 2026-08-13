@@ -9,10 +9,17 @@ import { Button } from "../controls/Button.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { DeskCanvas } from "./DeskCanvas.js";
+import { ShelfView } from "./ShelfView.js";
 import { loadDeskViewMode, onDeskViewMode, persistDeskViewMode, type DeskViewMode } from "./deskViewBus.js";
 import styles from "./DeskPage.module.css";
 
 type ViewMode = DeskViewMode;
+
+const HEADINGS: Record<ViewMode, string> = {
+  desk: "The Desk",
+  list: "Library",
+  shelf: "The Shelf",
+};
 
 interface DeskPageProps {
   /** M22.5: true when the Desk is mounted only as the hidden background
@@ -115,7 +122,7 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
 
       {hasBooks && (
         <div className={styles.headerRow}>
-          <h1 className={styles.heading}>{mode === "desk" ? "The Desk" : "Library"}</h1>
+          <h1 className={styles.heading}>{HEADINGS[mode]}</h1>
         </div>
       )}
 
@@ -135,6 +142,15 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
               onClick={() => setMode("desk")}
             >
               Desk
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              pressed={mode === "shelf"}
+              className={styles.modeButton}
+              onClick={() => setMode("shelf")}
+            >
+              Shelf
             </Button>
             <Button
               size="sm"
@@ -180,7 +196,14 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
       )}
 
       {hasBooks ? (
-        mode === "desk" ? (
+        mode === "shelf" ? (
+          <ShelfView
+            resources={resources}
+            publishingId={publishingId}
+            onPublish={handlePublish}
+            listeningEngaged={listeningEngaged}
+          />
+        ) : mode === "desk" ? (
           <DeskCanvas
             resources={resources}
             reducedMotion={reducedMotion}

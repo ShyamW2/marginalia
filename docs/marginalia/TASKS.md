@@ -799,7 +799,7 @@ acceptance criteria, not polish. A beautiful shelf with no keyboard path is not 
 
 #### A — The seam, before any of the four surfaces
 
-- [ ] **One 3D seam, not four call sites.** A single module owns the renderer, the canvas
+- [x] **One 3D seam, not four call sites.** A single module owns the renderer, the canvas
       lifecycle, the shared book geometry/material, and the reduced-motion and
       context-lost exits. The Desk, shelf, turntable and opening are *consumers*. This is
       settled decision "one narrow seam per subsystem" applied to a renderer.
@@ -811,7 +811,7 @@ acceptance criteria, not polish. A beautiful shelf with no keyboard path is not 
       _Acceptance: exactly one `<canvas>` exists no matter how many 3D surfaces are
       mounted; killing the context (`WEBGL_lose_context`) on each surface leaves a
       usable, non-blank room; `grep` finds no three.js import outside the seam._
-- [ ] **One book object, used by all three surfaces.** Cover, spine, page block, openable
+- [x] **One book object, used by all three surfaces.** Cover, spine, page block, openable
       front cover — authored once and consumed by the desk, the shelf and the opening.
       Covers come from the existing `BookCover` image path as a texture.
       ⚠️ **Price the texture upload before designing around it.** M27 measured
@@ -820,7 +820,11 @@ acceptance criteria, not polish. A beautiful shelf with no keyboard path is not 
       write the number into NOTES.md **before** choosing resolutions.
       _Acceptance: the same book asset renders in all three surfaces with no per-surface
       fork of its geometry; a book with no cover art still renders legibly._
-- [ ] **Reduced motion renders zero canvases, everywhere.** The existing 2D Desk, the
+      ✅ **Measured 2026-08-13, and the number changed the design** (NOTES.md "M23 §D"):
+      60 real covers uploaded **465 MB / 1,088 ms** at source resolution while being drawn
+      at 168×252 px. Covers are now capped at a 576px longest edge — **86 MB / 65 ms**.
+      The gate did its job: it found a defect, not a confirmation.
+- [x] **Reduced motion renders zero canvases, everywhere.** The existing 2D Desk, the
       list, and the crossfade opening remain the reduced-motion presentation.
       _Acceptance: with reduced motion on, `document.querySelectorAll("canvas").length ===
       0` on the Desk, the shelf route and through a whole book opening._
@@ -879,7 +883,7 @@ under the canvas, and which fell back to 2D permanently after one visit to the r
 
 #### D — The shelf (a third view mode)
 
-- [ ] **A scrollable 3D bookshelf as a third Desk view**, on its own key alongside
+- [x] **A scrollable 3D bookshelf as a third Desk view**, on its own key alongside
       `d` (desk) and `l` (list) — add it to `shortcuts/keys.ts`; `b` is free. Hovering a
       book lifts it slightly; the reworked action card (M22.6 §D) floats above it; the
       book itself is clickable as well as its actions.
@@ -891,6 +895,19 @@ under the canvas, and which fell back to 2D permanently after one visit to the r
       _Acceptance: `d`/`l`/`b` reach three distinct views; the shelf holds 60fps while
       scrolling with the full fixture library; hover lift and the action card both work
       from keyboard focus, not hover alone; every book reachable by Tab._
+      ✅ All verified live except the frame rate, which **this machine cannot measure**:
+      headless Chromium here renders through SwiftShader (software), where even the
+      already-shipped Desk sits at the harness's own 30Hz ceiling. What *is* measured and
+      hardware-independent: 32 draw calls/frame at the real library size, 387 at a
+      synthetic 60 books, and the per-frame JS is one `getBoundingClientRect` plus a damp
+      per book. **The 60fps criterion is owed on the operator's own GPU** and is the one
+      part of §D's acceptance not signed off here.
+      ➕ **Beyond the task, at the operator's request:** the shared book asset now carries
+      a real binding — cloth dyed from a prominent cover colour, and the title lettered
+      down the spine (`scene3d/coverPalette.ts`, `spineLayout.ts`, `spineTexture.ts`). It
+      is a property of the *book*, not of the shelf, so the Desk gets it in the same
+      commit. M22.6 §D's action card was extracted to `desk/BookActionCard.tsx` so both
+      surfaces show the same one rather than two that drift.
 
 #### E — The opening, finished in 3D
 

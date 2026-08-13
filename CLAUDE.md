@@ -118,7 +118,16 @@ doc), never by drift.
    3D consumer owes the layering contract** — the one canvas is a fixed `z-index: 0` layer
    that paints over the page, so a surface raises its foreground DOM above it and stands
    its own background down while 3D is on. A lost context stays a designed state, but is
-   recoverable: the canvas is sticky across room changes and a real loss retries.
+   recoverable: the canvas is sticky across room changes and a real loss retries — and
+   because it is sticky, an **idle layer is hidden, not merely stopped**: WebGL keeps
+   showing the last frame it drew, so a canvas that only stops rendering leaves the room
+   you left painted over the room you went to (2026-08-13, found live).
+   *Amended 2026-08-13 (M23 §D):* the shelf is the second camera on this seam and the
+   worked example of "consumers bring their own camera, never their own units" — the Desk
+   looks *down* at `y = 0`, the shelf looks *along −Z* at `z = 0`, same units, same 1:1
+   construction. `SceneLights` is sized for the Desk's downward framing, so a surface
+   facing a different way brings its own key light — permitted **only** while the surfaces
+   are mutually exclusive view modes, and otherwise a change to `SceneLights`.
 15. **The list view is the library's accessibility floor** (2026-08-12, restating
    DESIGN.md:67-68 as an invariant because a milestone came close to overturning it by
    accident). `LibraryGrid` is the keyboard/screen-reader path for the Desk. New library

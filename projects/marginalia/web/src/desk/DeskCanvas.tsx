@@ -178,7 +178,15 @@ export function DeskCanvas({
         const position = positions[resource.id];
         const values = motionValues.get(resource.id);
         if (!position || !values) return [];
-        return [{ resourceId: resource.id, rotationDeg: position.rotation, zOrder: position.zOrder, ...values }];
+        return [
+          {
+            resourceId: resource.id,
+            title: resource.title,
+            rotationDeg: position.rotation,
+            zOrder: position.zOrder,
+            ...values,
+          },
+        ];
       }),
     [resources, positions, motionValues],
   );

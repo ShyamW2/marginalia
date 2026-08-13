@@ -23,6 +23,8 @@ export const SHORTCUT_KEYS = {
   // keys rather than reusing `reader`'s.
   desk: "d",
   list: "l",
+  // M23 §D: the 3D shelf, a third view of the same library on the same route.
+  shelf: "b",
   // M21: play/pause reuses prevPage/nextPage's own key for skip-sentence,
   // distinguished by shift (AUDIO.md: "space", "shift+←/→").
   playPause: " ",

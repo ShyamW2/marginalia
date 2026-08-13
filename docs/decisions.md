@@ -3,6 +3,55 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-13 — The shelf: a second camera on the same seam, and a binding you can read
+
+M23 §D, plus one bug found before it and one measurement gate that changed a design.
+
+1. **An idle 3D layer must be hidden, not merely stopped.** Operator report: "the desk is
+   persistent — reader view does not open, neither does library." The shared canvas is
+   deliberately sticky (2026-08-13 ruling 3 above), and when the last consumer unregisters
+   it drops to `frameloop="never"`. But WebGL does not clear a drawing buffer just because
+   nothing is drawing into it, so the Desk's final frame stayed painted on a fixed,
+   full-viewport, `z-index: 0` layer over every room the user went to next — and a room
+   whose own DOM claims no stacking context renders *underneath* it and appears not to
+   have opened at all. **The layering contract now covers *when* as well as *where*:** a
+   3D layer that has stopped rendering is not a 3D layer that is gone, and only the second
+   is safe to leave over another room.
+
+2. **The shelf brings its own camera, and that is the seam working as designed.** It is
+   the first consumer to prove the 2026-08-13 rule that consumers share the units and
+   bring their own framing: the Desk hangs a camera *above* the plane `y = 0` looking
+   down, the shelf stands one *in front of* `z = 0` looking along −Z, and a DOM point
+   `(x, y)` is world `(x, −y, 0)`. The 1:1 plane construction is identical, and on the
+   shelf it lands somewhere strictly better — the **spine face** is the 1:1 face, so the
+   one surface a user can see or click is exact and everything that foreshortens is behind
+   it, where nothing is aimed. Books therefore stand **upright**: a leaning spine is more
+   charming and was tried, and it is the one thing that breaks that agreement.
+
+   The cost, recorded so it is not rediscovered: `SceneLights` is a *desk lamp*, hung
+   above `y = 0` and pointing down, which grazes a viewer-facing spine at almost zero
+   incidence. The shelf contributes a front key light of its own. That is safe **only
+   because the Desk and the shelf are mutually exclusive view modes of one room** — if a
+   surface ever mounts both at once, the light moves into `SceneLights` and is balanced
+   there.
+
+3. **A book's binding is derived, not chosen.** The operator asked for the title on the
+   spine and a prominent cover colour on the cloth. Both are properties of the shared book
+   asset, not of the shelf, so they land on the Desk in the same commit — a book dragged
+   off the optical axis now reveals a binder that says what it is. The colour is extracted
+   from the cover (quantize, weight by saturation, average) and the ink is picked by
+   contrast from two fixed inks, never computed, because a per-book computed ink drifts
+   into mud on exactly the mid-lightness bindings where legibility is hardest.
+
+4. **The texture gate found a real defect and moved a number.** TASKS.md §A required
+   pricing the upload before choosing resolutions. Measured on a synthetic 60-book library
+   built from the real fixture covers: **465 MB of GPU texture and 1,088 ms of upload** —
+   the covers were being uploaded at their source resolution (~1200×1800, 8.6 MB each)
+   and *drawn* at 168×252 CSS px. Covers are now downscaled to a 576px longest edge before
+   the GPU sees them: **86 MB and 65 ms**, with nothing visible lost on any surface. The
+   general rule this is an instance of: a texture's budget is set by how large it is
+   *drawn*, and "it's just the file we already have" is not a resolution decision.
+
 ## 2026-08-13 — The Desk gets a real camera, and the seam gets a coordinate convention
 
 Operator review of M23 §B's first pass. Three reported symptoms, four causes; full

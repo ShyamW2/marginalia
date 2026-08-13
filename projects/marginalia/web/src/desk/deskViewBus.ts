@@ -1,11 +1,14 @@
 const EVENT = "marginalia:desk-view-mode-change";
 const STORAGE_KEY = "marginalia:desk-view-mode";
 
-export type DeskViewMode = "desk" | "list";
+export type DeskViewMode = "desk" | "list" | "shelf";
+
+const MODES: readonly DeskViewMode[] = ["desk", "list", "shelf"];
 
 export function loadDeskViewMode(): DeskViewMode {
   if (typeof localStorage === "undefined") return "desk";
-  return localStorage.getItem(STORAGE_KEY) === "list" ? "list" : "desk";
+  const stored = localStorage.getItem(STORAGE_KEY);
+  return MODES.find((mode) => mode === stored) ?? "desk";
 }
 
 export function persistDeskViewMode(mode: DeskViewMode): void {
@@ -14,7 +17,8 @@ export function persistDeskViewMode(mode: DeskViewMode): void {
 }
 
 /**
- * `d`/`l` (M22.5 "d for the Desk, l for the Library") must work from
+ * `d`/`l`/`b` (M22.5 "d for the Desk, l for the Library"; M23 §D adds the
+ * shelf on `b`) must work from
  * anywhere, including from the reader — a full room, not an overlay, so
  * closing it leaves no `DeskPage` mounted at all (visible or as a hidden
  * background) for a DOM event to reach. Persisting here, synchronously,

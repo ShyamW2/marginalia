@@ -1,11 +1,8 @@
 import { useEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import {
-  CanvasTexture,
   MathUtils,
   MeshStandardMaterial,
-  RepeatWrapping,
-  SRGBColorSpace,
   Vector3,
   type Group,
   type Mesh,
@@ -14,6 +11,7 @@ import {
 import type { MotionValue } from "motion/react";
 import { Book3D } from "../scene3d/Book3D.js";
 import { bookThickness, deskCameraFrame, deskPerspectiveDistance, stackElevation } from "./deskDepthMath.js";
+import { GRAIN_TILE_HEIGHT, GRAIN_TILE_WIDTH, makeWoodTexture } from "./woodTexture.js";
 import { Turntable3D, type Turntable3DProps } from "./Turntable3D.js";
 import { useDeskThemeColors } from "./useDeskThemeColors.js";
 
@@ -34,6 +32,9 @@ const UP = new Vector3(0, 1, 0);
 
 export interface DeskBookPlacement {
   resourceId: string;
+  /** M23 §D: lettered down the binding, so a book dragged off the optical axis
+   * is identifiable by its spine the same way it is on the shelf. */
+  title: string;
   rotationDeg: number;
   zOrder: number;
   x: MotionValue<number>;
@@ -153,65 +154,6 @@ function DeskCameraRig() {
   });
 
   return <perspectiveCamera ref={cameraRef} />;
-}
-
-/** One tile of the desk's grain, in px. Long low-frequency fibers rather than
- * isotropic noise — the same anisotropy `DeskCanvas.module.css`'s 2D `.grain`
- * uses, so the two presentations read as the same material. */
-const GRAIN_TILE_WIDTH = 512;
-const GRAIN_TILE_HEIGHT = 256;
-
-/**
- * Paints the desk's grain into a 2D canvas once per theme. A texture rather
- * than a shader because it is the cheapest thing that survives a lost context
- * gracefully and needs no per-frame work, and 2D canvas is already how the
- * rest of the app draws (`CursorTrail.tsx`).
- */
-function makeWoodTexture(surface: string, grain: string): CanvasTexture | null {
-  const canvas = document.createElement("canvas");
-  canvas.width = GRAIN_TILE_WIDTH;
-  canvas.height = GRAIN_TILE_HEIGHT;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
-
-  ctx.fillStyle = surface;
-  ctx.fillRect(0, 0, GRAIN_TILE_WIDTH, GRAIN_TILE_HEIGHT);
-
-  // Deterministic: the desk must not reshuffle its own grain on a re-render
-  // or a theme toggle.
-  let seed = 20260813;
-  const random = () => {
-    seed = (seed * 1664525 + 1013904223) >>> 0;
-    return seed / 0x100000000;
-  };
-
-  ctx.strokeStyle = grain;
-  ctx.lineCap = "round";
-  for (let i = 0; i < 220; i += 1) {
-    const y = random() * GRAIN_TILE_HEIGHT;
-    const amplitude = 1 + random() * 5;
-    const wavelength = 120 + random() * 260;
-    const phase = random() * Math.PI * 2;
-    ctx.globalAlpha = 0.05 + random() * 0.16;
-    ctx.lineWidth = 0.4 + random() * 1.5;
-    ctx.beginPath();
-    for (let x = 0; x <= GRAIN_TILE_WIDTH; x += 8) {
-      const wobble = Math.sin((x / wavelength) * Math.PI * 2 + phase) * amplitude;
-      if (x === 0) ctx.moveTo(x, y + wobble);
-      else ctx.lineTo(x, y + wobble);
-    }
-    ctx.stroke();
-  }
-  ctx.globalAlpha = 1;
-
-  const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  texture.wrapS = RepeatWrapping;
-  texture.wrapT = RepeatWrapping;
-  // Grazing angles at the far edge of a wide field of view are exactly where
-  // an unfiltered tile turns to moiré.
-  texture.anisotropy = 8;
-  return texture;
 }
 
 /**
@@ -371,7 +313,13 @@ function DeskBook3D({
           buries half the book under the desk, which is what read as "the
           books are cut off" in the faked-tilt version. */}
       <group position={[-BOOK_WIDTH / 2, 0, thickness / 2]}>
-        <Book3D resourceId={book.resourceId} width={BOOK_WIDTH} height={BOOK_HEIGHT} thickness={thickness} />
+        <Book3D
+          resourceId={book.resourceId}
+          title={book.title}
+          width={BOOK_WIDTH}
+          height={BOOK_HEIGHT}
+          thickness={thickness}
+        />
       </group>
     </group>
   );

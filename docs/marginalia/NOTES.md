@@ -5422,3 +5422,126 @@ is the whole point — it simply stops being shown. One line, and a regression t
 *where* the canvas paints. It did not cover *when*. A 3D layer that has stopped rendering is
 not the same thing as a 3D layer that is gone, and only the second one is safe to leave over
 another room.
+
+## M23 §D — the shelf, and the binding that came with it — 2026-08-13
+
+### The measurement gate, which found a defect rather than confirming a plan
+
+§A required pricing the texture upload "with real covers at real count" before choosing
+resolutions. The real count is three, which prices nothing, so the measurement was taken
+against a **synthetic 60-book library served from the real fixture covers** (Playwright
+route interception — no fixture, no data, and no shelf state was touched to do it).
+
+The first read, before any change:
+
+| | 3 books | 60 books |
+|---|---|---|
+| GPU texture bytes | 8.5 MB | **465 MB** |
+| Upload time (`texStorage2D` + `texSubImage2D`) | 10.6 ms | **1,088 ms** |
+| Draw calls / frame | 32 | 387 |
+
+465 MB is the covers arriving at their source resolution — around 1200×1800, 8.6 MB each
+— while being *drawn* at 168×252 CSS px on the Desk and a foreshortened ~235×352 on the
+shelf. No surface can show a texel of the difference. `useCoverTexture` now downscales to
+a 576px longest edge (twice the largest on-screen size, so a 2× display is covered)
+before the GPU sees anything: **86 MB and 65 ms** for the same 60 books, a 5.4× cut in
+bytes and 17× in upload time.
+
+Two notes for whoever reads this next. First, the instrumentation itself was wrong at the
+first attempt: hooking `texImage2D` measured **8 calls and zero bytes**, because three.js
+on WebGL2 uploads through `texStorage2D` + `texSubImage2D`. A measurement that reports
+"free" is worth exactly as much as no measurement. Second, this is the same shape of
+mistake in a different place: a texture's budget comes from how large it is *drawn*, and
+"it's the file we already have" is not a resolution decision.
+
+### The frame rate is the one criterion not signed off here
+
+§D asks for 60fps while scrolling. **This machine cannot measure it.** Headless Chromium
+resolves to `ANGLE (SwiftShader)` — software rasterisation — where the *already-shipped*
+Desk sits at the harness's own 30Hz ceiling and a 60-book shelf falls to ~6fps. Those
+numbers say nothing about a real GPU. What can be stated hardware-independently: 32 draw
+calls per frame at the real library size, 387 at 60 books, and per-frame JS of one
+`getBoundingClientRect` on the strip plus one damped lift per book. The criterion is owed
+on the operator's own machine.
+
+### The shelf is the seam's second camera, and that is the point
+
+The 2026-08-13 ruling said consumers share the units and bring their own camera. The
+shelf is the first surface to actually exercise it: the Desk hangs a camera above the
+plane `y = 0` looking down; the shelf stands one in front of `z = 0` looking along −Z; a
+DOM point `(x, y)` is world `(x, −y, 0)`. Identical 1:1 construction, and on this surface
+it lands somewhere better than the Desk's — the **spine face** is the 1:1 face, so the one
+face a user can see or click is exact and every part that foreshortens is behind it where
+nothing is aimed. Hence upright books: a lean is charming and was tried, and it is the
+single thing that breaks that agreement.
+
+Three things went wrong on the way, all worth keeping:
+
+- **The books faced the wrong way.** Standing `Book3D` spine-out is a **+90°** yaw about
+  Y. −90° is the plausible mistake and points the same book *out of the screen*: the
+  shelf showed a row of page blocks coming at the camera with the spines buried behind
+  the plank. It looks like a lighting or a geometry bug and is neither.
+- **The lights are a desk lamp.** `SceneLights` hangs above `y = 0` and points down, which
+  grazes a viewer-facing spine at almost zero incidence — the first shelf was lit by
+  ambient alone, flat and about half its true colour. The shelf brings its own front key.
+  Safe only while the Desk and the shelf are mutually exclusive view modes; recorded in
+  the component, in decisions.md, and in CLAUDE.md.
+- **A back panel turned the room into a bookcase.** Any panel tall enough to sit behind
+  the books fills most of the viewport, and a flat wall of desk colour is what the eye
+  lands on instead of the books. Deleted; the plank alone grounds them, and it shares the
+  Desk's own grain (`woodTexture.ts`, extracted for the purpose) so the two surfaces read
+  as one room.
+
+### The binding, which is a property of the book and not of the shelf
+
+The operator asked for spine titles and a cover-derived cloth colour. Both went into the
+shared `Book3D`, so the Desk gets them in the same commit rather than growing a second
+book asset later — which is the entire reason §A insisted on one.
+
+- **Colour** (`coverPalette.ts`): quantize to 4 bits a channel, weight each pixel by
+  `0.15 + saturation` and discount near-white and near-black to a tenth, take the heaviest
+  bucket's weighted average, clamp into a lightness band. Deliberately dumb — the target
+  is "recognisably this book's colour", not a faithful dominant hue, and it runs on the
+  main thread while a shelf mounts. A book with no cover gets a deterministic muted
+  fallback, so it is still a distinct object rather than one of a row of blanks.
+- **Ink** is picked by contrast from two fixed inks, never computed. A per-book computed
+  ink drifts into low-contrast mud on exactly the mid-lightness bindings where legibility
+  is hardest.
+- **Lettering** (`spineTexture.ts`) is painted into a canvas texture because the spine is
+  a *curve* — `bookGeometry.ts` made sure of that — so there is no flat rectangle to hang
+  a DOM label on. `CylinderGeometry`'s `v` runs along the book's height and `CanvasTexture`
+  keeps `flipY`, so canvas row 0 is the book's **head** and text painted downward reads
+  head-to-tail, as an English-language spine is bound.
+  ⚠️ The type was fitted in *canvas* px at the first attempt, which silently halved every
+  size bound in `spineLayout.ts` (they are sizes a reader sees, and the canvas is 2×). It
+  read as timid rather than as broken, which is the kind of bug that ships.
+
+### One card, two surfaces
+
+M22.6 §D's hover card was inlined in `BookObject.tsx`. §D needed the same card on the
+shelf, so it moved to `desk/BookActionCard.tsx` — one control, one behaviour, a
+`placement` prop for the two sides it hangs from (the Desk looks down at a cover and hangs
+it below; the shelf looks at an upright spine and floats it over the head). Settled
+decision 12: a control means the same thing on every surface.
+
+The one thing that had to survive the move: "Listen" flies the reader's opening from the
+**book**, not from its own button, while Scan and Digest deliberately fly from their
+buttons — they are popups put *on* the surface, not a room change. Hence `openOriginRef`.
+
+### Verified live
+Playwright + SwiftShader, real fixture books, **zero console or page errors**:
+- `d` / `l` / `b` reach three distinct views ("The Desk" / "Library" / "The Shelf").
+- Tab reaches **3/3** books on the shelf; Enter on a focused spine opens the reader;
+  focus alone (no pointer) lifts the book and opens its action card.
+- The action card's own buttons work from the shelf (Open scan → `/scan/…`) and do not
+  also open the book.
+- `elementFromPoint` at a spine's centre lands inside that book's own slot, in both
+  themes — the 1:1 plane holding where §B warned hit-testing breaks.
+- Reduced motion: **0 canvases** on all three views, and the shelf still renders flat CSS
+  spines on a CSS plank with every book focusable.
+- `WEBGL_lose_context` on the shelf: 0 canvases, 3 books still visible and usable.
+- Both themes and two window sizes.
+- **The Desk, after the card extraction:** hover card and its four actions present, drag
+  moves a book by exactly the gesture and persists, click still opens the reader.
+- The shelf state each run touched was read before and written back after, and the stored
+  x/y are byte-identical (only `zOrder`, which is a session counter, moved).
