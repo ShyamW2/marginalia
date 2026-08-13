@@ -5278,3 +5278,47 @@ books, **zero console or page errors** across every case below:
 - A book dragged under the notepad always loses to it now, regardless of z-order, because
   the notepad is DOM and the book is canvas. The 2D desk had the same ordering; flagged in
   case §C's turntable makes it matter.
+
+## M23 §B — the binder stops fizzling — 2026-08-13 (third pass)
+
+**Operator report:** everything else about the reworked Desk looked right, but "the binder
+of the book... sort of fizzles, and at times and parts you can see through it, especially
+when hovering over the book and dragging it around."
+
+**Cause: four solids sharing one plane.** `Book3D`'s spine was a box spanning the full
+thickness at `x = 0`, and the back board, the page block and the front board *also* started
+at `x = 0`. All four then presented a face on the plane `x = 0` with the **same** outward
+normal, and the spine additionally shared `z = ±thickness/2` with both boards. Coplanar
+same-facing polygons are a depth-buffer tie broken by float noise, so which one wins changes
+with every sub-pixel of camera movement — a still book is stable and a moving one shimmers,
+which is exactly the shape of the report. What "showed through" was the page block's cream
+(`#f2ead9`) winning the tie against the spine's brown; it is visible as a light sliver beside
+the binder in the before screenshots.
+
+**Fix: the back is round, because a bound book's back *is* round.** New
+`scene3d/bookGeometry.ts` derives the arc: a circle centred at `(c, 0)` through the spine's
+apex at the book's own left bound has radius `c`, and requiring it to also pass through the
+boards' outer corners `(bulge, ±t/2)` gives `c = (bulge² + t²/4) / 2·bulge`. The curve joins
+the covers with no step and no overlap, so the shared planes are gone rather than nudged
+apart by an epsilon. Rendered as a partial `CylinderGeometry`; the test pins
+three.js's `(sin θ, ·, cos θ)` vertex convention, since `Book3D`'s placement depends on it.
+
+Two consequences worth stating:
+- **The bulge comes out of the covers, not out of the footprint.** The boards now span
+  `[bulge, width]`. On the Desk `x ∈ [0, width]` *is* the DOM hit target
+  (`deskDepthMath.ts`'s 1:1 plane), so a spine hanging outside it would trade a rendering
+  bug for a hit-testing one. The cover carries ~4.5% less width than its source 2:3 image —
+  under the threshold where the squeeze reads.
+- **The arc's end caps run a half-unit past head and tail.** Flush would put them in the
+  boards' own end planes facing the same way, re-creating the tie this curve exists to
+  avoid. Half a unit is half a *pixel* here, under the antialiasing.
+
+⚠️ **Coincident faces with *opposite* normals are fine and are still used** — the page
+block's faces against the boards' inner faces. Backface culling draws exactly one of the
+pair. Only same-facing coincidence fights, which is the distinction to carry into §C–§E.
+
+**Verified live:** same Playwright + SwiftShader harness. Before/after close-ups of the
+binder at the left edge, the right edge, and three mid-drag positions: the cream sliver is
+gone and the spine reads as one solid rounded band. Ten frames of a held, lifted book at the
+desk's left edge are **byte-identical**. The fore edge still shows board / pages / board.
+Corner hit-testing, the ink theme, and reduced motion (0 canvases) all unchanged.

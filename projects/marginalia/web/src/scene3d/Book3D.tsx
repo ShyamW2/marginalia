@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { MeshStandardMaterial } from "three";
+import { spineArc, spineBulge } from "./bookGeometry.js";
 import { useCoverTexture } from "./useCoverTexture.js";
 
 // A real cover doesn't swing to a flat 180° against the desk.
@@ -43,6 +44,11 @@ export interface Book3DProps {
  * on the shelf, or swing its cover as it opens; this component doesn't know
  * which surface it's on.
  *
+ * ⚠️ The book fills `x ∈ [0, width]` exactly, and nothing may hang outside it:
+ * on the Desk that span *is* the DOM hit target (`desk/deskDepthMath.ts`). The
+ * round back therefore takes its `bulge` out of the covers, which span
+ * `[bulge, width]`, rather than adding it outside the footprint.
+ *
  * ⚠️ Centred on z since M23 §B's rework. It previously hung *below* its own
  * origin — the spine box alone reached a full thickness past the back board —
  * so a consumer that laid the book on a surface at its origin buried most of
@@ -70,44 +76,55 @@ export function Book3D({ resourceId, width = 1, height = 1.5, thickness = 0.12, 
 
   const boardThickness = Math.max(thickness * 0.09, 0.008 * width);
   const blockThickness = Math.max(thickness - boardThickness * 2, thickness * 0.35);
+  // The round back, and the hinge line the boards start at. See
+  // `bookGeometry.ts` for why the spine is a curve and not the box it was.
+  const bulge = spineBulge(width, thickness);
+  const arc = spineArc(thickness, bulge);
+  const boardWidth = width - bulge;
   // Pages sit a hair inside the boards on the three cut edges and flush at
   // the spine — the overhang is most of what makes a closed book read as a
   // bound object rather than a slab.
   const pageInset = width * 0.022;
-  const pageWidth = width - pageInset;
+  const pageWidth = boardWidth - pageInset;
   const pageHeight = height - pageInset * 2;
   const angle = -openProgress * MAX_OPEN_ANGLE;
 
   return (
     <group name={`book-${resourceId}`}>
       {/* Back board. */}
-      <mesh position={[width / 2, 0, -thickness / 2 + boardThickness / 2]} castShadow receiveShadow>
-        <boxGeometry args={[width, height, boardThickness]} />
+      <mesh position={[bulge + boardWidth / 2, 0, -thickness / 2 + boardThickness / 2]} castShadow receiveShadow>
+        <boxGeometry args={[boardWidth, height, boardThickness]} />
         <primitive object={edgeMaterial} attach="material" />
       </mesh>
 
       {/* Page block. */}
-      <mesh position={[pageWidth / 2, 0, 0]} castShadow receiveShadow>
+      <mesh position={[bulge + pageWidth / 2, 0, 0]} castShadow receiveShadow>
         <boxGeometry args={[pageWidth, pageHeight, blockThickness]} />
         <primitive object={pageBlockMaterial} attach="material" />
       </mesh>
 
-      {/* Spine, wrapping the full thickness at the hinge. */}
-      <mesh position={[boardThickness / 2, 0, 0]} castShadow receiveShadow>
-        <boxGeometry args={[boardThickness, height, thickness]} />
+      {/* The round back, closing the book from one board's outer corner to the
+          other's. Its end caps run a half-unit past head and tail rather than
+          flush with them: flush would put the caps in the boards' own end
+          planes facing the same way, which is the tie this curve exists to
+          avoid. Half a unit is a half *pixel* on the Desk — under the
+          antialiasing, and four orders of magnitude more depth separation than
+          the buffer needs at this camera distance. */}
+      <mesh position={[arc.centerX, 0, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[arc.radius, arc.radius, height + 1, 32, 1, false, arc.thetaStart, arc.thetaLength]} />
         <primitive object={spineMaterial} attach="material" />
       </mesh>
 
-      {/* The front board: hinged at the spine (local x = 0), cover art on its
-          outward (+z) face. */}
-      <group position={[0, 0, thickness / 2 - boardThickness / 2]} rotation={[0, angle, 0]}>
+      {/* The front board: hinged at the spine's joint (local x = bulge), cover
+          art on its outward (+z) face. */}
+      <group position={[bulge, 0, thickness / 2 - boardThickness / 2]} rotation={[0, angle, 0]}>
         {/* Keyed on the material's uuid: R3F's `attach="material-4"` binding
             was seen reconciling in place across sibling fibers whose textures
             resolved at different times, landing one book's cover on another's
             mesh (M23 §B, NOTES.md). A remount on identity change sidesteps
             whatever that reconciliation was doing. */}
-        <mesh key={coverMaterial.uuid} position={[width / 2, 0, 0]} castShadow receiveShadow>
-          <boxGeometry args={[width, height, boardThickness]} />
+        <mesh key={coverMaterial.uuid} position={[boardWidth / 2, 0, 0]} castShadow receiveShadow>
+          <boxGeometry args={[boardWidth, height, boardThickness]} />
           <primitive object={edgeMaterial} attach="material-0" />
           <primitive object={edgeMaterial} attach="material-1" />
           <primitive object={edgeMaterial} attach="material-2" />
