@@ -23,6 +23,17 @@
   --color-highlight-active: #eac96a;
   --color-danger: #a13d3d;
 
+  /* The Desk's 3D surface (M23 §B). three.js cannot read a stylesheet, so
+   * these get read back through `desk/useDeskThemeColors.ts` — they are
+   * tokens rather than constants in the scene so the desk stays themeable
+   * like every other surface. Deliberately close to --color-bg: the desk is
+   * the room's floor, not a feature (DESIGN.md anti-goals, "no aesthetic
+   * without a job"), so it carries only enough warmth and grain to read as a
+   * material under a light. */
+  --desk-surface: #eee6d6;
+  --desk-grain: #dccfb5;
+  --desk-rim: #c3b092;
+
   /*
    * Highlight kinds (docs/marginalia/DESIGN.md, docs/decisions.md
    * 2026-07-19): rose = revisit/general, sage = definition, honey = quote,
@@ -65,6 +76,10 @@
   --color-highlight-active: #6b5a2e;
   --color-danger: #d97a7a;
 
+  --desk-surface: #2b2721;
+  --desk-grain: #211e19;
+  --desk-rim: #453e33;
+
   --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.4);
 }
 
@@ -82,6 +97,10 @@
     --color-highlight: #4d4326;
     --color-highlight-active: #6b5a2e;
     --color-danger: #d97a7a;
+
+    --desk-surface: #2b2721;
+    --desk-grain: #211e19;
+    --desk-rim: #453e33;
 
     --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.4);
   }

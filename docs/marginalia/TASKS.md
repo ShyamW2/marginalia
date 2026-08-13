@@ -827,6 +827,21 @@ acceptance criteria, not polish. A beautiful shelf with no keyboard path is not 
 
 #### B — The Desk, looking down
 
+⚠️ **Reworked 2026-08-13 after operator review** (decisions.md that date; full diagnosis in
+NOTES.md "M23 §B — the Desk, rebuilt on a real camera"). The boxes below stayed ticked
+because the tasks are done — but they were first ticked against a build whose books were
+clipped, whose depth reveal was inverted and stepped, whose hover action card was invisible
+under the canvas, and which fell back to 2D permanently after one visit to the reader.
+**Two lessons for §C–E, which have the same shapes of acceptance criterion:**
+- "Smoothly animated, not stepped" and "as a real object seen from above would be" are not
+  satisfiable by faking foreshortening. Depth on these surfaces comes from a real camera;
+  the 1:1 desk plane (`deskDepthMath.ts`) is what keeps that compatible with DOM
+  hit-testing, and it is an invariant now, not an implementation detail.
+- An element being in the DOM is not evidence a user can see it. Anything sharing a
+  viewport with the shared canvas is verified with `document.elementFromPoint`, and every
+  3D consumer owes the layering contract in `Scene3D.module.css`.
+
+
 - [x] **A top-down desk with real depth.** A book centred under the camera reads as flat
       cover-only; moved off-centre it reveals binder and page edges, as a real object seen
       from above would. Smoothly animated, not stepped.

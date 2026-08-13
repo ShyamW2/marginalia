@@ -3,6 +3,62 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-13 — The Desk gets a real camera, and the seam gets a coordinate convention
+
+Operator review of M23 §B's first pass. Three reported symptoms, four causes; full
+diagnosis and the live verification in NOTES.md ("M23 §B — the Desk, rebuilt on a real
+camera"). Two of the outcomes are rules rather than fixes, so they are recorded here.
+
+1. **A perspective camera is the Desk's depth, not a faked tilt.** §B's first pass used a
+   straight-down orthographic camera and rotated each book about its own centre to
+   simulate foreshortening, reading TASKS.md's "a projected 3D surface is where
+   hit-testing breaks" as a reason to avoid perspective. That produced all three of the
+   operator's visual complaints at once — an inverted reveal, books clipped by the desk
+   plane they had sunk into, and a four-way axis snap that read as stepping — and none of
+   them was tunable, because they are what faking foreshortening costs.
+
+   The hit-testing concern is answered exactly instead of traded away: an eye at distance
+   `d` above the viewport centre with vertical fov `2·atan((h/2)/d)` maps the plane
+   `y = 0` to the viewport **1:1**, so a book's footprint *is* its DOM rect at every
+   position including the corners, and only what stands above the desk splays. This is the
+   same construction CSS `perspective` uses. **The 1:1 desk plane is now the invariant** —
+   anything that would break it (moving the camera off the viewport's axis, tilting it,
+   or reintroducing the DOM parallax under 3D) breaks drag/drop, and is a change to make
+   deliberately, not incidentally.
+
+2. **The seam's coordinate convention is written down: one world unit is one CSS pixel,
+   origin at the viewport's top-left, +X right, +Z down the screen, +Y up out of the
+   surface.** It was already implicitly true — it is what lets a surface place 3D content
+   straight from `getBoundingClientRect()` with no reprojection — but nobody had stated
+   it, and the cost of that showed up as a shadow bug: `castShadow` had been on since §A
+   and nothing had ever cast a shadow, because a directional light's shadow frustum
+   defaults to a ±5-unit box at the world origin, which at this scale is the top-left
+   corner pixel of the page. Consumers share the units; a surface that wants different
+   framing brings its own camera, never its own units.
+
+3. **The shared canvas is sticky, and a lost context is recoverable.** R3F's unmount path
+   calls `gl.forceContextLoss()`, which fires a real `webglcontextlost` at the canvas it
+   is tearing down — so tying the canvas's lifetime to "is any layer registered" made
+   every room change look like a GPU failure and latched the whole app into its 2D
+   fallback. The canvas now stays mounted once any consumer has registered and idles at
+   `frameloop="never"`, the loss handler ignores our own teardown, and a genuine loss
+   schedules a remount (a fresh canvas gets a fresh context) rather than degrading until
+   reload. **"A lost context is a designed state" still holds; "a lost context is
+   permanent" was never the design and is now not the behaviour.**
+
+4. **Layering is a contract, not a per-surface fix.** The one canvas is a fixed,
+   full-viewport `z-index: 0` layer that comes after the page in DOM order, so it paints
+   over everything unless told otherwise — which is how the Desk silently lost its hover
+   action card, its notepad and its listening tool while they stayed fully present and
+   clickable in the DOM. Every 3D consumer owes two things: foreground DOM raised above
+   the canvas, and its own background stood down while 3D is on. Written into
+   `Scene3D.module.css` and `DeskCanvas.module.css` as the worked example.
+
+   ⚠️ Corollary for verification: "the element is in the DOM" does not mean "the user can
+   see it". The first pass checked the action card with `querySelector` and it passed
+   while the card was invisible under an opaque 3D surface. Checks on anything sharing a
+   viewport with a canvas use `document.elementFromPoint`.
+
 ## 2026-08-12 — The graphics-and-fixes pass, and the move to a real 3D substrate
 
 Operator review after rung 1 went public: nine areas, mixing small irritations with a

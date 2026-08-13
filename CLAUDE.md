@@ -109,6 +109,16 @@ doc), never by drift.
    page fold's own WebGL renderer (M27, was M25) is the precedent that makes this consistent; the
    two must not become two ad-hoc call sites. *A CSS-3D-first alternative was recommended
    and rejected — see decisions.md 2026-08-12 for the reasoning on both sides.*
+   *Amended 2026-08-13 (decisions.md), three rules the seam now carries:* **(a) one world
+   unit is one CSS pixel**, origin at the viewport's top-left, +X right, +Z down the
+   screen, +Y up out of the surface — consumers share the units and bring their own camera,
+   never their own units; **(b) depth comes from a real perspective camera**, never from
+   faking foreshortening, and on the Desk the plane `y = 0` maps to the viewport 1:1 so a
+   book's footprint *is* its DOM hit target (breaking that breaks drag/drop); **(c) every
+   3D consumer owes the layering contract** — the one canvas is a fixed `z-index: 0` layer
+   that paints over the page, so a surface raises its foreground DOM above it and stands
+   its own background down while 3D is on. A lost context stays a designed state, but is
+   recoverable: the canvas is sticky across room changes and a real loss retries.
 15. **The list view is the library's accessibility floor** (2026-08-12, restating
    DESIGN.md:67-68 as an invariant because a milestone came close to overturning it by
    accident). `LibraryGrid` is the keyboard/screen-reader path for the Desk. New library

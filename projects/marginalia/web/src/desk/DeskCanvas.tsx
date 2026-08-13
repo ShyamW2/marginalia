@@ -54,15 +54,25 @@ export function DeskCanvas({
   const tiltLayerRef = useRef<HTMLDivElement>(null);
   const [positions, setPositions] = useState<Record<string, ShelfState>>({});
   const zCounter = useRef(0);
-  const { rotateX, rotateY, onPointerMove, onPointerLeave } = useDeskParallax(!reducedMotion);
   const show3D = useScene3DAvailable();
+  // ⚠️ The ambient CSS parallax is a *2D* effect on this DOM subtree, and the
+  // 3D camera does not share it. Left on alongside 3D it rotates every book's
+  // real hit target a degree or two away from the object drawn for it — small
+  // at rest, worst at the corners, and exactly the DOM/3D disagreement the
+  // 1:1 desk plane exists to prevent. The 3D presentation earns its depth from
+  // the camera instead, so the tilt is the 2D presentation's alone.
+  const { rotateX, rotateY, onPointerMove, onPointerLeave } = useDeskParallax(!reducedMotion && !show3D);
 
-  // M23 §B: one x/y `MotionValue` pair per book, owned here rather than
-  // inside `BookObject` so the desk's 3D depth layer (`DeskScene3D.tsx`) can
-  // read the same live values every frame and follow an in-progress drag —
-  // if each `BookObject` kept its own via `useMotionValue`, the 3D layer
-  // would have no way to see a drag before it commits to `positions` state.
-  const motionValues = useRef(new Map<string, { x: MotionValue<number>; y: MotionValue<number> }>()).current;
+  // M23 §B: one motion-value bundle per book, owned here rather than inside
+  // `BookObject` so the desk's 3D depth layer (`DeskScene3D.tsx`) can read the
+  // same live values every frame and follow an in-progress drag — if each
+  // `BookObject` kept its own via `useMotionValue`, the 3D layer would have no
+  // way to see a drag before it commits to `positions` state. `lift` carries
+  // the hover/drag gesture the same way: the DOM owns the gesture, the 3D
+  // object owns how it looks.
+  const motionValues = useRef(
+    new Map<string, { x: MotionValue<number>; y: MotionValue<number>; lift: MotionValue<number> }>(),
+  ).current;
 
   // Books are absolutely positioned, so they never contribute to the
   // surface's natural height — without this, arranging enough books to
@@ -104,7 +114,7 @@ export function DeskCanvas({
     resources.forEach((resource, index) => {
       if (motionValues.has(resource.id)) return;
       const seed = resource.shelf ?? defaultShelfState(resource.id, index);
-      motionValues.set(resource.id, { x: motionValue(seed.x), y: motionValue(seed.y) });
+      motionValues.set(resource.id, { x: motionValue(seed.x), y: motionValue(seed.y), lift: motionValue(0) });
     });
     for (const id of motionValues.keys()) {
       if (!activeIds.has(id)) motionValues.delete(id);
@@ -151,12 +161,14 @@ export function DeskCanvas({
   return (
     <motion.div
       ref={containerRef}
-      className={cursorStyle === "system" ? `${styles.surface} ${styles.systemCursor}` : styles.surface}
+      className={[styles.surface, cursorStyle === "system" ? styles.systemCursor : "", show3D ? styles.surfaceIs3D : ""]
+        .filter(Boolean)
+        .join(" ")}
       style={{ rotateX, rotateY, "--desk-content-height": `${contentHeight}px` } as CSSProperties}
       onPointerMove={onPointerMove}
       onPointerLeave={onPointerLeave}
     >
-      <div className={styles.grain} aria-hidden="true" />
+      {!show3D && <div className={styles.grain} aria-hidden="true" />}
       <div className={styles.tiltLayer} ref={tiltLayerRef}>
         {resources.map((resource) => {
           const position = positions[resource.id];
@@ -169,6 +181,7 @@ export function DeskCanvas({
               position={position}
               x={values.x}
               y={values.y}
+              lift={values.lift}
               reducedMotion={reducedMotion}
               cursorStyle={cursorStyle}
               onBringToFront={bringToFront}

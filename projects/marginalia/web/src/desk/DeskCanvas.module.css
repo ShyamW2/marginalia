@@ -34,6 +34,25 @@
   overflow: hidden;
   transform-style: preserve-3d;
   perspective: 1200px;
+  /* Above `Scene3D.module.css`'s `.canvasLayer` (a fixed, full-viewport
+     `z-index: 0` layer that comes later in DOM order and therefore paints
+     over anything at `auto`). Everything on the desk that must read *above*
+     the 3D books — the hover action card, the notepad, the listening tool,
+     focus rings — is inside here, so one raise covers all of them. Without
+     it, the moment a 3D layer mounted the canvas painted straight over the
+     whole desk and the action card, notepad and turntable silently vanished
+     while staying fully present, focusable and clickable in the DOM. */
+  z-index: 1;
+}
+
+/* While the 3D layer is drawing the desk, the 3D layer *is* the desk: this
+   element keeps its box, its scroll extent and its hit-testing, and gives up
+   only its paint. Left opaque it would sit above the canvas (see `z-index`
+   above) and hide the very surface it is standing in for. The 2D rules above
+   stay the reduced-motion / lost-context presentation, unchanged. */
+.surfaceIs3D {
+  background: none;
+  border-color: transparent;
 }
 
 /* Wood grain: an anisotropic feTurbulence tile (low x frequency, high y)

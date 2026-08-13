@@ -7,6 +7,7 @@ import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { IconButton } from "../controls/IconButton.js";
 import { BrainIcon, MagnifierIcon, PlayIcon, PublishIcon } from "../controls/icons.js";
+import { BOOK_DRAG_LIFT, BOOK_HOVER_LIFT } from "./deskDepthMath.js";
 import styles from "./BookObject.module.css";
 
 // Total accumulated |wheel delta| needed to "wind the crown" all the way in.
@@ -37,6 +38,10 @@ interface BookObjectProps {
    * in-progress drag instead of only updating once it commits. */
   x: MotionValue<number>;
   y: MotionValue<number>;
+  /** Written, never read, by this component: how high the 3D layer should
+   * float this book, in px above the desk. The gesture lives here (this is
+   * the real hit target); how it looks lives in `DeskScene3D.tsx`. */
+  lift: MotionValue<number>;
   reducedMotion: boolean;
   cursorStyle: CursorStyleChoice;
   onBringToFront: (resourceId: string) => number;
@@ -65,6 +70,7 @@ export function BookObject({
   position,
   x,
   y,
+  lift,
   reducedMotion,
   cursorStyle,
   onBringToFront,
@@ -107,6 +113,16 @@ export function BookObject({
       setEdgeShift(0);
     }
   }, [isHovering]);
+
+  // M23 §B: the same reaction the 2D presentation gets from `whileHover`'s
+  // few-px lift and `.lifted`'s deeper shadow, handed to the 3D layer as a
+  // real height above a real desk — which is where its shadow then comes from
+  // for free. Written unconditionally: it costs nothing when 3D is off, and
+  // gating it on `show3D` would leave the value stale at whatever it held
+  // when the context was lost.
+  useEffect(() => {
+    lift.set(isDragging ? BOOK_DRAG_LIFT : isHovering ? BOOK_HOVER_LIFT : 0);
+  }, [lift, isDragging, isHovering]);
 
   function open() {
     if (openedRef.current) return;
@@ -264,14 +280,20 @@ export function BookObject({
           those animates it to an *absolute* -4, which for a book dragged
           away from the origin is a multi-hundred-px jump on hover, not a
           few-px lift (the M11 "desk hover jump" bug). */}
+      {/* Under 3D the hover lift belongs to the object, not to its hit target
+          (see the `lift` effect above). Moving this wrapper as well would
+          slide the info strip — its child — a few px out from under the book
+          it describes, and shift the rect `layoutId` hands to the opening. */}
       <motion.div
         className={styles.liftWrap}
-        whileHover={reducedMotion ? undefined : { y: -4 }}
+        whileHover={reducedMotion || show3D ? undefined : { y: -4 }}
         transition={{ type: "spring", stiffness: 420, damping: 30 }}
       >
         <motion.div
           ref={coverRef}
-          className={`${styles.coverWrap} ${isDragging ? styles.lifted : ""}`}
+          className={[styles.coverWrap, isDragging ? styles.lifted : "", show3D ? styles.coverWrapIs3D : ""]
+            .filter(Boolean)
+            .join(" ")}
           layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
         >
           {/* M23 §B: while the desk's 3D layer is drawing this book, the

@@ -5113,3 +5113,168 @@ Not yet covered by this pass: the desk's own ~1.6° ambient CSS parallax tilt
 tilt at pointer rest), and diverge by at most a few px at the DOM layer's own extreme tilt
 while the pointer is actively over the surface; not worth chasing further without a shown
 problem. §C–E still need their own live verification once built.
+
+## M23 §B — the Desk, rebuilt on a real camera — 2026-08-13 (second pass)
+
+Operator review of the first §B pass, same day: books rendered with pieces missing, the
+depth "only updates in a few fixed points, seems to snap", the reveal was **inverted**
+(a book at the left showed its left side, not the side facing the camera), the hover
+action card had disappeared, and returning from the reader dropped the Desk back to its
+2D presentation. Four separate causes; the first three were all one wrong trade.
+
+### The wrong trade: an orthographic camera plus a faked tilt
+
+The first pass read TASKS.md's warning that "a projected 3D surface is where hit-testing
+breaks" as *avoid a perspective camera*, and built a straight-down **orthographic** camera
+with a 1:1 world-to-pixel frustum, faking depth by rotating each book about its own centre
+proportional to its distance from the viewport centre (`bookTilt`). All three visual
+defects fall out of that one decision:
+
+1. **Inverted.** Rotating a box about its own centre lifts the far edge and buries the
+   near one, so the sliver you see is the side pointing *away* from the camera. Real
+   foreshortening shows the side pointing *toward* it.
+2. **Cut off.** The same rotation sank the other half of the book *below* the desk plane,
+   which then occluded it — that is the clean straight edge across each cover in the
+   operator's screenshots, and it is always on the side facing the screen's centre because
+   that is the half that goes down.
+3. **Snapping.** The tilt axis had to be snapped to whichever of the book's own edges
+   dominated the offset (§B's first pass had already found that a diagonal axis reveals a
+   tapering sliver that reads as a warped wedge). Snapping to one of four cardinals is
+   exactly "updates its perspective in a few fixed points."
+
+None of these is a tuning problem. They are what faking foreshortening costs.
+
+### The fix, and why it does not cost hit-testing
+
+`DeskScene3D.tsx` now runs a real `PerspectiveCamera` hung straight above the **viewport's**
+centre. The hit-testing worry is answered exactly rather than traded away: put the eye at
+distance `d` with vertical fov `2·atan((h/2)/d)` and aspect `w/h`, and the plane `y = 0`
+maps to the viewport **1:1** — world (x, 0, z) lands on screen pixel (x, z), corners
+included. It is the same construction CSS `perspective: <d>px` uses. So a book's
+*footprint* is exactly its DOM `BookObject` rect at every desk position, and only what
+stands above the desk splays — which is the depth cue the milestone wanted. Derivation and
+the budget it spends live in `deskDepthMath.ts`'s header; `deskDepthMath.test.ts` pins the
+1:1 mapping at two window sizes and four points including both corners, pins the reveal's
+*direction*, and pins that the reveal grows strictly proportionally to offset (the "no
+steps" property, stated as a test rather than as a comment).
+
+`d = clamp(0.9 · viewportHeight, 620, 1400)` — ~54° at 900px tall, wider than CSS's
+conventional ~1000px perspective, short of the corner fisheye below ~45°. Scaling with the
+viewport keeps the angle a book near the edge is seen at roughly constant across window
+sizes.
+
+Two related sign/geometry bugs fixed at the same time, both silent:
+- **`Book3D` was not the solid its bounds claimed.** Its spine box was centred at
+  `-thickness/2` with depth `thickness`, so it reached a full thickness *below* the back
+  board. Any consumer laying the book on a surface at its own origin buried most of it. It
+  is now centred on z, with a back board, an inset page block and the hinged front cover.
+- **Yaw had the wrong sign.** The stored rotation is a CSS `rotate()`, where positive is
+  clockwise on screen; a positive rotation about world +Y is counter-clockwise seen from
+  above. The 3D book and its DOM hit target sat at mirrored angles.
+
+### The action card had not gone anywhere — it was behind the canvas
+
+`Scene3D.module.css`'s `.canvasLayer` is `position: fixed; inset: 0; z-index: 0` and comes
+*later* in DOM order than the page, so it painted over everything on the Desk. The hover
+card, the notepad and the listening tool were all fully present, focusable and clickable
+the whole time, and invisible under an opaque 3D desk surface. (The first pass verified
+the card by asserting it was in the DOM, which it always was. The check now is
+`document.elementFromPoint` at the card's own coordinates — what actually receives a click
+there — not `querySelector`.)
+
+Fixed as a **layering contract** written into both files rather than a one-off: the canvas
+stays at `z-index: 0`; a consumer's foreground DOM claims `z-index: 1` (`.surface`), and
+its *background* gets out of the way while 3D is on (`.surfaceIs3D` drops the background,
+border and 2D grain, keeping the box, the scroll extent and every hit target). The
+`useDeskParallax` tilt is now also off under 3D — a 2D rotation of the DOM subtree that the
+3D camera does not share rotates every hit target away from the object drawn for it, which
+is the exact DOM/3D disagreement the 1:1 plane exists to prevent.
+
+### The desk reverted after reading because R3F's own teardown looks like a lost context
+
+`unmountComponentAtNode` in `@react-three/fiber@8.18.0` calls `gl.forceContextLoss()` 500ms
+after the tree detaches (`events-*.esm.js:2095`). That fires a real `webglcontextlost`
+event on the canvas being torn down, which `Scene3DProvider`'s own handler read as a
+genuine loss and latched — permanently. Leaving the Desk for the reader unregistered the
+last layer, unmounted the canvas, and poisoned `contextLost` for the rest of the session.
+
+Three changes, in order of how much they matter:
+- The canvas is now **sticky**: once any consumer has registered, it stays mounted and
+  idles at `frameloop="never"` when nothing wants it. This removes the unmount entirely on
+  every room change, and skips re-uploading every cover texture too.
+- The loss handler ignores events fired while we are deliberately unmounting (the one
+  remaining path is reduced motion turning on mid-session).
+- A genuine loss is no longer a one-way door: a torn-down canvas can never receive
+  `webglcontextrestored`, so the provider schedules its own remount after 1.5s, up to three
+  attempts, then settles into 2D for good.
+
+`Scene3D.test.tsx` now pins all three; the old "unmounts once the last layer unregisters"
+test was asserting the bug and has been replaced with its round trip.
+
+### Lighting: the intensities were ~π too low, and the shadows had no frustum
+
+⚠️ **Measured, not guessed.** The desk rendered at (149,144,132) against a `--desk-surface`
+token of #eee6d6 — exactly 0.36 of its own colour. three.js runs every light through
+`BRDF_Lambert`, which divides by π, so an up-facing surface only renders at its true colour
+when the intensities reaching it sum to about **π**. At the first pass's 0.75/0.65 (and at
+this pass's first attempt of 0.62/0.55) everything was at ~36% brightness, which reads as a
+broken material rather than as dim light. Now ambient 1.7 + directional 1.55, i.e.
+`ambient + directional·cos θ ≈ 3.14` on the desk plane. *(An earlier hypothesis that ACES
+tone mapping was the cause was wrong — but `flat`/`NoToneMapping` is still right here, since
+these materials are tinted straight from CSS custom properties and should not be graded.)*
+
+Separately, `castShadow` had been on since §A and **nothing had ever cast a shadow**: a
+directional light's shadow camera does not follow the scene, and three's default is a
+±5-unit box at the world origin — roughly the top-left corner pixel of the page, given that
+this seam's world unit is the CSS pixel. It is now fitted to the viewport plus a 300px
+margin. First cut used ±(0.75·size + 400) on a 2048² map, which spent three quarters of the
+map off-screen; since the Desk runs a continuous frameloop, that map is re-rendered *every
+frame*, and under SwiftShader it was slow enough to stall Playwright's own input dispatch
+for minutes. A viewport-fitted 1024² map is ~2 world units per texel — a soft contact
+shadow, and a quarter of the per-frame cost.
+
+**The seam now states its coordinate convention explicitly** (`Scene3D.tsx`): one world
+unit is one CSS pixel, origin at the viewport's top-left, +X right, +Z down the screen, +Y
+up out of the desk. It was already implicitly true and is what lets a surface place content
+straight from `getBoundingClientRect()`; the shadow-frustum bug is what a convention nobody
+had written down costs.
+
+### Also changed
+- **Books have thickness now, and it varies** (`bookThickness`, 17–30px, hashed from the
+  resource id). A desk of identically-thick books reads as tiles, not objects. SPEC-GAP:
+  the library carries no page or word count to derive a true thickness from; if one lands,
+  that function is the single place that changes.
+- **Hover and drag lift the 3D object, not the DOM.** `BookObject` owns the gesture and
+  writes a target height into a shared `lift` motion value; `DeskScene3D` damps toward it.
+  The book's shadow then comes from its real height for free, so the 2D `box-shadow` and
+  `whileHover` lift are switched off under 3D rather than doubling up.
+- `stackElevation` is capped at rank 8: under perspective, elevation is no longer free.
+
+### Verified live
+Playwright + the cached headless Chromium (`--use-gl=swiftshader`), three real fixture
+books, **zero console or page errors** across every case below:
+- Books dragged into three corners render whole, resting *on* the desk, each showing the
+  faces pointing back toward the camera — a book at the left shows its right side and (if
+  above centre) its bottom edge; mirrored on the right. Screenshots in both themes.
+- Mid-drag frames across the full width: the reveal tracks continuously and the dragged
+  book visibly floats above the one it passes over.
+- The hover card is back, `elementFromPoint` lands inside it, all four actions present, and
+  clicking "Read digest" navigates.
+- **Three consecutive reader round trips**: canvas count stays 2 (CursorTrail's pre-existing
+  2D canvas + the one Scene3D canvas) and the Desk stays 3D every time.
+- Reduced motion: **0 canvases**, 2D desk with real cover art; `l` → list view, 0 canvases.
+- Two window sizes (1400×900, 1000×700).
+
+### Left alone, deliberately
+- **`desk/DeskScene3D.tsx` imports three.js**, which is in tension with §A's own acceptance
+  criterion ("`grep` finds no three.js import outside the seam"). Pre-existing from the
+  first pass and not silently unified here: what the rule is actually protecting — no three
+  types reaching `DeskCanvas`, `BookObject`, `DeskPage` — does hold (`DeskBookPlacement` is
+  motion values and plain numbers). Whether per-surface scene files belong in `scene3d/` or
+  next to their surface is a structural call for §C/§D, when there are three of them to
+  look at, not one.
+- The hover info card inherits the book's CSS `rotate`, so it sits tilted. Pre-existing in
+  the 2D desk too; out of scope for this pass.
+- A book dragged under the notepad always loses to it now, regardless of z-order, because
+  the notepad is DOM and the book is canvas. The 2D desk had the same ordering; flagged in
+  case §C's turntable makes it matter.

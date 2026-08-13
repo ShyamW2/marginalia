@@ -13,10 +13,10 @@ const FALLBACK_COVER_COLOR = "#c9b8a0";
 // Shared across every mounted book: flat-color faces never differ per book,
 // so there is no reason to allocate a material per instance — a shelf holds
 // dozens of these at once (M23 §D).
-const edgeMaterial = new MeshStandardMaterial({ color: COVER_EDGE_COLOR });
-const pageBlockMaterial = new MeshStandardMaterial({ color: PAGE_BLOCK_COLOR });
-const spineMaterial = new MeshStandardMaterial({ color: SPINE_COLOR });
-const fallbackCoverMaterial = new MeshStandardMaterial({ color: FALLBACK_COVER_COLOR });
+const edgeMaterial = new MeshStandardMaterial({ color: COVER_EDGE_COLOR, roughness: 0.8 });
+const pageBlockMaterial = new MeshStandardMaterial({ color: PAGE_BLOCK_COLOR, roughness: 0.95 });
+const spineMaterial = new MeshStandardMaterial({ color: SPINE_COLOR, roughness: 0.7 });
+const fallbackCoverMaterial = new MeshStandardMaterial({ color: FALLBACK_COVER_COLOR, roughness: 0.7 });
 
 export interface Book3DProps {
   resourceId: string;
@@ -29,23 +29,31 @@ export interface Book3DProps {
 }
 
 /**
- * M23 §A: the one book object — cover, spine, page block and an openable
+ * M23 §A: the one book object — boards, spine, page block and an openable
  * front cover, authored once for the Desk, the shelf and the opening to
  * share (settled decision 14). A missing cover falls back to a plain face,
  * mirroring `BookCover.tsx`'s own onError contract, rather than a broken or
  * blank texture.
  *
- * Local space: the spine is the y-axis at x=0, the book extends to x=width,
- * height along y, thickness along z with the cover's outward face toward
- * +z. A consumer rotates and positions the whole group to lay it flat on
- * the Desk, stand it upright on the shelf, or swing its cover as it opens —
- * this component doesn't know which surface it's on.
+ * Local space: the spine is the y-axis at **x = 0**, the book extends to
+ * x = width, height runs along y **centred on 0**, and thickness runs along z
+ * **centred on 0** — so the solid occupies `z ∈ [-thickness/2, +thickness/2]`
+ * and the front cover's outward face is at `+thickness/2`. A consumer rotates
+ * and positions the whole group to lay it flat on the Desk, stand it upright
+ * on the shelf, or swing its cover as it opens; this component doesn't know
+ * which surface it's on.
+ *
+ * ⚠️ Centred on z since M23 §B's rework. It previously hung *below* its own
+ * origin — the spine box alone reached a full thickness past the back board —
+ * so a consumer that laid the book on a surface at its origin buried most of
+ * it under that surface. A book that is not the solid its bounds claim is a
+ * bug in every consumer at once, which is the whole reason this is one asset.
  */
 export function Book3D({ resourceId, width = 1, height = 1.5, thickness = 0.12, openProgress = 0 }: Book3DProps) {
   const texture = useCoverTexture(resourceId);
 
   const coverMaterial = useMemo(
-    () => (texture ? new MeshStandardMaterial({ map: texture }) : fallbackCoverMaterial),
+    () => (texture ? new MeshStandardMaterial({ map: texture, roughness: 0.62 }) : fallbackCoverMaterial),
     [texture],
   );
 
@@ -60,24 +68,46 @@ export function Book3D({ resourceId, width = 1, height = 1.5, thickness = 0.12, 
     };
   }, [coverMaterial]);
 
-  const coverThickness = thickness * 0.15;
-  const pageThickness = thickness - coverThickness;
+  const boardThickness = Math.max(thickness * 0.09, 0.008 * width);
+  const blockThickness = Math.max(thickness - boardThickness * 2, thickness * 0.35);
+  // Pages sit a hair inside the boards on the three cut edges and flush at
+  // the spine — the overhang is most of what makes a closed book read as a
+  // bound object rather than a slab.
+  const pageInset = width * 0.022;
+  const pageWidth = width - pageInset;
+  const pageHeight = height - pageInset * 2;
   const angle = -openProgress * MAX_OPEN_ANGLE;
 
   return (
     <group name={`book-${resourceId}`}>
-      <mesh position={[width / 2, 0, -coverThickness / 2]} castShadow receiveShadow>
-        <boxGeometry args={[width, height, pageThickness]} />
+      {/* Back board. */}
+      <mesh position={[width / 2, 0, -thickness / 2 + boardThickness / 2]} castShadow receiveShadow>
+        <boxGeometry args={[width, height, boardThickness]} />
+        <primitive object={edgeMaterial} attach="material" />
+      </mesh>
+
+      {/* Page block. */}
+      <mesh position={[pageWidth / 2, 0, 0]} castShadow receiveShadow>
+        <boxGeometry args={[pageWidth, pageHeight, blockThickness]} />
         <primitive object={pageBlockMaterial} attach="material" />
       </mesh>
-      <mesh position={[coverThickness / 2, 0, -thickness / 2]}>
-        <boxGeometry args={[coverThickness, height, thickness]} />
+
+      {/* Spine, wrapping the full thickness at the hinge. */}
+      <mesh position={[boardThickness / 2, 0, 0]} castShadow receiveShadow>
+        <boxGeometry args={[boardThickness, height, thickness]} />
         <primitive object={spineMaterial} attach="material" />
       </mesh>
-      {/* The front cover: hinged at the spine (local x = 0). */}
-      <group position={[0, 0, thickness / 2 - coverThickness / 2]} rotation={[0, angle, 0]}>
-        <mesh key={coverMaterial.uuid} position={[width / 2, 0, 0]} castShadow>
-          <boxGeometry args={[width, height, coverThickness]} />
+
+      {/* The front board: hinged at the spine (local x = 0), cover art on its
+          outward (+z) face. */}
+      <group position={[0, 0, thickness / 2 - boardThickness / 2]} rotation={[0, angle, 0]}>
+        {/* Keyed on the material's uuid: R3F's `attach="material-4"` binding
+            was seen reconciling in place across sibling fibers whose textures
+            resolved at different times, landing one book's cover on another's
+            mesh (M23 §B, NOTES.md). A remount on identity change sidesteps
+            whatever that reconciliation was doing. */}
+        <mesh key={coverMaterial.uuid} position={[width / 2, 0, 0]} castShadow receiveShadow>
+          <boxGeometry args={[width, height, boardThickness]} />
           <primitive object={edgeMaterial} attach="material-0" />
           <primitive object={edgeMaterial} attach="material-1" />
           <primitive object={edgeMaterial} attach="material-2" />

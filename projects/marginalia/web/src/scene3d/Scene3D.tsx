@@ -1,6 +1,17 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Canvas, type RootState } from "@react-three/fiber";
+import { NoToneMapping } from "three";
 import { useReducedMotion } from "motion/react";
+import { SceneLights } from "./SceneLights.js";
 import styles from "./Scene3D.module.css";
 
 interface Scene3DContextValue {
@@ -10,6 +21,12 @@ interface Scene3DContextValue {
 
 const Scene3DContext = createContext<Scene3DContextValue | null>(null);
 
+/** How long to wait before giving a genuinely-lost context a fresh canvas. */
+const RECOVERY_DELAY_MS = 1500;
+/** After this many real losses, stay in the 2D presentation for good rather
+ * than thrashing a machine that plainly cannot hold a WebGL context. */
+const MAX_RECOVERY_ATTEMPTS = 3;
+
 /**
  * M23 §A: the one 3D seam. Mounted once near the app root (`App.tsx`), this
  * owns the single `<canvas>` three.js/React Three Fiber ever creates — the
@@ -18,10 +35,25 @@ const Scene3DContext = createContext<Scene3DContextValue | null>(null);
  * `<Canvas>`. Nothing outside this file may import `three` or
  * `@react-three/fiber` (settled decision 14).
  *
- * A lost WebGL context is a designed state, not an error: `contextLost`
- * tears the canvas down, and every consumer's own `useScene3DAvailable()`
- * flips to `false` so it falls back to the 2D presentation it already has —
- * there is no per-surface escape hatch to write.
+ * ## The seam's coordinate convention
+ *
+ * **One world unit is one CSS pixel, and the world origin is the viewport's
+ * top-left corner**: +X runs right, +Z runs *down* the screen, +Y comes up
+ * out of the desk toward the viewer. Every consumer shares it, which is what
+ * lets a surface place 3D content from a DOM element's own
+ * `getBoundingClientRect()` with no reprojection — and is why the lights
+ * below are sized in pixels. A surface that wants a different framing sets
+ * up its own camera (`desk/DeskScene3D.tsx`'s `DeskCameraRig`), never its
+ * own units.
+ *
+ * ## A lost context is a designed state
+ *
+ * `contextLost` drops the canvas and flips every consumer's
+ * `useScene3DAvailable()` to `false`, so each falls back to the 2D
+ * presentation it already has — no per-surface escape hatch. It is not a
+ * one-way door: a fresh canvas gets a fresh context, so a loss schedules one
+ * retry (up to `MAX_RECOVERY_ATTEMPTS`) rather than degrading the app until
+ * reload.
  */
 export function Scene3DProvider({ children }: { children: ReactNode }) {
   const reducedMotion = useReducedMotion();
@@ -45,9 +77,34 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
   );
 
   const layerIds = Object.keys(layers);
+  const hasLayers = layerIds.length > 0;
+
   // Reduced motion renders zero canvases, full stop — checked here once
   // rather than by every consumer (TASKS.md M23 §A, "everywhere").
-  const shouldMount = layerIds.length > 0 && !reducedMotion && !contextLost;
+  const canRender = !reducedMotion && !contextLost;
+
+  // ⚠️ The canvas is **sticky**: once a consumer has ever registered, it stays
+  // mounted for the session and merely idles (`frameloop="never"`) when no
+  // surface wants it. Tying its lifetime to `hasLayers` instead looked
+  // tidier and was a real bug: R3F's own unmount path calls
+  // `gl.forceContextLoss()` (500ms after the tree detaches), which fires a
+  // `webglcontextlost` event on the canvas it is tearing down — caught by the
+  // handler below, which latched `contextLost` and permanently degraded every
+  // 3D surface. Live symptom: open a book, come back to the Desk, and the
+  // Desk is flat 2D until a full reload. Keeping the canvas alive also skips
+  // re-uploading every cover texture on each room change.
+  const [everRegistered, setEverRegistered] = useState(false);
+  useEffect(() => {
+    if (hasLayers) setEverRegistered(true);
+  }, [hasLayers]);
+  const shouldMount = everRegistered && canRender;
+
+  // Read by the context-lost handler to tell a real loss (the GPU took the
+  // context away while we were using it) from our own teardown (reduced
+  // motion turned on, or the app is unmounting) — the latter must not latch.
+  const mountedIntentionally = useRef(shouldMount);
+  mountedIntentionally.current = shouldMount;
+  const lossCount = useRef(0);
 
   // Stable identity: R3F only calls `onCreated` once per canvas, but keeping
   // this referentially stable avoids re-registering listeners on every
@@ -59,6 +116,8 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
       // Without preventDefault() the browser never fires
       // "webglcontextrestored" and the surface is stuck degraded.
       event.preventDefault();
+      if (!mountedIntentionally.current) return;
+      lossCount.current += 1;
       setContextLost(true);
     }
     function onRestored() {
@@ -67,6 +126,14 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
     canvas.addEventListener("webglcontextlost", onLost, false);
     canvas.addEventListener("webglcontextrestored", onRestored, false);
   }, []);
+
+  // A canvas we tore down can never receive "webglcontextrestored" — so
+  // recovery is ours to drive, not the browser's.
+  useEffect(() => {
+    if (!contextLost || lossCount.current > MAX_RECOVERY_ATTEMPTS) return;
+    const timer = setTimeout(() => setContextLost(false), RECOVERY_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [contextLost]);
 
   return (
     <Scene3DContext.Provider value={{ setLayer, contextLost }}>
@@ -80,14 +147,24 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
               inherited from this one. Without this override, a mounted 3D
               layer silently ate every click and drag on the page underneath
               it — caught live once §B was the first consumer to ever make
-              `shouldMount` true; §A's canvas never actually rendered. */}
-          <Canvas onCreated={handleCreated} dpr={[1, 2]} shadows style={{ pointerEvents: "none" }}>
-            {/* Shared across every consumer — a surface registering its own
-                lights would double them up the moment two are ever mounted
-                together, which the seam's own "one narrow seam" rule
-                (CLAUDE.md) says belongs here, not per-surface. */}
-            <ambientLight intensity={0.75} />
-            <directionalLight position={[280, 520, 200]} intensity={0.65} castShadow />
+              `shouldMount` true; §A's canvas never actually rendered.
+
+              `flat` (NoToneMapping) because these scenes are UI, not film:
+              the desk's material colours come straight from the same CSS
+              custom properties the 2D presentation uses, and R3F's default
+              ACES tone mapping desaturated them badly — a #faf7f0 desk
+              rendered as flat grey, which read as a broken material rather
+              than as tone mapping (found live). */}
+          <Canvas
+            onCreated={handleCreated}
+            dpr={[1, 2]}
+            shadows
+            flat
+            gl={{ toneMapping: NoToneMapping, antialias: true }}
+            frameloop={hasLayers ? "always" : "never"}
+            style={{ pointerEvents: "none" }}
+          >
+            <SceneLights />
             {layerIds.map((id) => (
               <group key={id}>{layers[id]}</group>
             ))}

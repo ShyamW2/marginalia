@@ -1,3 +1,12 @@
+/* ⚠️ Layering contract for every 3D surface: this sits at `z-index: 0`, so a
+   consumer's own *foreground* DOM (hover cards, the notepad, focus rings —
+   anything that must read above the 3D objects) has to claim `z-index: 1` or
+   higher, and its *background* has to get out of the way while 3D is on.
+   `desk/DeskCanvas.module.css`'s `.surface`/`.surfaceIs3D` pair is the worked
+   example. Without that, this fixed full-viewport layer comes later in DOM
+   order than the page and paints straight over it — which is exactly how the
+   Desk lost its hover action card, its notepad and its listening tool the
+   moment §B made a canvas mount for the first time. */
 .canvasLayer {
   position: fixed;
   inset: 0;

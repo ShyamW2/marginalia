@@ -11,14 +11,32 @@ afterEach(cleanup);
 // that renders a plain <canvas> and forwards `onCreated` is enough to test it
 // without a real GPU.
 vi.mock("@react-three/fiber", () => ({
-  Canvas: ({ children, onCreated }: { children?: ReactNode; onCreated?: (state: unknown) => void }) => {
+  Canvas: ({
+    children,
+    onCreated,
+    frameloop,
+  }: {
+    children?: ReactNode;
+    onCreated?: (state: unknown) => void;
+    frameloop?: string;
+  }) => {
     const ref = useRef<HTMLCanvasElement>(null);
     useEffect(() => {
       if (ref.current) onCreated?.({ gl: { domElement: ref.current } });
     }, [onCreated]);
-    return <canvas ref={ref}>{children}</canvas>;
+    return (
+      <canvas ref={ref} data-frameloop={frameloop}>
+        {children}
+      </canvas>
+    );
   },
 }));
+
+// The shared lights reach into real three.js objects through refs (sizing the
+// key light's shadow frustum in viewport pixels — see SceneLights.tsx). Under
+// the stand-in Canvas those refs are DOM nodes, and none of it is what this
+// file tests: the seam's state machine is.
+vi.mock("./SceneLights.js", () => ({ SceneLights: () => null }));
 
 // `motion/react`'s real useReducedMotion lazily caches `matchMedia`'s result
 // in a module-level singleton the first time anything calls it — fine for an
@@ -65,14 +83,60 @@ describe("Scene3DProvider", () => {
     expect(screen.getByTestId("layer-turntable")).toBeTruthy();
   });
 
-  it("unmounts the canvas once the last registered layer unregisters", async () => {
+  // ⚠️ Deliberately *not* "unmounts once the last layer unregisters", which is
+  // what this asserted until it was found to be the mechanism behind a live
+  // bug: R3F's unmount path calls `gl.forceContextLoss()`, whose
+  // `webglcontextlost` event the provider's own handler then read as a real
+  // loss and latched — so leaving the Desk for the reader and coming back
+  // dropped every 3D surface to its 2D fallback until a full reload.
+  it("keeps the canvas alive but idle once the last registered layer unregisters", async () => {
     function Toggle({ show }: { show: boolean }) {
       return <Scene3DProvider>{show && <Registrar id="desk" />}</Scene3DProvider>;
     }
     const { rerender } = render(<Toggle show={true} />);
     await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+    expect(document.querySelector("canvas")?.dataset.frameloop).toBe("always");
+
     rerender(<Toggle show={false} />);
-    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(0));
+    await waitFor(() => expect(document.querySelector("canvas")?.dataset.frameloop).toBe("never"));
+    expect(document.querySelectorAll("canvas")).toHaveLength(1);
+
+    // And picks straight back up when a surface returns — the round trip the
+    // bug above broke.
+    rerender(<Toggle show={true} />);
+    await waitFor(() => expect(document.querySelector("canvas")?.dataset.frameloop).toBe("always"));
+    expect(document.querySelectorAll("canvas")).toHaveLength(1);
+  });
+
+  it("ignores the context-loss event its own teardown fires", async () => {
+    // Reduced motion turning on mid-session is the one path that still
+    // unmounts the canvas, and R3F fires `webglcontextlost` as it goes. That
+    // must not latch `contextLost`, or turning reduced motion back off would
+    // leave the app permanently 2D.
+    function Room() {
+      return (
+        <Scene3DProvider>
+          <Registrar id="desk" />
+          <AvailabilityProbe />
+        </Scene3DProvider>
+      );
+    }
+    const { rerender } = render(<Room />);
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+    const canvas = document.querySelector("canvas")!;
+
+    mockUseReducedMotion.mockReturnValue(true);
+    try {
+      rerender(<Room />);
+      await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(0));
+      canvas.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+    } finally {
+      mockUseReducedMotion.mockReturnValue(false);
+    }
+
+    rerender(<Room />);
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+    expect(screen.getByTestId("available").textContent).toBe("true");
   });
 
   it("renders zero canvases under reduced motion even with content registered", () => {
@@ -105,5 +169,22 @@ describe("Scene3DProvider", () => {
 
     await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(0));
     expect(screen.getByTestId("available").textContent).toBe("false");
+  });
+
+  it("gives a genuinely lost context a fresh canvas rather than degrading until reload", async () => {
+    render(
+      <Scene3DProvider>
+        <Registrar id="desk" />
+        <AvailabilityProbe />
+      </Scene3DProvider>,
+    );
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+    document.querySelector("canvas")!.dispatchEvent(new Event("webglcontextlost", { cancelable: true }));
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(0));
+
+    // A new canvas gets a new context, so recovery is the provider's to drive:
+    // the browser can't fire "webglcontextrestored" at an element we removed.
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1), { timeout: 4000 });
+    expect(screen.getByTestId("available").textContent).toBe("true");
   });
 });

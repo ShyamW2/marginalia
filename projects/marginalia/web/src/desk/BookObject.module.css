@@ -33,6 +33,14 @@
   transition: opacity var(--duration-standard) var(--ease-standard);
 }
 
+/* The 3D book casts a real shadow from a real height (DeskScene3D's lift), so
+   the 2D stand-ins here would double it — a hard drop shadow pinned to the
+   flat footprint, under an object that has visibly left it. */
+.coverWrapIs3D,
+.coverWrapIs3D.lifted {
+  box-shadow: none;
+}
+
 .lifted {
   box-shadow: 0 18px 34px rgba(20, 14, 6, 0.32);
 }
