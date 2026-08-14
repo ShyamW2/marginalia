@@ -1026,17 +1026,25 @@ missed the state you actually watch for longer.
 
 - [x] **The room the book left goes while the book is still moving.** It was held at full
       opacity for the whole landing and then removed with the canvas at the handoff — a
-      fully-drawn desk behind an almost-open reading pane, then a blink. It now fades on
-      its own clock (`ROOM_FADE_MS` = `HANDOFF_DELAY_MS`, so it is empty at the instant
-      the spread reaches the pane and the handoff takes over), through `Scene3D.tsx`'s new
-      `useScene3DLayerFade`. Same code path off the shelf, which had the same symptom.
+      fully-drawn desk behind an almost-open reading pane, then a blink. It now fades
+      through `Scene3D.tsx`'s new `useScene3DLayerFade`, over the landing's own duration
+      and on the landing's own curve. Same code path off the shelf, which had the same
+      symptom.
+      ⚠️ **The fade and the zoom are one gesture, and getting that wrong made the zoom
+      invisible** (the operator's fourth pass, decisions.md point 3): the first cut ran a
+      shorter fade on an ease-out against a landing whose easing was front-loaded, so both
+      finished in the first ~300ms and the spread then grew unseen, cream on cream. One
+      duration (`ROOM_FADE_MS` = `LANDING_MS`), one curve (`LANDING_EASE`, cubic
+      ease-in-out, matched inside `FadingLayer`). **The room is what gives the growth a
+      scale to be read against; it cannot leave first.**
       ⚠️ **Per-layer opacity in three.js is every material under the group**, walked each
       frame — so the as-authored state is recorded *per material* and written back from
       that record. The page block's material is shared across every mounted book; restore
       it by re-traversing a tree that is already unmounting and the next room's books are
       invisible.
-      _Acceptance: nothing of the desk or the shelf is left by the time the spread is on
-      the pane; Escape mid-landing still lands on a complete, fully-opaque room._
+      _Acceptance: the spread is visibly growing while the room is visibly going, and
+      nothing of the desk or the shelf is left by the time the spread is on the pane;
+      Escape mid-landing still lands on a complete, fully-opaque room._
 - [x] **A blank spread is two board-sized leaves, like a printed one.** E.1's coplanarity
       fix built the two leaves only when a page snapshot existed, so the book *opened*
       onto the old asymmetry — left page on the board, right page the page block's own

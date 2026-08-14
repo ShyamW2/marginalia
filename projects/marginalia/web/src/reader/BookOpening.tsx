@@ -17,6 +17,7 @@ import { capturePageSnapshot } from "./pageSnapshot.js";
 import {
   HANDOFF_DELAY_MS,
   HANDOFF_MS,
+  LANDING_EASE,
   LANDING_MS,
   ROOM_FADE_MS,
   openSequenceMs,
@@ -267,7 +268,7 @@ export function BookOpening({
   // its own cleanup and stop this animation 90ms short of the pane.
   useEffect(() => {
     if (!landed || !use3D || !stage) return;
-    const controls = animate(landing, 1, { duration: LANDING_MS / 1000, ease: [0.32, 0, 0.2, 1] });
+    const controls = animate(landing, 1, { duration: LANDING_MS / 1000, ease: LANDING_EASE });
     return () => controls.stop();
   }, [landed, use3D, stage, landing]);
 

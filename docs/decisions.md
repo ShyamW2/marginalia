@@ -96,9 +96,10 @@ TASKS.md carries the tasks, this entry carries the why.
 
 ## 2026-08-14 (later still) — The room leaves during the zoom, and a blank page is a page
 
-The third operator review of the day, on the same sequence. Two things, and both are
-*corrections to the entry below* rather than new ground — each one is the half of a fix
-that was applied only to the case that comes last.
+The third operator review of the day, on the same sequence, and then a fourth on the fix
+itself. The first two points are *corrections to the entry below* rather than new ground —
+each one is the half of a fix that was applied only to the case that comes last. The third
+is a correction to the first.
 
 1. **A layer can be faded on its own, and the room is the layer that should be**
    (amends point 2 below). That point said the desk "can only be faded on the canvas",
@@ -137,6 +138,30 @@ that was applied only to the case that comes last.
    something to print and plain paper otherwise. The general shape of both of today's
    corrections: **a fix conditioned on the state that arrives last leaves the state you
    watch for longer untouched.**
+
+3. **The room's departure and the spread's growth are one gesture, on one curve**
+   (corrects point 1, from the operator's fourth pass: *"we've now lost the zoom from when
+   the book renders to when it takes over the reading pane"*). Point 1's first cut faded
+   the room over `HANDOFF_DELAY_MS` on a cubic **ease-out** — a third of the way down by
+   230ms, effectively gone by 470ms of an 850ms landing. Meanwhile the landing's own
+   easing was `[0.32, 0, 0.2, 1]`, a UI decelerate that is ~85% of the way to full size in
+   the first third and spends the rest on sub-pixel settle. The two front-loaded *into
+   each other*: everything happened in the first ~300ms, and then a cream spread grew
+   imperceptibly on a cream page for half a second with nothing behind it.
+
+   Neither clock was individually wrong; the pairing was. Both now run for `LANDING_MS` on
+   a **cubic ease-in-out** (`LANDING_EASE`, and the same curve inside `FadingLayer`), so
+   the room passes half its opacity as the spread passes half its growth, and "the
+   background fades out whilst the pages zoom in" is true by construction rather than by
+   two clocks that happen to overlap.
+
+   ⚠️ **The rule here is worth more than the fix.** A room being removed is not clutter
+   being cleared: while it is still there it is *the scale the arriving thing is read
+   against*. Fade it out ahead of what replaces it and the result is not a cleaner
+   transition but an invisible one — the zoom was running the whole time and could not be
+   seen. So a departure takes the arrival's curve, not the curve that feels right for a
+   departure considered on its own, which is why `FadingLayer` defaults to ease-in-out
+   rather than to the ease-out any fade reads as wanting in isolation.
 
 ## 2026-08-14 (later) — The opening's last beat is a handoff, and the spread is one plane
 

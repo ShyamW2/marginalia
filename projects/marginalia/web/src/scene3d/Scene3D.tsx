@@ -347,10 +347,15 @@ function FadingLayer({ fade, children }: { fade: LayerFade | null; children: Rea
     }
     if (startedAt.current === null) startedAt.current = performance.now();
     const t = fade.ms <= 0 ? 1 : Math.min(1, (performance.now() - startedAt.current) / fade.ms);
-    // Ease-out: the room is gone from the eye well before it is gone from the
-    // buffer, which is what keeps the last stretch of the landing feeling empty
-    // rather than feeling like something is still leaving.
-    const value = 1 + (fade.to - 1) * (1 - Math.pow(1 - t, 3));
+    // ⚠️ **Ease-in-out, and it was ease-out for one build.** A layer fades out
+    // because something else is taking its place, so the curve has to leave it
+    // legible for as long as that something is still arriving — an ease-out is a
+    // third gone in the first eighth of its clock, which emptied the room before
+    // the opening's spread had done any of its growing ("we've now lost the
+    // zoom", 2026-08-14). Same curve as `openingGeometry.ts`'s `LANDING_EASE`,
+    // so a caller that runs the two on one duration gets one gesture.
+    const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const value = 1 + (fade.to - 1) * eased;
     if (value !== applied.current) write(value);
   });
 

@@ -149,13 +149,37 @@ export const HANDOFF_DELAY_MS = LANDING_MS - HANDOFF_LEAD_MS;
  * the shelf as well as the desk. Holding the room is still right (it is the room
  * the book is *leaving*); holding it undimmed to the last frame is not.
  *
- * Exactly `HANDOFF_DELAY_MS`, so the two beats meet with no gap and no overlap:
- * the room is empty at the instant the spread reaches the pane and the handoff
- * takes over. Anything shorter leaves the book flying over blank paper for a
- * beat; anything longer puts the room's last frames underneath a crossfade that
- * is already assuming it has gone.
+ * ⚠️ **Exactly the landing, on the landing's own curve** — and the first attempt
+ * at this got both halves wrong (the operator's fourth review, same day: "we've
+ * now lost the zoom"). It ran for `HANDOFF_DELAY_MS` on a cubic *ease-out*,
+ * which puts the room at a third of its opacity 230ms in and effectively gone by
+ * 470ms of an 850ms landing — so the half of the zoom where the spread actually
+ * gets big had nothing left behind it, and a cream spread growing on a cream
+ * page is not a zoom anybody can see. The room is the thing that gives the
+ * growth a scale to be read against, so it has to still be *going* while the
+ * growth is happening, not already gone.
+ *
+ * So: the same duration as `LANDING_MS` and the same cubic ease-in-out
+ * `FadingLayer` and `LANDING_EASE` both use, which makes "the background fades
+ * out whilst the pages zoom in" true by construction rather than by two clocks
+ * that happen to overlap. The room passes 50% as the spread passes half its
+ * growth. The last 90ms sit under the handoff, at an opacity of about 2% — below
+ * anything the crossfade could be said to be assuming about it.
  */
-export const ROOM_FADE_MS = HANDOFF_DELAY_MS;
+export const ROOM_FADE_MS = LANDING_MS;
+
+/**
+ * The landing's own easing, shared with the room fade above.
+ *
+ * ⚠️ **Cubic ease-in-out, because the growth has to be *in* the beat.** This was
+ * `[0.32, 0, 0.2, 1]` — a standard UI decelerate, which is ~85% of the way to
+ * full size in the first third and spends the remaining ~550ms on sub-pixel
+ * settle. That is the right curve for a panel arriving and the wrong one for a
+ * zoom you are meant to watch: it front-loads the motion into the same window
+ * the room is leaving in, and then holds still for half a second. Here the
+ * middle of the beat is where the spread is actually growing.
+ */
+export const LANDING_EASE: [number, number, number, number] = [0.65, 0, 0.35, 1];
 
 /** How far the book floats toward the camera once it reaches centre — off the
  * desk, or out into the room. Perspective magnifies it slightly, which is the

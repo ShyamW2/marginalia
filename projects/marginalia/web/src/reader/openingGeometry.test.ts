@@ -4,6 +4,7 @@ import type { OpeningPose } from "../scene3d/openingPose.js";
 import {
   DESK_SEQUENCE_MS,
   HANDOFF_DELAY_MS,
+  LANDING_EASE,
   LANDING_MS,
   ROOM_FADE_MS,
   SHELF_SEQUENCE_MS,
@@ -242,13 +243,27 @@ describe("landingStep", () => {
 });
 
 describe("the landing's clock", () => {
-  it("empties the room the book left exactly as the handoff takes over", () => {
+  it("empties the room the book left over exactly the zoom, not before it", () => {
     // The 2026-08-14 fix for a desk still fully drawn behind an almost-open
-    // reader. The room now leaves *during* the zoom, and the two beats have to
-    // meet: a shorter fade flies the book over blank paper for a beat, a longer
-    // one is still drawing the room underneath a crossfade that has already
-    // assumed it has gone.
-    expect(ROOM_FADE_MS).toBe(HANDOFF_DELAY_MS);
-    expect(ROOM_FADE_MS).toBeLessThan(LANDING_MS);
+    // reader — and then for the fix's own first cut, which ran the fade shorter
+    // than the landing *and* on an ease-out, so the room was gone before the
+    // spread had grown and the zoom read as nothing at all ("we've now lost the
+    // zoom"). One duration, one curve: the two are one gesture.
+    expect(ROOM_FADE_MS).toBe(LANDING_MS);
+    // The handoff still overlaps the tail, where the room is all but gone.
+    expect(HANDOFF_DELAY_MS).toBeLessThan(ROOM_FADE_MS);
+  });
+
+  it("spends the landing's middle on the growth, not on a settle", () => {
+    // `LANDING_EASE` is symmetric — the defining property of the ease-in-out
+    // that replaced the front-loaded decelerate, and the reason the room fading
+    // on the same curve stays behind the spread while it is actually growing.
+    const [x1, y1, x2, y2] = LANDING_EASE;
+    expect(x1).toBeCloseTo(1 - x2, 10);
+    expect(y1).toBeCloseTo(1 - y2, 10);
+    // And it is genuinely eased in: a curve that starts fast is what put the
+    // whole zoom in the first third.
+    expect(y1).toBe(0);
+    expect(x1).toBeGreaterThan(0.5);
   });
 });
