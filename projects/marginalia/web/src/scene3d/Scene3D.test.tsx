@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
-import { Scene3DProvider, useScene3DAvailable, useScene3DLayer } from "./Scene3D.js";
+import {
+  Scene3DProvider,
+  useScene3DAvailable,
+  useScene3DHold,
+  useScene3DLayer,
+} from "./Scene3D.js";
 
 afterEach(cleanup);
 
@@ -30,6 +35,11 @@ vi.mock("@react-three/fiber", () => ({
       </canvas>
     );
   },
+  // Every layer is wrapped in a `FadingLayer`, which subscribes to the frame
+  // loop so it can walk its own materials while a fade runs. There is no frame
+  // loop here and nothing to walk; what this file tests is which layers exist,
+  // which is decided before any of that.
+  useFrame: () => {},
 }));
 
 // The shared lights reach into real three.js objects through refs (sizing the
@@ -62,6 +72,11 @@ function Registrar({ id }: { id: string }) {
  * under vitest. */
 function canvasLayer(): HTMLElement | null {
   return document.querySelector("canvas")?.parentElement ?? null;
+}
+
+function Holder({ id }: { id: string }) {
+  useScene3DHold(id);
+  return null;
 }
 
 function AvailabilityProbe() {
@@ -121,6 +136,54 @@ describe("Scene3DProvider", () => {
     await waitFor(() => expect(document.querySelector("canvas")?.dataset.frameloop).toBe("always"));
     expect(document.querySelectorAll("canvas")).toHaveLength(1);
     expect(canvasLayer()?.style.visibility).toBe("visible");
+  });
+
+  // M23 §E's rework: the opening is a transition *between* rooms, so the room
+  // it left has to stay on the canvas while the book climbs out of it —
+  // otherwise the Desk blinks out on the click and the whole sequence plays
+  // over a reader the book has not reached yet.
+  it("holds a layer past its owner's unmount, and drops it when the hold ends", async () => {
+    function Rooms({ desk, opening }: { desk: boolean; opening: boolean }) {
+      return (
+        <Scene3DProvider>
+          {desk && <Registrar id="desk" />}
+          {opening && <Holder id="desk" />}
+        </Scene3DProvider>
+      );
+    }
+    const { rerender } = render(<Rooms desk={true} opening={false} />);
+    await waitFor(() => expect(screen.queryByTestId("layer-desk")).toBeTruthy());
+
+    // The click: the opening takes the hold, the Desk unmounts. The desk's
+    // scene stays.
+    rerender(<Rooms desk={false} opening={true} />);
+    await waitFor(() => expect(document.querySelector("canvas")?.dataset.frameloop).toBe("always"));
+    expect(screen.queryByTestId("layer-desk")).toBeTruthy();
+
+    // The opening finishes: nothing is holding it and nothing owns it.
+    rerender(<Rooms desk={false} opening={false} />);
+    await waitFor(() => expect(screen.queryByTestId("layer-desk")).toBeNull());
+  });
+
+  // ⚠️ Escape during the opening lands straight back on the Desk, which
+  // re-registers a *live* layer under the same id before the hold is released.
+  // Releasing must not drop that one, or the room the user is now looking at
+  // goes blank.
+  it("leaves a re-registered layer alone when an old hold is released", async () => {
+    function Rooms({ desk, opening }: { desk: boolean; opening: boolean }) {
+      return (
+        <Scene3DProvider>
+          {desk && <Registrar id="desk" />}
+          {opening && <Holder id="desk" />}
+        </Scene3DProvider>
+      );
+    }
+    const { rerender } = render(<Rooms desk={true} opening={true} />);
+    await waitFor(() => expect(screen.queryByTestId("layer-desk")).toBeTruthy());
+
+    rerender(<Rooms desk={true} opening={false} />);
+    await waitFor(() => expect(document.querySelector("canvas")?.dataset.frameloop).toBe("always"));
+    expect(screen.queryByTestId("layer-desk")).toBeTruthy();
   });
 
   it("ignores the context-loss event its own teardown fires", async () => {

@@ -156,6 +156,15 @@ with proper status codes.
 | `GET /api/threads/:id` | full message history |
 | `POST /api/resources/:id/publish` | run vault compiler for this resource → `{notes: n, conceptsCreated: n, conceptsLinked: n}` |
 | `GET /api/settings` / `PUT` | provider config + vault path. Never return API keys in GET (return `"***"` if set). |
+| `GET /api/resources/:id/search?q=` | **M24.** One book's text *and* its annotations → hits ordered by position in the book. Each hit: `{source: "text" \| "highlight" \| "note" \| "thread", spineIndex, offset, percent, snippet, anchor: {prefix, exact, suffix}, highlightId?}`. One result set; the reader and the Scan are two views of it. |
+
+**Search notes (M24).** The `anchor` is the contract: it must round-trip through
+`findAnchorInText` to the same offset, because that is how a hit becomes a painted mark in
+the reader (`rangeFromTextOffsets` → `cfiFromRange`) and a position on the Scan's strip
+(`computeHighlightPositionPercent`). Search *produces* anchors for every occurrence;
+`findAnchorInText` *resolves* a known one — do not use the latter to implement the former.
+Scoped to one resource by design (cross-book is M28), and deliberately without FTS5: one
+book scans brute-force, and the offset table is computed once per search, not per hit.
 
 SSE notes: set `Content-Type: text/event-stream`, flush on every token, handle client
 disconnect by aborting the provider stream. If the provider errors mid-stream, emit

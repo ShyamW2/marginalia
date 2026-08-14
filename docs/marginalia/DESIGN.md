@@ -121,6 +121,13 @@ The design work here is restraint plus two signature elements.
   3D honesty note under Technical foundations. Interim (M7): a fast 150–200ms slide +
   opacity pass so turning feels physical without faking paper. Full 3D turn with notes
   riding the page is M10, snapshot-based.
+- **Finding a word never ejects you from the page** (M24, 2026-08-14). Cmd+F opens a find
+  field *in the reader*; matches paint in place and `‹ ›` step through the whole book's
+  hits in book order, displaying the containing section when a step crosses a boundary.
+  Escape clears every mark. Two rules follow from this room's stillness: **a search mark is
+  not a highlight** — it takes neither the four kind hues nor their weight — and the handoff
+  to the Scan (where the same result set is seen as a distribution) is **always invoked,
+  never automatic**.
 - **No ambient effects here.** No cursor trails, no parallax while reading, no glow.
   The reader earns its analogue feel by being still. Cursor may switch to a fine
   I-beam/nib during selection, nothing more. "Reading comes first" (CLAUDE.md) is the
@@ -142,6 +149,21 @@ dark panel, neon strokes, scanline grain, data readouts in a mono face).
   bands stay lit, the rest dim to embers. Bands take their kind's hue translated
   into the scan's phosphor palette. (Vault-concept filtering is a post-v1.5
   refinement — concepts aren't persisted in SQLite; decisions.md 2026-07-19.)
+  **Amended 2026-08-14 (M24, decisions.md this date).** Search stops being one filter among
+  four and becomes the surface's primary control: a large, prominent field of a piece with
+  the reader's find bar, searching **the book's own text as well as your annotations** —
+  server-side, so full thread bodies and notes are reachable rather than a thread's first
+  line. Results are a **transient layer over the strip, distinct from the persistent heat
+  bands**: the Scan's job here is to show *where in the book* a phrase clusters, which is
+  the spatial question no other surface answers. Filters compose with the query unchanged.
+- **Reaching a result is stepping, not aiming** (M24, 2026-08-14). `‹ ›` walk a cursor
+  along the result set in book order; the strip auto-pans to keep it in view, the ghost
+  readout follows it, Enter opens the reader through the airlock. Clicking a band still
+  works and is now the *shortcut*, not the only door — band hit-targets are a few px wide
+  and mutually occluding, so aiming was never a fair ask. Stepping must be usable without
+  zooming, and is the strip's keyboard and screen-reader path. Stepping moves the cursor
+  only: it never drives the reader underneath, because surveying and reading are separate
+  acts (settled decision 13).
 - **Importance / revisit marks.** Mark any highlight 1–3 stars (additive
   `highlights.importance` migration). On the scan, important passages render as
   **dog-ears** — folded corners on the strip — with a brighter bloom. A "revisit queue"
@@ -294,10 +316,20 @@ Signature transitions ("doorways"):
   flutter played *over* a closed cover, which is not this. The sequence is: fly to centre,
   then the front cover **rotates anticlockwise about its spine (left) edge** toward the
   viewer, revealing a two-page spread beneath it, which scales onto the reading pane and
-  crossfades to the live reader. Unchanged and load-bearing: the pages are **blank paper
-  planes, never real epub pages**; the reveal waits on the reader having landed, so it can
-  never flash an unstyled page; Escape cancels at any phase; reduced motion is a crossfade
-  with no 3D at all.
+  crossfades to the live reader. Unchanged and load-bearing: the reveal waits on the
+  reader having landed, so it can never flash an unstyled page; Escape cancels at any
+  phase; reduced motion is a crossfade with no 3D at all.
+  **Amended 2026-08-14 (decisions.md), two rules retired and one added.** (a) The
+  sequence plays **over the room the book came from**, which stays on screen until the
+  spread has landed — the reader mounts and loads underneath the whole time, invisible.
+  A transition shown against its destination is not a transition. (b) "Blank paper
+  planes, never real epub pages" is narrowed to what it was protecting: never *animate*
+  real page content. The book may hold **one still of the reading pane** printed across
+  its spread while it sits open, so the page you are about to read is already in your
+  hands; a failed capture falls back to blank paper. (c) The whole thing is paced to be
+  watched — ~1.9s off the Desk, ~2.5s off the shelf (whose extra time is the book coming
+  out of the row and turning), then ~0.85s of landing. It blocks no input at any point,
+  which is what licenses the length.
 - **Book → Scan: the airlock.** The lights change: page desaturates and dims, chrome
   recedes, scanlines fade in, and the highlights you were just reading *become* the
   glowing bands — the same marks, re-materialized as data. Reverse on the way back

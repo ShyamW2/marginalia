@@ -1,4 +1,5 @@
 import { lazy, Suspense } from "react";
+import { preloadReaderPage } from "../reader/preload.js";
 import { AnimatePresence } from "motion/react";
 import { Route, Routes, matchPath, useLocation, useNavigate, type Location } from "react-router-dom";
 import { NavCluster } from "./NavCluster.js";
@@ -18,9 +19,11 @@ import styles from "./App.module.css";
 const DeskPage = lazy(() =>
   import("../desk/DeskPage.js").then((m) => ({ default: m.DeskPage })),
 );
-const ReaderPage = lazy(() =>
-  import("../reader/ReaderPage.js").then((m) => ({ default: m.ReaderPage })),
-);
+// Shares its promise with `preloadReaderPage`, which the Desk and the shelf
+// call on hover — so a book that has been pointed at has already fetched the
+// room it opens into, and the opening's 3D layer registers in the same commit
+// the Desk's unregisters (M23 §E).
+const ReaderPage = lazy(() => preloadReaderPage().then((m) => ({ default: m.ReaderPage })));
 const ScanOverlay = lazy(() =>
   import("../scan/ScanOverlay.js").then((m) => ({ default: m.ScanOverlay })),
 );

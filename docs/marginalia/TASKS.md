@@ -301,8 +301,15 @@ default and retiring the track.
 
 #### F — The opening actually opens
 
-- [ ] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
+- [x] **The cover opens into a spread, and the spread becomes the page.** *(Operator is happy
       with the flight to centre; the flutter is not what was asked for.)*
+      ✅ **Delivered by M23 §E on 2026-08-13** — read the outcome there, not here. All four
+      ⚠️ warnings below survived the move into three.js: the 3D lives in the shared canvas
+      rather than on `FlyPanel`'s flown node (so the fight it warns about cannot happen),
+      the spread is blank paper in the reader's own `--color-bg`, the `contentReady` gate
+      is untouched, and reduced motion still renders zero canvases with Escape live at
+      every phase. The 2D presentation this section describes is now the lost-context and
+      reduced-motion path, and its `.spread` defect was fixed there too.
       ⚠️ **Absorbed into M23 §E on 2026-08-12, not failed and not abandoned** (M23 was M26
       until the same-day renumbering — see decisions.md). Most of it is
       built (`BookOpening.tsx` already flies, rotates about the spine and lands); the
@@ -914,8 +921,8 @@ under the canvas, and which fell back to 2D permanently after one visit to the r
 **Absorbs M22.5 §F** (see the note there). Build it once, here, in the new substrate —
 not twice in two.
 
-- [ ] **From the desk: the spread is twice the cover's width, creased at the hinge.**
-      The front cover opens about its spine edge; the revealed spread is **2× cover
+- [x] **From the desk: the spread is twice the cover's width, creased at the hinge/binder edges.**
+      The front cover opens about its spine edge (left side); the revealed spread is **2× cover
       width** with the crease at the **hinge (left) edge**, not down the middle of a
       cover-width plane — today's defect (`BookOpening.module.css`'s `.spread` is
       `inset: 0`, split 50/50). The scene then translates so the crease sits centred,
@@ -931,17 +938,113 @@ not twice in two.
       _Acceptance: the crease lands on the hinge and the open spread is twice the cover's
       width (measured, not eyeballed); the final rect matches the reader pane within a few
       px; Escape during any phase leaves no overlay mounted._
-- [ ] **The whole sequence slows down.** Currently 540ms (240 fly + 140 open + 160
+      ✅ **Measured, and "twice the cover" needed pinning down**: the spread is exactly
+      `2 × boardWidth`, centred on the hinge — ~4.5% under twice the DOM rect, because
+      `spineBulge` takes the round back *out* of the covers so a book never hangs outside
+      its footprint. The exact property is the one the landing needs: the crease **is** the
+      spread's centre (`openingGeometry.test.ts`).
+      ⚠️ **The landing overhung the pane by 7px until a defect was found by driving it**: a
+      spread's two halves are not coplanar, and planting the page block on the camera's 1:1
+      plane left the open cover proud of it, splaying outward. Reference plane is now their
+      midpoint. Recorded as a rule in decisions.md — under a perspective camera, "scaled
+      correctly" and "lands correctly" are different claims.
+- [x] **The whole sequence slows down.** Currently 540ms (240 fly + 140 open + 160
       landing). Lengthening is explicitly permitted: the overlay is `pointer-events: none`
       throughout, so DESIGN.md's ~400ms bound (which governs *input blocking*) is not in
       play — decisions.md 2026-08-12, ruling 8.
       _Acceptance: the open reads as deliberate rather than snapped, judged live by the
       operator; input is never blocked at any point, verified by clicking through it._
-- [ ] **From the shelf: the book comes out, turns side-on, then opens.** The clicked book
+      ✅ 760ms of travel/open/recentre, the `contentReady` hold, then 340ms of landing —
+      ~1.1s, to the operator's "flow into the reader view over a second". The phases
+      **overlap** rather than run in sequence, which is what makes it read as one gesture.
+      The 2D presentation was slowed to match: a lost context changes what the opening
+      *is*, never how long the room takes.
+      ⏳ **"Reads as deliberate rather than sluggish" is the operator's to judge** and is
+      the one part of this box not signed off here.
+- [x] **From the shelf: the book comes out, turns side-on, then opens.** The clicked book
       translates toward the camera out of the shelf, rotates to a side-on view, and from
       there **reuses the desk opening above** — one opening, two approaches.
       _Acceptance: the shelf and desk openings share the open/land phases in code, not by
       copy; interrupting at any phase from either entry point leaves a coherent app._
+      ✅ **Shared by construction, not by discipline** (decisions.md this date, ruling 1):
+      the opening borrows the *source surface's* camera unchanged — which is what keeps the
+      book from jumping on the overlay's first frame — and because both cameras are the
+      same 1:1-plane construction, the whole sequence is authored once in stage px and
+      mounted through a frame group that either rotates onto the Desk's `y = 0` or stays on
+      the shelf's `z = 0`. **That rotation is the entire difference.** The shelf's only
+      extra is a control point in the travel's Bézier that pulls the book out of the row
+      before it turns.
+      ➕ **Beyond the task, and needed for the operator's "object permanence" brief:** the
+      reader room is code-split, so a click held the Desk on screen for 250ms before the
+      opening's first frame — every frame after that was continuous and the first was not.
+      `reader/preload.ts` warms the chunk on hover/focus; the handoff is now one commit
+      (~39ms measured), with the code split intact.
+
+#### E.1 — The opening, reworked after the operator's review (2026-08-14)
+
+⚠️ **Read decisions.md 2026-08-14 "The opening is a transition *between* rooms" first.**
+The boxes in §E above stay ticked — the tasks were done — but the sequence they produced
+was staged and timed wrongly, and four things changed. The one lesson worth carrying into
+any future transition: **a transition played over its destination is not a transition.**
+Every frame of §E was continuous and correct, and the whole thing still read as a jump,
+because the room it was leaving vanished on the click.
+
+- [x] **The room the book came from stays until the spread lands.** The Desk (or the
+      shelf) is held on the shared canvas past its own unmount — `Scene3D.tsx`'s
+      `useScene3DHold`, a held *layer* rather than a second mounted room. The reader
+      mounts and loads underneath from the first frame exactly as before; it is invisible
+      until the landing starts (`.roomHidden`, an opacity, because the landing's target
+      rect and the spread's snapshot are both measured off the live pane).
+      ⚠️ **A held room needs a book-shaped hole in it** (`departedBook.ts`) or the book is
+      drawn twice — flying, and still lying where it was.
+      ⚠️ **The layer drop is deferred by a microtask** and must stay that way: React runs
+      the leaving room's cleanups before the arriving overlay's effects, in one commit.
+      _Acceptance: clicking a book on the Desk shows the desk, not the reader, for the
+      whole of the travel and the open; Escape mid-sequence lands back on a complete desk
+      with every book on it._
+- [x] **Retimed to be watched.** 1900ms of travel/open/recentre off the Desk (was 760),
+      850ms of landing (was 340). Nothing blocks input at any point, which is what
+      licenses it (ruling 8, 2026-08-12).
+- [x] **The shelf's approach gets a clock.** The pull out of the row (475ms) and the turn
+      to face you (575ms) are phases of their own, not a Bézier control point — which is
+      what made them "almost instantaneous". Everything after the cover faces the camera
+      is the Desk's sequence **unscaled**, asserted in ms in `openingGeometry.test.ts`
+      rather than left to the ranges looking similar.
+- [x] **The held-open spread is printed with the page you are about to read.** One still
+      of the reading pane (`pageSnapshot.ts`, the page curl's own capture, 700ms
+      deadline), cut down the middle onto the two pages. DESIGN.md's "blank paper planes"
+      rule is amended, not dropped: never *animate* real page content. A failed or
+      timed-out capture lands blank paper, exactly as before.
+      _Acceptance: the miniature book shows text before it starts growing; a book whose
+      capture fails still opens and still lands._
+
+#### E.2 — Two corrections from the operator's third pass (2026-08-14)
+
+⚠️ **Read decisions.md 2026-08-14 "(later still)" first.** Neither of these is new ground:
+each is the half of an E.1 fix that was applied only to the state that arrives *last*, and
+missed the state you actually watch for longer.
+
+- [x] **The room the book left goes while the book is still moving.** It was held at full
+      opacity for the whole landing and then removed with the canvas at the handoff — a
+      fully-drawn desk behind an almost-open reading pane, then a blink. It now fades on
+      its own clock (`ROOM_FADE_MS` = `HANDOFF_DELAY_MS`, so it is empty at the instant
+      the spread reaches the pane and the handoff takes over), through `Scene3D.tsx`'s new
+      `useScene3DLayerFade`. Same code path off the shelf, which had the same symptom.
+      ⚠️ **Per-layer opacity in three.js is every material under the group**, walked each
+      frame — so the as-authored state is recorded *per material* and written back from
+      that record. The page block's material is shared across every mounted book; restore
+      it by re-traversing a tree that is already unmounting and the next room's books are
+      invisible.
+      _Acceptance: nothing of the desk or the shelf is left by the time the spread is on
+      the pane; Escape mid-landing still lands on a complete, fully-opaque room._
+- [x] **A blank spread is two board-sized leaves, like a printed one.** E.1's coplanarity
+      fix built the two leaves only when a page snapshot existed, so the book *opened*
+      onto the old asymmetry — left page on the board, right page the page block's own
+      face, a `pageInset` narrower and a board thickness lower ("it still has a larger
+      left page than right"). `Book3D` now draws both leaves whenever the front board is
+      past 90°, printed if there is something to print and plain paper otherwise.
+      _Acceptance: the two halves are the same size from the moment the cover passes
+      edge-on, with or without a snapshot, off either surface._
 
 #### Verify
 
@@ -949,32 +1052,246 @@ not twice in two.
       and with reduced motion on for a full second pass. Specifically: does the desk still
       feel like a place to work rather than a demo, and does the slower opening read as
       deliberate rather than sluggish?
+- [x] **Drive the reworked opening from both surfaces** (E.1): desk and shelf, watching
+      for the desk holding underneath, the printed spread appearing before the zoom, and
+      the left page reading the right way round rather than mirrored.
+      ✅ All three, plus Escape at two points and a reduced-motion pass — NOTES.md
+      "M23 §E.1 ... Verified live". **The pacing itself is still the operator's call.**
+- [ ] **Drive E.2's two corrections** — desk and shelf, watching the room empty *during*
+      the zoom rather than at the end of it, and the blank spread's two halves matching
+      from the moment the cover passes edge-on. ⚠️ **Not driven by the session that wrote
+      them**: they were typechecked and unit-tested only (no browser automation on this
+      machine), and the operator's own dev server was already running the change. The
+      shared-material restore is the line to watch — leave the opening by Escape, then
+      look at the books on the desk you land on.
 
-### M24 — Search, designed before it is built
+### M24 — Search: one result set, two views
 
-A **design pass**, not an implementation milestone — its output is a spec and a task
-list, exactly as OPUS.md describes. Do not start building from this section.
+**The design pass is done** (2026-08-14, decisions.md this date). Every question this
+section was raised to answer is answered below; this is now an implementation milestone
+and can be worked without re-deciding anything.
 
-Grounding, verified 2026-08-12: **there is no search endpoint and no search UI anywhere
-in the codebase.** This is genuinely new, and the operator flagged it as needing
-conceptualisation. The working hypothesis to design against (decisions.md 2026-08-12,
-ruling 10) — not yet settled:
+#### What is actually true today
 
-- The **Scan is spatial** (where a thing sits in the book); **search is retrieval**. The
-  overlap the operator feels is these two jobs competing in one surface.
-- **Cmd+F is an in-book text find that never leaves the reader.** Text search is invoked
-  where the text is.
-- **Thematic/annotation search hands off *into* the Scan as a filter**, rather than
-  growing a second result list beside it — which would also give the Scan the job it is
-  currently missing.
+⚠️ **The 2026-08-12 grounding line was half wrong, and the wrong half is the one that
+matters.** It said "there is no search endpoint and no search UI anywhere in the
+codebase". There is no endpoint — but there *is* a search UI, and it has been shipped
+since M9: `ScanPage.tsx`'s "Search quotes and threads…" input, whose `litIds` memo
+substring-matches `exact + note + threadFirstLine` client-side and composes with the
+kind/tag/theme filters. Read that code before writing any of this. What genuinely does
+not exist:
 
-- [ ] **Decide and write down**: where text search lives and how results anchor (the
-      existing CFI/quote-plus-context anchoring is the obvious reuse — confirm it before
-      assuming it); whether thematic search is library-wide or per-book; what the Scan
-      becomes once it is a filter target; and whether any of this needs the parked
-      concept-tagging work (TASKS.md "Parked", decisions.md 2026-07-19) as a prerequisite.
-      _Acceptance: a spec an implementation session can execute without re-deciding
-      anything, and a task list whose criteria can fail._
+1. **Any search over the book's own text.** You can only find passages you already
+   highlighted. This is the real gap, and the reason the Scan feels less useful than
+   intended — it is an instrument that can only see your annotations.
+2. **Any server-side search.** Today's filter is an in-memory pass over the already-loaded
+   scan payload, which is why it can only match a thread's *first line* — the rest of a
+   thread is never sent to the Scan.
+3. **Any in-reader find.** No Cmd+F anywhere.
+4. **Anything cross-book.** Every filter is scoped to one `resourceId`. Deliberately still
+   true after this milestone — see M28.
+
+#### The frame
+
+**The Scan is spatial (where a thing sits in the book); search is retrieval.** Both jobs
+are real; the mistake would be to give each its own result list. So: **one result set,
+two views of it.** The reader shows you the hit you are standing on; the Scan shows you
+the distribution of all of them. The same hits, the same anchors, the same ordering —
+`‹ ›` steps through that one set on whichever surface you are on.
+
+**Anchoring is not a new problem.** Every stage a hit needs is already built and already
+load-bearing for the highlight fallback path. Confirmed by reading each one, 2026-08-14:
+
+| Stage | Existing code |
+|---|---|
+| the book's text, server-side | `resource_text`, one row per spine section (`migrations.ts` v1) |
+| char offset → book percent | `computeHighlightPositionPercent` (`annotations/position.ts`) |
+| char offset → live DOM Range | `rangeFromTextOffsets` (`reader/selectionContext.ts`) |
+| Range → CFI → painted mark | `contents.cfiFromRange` → `attachOwnedMark` (`ReaderView.tsx`) |
+
+A search hit is the same object as a fallback-anchored highlight, arriving by a different
+route. **Do not invent a second anchoring model**; if you find yourself writing one, the
+design has gone wrong.
+
+**The parked concept-tagging work is not a prerequisite** (this was the fourth open
+question). Those are *vault* concepts — markdown files under the vault root, never in
+SQLite, which is exactly why DESIGN.md defers concept filtering. Tags and digest themes
+are already persisted and already filter the Scan, so nothing here waits on them.
+Concepts become one more vocabulary on the same filter surface, later.
+
+#### A — The find bar in the reader
+
+- [ ] **Cmd+F opens a find field in the reader, and finding never leaves the reader.**
+      Matches in the current spread paint in place; `‹ ›` (and Enter / Shift+Enter) step
+      through the whole book's hits in book order, displaying the containing section when
+      a step crosses a spread or spine boundary. Escape closes the field and clears every
+      mark. The field is chrome, so it obeys the reader's existing chrome rules
+      (`useFullscreenChrome`) rather than inventing its own show/hide.
+      ⚠️ **Search marks must be their own mark class, cleared explicitly.**
+      `rendition.annotations.highlight()` unconditionally creates a new SVG mark per call
+      — there is a comment in `ReaderView.tsx` that exists because of this — so a find
+      that repaints as you type will pile up marks over the user's real highlights and
+      then remove the wrong ones. Search marks are removed by their own bookkeeping, never
+      by anything that touches owned highlight marks.
+      ⚠️ **Debounce the query, and do not re-query per keystroke.** The server pass is
+      cheap; the repaint is not.
+      _Acceptance: a query with hits in three different chapters steps through all of them
+      in order, forwards and backwards, wrapping at each end; closing the bar leaves zero
+      residual marks (assert on the mark count, not by eye); the user's own highlights are
+      visually unchanged throughout and still clickable after the bar closes._
+- [ ] **The current hit is distinguishable from the others**, in all three reading themes,
+      without borrowing any of the four highlight-kind hues — a search hit is not a
+      highlight and must not read as one.
+      _Acceptance: judged in all three themes; contrast passes over body text in each._
+- [ ] **The reader can hand off to the Scan, and never does so on its own.** An explicit
+      "see in the Scan" affordance on the find bar opens the Scan carrying the query and
+      the current cursor position. **Not the default and not automatic** — the operator was
+      explicit: finding a word must not eject you from the page you are reading.
+      _Acceptance: the Scan opens with the same query, the same hit count, and the cursor
+      on the same hit; no path exists by which typing in the find bar opens the Scan._
+
+#### B — The seam: one search, server-side
+
+- [ ] **One endpoint, one module, one result shape.** `GET /api/resources/:id/search?q=`
+      → an ordered array of hits, each carrying `source` (`"text" | "highlight" | "note" |
+      "thread"`), `spineIndex`, `offset`, `percent`, a display snippet, the
+      `{prefix, exact, suffix}` anchor, and `highlightId` when the hit *is* one. Ordered by
+      position in the book, because that is the ordering both views step through.
+      Add it to SPEC.md's API table in the same commit.
+      ⚠️ **`findAnchorInText` does not do this job.** It resolves a *known* anchor to one
+      occurrence; search must *produce* anchors for *every* occurrence, capturing context
+      either side so each hit is independently re-anchorable. Reuse the offset arithmetic,
+      not the function.
+      _Acceptance: a query matching both book text and a highlight's own quote returns both,
+      correctly typed, with the highlight hit carrying its id; every returned anchor
+      round-trips — feeding it back through `findAnchorInText` lands on the same offset._
+- [ ] **Precompute the section offsets once per search.** `computeHighlightPositionPercent`
+      calls `getResourceTextSections` on *every* invocation, so building the Scan already
+      re-reads the whole book once per highlight. Search over hundreds of hits would
+      multiply that. Factor the offset table out and pass it in; the Scan build should take
+      the same treatment while you are there.
+      ⚠️ Read-derived, not profiled — measure before and after rather than trusting this
+      paragraph.
+      _Acceptance: one search over the Jekyll fixture reads each section's text at most once
+      (assert on a counting fake, not a stopwatch); the Scan renders identically after the
+      refactor._
+- [ ] **Annotations are searched properly now that it is server-side** — full thread
+      bodies and full notes, not `threadFirstLine`. This is a real capability change, not a
+      refactor: questions you asked are findable for the first time.
+      _Acceptance: a phrase appearing only in the third message of a thread is found._
+- [ ] **No FTS5 in this milestone.** Brute-force scanning over a single book's sections is
+      the boring choice and is expected to be fast enough; measure and record it. FTS5
+      arrives with M28, where it is actually needed.
+      _Acceptance: a full search over the Jekyll fixture measured and written into NOTES.md
+      with the method; if it exceeds ~50ms, say so rather than quietly adding an index._
+
+#### C — The Scan becomes the surface that shows distribution
+
+- [ ] **The search field becomes the Scan's primary control** — large and prominent, in the
+      spirit of macOS Spotlight and visually of a piece with the reader's find bar, so the
+      two read as one instrument in two places. It searches the book's text as well as your
+      annotations (the server does both now), with the source of each hit legible in the
+      results.
+      _Acceptance: text hits and annotation hits are distinguishable at a glance and both
+      step in one ordered set; the existing kind/tag/theme filters still compose with the
+      query exactly as they do today._
+- [ ] **Results render as a transient layer over the strip, distinct from the persistent
+      heat bands.** This is the answer to "show the distribution of search results spatially
+      throughout the text" — the layer is the point of the whole surface.
+      ⚠️ **The layer rides the same warp wrapper as everything else on the face** (M18,
+      "one filter, one wrapper"): a face that bows in some places and not others reads as
+      broken. Things that float *above* the glass — the readout — stay flat.
+      _Acceptance: at maximum CRT intensity the result layer and the chapter axis bow
+      together with no visible seam; the readout does not bow._
+- [ ] **`‹ ›` step a cursor through the results inside the Scan, and clicking a band
+      becomes the shortcut rather than the only door.** The strip auto-pans to keep the
+      cursor in view, the ghost readout follows it, and Enter opens the reader at that hit
+      through the existing airlock. Stepping does **not** drive the reader live underneath
+      — surveying and reading stay separate acts.
+      ⚠️ **This is the fix for a real, structural problem, not a convenience.** Highlight
+      hit-targets are invisible buttons a few px wide; `HeatStrip.tsx` already carries a
+      minimum-separation constant (~1.2% of strip width, ~9px) that exists because bands
+      were swallowing each other's clicks entirely. Zoom/pan exists to work around the same
+      thing. Stepping must therefore be usable *without* zooming.
+      ⚠️ **Step through the same `fractionToView` / `warpLocal` path the bands use**, or the
+      cursor and the band it names will disagree by the warp's displacement — the exact bug
+      that was foreseen once and missed once already on this surface.
+      _Acceptance: with 20+ hits inside one chapter at default zoom, every hit is reachable
+      by stepping alone; the cursor visually coincides with the band it names at maximum
+      CRT intensity **and** at the strip's left and right extremes, where displacement is
+      largest._
+- [ ] **This is the strip's first keyboard path, so make it a real one.** The result cursor
+      is focusable and steppable by arrow keys, and announces position ("hit 4 of 17,
+      chapter 9") to a screen reader.
+      _Acceptance: a full search → step → open cycle completed with the keyboard only, and
+      once with a screen reader running._
+
+#### Verify
+
+- [ ] **One phrase, followed the whole way**: found in the reader, stepped through in place,
+      handed to the Scan, seen as a distribution, stepped there, opened back into the reader
+      at a different hit — with the hit count and ordering identical on both surfaces at
+      every step. Both themes, two window sizes, reduced motion on.
+- [ ] **The instrument answers the question it could not answer before**: pick a word you
+      never highlighted, and confirm the Scan shows where in the book it clusters.
+
+### M24.5 — Themes worth colouring
+
+Split out of M24 deliberately (decisions.md 2026-08-14): search is nearly free because its
+pipeline already exists, while this milestone rests on an open question about LLM output
+quality. Bundling them would have stalled the cheap work behind the risky work. Appended
+as M24.5 rather than renumbered, per OPUS.md.
+
+**The operator's symptom, and the cause.** *"After one digest there are too many themes —
+too much to follow"*, and *"I'd like more general themes with colour keys."* These are one
+problem, not two. `thematicBuild.ts` asks for up to **8 short theme names per chapter
+part**, free text, deduplicated into a per-book `themeVocabulary` that feeds the Scan's
+dropdown — so a normal book produces dozens. And the phosphor palette has exactly **four**
+colours, keyed to the four highlight kinds; themes carry no colour at all.
+
+⚠️ **You cannot key an unbounded vocabulary to colour.** A 30-item legend is a worse
+instrument than none. So bounding the vocabulary is the *prerequisite* for the colour key,
+not a companion improvement — do these in order or the second one cannot land.
+
+- [ ] **A distillation pass gives each book ~6–8 book-level themes**, with the existing
+      specific chapter themes kept and folded underneath as children. Specific themes stay
+      valuable; they stop being the top-level vocabulary.
+      ⚠️ **Distil from the chapter themes and analyses already stored, never from the book
+      text again.** This is a small call over material already paid for; a second full-book
+      pass would double a digest's cost for a labelling change.
+      ⚠️ Settled decision 11 applies: the model returns **names**, code does the rest.
+      _Acceptance: on both fixtures the distilled set is 6–8 themes, every chapter theme is
+      assigned a parent, and the token cost of the pass is recorded in the ledger and is a
+      small fraction of the digest that preceded it._
+- [ ] **Each book-level theme owns a phosphor colour**, derived deterministically from its
+      position in the book's own distilled set, so a rebuild of the same digest produces the
+      same key. The four kind hues stay reserved for kinds — themes need their own ramp.
+      _Acceptance: the legend is readable at a glance; rebuilding a digest does not reshuffle
+      the colours; theme colours are never confusable with kind colours in either mode._
+- [ ] **The canonical vocabulary self-populates across books.** When Book B's distilled
+      themes are computed, each is matched against the themes already seen in the library:
+      a match adopts the existing canonical theme (and its colour), a miss creates one. So
+      the shared vocabulary is *discovered* from reading rather than authored up front, and
+      a theme common to two books is recognisably the same theme in both.
+      ⚠️ **Reuse `matchConcept`'s rule rather than inventing a heuristic** — slug-normalised
+      equality, then alias equality, then Levenshtein similarity ≥ 0.85 (`vault/concepts.ts`,
+      already tested). If it needs to differ for themes, say why in NOTES.md.
+      ⚠️ **Canonical themes live in SQLite, not the vault.** This is the sidecar-is-truth
+      rule (settled decision 6) and is what keeps this milestone independent of the parked
+      vault-concept work.
+      _Acceptance: digest two books sharing an obvious theme and confirm they land on one
+      canonical entry with one colour; digest two books sharing nothing and confirm no
+      spurious merge; a near-miss pair ("Doubling" / "The double") is decided by the rule
+      and the outcome is recorded either way._
+- [ ] **The Scan's theme filter becomes the colour key** rather than a dropdown of dozens:
+      book-level themes as coloured, toggleable entries, specific themes reachable
+      underneath.
+      _Acceptance: a book with no digest still shows a coherent Scan (today's fallback
+      behaviour is preserved); filtering by a book-level theme lights every child theme's
+      highlights._
+- [ ] **Verify:** rebuild a digest from scratch and confirm the key is stable; judge on both
+      fixtures whether the distilled themes are actually *good* — if they are not, that is a
+      prompt problem to solve here, not something to ship and route around.
 
 ### M25 — Web search
 
@@ -1151,6 +1468,26 @@ a painter being retired); RTL reading direction.
       is the stutter gone, and does the real back of the sheet read better than the mirror did
       (it is not obviously true — more information on that surface could read as noise).
 
+### M28 — Universal search (the successor to M24, shape only)
+
+Named on 2026-08-14 so M24 can be scoped honestly and so its result shape is chosen with
+this in mind. **Not scheduled**, and deliberately after M24.5 — cross-book parallels are
+only legible once themes have a shared vocabulary to be parallel *in*.
+
+The operator's ask: *"a universal search where you can search attached Obsidian vaults and
+annotations in other books too, to draw parallels."*
+
+- The Obsidian half is **not speculative**. The vault is already a real directory this
+  server reads and writes, with concept files carrying names and aliases
+  (`server/src/vault/concepts.ts`). It needs an index and a result surface, not an
+  integration.
+- **This is where FTS5 earns its place** (M24 deliberately does without). Scanning one
+  book brute-force is fine; scanning a library is not.
+- **It does not belong on the Scan.** The Scan is one book's instrument; a cross-book
+  result surface belongs to the Desk. Growing it sideways out of the Scan would re-create
+  exactly the "two jobs competing in one surface" problem M24 was raised to fix.
+- The gate before anything is built: **what does a cross-book hit open**, and what makes a
+  parallel worth surfacing rather than a coincidence of vocabulary?
 
 ## Parked (post-v1.5) — recorded so they aren't relitigated
 

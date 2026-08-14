@@ -20,6 +20,24 @@
   pointer-events: none;
 }
 
+/* ⚠️ M23 §E: **no tint in 3D**, and this is a decision rather than an omission.
+   The book is drawn in the shared canvas — a fixed, full-viewport `z-index: 0`
+   layer that comes *after* the page in DOM order (`scene3d/Scene3D.module.css`'s
+   layering contract) — so a tint at this overlay's usual tier paints over the
+   very object it exists to sit behind. Dropping to `z-index: 0` puts it under
+   the canvas, but *also* under most of ReaderView, whose stage, margin wrapper
+   and page cards all claim z-indices of their own: measured live, the tint
+   showed while the reader was still loading and vanished the moment it wasn't,
+   which is worse than either. The `contentReady` gate is what actually keeps
+   the reveal honest; the tint was only ever hiding a room that hadn't arrived.
+   So the 3D presentation is a real object over a live room, and the z-index
+   stays for the element's own sake — nothing of this overlay may paint over the
+   book. */
+.backdropIs3D {
+  z-index: 0;
+  background: none;
+}
+
 .stage {
   position: relative;
   width: min(240px, 42vw);
@@ -38,6 +56,14 @@
   perspective: 900px;
 }
 
+/* Carries the recentring translate, so `.scene`'s own box stays untransformed
+   for the landing to measure against (BookOpening.tsx). */
+.book {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+
 .cover {
   position: absolute;
   inset: 0;
@@ -48,9 +74,20 @@
   backface-visibility: hidden;
 }
 
+/* ⚠️ **Twice the cover's width, creased at the hinge** — M23 §E, and
+   decisions.md 2026-08-12's "already a written, unstarted task". This was
+   `inset: 0`: one cover's width split 50/50, which put the gutter down the
+   middle of a single page and made the open book the same size as the closed
+   one. The cover hinges on its *left* edge, so the spread extends a second
+   page's width to the *left* of this scene, and the crease lands on the
+   scene's left edge — where `.book`'s recentring translate then takes it to
+   the middle. */
 .spread {
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  left: -100%;
+  width: 200%;
   z-index: 0;
   display: flex;
   border-radius: 6px;

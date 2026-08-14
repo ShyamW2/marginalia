@@ -128,6 +128,18 @@ doc), never by drift.
    construction. `SceneLights` is sized for the Desk's downward framing, so a surface
    facing a different way brings its own key light — permitted **only** while the surfaces
    are mutually exclusive view modes, and otherwise a change to `SceneLights`.
+   *Amended 2026-08-13 (M23 §E), two rules about **continuity** between surfaces:* a
+   surface that *continues an object from another surface* — the opening is the first —
+   **borrows that surface's camera rather than bringing one**, because a camera change is
+   a discontinuity on the very first frame that no easing afterwards undoes. That is
+   affordable precisely because every camera on this seam is the same 1:1-plane
+   construction, so a sequence authored once in stage px (x right, y **down**, z toward
+   the camera) mounts on either surface through a single frame rotation — which is the
+   whole of "one opening, two approaches". Second: **object permanence is a property of
+   the handoff, not of the animation.** A room that another room animates into is
+   code-split, so it is fetched by the gesture that *precedes* the click
+   (`reader/preload.ts`), or the first frame is a blank one however continuous every frame
+   after it is.
 15. **The list view is the library's accessibility floor** (2026-08-12, restating
    DESIGN.md:67-68 as an invariant because a milestone came close to overturning it by
    accident). `LibraryGrid` is the keyboard/screen-reader path for the Desk. New library

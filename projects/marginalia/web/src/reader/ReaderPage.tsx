@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import type { ReaderPaneWidth, Resource, Settings, SpreadMode } from "@marginalia/shared";
@@ -12,9 +12,11 @@ import {
   setPendingOverlayOrigin,
   type OverlayOrigin,
 } from "../controls/overlayOrigin.js";
+import { readPendingOpeningPose, type OpeningPose } from "../scene3d/openingPose.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { BookOpening } from "./BookOpening.js";
+import { HANDOFF_MS } from "./openingGeometry.js";
 import { ReaderView } from "./ReaderView.js";
 import styles from "./ReaderPage.module.css";
 
@@ -89,7 +91,23 @@ export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }:
   // a direct/deep link or the list view's plain `<Link>`, both of which
   // keep today's plain load with no overlay.
   const [origin] = useState<OverlayOrigin | null>(() => readPendingOverlayOrigin());
+  // M23 §E: the same click-time handoff, carrying what a rect can't — the
+  // clicked book's pose as a 3D object, so the opening continues it rather
+  // than starting a new one. Null from the list view or a deep link, which
+  // take the opening's 2D presentation.
+  const [openingPose] = useState<OpeningPose | null>(() => readPendingOpeningPose());
   const [openingDone, setOpeningDone] = useState(false);
+  // ⚠️ **The room stays out of sight until the opening hands over to it**
+  // (2026-08-14). The opening now keeps the Desk (or the shelf) on the shared
+  // canvas while the book climbs out of it — but this room's own chrome is
+  // ordinary DOM with z-indices of its own, so a reader that renders normally
+  // paints its title bar and its controls straight over that surface: a desk
+  // wearing the reader's furniture. It still *mounts* and loads on the first
+  // frame, exactly as before — the epub, the pagination and the pane's rect are
+  // all real and measurable throughout, which is what the opening's snapshot and
+  // its landing target are taken from. It is only invisible, and only until the
+  // landing starts.
+  const [roomHidden, setRoomHidden] = useState(() => Boolean(origin));
   const [readerReady, setReaderReady] = useState(false);
   // M22.5 "the opening actually opens": the reading pane's rect, measured by
   // BookOpening once the reader is ready — the target the revealed spread
@@ -219,7 +237,14 @@ export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }:
   return (
     <div className={`${styles.readerPage} register-paper register-quiet`} ref={appBoundsRef}>
       {resource && spreadMode && readerPaneWidth !== null && (
-        <>
+        <div
+          className={`${styles.room} ${roomHidden ? styles.roomHidden : ""}`}
+          // Kept in step with the opening's handoff rather than guessed at in
+          // CSS: this fade is one half of that crossfade (the canvas holding the
+          // book and the desk is the other), and it starts only once the spread
+          // has actually landed on this pane — see `HANDOFF_MS`.
+          style={{ "--room-reveal": `${HANDOFF_MS}ms` } as CSSProperties}
+        >
           <div className={styles.titleBar}>
             {/* Doorway transition (DESIGN.md): shares a layoutId with the
                 library card's cover — the same element the user just
@@ -253,17 +278,24 @@ export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }:
             digestButtonRef={digestButtonRef}
             stageRef={readerStageRef}
           />
-        </>
+        </div>
       )}
       {origin && !openingDone && (
         <BookOpening
           origin={origin}
+          pose={openingPose}
           resourceId={id}
           title={resource?.title ?? ""}
           reducedMotion={reducedMotion}
           contentReady={readerReady}
           stageRef={readerStageRef}
-          onDone={() => setOpeningDone(true)}
+          onRevealRoom={() => setRoomHidden(false)}
+          onDone={() => {
+            setOpeningDone(true);
+            // Belt and braces: every path that ends the overlay also ends the
+            // hiding, so no failure of the sequence can leave an invisible room.
+            setRoomHidden(false);
+          }}
           onCancel={() => navigate("/")}
         />
       )}

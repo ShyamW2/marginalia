@@ -3,6 +3,312 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-14 — Search: one result set, two views (the M24 design pass)
+
+M24's four open questions, answered. The milestone is now an implementation milestone;
+TASKS.md carries the tasks, this entry carries the why.
+
+0. **A grounding line in M24 was wrong, and finding that changed the design.** The
+   2026-08-12 entry recorded "there is no search endpoint and no search UI anywhere in the
+   codebase" as *verified*. The endpoint half is true. The UI half is not: `ScanPage.tsx`
+   has shipped a "Search quotes and threads…" input since M9, filtering
+   `exact + note + threadFirstLine` client-side. So search was never absent — it was
+   present, annotation-only, and quietly weak, which is a different problem with a
+   different fix. **Recorded prominently because OPUS.md's rule is "never let a document
+   claim something the code does not do", and this was a design pass about to be run on a
+   false premise.** The lesson generalises: "verified" should name the file it was verified
+   against, or it decays into a remembered claim like any other.
+
+1. **One result set, two views of it.** Ruling 10's framing (the Scan is spatial, search is
+   retrieval) is kept, but its implied fix — search lives in the reader, the Scan is only a
+   filter *target* — is not what the operator wanted and is not what the code makes cheap.
+   The reader shows the hit you are standing on; the Scan shows the distribution of all of
+   them; **the hits, anchors and ordering are one set**, and `‹ ›` steps through it on
+   whichever surface you are on. Two result lists was the failure mode to avoid, and this
+   avoids it without demoting either surface.
+
+2. **Search produces anchors; it does not get a new anchoring model.** Verified by reading
+   each stage: `resource_text` → `computeHighlightPositionPercent` → `rangeFromTextOffsets`
+   → `cfiFromRange` → mark. That chain is the *highlight fallback path*, already load-bearing.
+   A search hit is the same object arriving by a different route, which is why the reader
+   find bar is mostly wiring rather than invention. The one real distinction, easy to get
+   wrong: `findAnchorInText` resolves a **known** anchor to one occurrence, while search must
+   **produce** anchors for every occurrence — reuse the arithmetic, not the function.
+
+3. **Stepping is the primary way to reach a result; clicking a band is the shortcut.** Not a
+   convenience ruling — a structural one. Highlight hit-targets on the strip are invisible
+   buttons a few px wide, and `HeatStrip.tsx` already carries a minimum-separation constant
+   that exists because bands were swallowing each other's clicks outright; zoom/pan exists
+   to work around the same thing. So the operator's *"clicking individual annotations is a
+   little painful"* is a correct diagnosis of a known defect, not a preference. Stepping must
+   work without zooming, and it must travel the same `fractionToView`/`warpLocal` path the
+   bands do or the cursor and its band disagree by the warp's displacement. It also gives the
+   strip its first keyboard path, which it has never had.
+
+4. **Stepping in the Scan moves a cursor, not the reader.** The alternative — each step
+   navigating the book live underneath — was considered and rejected: the Scan is a popup over
+   a background location (settled decision 13), and driving the reader from it collapses
+   surveying and reading into one act, which is the airlock's whole distinction. Enter opens
+   the reader deliberately.
+
+5. **The reader never hands off to the Scan on its own.** Operator's explicit call: finding a
+   word must not eject you from the page you are reading. The handoff exists, carries the query
+   and the cursor, and is always invoked.
+
+6. **Per-book now; cross-book is M28, named rather than implied.** Every filter in the codebase
+   is `resourceId`-scoped and stays that way. The operator wants universal search across books
+   and attached vaults "to draw parallels" — real, and more tractable than it sounds since the
+   vault is already a directory this server reads. It gets its own milestone because it needs
+   FTS5, a Desk-side result surface, and an answer to *what makes a parallel more than a
+   coincidence of vocabulary*. M24 does without FTS5 deliberately: one book scans fast, and an
+   index added early is an index tuned for the wrong query shape.
+
+7. **The parked concept-tagging work is not a prerequisite** (M24's fourth question, closed).
+   Those are *vault* concepts — markdown files, never in SQLite, which is precisely why
+   DESIGN.md defers concept filtering. Tags and digest themes are already persisted and already
+   filter the Scan. Concepts become one more vocabulary on the same surface, later.
+
+8. **Themes and colour keys split out as M24.5, and the two halves are one problem.** The
+   operator asked for *"more general themes, with colour keys"* and reported *"too many themes
+   after one digest"*. `thematicBuild.ts` requests up to 8 free-text themes **per chapter part**,
+   so a book yields dozens; the phosphor palette has exactly four colours, all reserved for
+   highlight kinds. **An unbounded vocabulary cannot be keyed to colour** — a 30-item legend is
+   worse than none — so bounding it is the prerequisite, not a companion. Split from M24 because
+   search is nearly free while this rests on an open question about LLM output quality; bundling
+   would stall cheap work behind risky work. Appended as M24.5, not renumbered.
+
+9. **The theme vocabulary self-populates rather than being authored.** A fixed canonical list
+   (~12–20 themes every book maps into) was recommended for its cross-book payoff and rejected
+   by the operator in favour of per-book distillation that *feeds and updates* a shared
+   vocabulary — "at some point some themes from Book A would be found in Book B". This is the
+   better call and worth recording why: an authored list flattens what is distinctive about each
+   book into someone's preset, while a discovered one earns its entries from actual reading, and
+   it still converges on shared colours for genuinely shared themes. Cost, accepted: the
+   vocabulary is only as good as the matching rule, so it reuses `matchConcept`'s tested rule
+   (slug equality → alias equality → Levenshtein ≥ 0.85) rather than a new heuristic. Canonical
+   themes live in SQLite, not the vault — settled decision 6, and what keeps M24.5 independent
+   of the parked vault work.
+
+10. **Cost discipline on the distillation pass**, at the operator's request ("best if we can keep
+    the entire thing as token efficient as possible"): distil from the chapter themes and
+    analyses **already stored**, never from the book text again. A second full-book pass would
+    double a digest's cost for what is a labelling change.
+
+## 2026-08-14 (later still) — The room leaves during the zoom, and a blank page is a page
+
+The third operator review of the day, on the same sequence. Two things, and both are
+*corrections to the entry below* rather than new ground — each one is the half of a fix
+that was applied only to the case that comes last.
+
+1. **A layer can be faded on its own, and the room is the layer that should be**
+   (amends point 2 below). That point said the desk "can only be faded on the canvas",
+   and took the coarseness as correct because both things the canvas holds should go at
+   once. That is true *at the handoff* and false for the 850ms before it: during the
+   landing the canvas holds the room the book is leaving and the book that is arriving,
+   and they want opposite treatment. Holding the room undimmed to the last frame is what
+   the operator saw — a desk still fully drawn behind an almost-open reading pane, then
+   blinking out ("it looks weird ... then it awkwardly disappears as we reach reader
+   view"), off the shelf as well as the desk.
+
+   So the room now leaves **during** the zoom, on its own clock (`ROOM_FADE_MS`, ending
+   exactly where the handoff begins, so the two beats meet with neither a gap nor an
+   overlap), and the canvas-wide fade keeps its one job. The mechanism is
+   `useScene3DLayerFade` — the per-layer opacity the layer map was always able to carry
+   (`useScene3DFade`'s docstring anticipated this exact second caller).
+
+   ⚠️ **What per-layer opacity costs in three.js**, since nothing in the seam had needed
+   it before: there is no group opacity, so it is every material under the group, walked
+   each frame the value moves. That makes *restoring* the interesting part — the page
+   block's material is shared across every mounted book, so the as-authored state is
+   remembered per material and written back from that record, never by re-traversing a
+   tree that is already coming apart. Get that wrong and the next room's books are
+   invisible.
+
+2. **A blank spread is a spread, not a page block** (amends point 3 below). The
+   coplanarity fix built two board-sized leaves on one plane — and built them *only when
+   a snapshot had arrived*. Before that, the book was still showing its left page on the
+   swung-open board and its right page as the page block's own top face: a `pageInset`
+   narrower on three sides, a board thickness lower, and therefore a different
+   magnification. The operator's "it still has a larger left page than right" was that
+   surviving half, and it is the half you look at longest, because it is what the book
+   opens *into* while the reader underneath is still loading.
+
+   The leaves are now drawn whenever the front board is past 90°, printed if there is
+   something to print and plain paper otherwise. The general shape of both of today's
+   corrections: **a fix conditioned on the state that arrives last leaves the state you
+   watch for longer untouched.**
+
+## 2026-08-14 (later) — The opening's last beat is a handoff, and the spread is one plane
+
+The second operator review of the same day: the sequence itself was accepted
+("pre-rendering, timing, much more natural") and four things about its *ending* were not.
+This entry amends the one below rather than replacing it; the held room, the printed
+spread and the shelf's approach are all untouched.
+
+1. **The room may not arrive before the book does.** The reader was revealed on the
+   landing's first frame and faded up across its whole 850ms — so a fully-drawn reading
+   pane sat under a postage-stamp book still crossing the screen toward it ("the reading
+   pane opens prematurely"). The order is now strictly sequential: the spread lands on
+   the pane, and *then* a short **handoff** (`HANDOFF_MS`, 380ms, overlapping the
+   landing's last 90ms so there is no dead beat) crosses the two over.
+
+   What that crossfade actually dissolves is only what genuinely differs — the desk
+   behind the book, and the book's own boards and shadow around the edge of the page.
+   The page itself is already the same rect showing the same bitmap on both sides of it,
+   which is what makes it read as "subtle" rather than as a dissolve.
+
+2. **The desk can only be faded on the canvas** (`useScene3DFade`). ⚠️ **Superseded the
+   same day — read the entry above.** A layer *can* be faded on its own, and the room is
+   faded that way during the landing; what remains true below is only the part about the
+   handoff itself, where taking the whole canvas is right. The shared canvas
+   paints *over* the page (settled decision 14c) — which is why this overlay carries no
+   tint — so there is no DOM element that can crossfade with what is drawn in it. The
+   fade is therefore a property of the whole canvas, and takes the book with it. That is
+   correct rather than coarse: at that moment the canvas holds exactly the room being
+   left and a book lying on the pane that is about to replace it, and both should go.
+
+3. **The two halves of a spread must be coplanar.** ⚠️ **Half-applied — read point 2 of
+   the entry above**: this was built for the *printed* spread only, and the blank one it
+   opens into kept the defect. They were a board thickness apart —
+   the right page on the page block, the left on the swung-open front board — and under a
+   *perspective* camera that is two pages at two magnifications ("the left page and right
+   page aren't equal in size"). `paperZ` used to be the midpoint of the pair, which halves
+   an error that is a **separation**, not an offset. Both printed pages now float
+   `PAGE_LIFT` above the open board, on one plane, and the printed page is **board-sized**
+   rather than inset inside the boards' overhang the way a real leaf is: realism lost
+   deliberately to exactness, because the last frame of the book and the first frame of
+   the reader have to be the same picture.
+
+4. **Themed paper is unlit.** `SceneLights` is a desk lamp, so a `MeshStandardMaterial`
+   handed `--color-bg` does not render `--color-bg` — the spread read as white paper over
+   a cream room. The opening's paper and its two printed pages are `MeshBasicMaterial`,
+   so the token renders as itself and the snapshot (already a picture of a lit room) is
+   not lit twice. Scoped to the `paperColor` opt-in: every other surface's book is still
+   lit, and the shelf still shares one material across dozens of books.
+
+Also, the Desk's travel came down from ~990ms to ~740ms on the operator's "20-30%
+faster". The 250ms comes off the **approach alone** — the open and the recentre keep
+their own durations to the millisecond, since the open was never the part that felt slow.
+
+## 2026-08-14 — The opening is a transition *between* rooms, and its pages are printed
+
+M23 §E reworked to the operator's review of the shipped sequence. Nothing here overturns
+the 2026-08-13 entry above; three of its four points were sound and are untouched. What
+was wrong was everything the sequence was *timed and staged* against.
+
+1. **The room you left stays until the book has arrived.** The shipped build unmounted
+   the Desk on the click, so the whole opening — a book climbing off a surface, turning,
+   swinging open — played over the **reader**, the one room the book has not reached yet.
+   That is the transition's own subject shown against its destination, and no amount of
+   easing fixes it.
+
+   The fix is a **held layer**, not a second mounted room (`Scene3D.tsx`'s
+   `useScene3DHold`): the layer's components live inside the shared canvas, so keeping
+   its registration alive keeps the Desk drawing after `DeskPage` is gone. Two live rooms
+   would have meant two of every fetch, shortcut and drag handler, and two cameras
+   fighting over `set({ camera })`. The held room is **scenery, not a room you are in** —
+   its DOM is gone, so nothing in it is hoverable, clickable or focusable, which is
+   exactly right for a room the user has already left.
+
+   Two consequences worth having written down, both found in the building:
+   - **The drop has to be deferred by a microtask.** React runs the unmounting room's
+     effect cleanups *before* the arriving overlay's effects, in the same commit — so a
+     synchronous drop deletes the layer moments before the thing that wants to keep it
+     can say so. It also makes StrictMode's mount/cleanup/mount a no-op rather than a
+     dropped room.
+   - **A held room needs a book-shaped hole in it.** The opening declares which book it
+     has taken (`departedBook.ts`, a store rather than a prop, because nothing above
+     those components can re-render them any more), or the book is drawn twice: once
+     flying, once still lying where it was.
+   - **The reader mounts and loads on the first frame exactly as before, and is merely
+     invisible** (`ReaderPage.module.css`'s `.roomHidden`, an *opacity*, never a
+     `display`). It has to be laid out and painted: the landing's target rect and the
+     spread's snapshot are both measured off the live pane. What it must not do is paint
+     its own chrome over the desk it is standing behind.
+
+2. **Timings were retimed against what can be watched, not against a budget.** 395ms of
+   travel and 365ms of open (2026-08-13's numbers) are correct as *durations of an
+   interaction* and wrong as durations of a thing you are meant to look at. Now 1900ms
+   for the Desk's travel/open/recentre and 850ms for the landing. The overlay is
+   `pointer-events: none` throughout, so ruling 8 of 2026-08-12 still covers this: the
+   ~400ms bound governs input blocking, and nothing here blocks input.
+
+3. **The shelf's approach is a phase, not a corner of a curve.** "The book comes out of
+   the row and turns" was implemented as a bezier control point in front of the book —
+   and a control point is not a duration, so the move that gives the shelf its whole
+   character was over in about a tenth of a second. The pull-out is now its own phase on
+   its own clock (475ms), the turn is its own (575ms), and the travel starts from
+   wherever the pull has reached. **Everything after the cover faces the camera is the
+   Desk's sequence unscaled** — the shelf's clock is longer by exactly its approach, which
+   is what "one opening, two approaches" ought to have meant all along.
+
+4. **The held-open spread is printed.** DESIGN.md's rule was "blank paper planes, never
+   real epub pages", and it is amended rather than dropped: the opening may lay **one
+   still of the reading pane** across the spread while the book is holding still, so what
+   is in your hands during the hold is the page you are about to read. The capture is the
+   page curl's own (`pageSnapshot.ts`, PAGE_CURL.md §5), behind its own 700ms deadline,
+   and a failed or timed-out capture lands blank paper exactly as before. What the rule
+   was protecting against — *animating* real page content, which PAGE_CURL.md prices — is
+   untouched, and this is the opposite case: one rasterization at the one moment in the
+   sequence when nothing is moving. It also makes the final crossfade a swap between two
+   pictures of the same thing rather than a dissolve between two different ones.
+
+## 2026-08-13 — The opening borrows its camera, and the book is never a new object
+
+M23 §E, built to the operator's added brief: *treat the book as a 3D object with object
+permanence — everything flows into the reader view over about a second.*
+
+1. **An opening does not get a camera of its own.** The natural build gives the sequence
+   its own framing and flies it to a view of the spread. That build cannot have object
+   permanence: a camera change is a discontinuity on the **first** frame, and easing
+   afterwards cannot undo it. So the opening reproduces the source surface's camera
+   exactly (`deskViewFrame` / `shelfViewFrame`, pure functions of the viewport) and moves
+   only the book.
+
+   This is the third consumer on the seam and the one that shows what §D's "consumers
+   bring their own camera" is *for*: both existing cameras are the same construction with
+   a 1:1 plane, and a cover facing the camera lies in that plane whichever it is. So the
+   whole sequence is authored once in "stage px" and mounted through a frame group that
+   either rotates onto the Desk's `y = 0` or stays on the shelf's `z = 0`. **That rotation
+   is the entire desk-vs-shelf difference** — TASKS.md's "share the open/land phases in
+   code, not by copy" satisfied by construction rather than by discipline. A per-surface
+   fork anywhere else in that file is how one opening quietly becomes two.
+
+2. **"Twice the cover" means twice the *board*.** `spineBulge` deliberately takes the
+   round back out of the covers so a book never hangs outside its own footprint, so an
+   open spread is `2 × boardWidth` — ~4.5% under twice the DOM rect. Recorded because the
+   criterion as written could be read either way, and because the property the landing
+   really depends on is the exact one: **the crease is the spread's own centre.**
+
+3. **Scaled correctly and landed correctly are different claims under a perspective
+   camera.** Found live: the landing overhung the reading pane by 7px on the left and
+   nothing on the right, because a spread's two halves are not coplanar (the open board's
+   paper sits a board thickness above the page block's) and the landing had planted the
+   page block on the 1:1 plane, leaving the cover half proud of it to splay. The reference
+   plane is now the midpoint of the two. **Only the 1:1 plane makes "the right size" and
+   "in the right place" the same statement**; anything off it is magnified by its own
+   height, and that is a class of bug, not an instance.
+
+4. **Object permanence is a property of the *handoff*, not of the animation.** The
+   opening's every frame was continuous and it still broke, because `App.tsx` code-splits
+   the reader: clicking a book held the Desk on screen for 250ms and then swapped rooms.
+   `reader/preload.ts` warms the chunk on hover or focus — the gesture that precedes every
+   open — taking the handoff to one commit (~39ms, measured), with the code split intact.
+   **The rule: a room that another room animates into is fetched by the gesture that
+   precedes the click, not by the click.**
+
+5. **The opening's 3D presentation carries no backdrop tint.** The tint's old tier paints
+   over the shared canvas (the layering contract, third time); dropping it under the
+   canvas also drops it under most of ReaderView, whose stage and page cards claim
+   z-indices of their own — measured live, it showed while the reader was loading and
+   vanished the moment it wasn't. The `contentReady` gate is what keeps the reveal honest;
+   the tint was only ever hiding a room that had not arrived. So the 3D opening is a real
+   object over a live room. The 2D presentation keeps its tint, where the sandwich works.
+
+6. **The 2D presentation was slowed to match the 3D one** (320 + 300 + 340ms against
+   760 + 340). A lost context changes what the opening *is*; it must not change how long
+   the room takes to arrive.
+
 ## 2026-08-13 — The shelf: a second camera on the same seam, and a binding you can read
 
 M23 §D, plus one bug found before it and one measurement gate that changed a design.

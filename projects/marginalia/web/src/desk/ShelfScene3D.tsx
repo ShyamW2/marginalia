@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
-import { useFrame, useThree } from "@react-three/fiber";
-import { MathUtils, MeshStandardMaterial, type Group, type Mesh, type PerspectiveCamera } from "three";
+import { useFrame } from "@react-three/fiber";
+import { MathUtils, MeshStandardMaterial, type Group, type Mesh } from "three";
 import type { MotionValue } from "motion/react";
 import { Book3D } from "../scene3d/Book3D.js";
-import { shelfCameraFrame, shelfPerspectiveDistance, type ShelfSlot } from "./shelfLayout.js";
+import { CameraRig } from "../scene3d/CameraRig.js";
+import { useDepartedBook } from "../scene3d/departedBook.js";
+import { FrontKeyLight } from "../scene3d/FrontKeyLight.js";
+import { shelfViewFrame, type ShelfSlot } from "./shelfLayout.js";
 import { useDeskThemeColors } from "./useDeskThemeColors.js";
 import { GRAIN_TILE_HEIGHT, GRAIN_TILE_WIDTH, makeWoodTexture } from "./woodTexture.js";
 
@@ -63,6 +66,10 @@ export function ShelfScene3D({
   deepest: number;
 }) {
   const originRef = useRef<Origin>({ x: 0, y: 0 });
+  // The book the opening has pulled out of this row, if any — the Desk's own
+  // arrangement, and `departedBook.ts` carries the reasoning. Without it a book
+  // that has left the shelf is still standing in it.
+  const departed = useDepartedBook();
 
   useFrame(() => {
     const rect = stripRef.current?.getBoundingClientRect();
@@ -75,23 +82,16 @@ export function ShelfScene3D({
   return (
     <>
       <ShelfCameraRig />
-      {/* ⚠️ The shared `SceneLights` is a *desk lamp*: it hangs above the plane
-          y = 0 and points down, so it grazes a spine face (which points at the
-          camera) at almost zero incidence and leaves this surface lit by
-          ambient alone — flat and about half its true colour. The shelf brings
-          its own key for its own objects.
-
-          This is safe because the Desk and the shelf are mutually exclusive
-          view modes of one room (`DeskPage.tsx` renders desk *or* shelf *or*
-          list), so the two are never in the scene together and this can't
-          double up the Desk's carefully-balanced exposure. If a surface ever
-          mounts both at once, this light moves into `SceneLights` and gets
-          balanced there instead. */}
-      <ShelfKeyLight />
+      {/* The shared `SceneLights` is a desk lamp and grazes a viewer-facing
+          spine at almost zero incidence — see `FrontKeyLight` for the whole
+          story, including why a second key light here is safe. */}
+      <FrontKeyLight />
       <ShelfPlank stripRef={stripRef} originRef={originRef} baseline={baseline} deepest={deepest} />
-      {books.map((book) => (
-        <ShelfBook3D key={book.slot.resourceId} book={book} originRef={originRef} baseline={baseline} />
-      ))}
+      {books
+        .filter((book) => book.slot.resourceId !== departed)
+        .map((book) => (
+          <ShelfBook3D key={book.slot.resourceId} book={book} originRef={originRef} baseline={baseline} />
+        ))}
     </>
   );
 }
@@ -99,57 +99,14 @@ export function ShelfScene3D({
 /**
  * A perspective camera standing in front of the viewport's centre, refitted
  * every frame, whose field of view puts the shelf plane (`z = 0`) on the
- * viewport 1:1 — `shelfLayout.ts`'s `shelfCameraFrame` does the arithmetic.
+ * viewport 1:1 — `shelfLayout.ts`'s `shelfViewFrame` does the arithmetic, and
+ * `scene3d/CameraRig.tsx` owns the R3F plumbing.
  *
  * Anchored to the **viewport**, not to the strip: the row slides under a fixed
  * eye as it scrolls, which is what a shelf does when you walk along it.
  */
 function ShelfCameraRig() {
-  const cameraRef = useRef<PerspectiveCamera>(null!);
-  const { size, set, camera: previousCamera } = useThree();
-
-  useEffect(() => {
-    const camera = cameraRef.current;
-    // R3F overwrites a camera's projection on every resize unless told it is
-    // manually managed — without this it silently stomps the frustum fitted
-    // below and renders through its own default camera instead. The Desk's rig
-    // carries the same flag and the same scar (`DeskScene3D.tsx`).
-    (camera as PerspectiveCamera & { manual?: boolean }).manual = true;
-    set({ camera });
-    return () => set({ camera: previousCamera });
-    // Runs once: `set`/`previousCamera` come from the R3F store and aren't
-    // meant to re-trigger this — the frustum is refitted every frame below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useFrame(() => {
-    const camera = cameraRef.current;
-    const frame = shelfCameraFrame(size.width, size.height, shelfPerspectiveDistance(size.height));
-    camera.fov = frame.fov;
-    camera.aspect = frame.aspect;
-    camera.near = frame.near;
-    camera.far = frame.far;
-    camera.position.set(frame.position[0], frame.position[1], frame.position[2]);
-    camera.lookAt(frame.target[0], frame.target[1], frame.target[2]);
-    camera.updateProjectionMatrix();
-  });
-
-  return <perspectiveCamera ref={cameraRef} />;
-}
-
-/** Front-left and slightly above, matching the direction every other room's
- * light comes from (`SceneLights.tsx`: "over the reader's left shoulder"), so
- * the shelf is lit like the same room rather than a different one. No shadow
- * map: the shared key light above already grounds the books on the plank, and a
- * second shadow-casting light is a second full shadow pass every frame. */
-function ShelfKeyLight() {
-  const { size } = useThree();
-  return (
-    <directionalLight
-      intensity={1.15}
-      position={[-size.width * 0.3, size.height * 0.4, 1400]}
-    />
-  );
+  return <CameraRig fit={shelfViewFrame} />;
 }
 
 /**

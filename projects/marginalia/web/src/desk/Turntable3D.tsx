@@ -121,6 +121,9 @@ export function Turntable3D({ toolRef, engaged, dropActive }: Turntable3DProps) 
   const armRef = useRef<Group>(null!);
   const ringRef = useRef<Mesh>(null!);
   const lampRef = useRef<Mesh>(null!);
+  // The tool's last known box — see the frame callback for why the live one
+  // isn't enough.
+  const lastRectRef = useRef<DOMRect | null>(null);
   const spinRef = useRef(0);
   const engagementRef = useRef(0);
   const playingSecondsRef = useRef(0);
@@ -162,11 +165,19 @@ export function Turntable3D({ toolRef, engaged, dropActive }: Turntable3DProps) 
   }, [materials]);
 
   useFrame((_state, delta) => {
-    const rect = toolRef.current?.getBoundingClientRect();
-    // Hidden rather than unmounted when the tool isn't laid out yet (or has
-    // scrolled to zero size): a mount/unmount per frame would rebuild geometry
-    // on a surface that runs a continuous frameloop.
-    if (!rect || rect.width === 0 || rect.height === 0) {
+    const live = toolRef.current?.getBoundingClientRect();
+    // ⚠️ The **last** rect, not only the live one. While the opening holds this
+    // layer on the canvas (`Scene3D.tsx`'s `useScene3DHold`) the desk goes on
+    // rendering after its DOM has gone, and a tool that hides the moment its
+    // element disappears pops off the desk you are still looking at — every
+    // other object on this surface freezes in place instead, because it reads
+    // a cached origin. Same rule, applied here.
+    if (live && live.width > 0 && live.height > 0) lastRectRef.current = live;
+    const rect = lastRectRef.current;
+    // Hidden rather than unmounted when the tool has never been laid out: a
+    // mount/unmount per frame would rebuild geometry on a surface that runs a
+    // continuous frameloop.
+    if (!rect) {
       groupRef.current.visible = false;
       return;
     }

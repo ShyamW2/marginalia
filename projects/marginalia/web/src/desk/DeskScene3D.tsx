@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
-import { useFrame, useThree } from "@react-three/fiber";
-import {
-  MathUtils,
-  MeshStandardMaterial,
-  Vector3,
-  type Group,
-  type Mesh,
-  type PerspectiveCamera,
-} from "three";
+import { useFrame } from "@react-three/fiber";
+import { MathUtils, MeshStandardMaterial, Vector3, type Group, type Mesh } from "three";
 import type { MotionValue } from "motion/react";
 import { Book3D } from "../scene3d/Book3D.js";
-import { bookThickness, deskCameraFrame, deskPerspectiveDistance, stackElevation } from "./deskDepthMath.js";
+import { CameraRig } from "../scene3d/CameraRig.js";
+import { useDepartedBook } from "../scene3d/departedBook.js";
+import {
+  BOOK_BASE_ELEVATION,
+  DESK_CAMERA_UP,
+  bookThickness,
+  deskViewFrame,
+  stackElevation,
+} from "./deskDepthMath.js";
 import { GRAIN_TILE_HEIGHT, GRAIN_TILE_WIDTH, makeWoodTexture } from "./woodTexture.js";
 import { Turntable3D, type Turntable3DProps } from "./Turntable3D.js";
 import { useDeskThemeColors } from "./useDeskThemeColors.js";
@@ -22,7 +23,6 @@ const BOOK_HEIGHT = 252;
 // that the perspective splay it costs stays under a pixel (deskDepthMath.ts's
 // `stackElevation`).
 const STACK_STEP = 0.5;
-const BASE_ELEVATION = 0.35;
 // Exponential-decay rate for the lift, in units of "e-folds per second" —
 // MathUtils.damp's own lambda. High enough to feel immediate, low enough that
 // the book settles rather than snapping.
@@ -84,20 +84,28 @@ export function DeskScene3D({
   });
 
   const zOrders = useMemo(() => books.map((b) => b.zOrder), [books]);
+  // The book the opening has taken off this desk, if any — see
+  // `departedBook.ts` for why this arrives as a subscription rather than a
+  // prop. While the opening holds this layer, the desk goes on rendering
+  // underneath the travelling book, and drawing that book here as well would
+  // show it in two places at once.
+  const departed = useDepartedBook();
 
   return (
     <>
       <DeskCameraRig />
       <DeskSurface deskRef={deskRef} originRef={originRef} />
       {turntable && <Turntable3D {...turntable} />}
-      {books.map((book) => (
-        <DeskBook3D
-          key={book.resourceId}
-          book={book}
-          originRef={originRef}
-          elevation={BASE_ELEVATION + stackElevation(book.zOrder, zOrders, STACK_STEP)}
-        />
-      ))}
+      {books
+        .filter((book) => book.resourceId !== departed)
+        .map((book) => (
+          <DeskBook3D
+            key={book.resourceId}
+            book={book}
+            originRef={originRef}
+            elevation={BOOK_BASE_ELEVATION + stackElevation(book.zOrder, zOrders, STACK_STEP)}
+          />
+        ))}
     </>
   );
 }
@@ -106,54 +114,20 @@ export function DeskScene3D({
  * A perspective camera hung straight above the viewport's centre, refitted
  * every frame, whose field of view is chosen so the desk plane (`y = 0`) maps
  * to viewport pixels 1:1 — `deskDepthMath.ts`'s `deskCameraFrame` does the
- * arithmetic and carries the derivation.
+ * arithmetic and carries the derivation, and `scene3d/CameraRig.tsx` owns the
+ * R3F plumbing every surface's camera needs identically.
  *
  * Anchored to the **viewport**, not to the desk element: scrolling a desk
  * taller than the window then slides the surface under a fixed eye, exactly
  * as moving a page around under a desk lamp would, rather than dragging the
  * whole point of view along with it.
+ *
+ * ⚠️ The frame comes from `deskViewFrame`, which the opening borrows verbatim
+ * when it continues a book off the Desk (M23 §E) — one function, so the two
+ * can't drift and the book can't jump on the overlay's first frame.
  */
 function DeskCameraRig() {
-  const cameraRef = useRef<PerspectiveCamera>(null!);
-  const { size, set, camera: previousCamera } = useThree();
-
-  useEffect(() => {
-    const camera = cameraRef.current;
-    // R3F's own resize handling overwrites a camera's projection on every
-    // size change unless told it is manually managed (`updateCamera` in R3F's
-    // source) — without this flag it silently stomped the frustum below, and
-    // R3F's *default* camera (never removed from the scene, just no longer
-    // the active one) was what actually rendered instead. Caught live at §B's
-    // first attempt as a keystoned book shape that had nothing to do with the
-    // geometry.
-    // Untyped in three.js's own Camera — R3F's own convention, not exposed as
-    // a public property.
-    (camera as PerspectiveCamera & { manual?: boolean }).manual = true;
-    // Screen-down is +Z, so the camera's own up vector points at -Z: this is
-    // what makes world (x, 0, z) land on screen pixel (x, z) rather than on
-    // its vertical mirror.
-    camera.up.set(0, 0, -1);
-    set({ camera });
-    return () => set({ camera: previousCamera });
-    // Runs once: `set`/`previousCamera` come from the R3F store and aren't
-    // meant to re-trigger this — the frustum itself is refitted every frame
-    // below, independent of this effect.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useFrame(() => {
-    const camera = cameraRef.current;
-    const frame = deskCameraFrame(size.width, size.height, deskPerspectiveDistance(size.height));
-    camera.fov = frame.fov;
-    camera.aspect = frame.aspect;
-    camera.near = frame.near;
-    camera.far = frame.far;
-    camera.position.set(frame.position[0], frame.position[1], frame.position[2]);
-    camera.lookAt(frame.target[0], frame.target[1], frame.target[2]);
-    camera.updateProjectionMatrix();
-  });
-
-  return <perspectiveCamera ref={cameraRef} />;
+  return <CameraRig fit={deskViewFrame} up={DESK_CAMERA_UP} />;
 }
 
 /**

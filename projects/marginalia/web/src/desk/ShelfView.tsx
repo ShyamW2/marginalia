@@ -12,6 +12,8 @@ import { motionValue, type MotionValue } from "motion/react";
 import type { ResourceSummary } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { useScene3DAvailable, useScene3DLayer } from "../scene3d/Scene3D.js";
+import { setPendingOpeningPose } from "../scene3d/openingPose.js";
+import { preloadReaderPage } from "../reader/preload.js";
 import { useSpinePalette } from "../scene3d/useSpinePalette.js";
 import { BookActionCard } from "./BookActionCard.js";
 import { ShelfScene3D, type ShelfBookPlacement } from "./ShelfScene3D.js";
@@ -116,15 +118,51 @@ export function ShelfView({ resources, publishingId, onPublish, listeningEngaged
     return () => rail.removeEventListener("wheel", onWheel);
   }, []);
 
-  const open = useCallback(
-    (resource: ResourceSummary) => {
-      const el = slotRefs.get(resource.id);
-      // The opening flies from the book's own spine — the thing that was
-      // actually clicked (M20.7's click-time-rect handoff).
-      if (el) setPendingOverlayOrigin(captureOverlayOrigin(el));
-      navigate(`/read/${resource.id}`, listeningEngaged ? { state: { listenOnOpen: true } } : undefined);
+  /**
+   * The opening flies from the book's own spine — the thing that was actually
+   * clicked (M20.7's click-time-rect handoff) — and, since M23 §E, hands over
+   * the book's *pose* so the opening continues this object rather than starting
+   * a new one.
+   *
+   * The rect is the spine face, which on this surface is exactly the camera's
+   * 1:1 plane (`shelfLayout.ts`), so it converts with no reprojection: the body
+   * recedes from it into −z, which is why the bounding box's centre is half a
+   * depth *behind* the plane.
+   */
+  const captureOpening = useCallback(
+    (slot: ShelfSlot) => {
+      const el = slotRefs.get(slot.resourceId);
+      if (!el) return;
+      setPendingOverlayOrigin(captureOverlayOrigin(el));
+      const rect = el.getBoundingClientRect();
+      setPendingOpeningPose({
+        surface: "shelf",
+        // `Book3D` is authored cover-forward: the shelf stands it up and turns
+        // it, so the book's own "width" is how far it recedes into the shelf
+        // and its "thickness" is the spine face you can see.
+        width: slot.depth,
+        height: slot.height,
+        thickness: slot.width,
+        centerX: rect.left + rect.width / 2,
+        // The DOM slot does not move when a book lifts — the lift belongs to
+        // the 3D object (`ShelfScene3D.tsx`) — so it is added here, upward,
+        // rather than read off the element.
+        centerY: rect.top + rect.height / 2 - (lifts.get(slot.resourceId)?.get() ?? 0),
+        centerZ: -slot.depth / 2,
+        // Spine to the camera, and upright: the shelf's own arrangement.
+        yaw: Math.PI / 2,
+        roll: 0,
+      });
     },
-    [navigate, listeningEngaged, slotRefs],
+    [slotRefs, lifts],
+  );
+
+  const open = useCallback(
+    (slot: ShelfSlot) => {
+      captureOpening(slot);
+      navigate(`/read/${slot.resourceId}`, listeningEngaged ? { state: { listenOnOpen: true } } : undefined);
+    },
+    [navigate, listeningEngaged, captureOpening],
   );
 
   const placements: ShelfBookPlacement[] = useMemo(
@@ -174,7 +212,8 @@ export function ShelfView({ resources, publishingId, onPublish, listeningEngaged
                 show3D={show3D}
                 publishing={publishingId === slot.resourceId}
                 onPublish={onPublish}
-                onActivate={() => open(resource)}
+                onActivate={() => open(slot)}
+                onCaptureOpening={() => captureOpening(slot)}
                 onActiveChange={(isActive) =>
                   setActiveId((prev) => (isActive ? slot.resourceId : prev === slot.resourceId ? null : prev))
                 }
@@ -200,6 +239,7 @@ function ShelfBook({
   publishing,
   onPublish,
   onActivate,
+  onCaptureOpening,
   onActiveChange,
   registerRef,
 }: {
@@ -211,6 +251,7 @@ function ShelfBook({
   publishing: boolean;
   onPublish: (resourceId: string) => void;
   onActivate: () => void;
+  onCaptureOpening: () => void;
   onActiveChange: (active: boolean) => void;
   registerRef: (el: HTMLElement | null) => void;
 }) {
@@ -256,10 +297,16 @@ function ShelfBook({
         onActivate();
       }}
       onKeyDown={handleKeyDown}
-      onPointerEnter={() => onActiveChange(true)}
+      onPointerEnter={() => {
+        onActiveChange(true);
+        // See `preloadReaderPage`: the room fetched while the book is merely
+        // pointed at, so the opening is continuous when it is clicked.
+        void preloadReaderPage();
+      }}
       onPointerLeave={() => onActiveChange(false)}
       onFocus={() => {
         onActiveChange(true);
+        void preloadReaderPage();
         // Tabbing to a book off the end of the rail has to bring it into the
         // room, or the keyboard path walks into books nobody can see.
         ref.current?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
@@ -292,6 +339,7 @@ function ShelfBook({
           onPublish={onPublish}
           placement="above"
           openOriginRef={ref}
+          onCaptureOpening={onCaptureOpening}
         />
       )}
     </div>

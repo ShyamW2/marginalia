@@ -43,3 +43,23 @@
   font-size: 0.85rem;
   color: var(--color-text-muted);
 }
+
+/* The room itself — title bar and reader — as one thing the opening can hide
+   and hand back. A plain column, so wrapping these two changes nothing about
+   how either is laid out (`.readerPage` is the same column, and ReaderView's
+   own wrapper sizes itself from the viewport). */
+.room {
+  display: flex;
+  flex-direction: column;
+  transition: opacity var(--room-reveal, 340ms) var(--ease-standard, ease-out);
+}
+
+/* ⚠️ `opacity`, never `display` or `visibility`: the reader underneath is doing
+   real work while it is invisible — epub.js is paginating, the pane is being
+   measured for the opening's landing target, and the page is being captured
+   for the spread the book holds open (`reader/BookOpening.tsx`). All of that
+   needs a laid-out, painted room; it just isn't one the user should be looking
+   at until the book has finished arriving. */
+.roomHidden {
+  opacity: 0;
+}

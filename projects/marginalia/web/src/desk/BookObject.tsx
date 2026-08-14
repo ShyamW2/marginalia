@@ -5,8 +5,15 @@ import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
+import { setPendingOpeningPose } from "../scene3d/openingPose.js";
+import { preloadReaderPage } from "../reader/preload.js";
 import { BookActionCard } from "./BookActionCard.js";
-import { BOOK_DRAG_LIFT, BOOK_HOVER_LIFT } from "./deskDepthMath.js";
+import {
+  BOOK_BASE_ELEVATION,
+  BOOK_DRAG_LIFT,
+  BOOK_HOVER_LIFT,
+  bookThickness,
+} from "./deskDepthMath.js";
 import styles from "./BookObject.module.css";
 
 // Total accumulated |wheel delta| needed to "wind the crown" all the way in.
@@ -94,15 +101,51 @@ export function BookObject({
     lift.set(isDragging ? BOOK_DRAG_LIFT : isHovering ? BOOK_HOVER_LIFT : 0);
   }, [lift, isDragging, isHovering]);
 
+  /**
+   * M20.7 "the opening": the same click-time-rect handoff Scan/Digest use
+   * (openScan/openDigest below) — the cover's own rect, not the whole
+   * draggable book, is what BookOpening.tsx flies from.
+   *
+   * M23 §E adds the book's *pose*, which is what lets the opening continue
+   * this exact object instead of starting a new one. Dimensions come from
+   * `offsetWidth`/`offsetHeight` and only the centre from the rect, because a
+   * rotated element's `getBoundingClientRect` is its axis-aligned bounding box
+   * — wider and shorter than the book — while its centre is still the book's.
+   *
+   * ⚠️ The one thing not carried is `stackElevation`'s few px of anti-z-fight
+   * lift, which `DeskCanvas.tsx` computes from the whole desk and this
+   * component cannot see. It is capped at ~4px of height in a top-down view,
+   * where height off the plane costs *no* screen displacement on the optical
+   * axis and a fraction of a px away from it.
+   */
+  function captureOpening() {
+    if (!coverRef.current) return;
+    setPendingOverlayOrigin(captureOverlayOrigin(coverRef.current));
+    const el = coverRef.current;
+    const rect = el.getBoundingClientRect();
+    const thickness = bookThickness(resource.id);
+    setPendingOpeningPose({
+      surface: "desk",
+      width: el.offsetWidth,
+      height: el.offsetHeight,
+      thickness,
+      centerX: rect.left + rect.width / 2,
+      centerY: rect.top + rect.height / 2,
+      // The book's own centre, not its footprint: it rests on the desk, so
+      // half its thickness is above the plane it rests on.
+      centerZ: BOOK_BASE_ELEVATION + lift.get() + thickness / 2,
+      yaw: 0,
+      // A CSS rotation is clockwise on screen; a positive rotation about the
+      // axis pointing at the viewer is counter-clockwise. `DeskScene3D` negates
+      // the same value for the same reason.
+      roll: -(position.rotation * Math.PI) / 180,
+    });
+  }
+
   function open() {
     if (openedRef.current) return;
     openedRef.current = true;
-    // M20.7 "the opening": the same click-time-rect handoff Scan/Digest use
-    // (openScan/openDigest below) — the cover's own rect, not the whole
-    // draggable book, is what BookOpening.tsx flies from.
-    if (coverRef.current) {
-      setPendingOverlayOrigin(captureOverlayOrigin(coverRef.current));
-    }
+    captureOpening();
     // M22 "the desk tool": while lit, a plain open behaves like the
     // explicit "Listen" action below — the tool is the charm, not a
     // separate gate other opens have to know about.
@@ -119,9 +162,7 @@ export function BookObject({
   function openListen() {
     if (openedRef.current) return;
     openedRef.current = true;
-    if (coverRef.current) {
-      setPendingOverlayOrigin(captureOverlayOrigin(coverRef.current));
-    }
+    captureOpening();
     navigate(`/read/${resource.id}`, { state: { listenOnOpen: true } });
   }
 
@@ -224,7 +265,13 @@ export function BookObject({
         if (target instanceof Element && target.closest("button")) return;
         if (dragDistance.current < DRAG_CLICK_THRESHOLD) open();
       }}
-      onPointerEnter={() => setIsHovering(true)}
+      onPointerEnter={() => {
+        setIsHovering(true);
+        // The room this book opens into, fetched while the pointer is still on
+        // it — see `preloadReaderPage` for the gap this closes.
+        void preloadReaderPage();
+      }}
+      onFocus={() => void preloadReaderPage()}
       onPointerLeave={() => {
         setIsHovering(false);
         setCrownProgress(0);
@@ -282,6 +329,7 @@ export function BookObject({
           publishing={publishing}
           onPublish={onPublish}
           openOriginRef={coverRef}
+          onCaptureOpening={captureOpening}
         />
       )}
     </motion.div>

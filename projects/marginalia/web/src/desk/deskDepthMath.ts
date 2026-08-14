@@ -108,6 +108,24 @@ export function deskCameraFrame(width: number, height: number, distance: number)
 }
 
 /**
+ * The Desk's camera for a viewport of this size — the frame plus the distance
+ * that goes with it, which is the only form any consumer actually wants.
+ *
+ * ⚠️ Shared with the opening (M23 §E), which borrows the Desk's camera unchanged
+ * so a book clicked on the Desk keeps looking exactly as it did on the overlay's
+ * first frame. Two surfaces constructing "the Desk's camera" separately is the
+ * drift this exists to prevent.
+ */
+export function deskViewFrame(width: number, height: number): DeskCameraFrame {
+  return deskCameraFrame(width, height, deskPerspectiveDistance(height));
+}
+
+/** The camera's up vector on this surface. Screen-down is +Z here, so up points
+ * at −Z — that is what makes world `(x, 0, z)` land on screen pixel `(x, z)`
+ * rather than on its vertical mirror. */
+export const DESK_CAMERA_UP = [0, 0, -1] as const;
+
+/**
  * How far the top of an object of height `objectHeight` is displaced from its
  * own footprint, for a footprint `offset` px from the optical axis under
  * `deskCameraFrame`'s camera. Not used by the scene — it is how the "does the
@@ -148,6 +166,12 @@ export function bookThickness(resourceId: string): number {
  * so the two can't drift apart. */
 export const BOOK_HOVER_LIFT = 7;
 export const BOOK_DRAG_LIFT = 34;
+
+/** How far off the desk a book rests before any hover lift or stacking — enough
+ * that a book never z-fights the surface it is lying on. Shared with the
+ * opening (M23 §E), which starts its sequence at exactly the height the Desk
+ * was drawing the book at. */
+export const BOOK_BASE_ELEVATION = 0.35;
 
 /** A book's stacking rank (0 = lowest) among the given z-orders, translated
  * into a small world-unit lift so overlapping books don't z-fight — the

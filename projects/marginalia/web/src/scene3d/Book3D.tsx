@@ -1,11 +1,14 @@
 import { useEffect, useMemo } from "react";
-import { MeshStandardMaterial } from "three";
-import { spineArc, spineBulge } from "./bookGeometry.js";
+import { MeshBasicMaterial, MeshStandardMaterial } from "three";
+import { PAGE_LIFT, bookParts, spineArc } from "./bookGeometry.js";
 import { spineTexture } from "./spineTexture.js";
 import { useCoverTexture } from "./useCoverTexture.js";
 import { useSpinePalette } from "./useSpinePalette.js";
+import { useSpreadTexture } from "./useSpreadTexture.js";
 
-// A real cover doesn't swing to a flat 180° against the desk.
+/** A real cover doesn't swing to a flat 180° against a desk — the page block
+ * is in the way. The opening (M23 §E) is the one caller that overrides this,
+ * because a book being *read* does lie flat and its spread is the whole point. */
 const MAX_OPEN_ANGLE = Math.PI * 0.82;
 
 const PAGE_BLOCK_COLOR = "#f2ead9";
@@ -24,8 +27,32 @@ export interface Book3DProps {
   width?: number;
   height?: number;
   thickness?: number;
-  /** 0 = closed, 1 = open to `MAX_OPEN_ANGLE`. Default closed. */
+  /** 0 = closed, 1 = open to `maxOpenAngle`. Default closed. */
   openProgress?: number;
+  /** How far `openProgress: 1` swings the front board, in radians. Defaults to
+   * the 148° a cover reaches against a page block; the opening passes π, where
+   * the board lies flat and the two halves become a spread. */
+  maxOpenAngle?: number;
+  /** Overrides the page block's colour, and with it the front board's inner
+   * face — the two faces a flat-open book shows as its spread. The opening
+   * passes the reader's own paper (`--color-bg`), so the crossfade at the end
+   * of the landing is a swap between two sheets of the same colour rather than
+   * a flash. Costs one material per instance, which is why it is opt-in: the
+   * shelf renders dozens of books and shares one. */
+  paperColor?: string;
+  /**
+   * A picture of the page the book is about to become, as a `data:` URL, laid
+   * across the open spread — the left half on the front board's inner face,
+   * the right half on the page block (`useSpreadTexture`).
+   *
+   * ⚠️ **Only the opening passes this, and only while the book is open.**
+   * DESIGN.md's rule was "blank paper planes, never real epub pages"; it was
+   * amended on 2026-08-14 (decisions.md) to permit exactly this: one *still*
+   * of the pane, on a book that is holding still, so the reader you are about
+   * to be in is already in your hands. What the rule was protecting against —
+   * animating real page content, which PAGE_CURL.md prices — is untouched.
+   */
+  spreadImage?: string | null;
 }
 
 /**
@@ -69,13 +96,18 @@ export function Book3D({
   height = 1.5,
   thickness = 0.12,
   openProgress = 0,
+  maxOpenAngle = MAX_OPEN_ANGLE,
+  paperColor,
+  spreadImage = null,
 }: Book3DProps) {
   const texture = useCoverTexture(resourceId);
   const palette = useSpinePalette(resourceId);
+  const spread = useSpreadTexture(spreadImage);
 
   // The round back, and the hinge line the boards start at. See
   // `bookGeometry.ts` for why the spine is a curve and not the box it was.
-  const bulge = spineBulge(width, thickness);
+  const parts = bookParts(width, height, thickness);
+  const { bulge } = parts;
   const arc = spineArc(thickness, bulge);
   const arcLength = arc.radius * arc.thetaLength;
 
@@ -102,6 +134,50 @@ export function Book3D({
     [texture, palette.binding],
   );
 
+  // Shared unless a caller asks for its own paper — see `paperColor`.
+  //
+  // ⚠️ **Unlit** when a caller does ask, and that is the whole point of asking.
+  // A lit `#fbf8f1` is not `#fbf8f1`: `SceneLights` is a desk lamp, so a
+  // MeshStandardMaterial handed the reader's paper renders it a good deal
+  // brighter than the pane it is supposed to be the same colour as, which is why
+  // the opening's spread read as white paper over a cream room ("would be nice
+  // if the book could open with the pages already matching the reading pane
+  // colours", 2026-08-14). Unlit, what you see is literally the token — and the
+  // crossfade at the end of the landing becomes a swap between two sheets of the
+  // same colour, which is the claim this prop was always making.
+  const paperMaterial = useMemo(
+    () => (paperColor ? new MeshBasicMaterial({ color: paperColor }) : pageBlockMaterial),
+    [paperColor],
+  );
+  useEffect(() => {
+    if (paperMaterial === pageBlockMaterial) return;
+    return () => paperMaterial.dispose();
+  }, [paperMaterial]);
+
+  // The printed spread, when the opening has one. Two materials rather than
+  // one because the two halves are on different solids that move
+  // independently — the left page is on a board that swings.
+  //
+  // Unlit for the same reason as the paper above, and one more: the snapshot is
+  // already a picture of a lit room, so relighting it is lighting it twice.
+  const pageMaterials = useMemo(
+    () =>
+      spread
+        ? {
+            left: new MeshBasicMaterial({ map: spread.left }),
+            right: new MeshBasicMaterial({ map: spread.right }),
+          }
+        : null,
+    [spread],
+  );
+  useEffect(() => {
+    if (!pageMaterials) return;
+    return () => {
+      pageMaterials.left.dispose();
+      pageMaterials.right.dispose();
+    };
+  }, [pageMaterials]);
+
   // None of these are JSX-owned (they're attached via `<primitive>`), so React
   // Three Fiber's usual auto-dispose-on-unmount doesn't cover them — a shelf
   // that scrolls dozens of books in and out would otherwise leak one GPU
@@ -111,16 +187,27 @@ export function Book3D({
   useEffect(() => () => spineMaterial.dispose(), [spineMaterial]);
   useEffect(() => () => coverMaterial.dispose(), [coverMaterial]);
 
-  const boardThickness = Math.max(thickness * 0.09, 0.008 * width);
-  const blockThickness = Math.max(thickness - boardThickness * 2, thickness * 0.35);
-  const boardWidth = width - bulge;
-  // Pages sit a hair inside the boards on the three cut edges and flush at
-  // the spine — the overhang is most of what makes a closed book read as a
-  // bound object rather than a slab.
-  const pageInset = width * 0.022;
-  const pageWidth = boardWidth - pageInset;
-  const pageHeight = height - pageInset * 2;
-  const angle = -openProgress * MAX_OPEN_ANGLE;
+  const { boardThickness, blockThickness, boardWidth, pageWidth, pageHeight } = parts;
+  const angle = -openProgress * maxOpenAngle;
+
+  // ⚠️ **The spread's two leaves are drawn as leaves, printed or not**
+  // (2026-08-14). They used to exist only when a caller handed over a
+  // `spreadImage`, so a book that had opened but whose snapshot had not arrived
+  // yet showed its *left* page on the swung-open board (`boardWidth × height`,
+  // up at the board's own face) against a *right* page that was the page
+  // block's top face — a `pageInset` narrower on three sides and a board
+  // thickness lower. The operator saw both halves of that: "it still has a
+  // larger left page than right". `openSpread`'s coplanarity fix had corrected
+  // the printed case only, which is the half of the sequence that comes last.
+  //
+  // Past 90° the front board is edge-on and the page block's face is what a
+  // reader would be looking at, so that is where the leaves appear — under a
+  // closed or half-open cover they would simply be paper floating over the
+  // artwork (they sit `PAGE_LIFT` above the *front* board's face, not the
+  // block's; see `openSpread.paperZ`).
+  const spreadOpen = openProgress * maxOpenAngle > Math.PI / 2;
+  const leftPage = pageMaterials?.left ?? paperMaterial;
+  const rightPage = pageMaterials?.right ?? paperMaterial;
 
   return (
     <group name={`book-${resourceId}`}>
@@ -131,9 +218,9 @@ export function Book3D({
       </mesh>
 
       {/* Page block. */}
-      <mesh position={[bulge + pageWidth / 2, 0, 0]} castShadow receiveShadow>
+      <mesh key={paperMaterial.uuid} position={[bulge + pageWidth / 2, 0, 0]} castShadow receiveShadow>
         <boxGeometry args={[pageWidth, pageHeight, blockThickness]} />
-        <primitive object={pageBlockMaterial} attach="material" />
+        <primitive object={paperMaterial} attach="material" />
       </mesh>
 
       {/* The round back, closing the book from one board's outer corner to the
@@ -151,9 +238,33 @@ export function Book3D({
         <primitive object={spineMaterial} attach="material" />
       </mesh>
 
+      {/* The right-hand page of the open spread — the snapshot's right half
+          once the opening has one, and plain paper until then. Only ever
+          present on a book that is open past the cover's own halfway point
+          (`spreadOpen`); every other surface draws the block and nothing else.
+
+          ⚠️ Sized to the **board**, not to the page block, and floated onto
+          `openSpread`'s `paperZ` rather than resting on the block — the two
+          things that make the printed spread exactly the rect the landing aims
+          at (`openingGeometry.ts`'s `spreadRect`) and exactly coplanar with its
+          other half. It was the page block's own size and height, which is what
+          a real leaf inside its boards' overhang looks like, and which put the
+          picture at a different scale and a different magnification from the
+          left page. Realism lost to the crossfade: the last frame of this and
+          the first frame of the reader have to be the same picture. */}
+      {spreadOpen && (
+        <mesh key={rightPage.uuid} position={[bulge + boardWidth / 2, 0, thickness / 2 + PAGE_LIFT]}>
+          <planeGeometry args={[boardWidth, height]} />
+          <primitive object={rightPage} attach="material" />
+        </mesh>
+      )}
+
       {/* The front board: hinged at the spine's joint (local x = bulge), cover
           art on its outward (+z) face, cloth on the four edges the binding
-          wraps. */}
+          wraps, and **paper on its inward (−z) face** — the pastedown endpaper
+          a bound book actually has there, and the left half of the spread once
+          the opening swings this board flat (M23 §E). Invisible while closed,
+          which is every other surface. */}
       <group position={[bulge, 0, thickness / 2 - boardThickness / 2]} rotation={[0, angle, 0]}>
         {/* Keyed on the material's uuid: R3F's `attach="material-4"` binding
             was seen reconciling in place across sibling fibers whose textures
@@ -167,8 +278,29 @@ export function Book3D({
           <primitive object={bindingMaterial} attach="material-2" />
           <primitive object={bindingMaterial} attach="material-3" />
           <primitive object={coverMaterial} attach="material-4" />
-          <primitive object={bindingMaterial} attach="material-5" />
+          <primitive object={paperMaterial} attach="material-5" />
         </mesh>
+        {/* And the left-hand page, on the board's inner face, so it swings with
+            it and is simply *there* the moment the board lies flat. Board-sized
+            and a `PAGE_LIFT` off that face — which, once the board is flat, is
+            `openSpread`'s `paperZ`, the same plane the right page floats on. See
+            that comment for why the two halves must agree about both.
+
+            ⚠️ The `[0, π, 0]` is not decoration. A plane faces its own +z, and
+            this one has to face the board's −z (the inner face); turning it
+            about y does that **and** puts its +u back along world +x once the
+            board itself has swung through π — two mirrorings that cancel. Drop
+            it and the page is legible only in a mirror. */}
+        {spreadOpen && (
+          <mesh
+            key={leftPage.uuid}
+            position={[boardWidth / 2, 0, -(boardThickness / 2 + PAGE_LIFT)]}
+            rotation={[0, Math.PI, 0]}
+          >
+            <planeGeometry args={[boardWidth, height]} />
+            <primitive object={leftPage} attach="material" />
+          </mesh>
+        )}
       </group>
     </group>
   );

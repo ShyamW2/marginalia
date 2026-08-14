@@ -8,14 +8,25 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Canvas, type RootState } from "@react-three/fiber";
-import { NoToneMapping } from "three";
+import { Canvas, useFrame, type RootState } from "@react-three/fiber";
+import { NoToneMapping, type Group, type Material, type Mesh } from "three";
 import { useReducedMotion } from "motion/react";
 import { SceneLights } from "./SceneLights.js";
 import styles from "./Scene3D.module.css";
 
+/** A layer on its way out: where its opacity is going, and how long it takes to
+ * get there. See `useScene3DLayerFade`. */
+export interface LayerFade {
+  to: number;
+  ms: number;
+}
+
 interface Scene3DContextValue {
   setLayer: (id: string, node: ReactNode | null) => void;
+  holdLayer: (id: string) => void;
+  releaseLayer: (id: string) => void;
+  setLayerFade: (id: string, fade: LayerFade | null) => void;
+  setFade: (ms: number | null) => void;
   contextLost: boolean;
 }
 
@@ -60,21 +71,96 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
   const [layers, setLayers] = useState<Record<string, ReactNode>>({});
   const [contextLost, setContextLost] = useState(false);
 
-  const setLayer = useMemo(
-    () => (id: string, node: ReactNode | null) => {
+  // Which layers have a live owner mounted, and which are being held past
+  // their owner's unmount (see `useScene3DHold`). Refs rather than state:
+  // they only ever decide what a *later* `setLayers` does, so re-rendering on
+  // a change to either would be a render nobody reads.
+  const liveIds = useRef(new Set<string>());
+  const heldIds = useRef(new Set<string>());
+
+  /**
+   * Drop a layer *unless* someone still wants it — a live owner, or a hold.
+   *
+   * ⚠️ **Deferred by a microtask, and that is the whole reason it works.**
+   * React runs an unmounting component's effect cleanups *before* the newly
+   * mounted ones' effects, in the same commit. The opening and the room it
+   * leaves are exactly that pair: the Desk unregisters and the opening takes
+   * its hold in one commit, in that order, so a synchronous drop would delete
+   * the layer a moment before the thing that wanted to keep it could say so.
+   * Checking on the microtask after the commit lets the whole commit have its
+   * say first — and makes StrictMode's mount/cleanup/mount double-invoke a
+   * no-op here rather than a dropped room.
+   */
+  const scheduleDrop = useCallback((id: string) => {
+    queueMicrotask(() => {
+      if (liveIds.current.has(id) || heldIds.current.has(id)) return;
       setLayers((prev) => {
-        if (node === null) {
-          if (!(id in prev)) return prev;
-          const next = { ...prev };
-          delete next[id];
-          return next;
-        }
-        if (prev[id] === node) return prev;
-        return { ...prev, [id]: node };
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
       });
+    });
+  }, []);
+
+  const setLayer = useCallback(
+    (id: string, node: ReactNode | null) => {
+      if (node === null) {
+        liveIds.current.delete(id);
+        // ⚠️ A held layer keeps its **last** node and goes on rendering. That
+        // node's components live inside the `<Canvas>` tree here, not inside
+        // the room that registered them, so they survive that room unmounting
+        // — which is the whole mechanism behind the Desk staying under the
+        // opening (M23 §E rework). They are frozen only in the sense that
+        // nothing re-renders them from above; anything they subscribe to
+        // themselves still moves them (`departedBook.ts`).
+        scheduleDrop(id);
+        return;
+      }
+      liveIds.current.add(id);
+      setLayers((prev) => (prev[id] === node ? prev : { ...prev, [id]: node }));
     },
-    [],
+    [scheduleDrop],
   );
+
+  const holdLayer = useCallback((id: string) => {
+    heldIds.current.add(id);
+  }, []);
+
+  const releaseLayer = useCallback(
+    (id: string) => {
+      heldIds.current.delete(id);
+      // Not an unconditional drop: by the time a hold is released the room may
+      // have come *back* (Escape during the opening lands straight on the Desk
+      // again) and re-registered a live layer under the same id. Blanking that
+      // one is blanking the room the user is now looking at.
+      scheduleDrop(id);
+    },
+    [scheduleDrop],
+  );
+
+  // Per-layer fades, keyed the same way as the layers themselves. Empty in the
+  // ordinary case; the opening writes one entry (see `useScene3DLayerFade`).
+  const [layerFades, setLayerFades] = useState<Record<string, LayerFade>>({});
+  const setLayerFade = useCallback((id: string, fade: LayerFade | null) => {
+    setLayerFades((prev) => {
+      if (fade === null) {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      }
+      const current = prev[id];
+      if (current && current.to === fade.to && current.ms === fade.ms) return prev;
+      return { ...prev, [id]: fade };
+    });
+  }, []);
+
+  // How long the whole canvas takes to fade out, or null for "fully opaque".
+  // See `useScene3DFade` for why this is a property of the canvas rather than
+  // of a layer.
+  const [fadeMs, setFadeMs] = useState<number | null>(null);
+  const setFade = useCallback((ms: number | null) => setFadeMs(ms), []);
 
   const layerIds = Object.keys(layers);
   const hasLayers = layerIds.length > 0;
@@ -136,7 +222,9 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
   }, [contextLost]);
 
   return (
-    <Scene3DContext.Provider value={{ setLayer, contextLost }}>
+    <Scene3DContext.Provider
+      value={{ setLayer, holdLayer, releaseLayer, setLayerFade, setFade, contextLost }}
+    >
       {children}
       {shouldMount && (
         <div
@@ -152,7 +240,15 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
           // photograph of the desk you just left. Hiding the layer (rather than
           // unmounting the canvas) keeps the context alive, which is the whole
           // point of the stickiness documented above.
-          style={{ visibility: hasLayers ? "visible" : "hidden" }}
+          // ⚠️ The fade's transition is only *present* while a fade is asked
+          // for. Leaving it on would make the reset at the end of one — which
+          // happens in the same commit as the faded layer being dropped — a
+          // 380ms fade back *up* of whatever the canvas draws next.
+          style={{
+            visibility: hasLayers ? "visible" : "hidden",
+            opacity: fadeMs === null ? 1 : 0,
+            transition: fadeMs === null ? "none" : `opacity ${fadeMs}ms ease-out`,
+          }}
         >
           {/* R3F's own wrapping div sets `pointerEvents: "auto"` inline
               unless told otherwise (its default assumption is that *it* is
@@ -180,13 +276,97 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
           >
             <SceneLights />
             {layerIds.map((id) => (
-              <group key={id}>{layers[id]}</group>
+              <FadingLayer key={id} fade={layerFades[id] ?? null}>
+                {layers[id]}
+              </FadingLayer>
             ))}
           </Canvas>
         </div>
       )}
     </Scene3DContext.Provider>
   );
+}
+
+interface MaterialState {
+  opacity: number;
+  transparent: boolean;
+}
+
+/**
+ * One layer's group, with an opacity of its own.
+ *
+ * ⚠️ **three.js has no group opacity**, so this is what one costs: every
+ * material under the group, walked and written each frame the value moves, with
+ * its as-authored state remembered so the layer can be handed back intact. That
+ * is also why the map is keyed on the *material* — the page block's is shared
+ * across every mounted book (`Book3D.tsx`), so restoring by re-traversal at
+ * unmount (when the tree is already coming apart) would leave a shared material
+ * stuck at zero and the next room's books invisible.
+ *
+ * The one caller is the opening's landing, which needs the room the book came
+ * from to *leave* while the book is still on screen — see `useScene3DLayerFade`
+ * for why the canvas-wide fade cannot do that job.
+ */
+function FadingLayer({ fade, children }: { fade: LayerFade | null; children: ReactNode }) {
+  const groupRef = useRef<Group>(null!);
+  const original = useRef(new Map<Material, MaterialState>());
+  const applied = useRef(1);
+  const startedAt = useRef<number | null>(null);
+
+  const write = useCallback((value: number) => {
+    const group = groupRef.current;
+    if (!group) return;
+    group.traverse((object) => {
+      const mesh = object as Mesh;
+      if (!mesh.material) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        let base = original.current.get(material);
+        if (!base) {
+          base = { opacity: material.opacity, transparent: material.transparent };
+          original.current.set(material, base);
+        }
+        const transparent = base.transparent || value < 1;
+        // Toggling `transparent` changes the program three.js compiles for the
+        // material, so it is one of the few flags that genuinely needs this.
+        if (material.transparent !== transparent) material.needsUpdate = true;
+        material.transparent = transparent;
+        material.opacity = base.opacity * value;
+      }
+    });
+    applied.current = value;
+  }, []);
+
+  useFrame(() => {
+    if (!fade) {
+      if (applied.current !== 1) {
+        write(1);
+        startedAt.current = null;
+      }
+      return;
+    }
+    if (startedAt.current === null) startedAt.current = performance.now();
+    const t = fade.ms <= 0 ? 1 : Math.min(1, (performance.now() - startedAt.current) / fade.ms);
+    // Ease-out: the room is gone from the eye well before it is gone from the
+    // buffer, which is what keeps the last stretch of the landing feeling empty
+    // rather than feeling like something is still leaving.
+    const value = 1 + (fade.to - 1) * (1 - Math.pow(1 - t, 3));
+    if (value !== applied.current) write(value);
+  });
+
+  useEffect(() => {
+    const materials = original.current;
+    return () => {
+      for (const [material, base] of materials) {
+        material.opacity = base.opacity;
+        if (material.transparent !== base.transparent) material.needsUpdate = true;
+        material.transparent = base.transparent;
+      }
+      materials.clear();
+    };
+  }, []);
+
+  return <group ref={groupRef}>{children}</group>;
 }
 
 function useScene3DContext(): Scene3DContextValue {
@@ -207,6 +387,90 @@ export function useScene3DLayer(id: string, node: ReactNode | null): void {
     setLayer(id, node);
     return () => setLayer(id, null);
   }, [id, node, setLayer]);
+}
+
+/**
+ * Keeps layer `id` on the canvas after the room that registered it has
+ * unmounted, for as long as the calling component is mounted. `null` holds
+ * nothing.
+ *
+ * M23 §E's rework: the opening is a *transition between rooms*, and the room
+ * it leaves has to still be there while the book climbs out of it — otherwise
+ * the Desk (or the shelf) blinks out on the click and the book spends a second
+ * travelling across the room it is only just arriving in. The reader mounts and
+ * loads underneath the whole time, hidden behind the held surface, which is why
+ * `contentReady` usually resolves long before it is needed.
+ *
+ * ⚠️ The held room is **scenery, not a room you are in**: its DOM is gone, so
+ * nothing in it is hoverable, clickable or focusable, and no gesture it owned
+ * still works. That is exactly what is wanted here (the user has already left)
+ * and is the reason this is a hold on one *layer* rather than a second mounted
+ * room — two live rooms would mean two of every fetch, shortcut and drag
+ * handler, and two cameras fighting over `set({ camera })`.
+ */
+export function useScene3DHold(id: string | null): void {
+  const { holdLayer, releaseLayer } = useScene3DContext();
+  useEffect(() => {
+    if (!id) return;
+    holdLayer(id);
+    return () => releaseLayer(id);
+  }, [id, holdLayer, releaseLayer]);
+}
+
+/**
+ * Fades layer `id` alone toward `fade.to` over `fade.ms`, and hands it back at
+ * its authored opacity on `null` or on unmount.
+ *
+ * ⚠️ **Not the same tool as `useScene3DFade` below, and the difference is the
+ * whole reason this exists** (2026-08-14). The canvas-wide fade can only take
+ * *everything* — and during the landing the canvas holds two things that want
+ * opposite treatment: the room the book left, which should be gone by the time
+ * the spread arrives, and the book itself, which is the thing arriving. Fading
+ * both is a ghost book mid-flight over an empty page; fading neither is what the
+ * operator saw — a desk still fully drawn behind an almost-open reader, and then
+ * blinking out at the end ("it looks weird ... then it awkwardly disappears").
+ * So the room goes on its own clock, and the canvas fade keeps its one job: the
+ * handoff, where the book and the pane are the same picture anyway.
+ *
+ * Held layers are the expected subject: the room is scenery by then
+ * (`useScene3DHold`), so nothing about a fading layer is interactive.
+ */
+export function useScene3DLayerFade(id: string | null, fade: LayerFade | null): void {
+  const { setLayerFade } = useScene3DContext();
+  useEffect(() => {
+    if (!id) return;
+    setLayerFade(id, fade);
+    return () => setLayerFade(id, null);
+  }, [id, fade, setLayerFade]);
+}
+
+/**
+ * Fades the **whole shared canvas** out over `ms` while the calling component
+ * asks for it, and restores it instantly on unmount or on `null`.
+ *
+ * ⚠️ The whole canvas, not one layer, and that is not a shortcut. The canvas is
+ * a single fixed layer that paints *over* the page (settled decision 14c), so
+ * nothing in the DOM can crossfade with what is drawn in it — which is exactly
+ * why the opening's backdrop carries no tint (`BookOpening.module.css`). The one
+ * consumer is the opening's handoff, where the canvas holds precisely two
+ * things: the room the book left, and the book, now landed on the reading pane
+ * and printed with a picture of it. Both should go at once — the room because
+ * the reader's own room is coming up underneath it, the book because the pane it
+ * is lying on is the same picture. Fading either alone would be the wrong half.
+ *
+ * ⚠️ **Only the handoff, and only because of what the canvas holds *there*.** The
+ * argument above does not extend to the 850ms of landing before it, where the room
+ * is leaving and the book is arriving and the two want opposite treatment — that is
+ * `useScene3DLayerFade`, which is the per-layer opacity this docstring used to say
+ * the layer map could carry if a second caller ever wanted one. It did. The two now
+ * split the sequence between them, and this one stayed a single field.
+ */
+export function useScene3DFade(ms: number | null): void {
+  const { setFade } = useScene3DContext();
+  useEffect(() => {
+    setFade(ms);
+    return () => setFade(null);
+  }, [ms, setFade]);
 }
 
 /**

@@ -87,6 +87,19 @@ export function shelfCameraFrame(width: number, height: number, distance: number
   };
 }
 
+/**
+ * The shelf's camera for a viewport of this size — the frame plus the distance
+ * that goes with it.
+ *
+ * ⚠️ Shared with the opening (M23 §E), which borrows the shelf's camera unchanged
+ * so a book clicked on the shelf keeps looking exactly as it did on the
+ * overlay's first frame. Unlike the Desk's, this one needs no `up` override:
+ * a front-facing camera takes three.js's default.
+ */
+export function shelfViewFrame(width: number, height: number): ShelfCameraFrame {
+  return shelfCameraFrame(width, height, shelfPerspectiveDistance(height));
+}
+
 /** A book is fatter on the shelf than on the desk: the desk shows a cover and
  * the shelf shows a *spine*, and 17–30px of thickness is a band too narrow to
  * letter a title on legibly (`spineLayout.ts` would floor every book at its

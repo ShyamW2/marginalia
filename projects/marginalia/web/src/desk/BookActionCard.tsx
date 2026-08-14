@@ -35,6 +35,11 @@ interface BookActionCardProps {
    * buttons instead: they are popups put *on* this surface, not a room change.
    * Falls back to the button if the surface doesn't offer one. */
   openOriginRef?: RefObject<HTMLElement | null>;
+  /** M23 §E: the surface's own "this is where the book is, as a 3D object"
+   * capture, called instead of the rect handoff above when the surface has one.
+   * Without it, "Listen" would open with the 2D presentation while clicking the
+   * same book two px away opened in 3D. */
+  onCaptureOpening?: () => void;
 }
 
 /**
@@ -55,6 +60,7 @@ export function BookActionCard({
   onPublish,
   placement = "below",
   openOriginRef,
+  onCaptureOpening,
 }: BookActionCardProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -103,7 +109,8 @@ export function BookActionCard({
   function openListen(event: MouseEvent<HTMLElement>) {
     if (openedRef.current) return;
     openedRef.current = true;
-    setPendingOverlayOrigin(captureOverlayOrigin(openOriginRef?.current ?? event.currentTarget));
+    if (onCaptureOpening) onCaptureOpening();
+    else setPendingOverlayOrigin(captureOverlayOrigin(openOriginRef?.current ?? event.currentTarget));
     navigate(`/read/${resource.id}`, { state: { listenOnOpen: true } });
   }
 

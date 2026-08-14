@@ -5545,3 +5545,228 @@ Playwright + SwiftShader, real fixture books, **zero console or page errors**:
   moves a book by exactly the gesture and persists, click still opens the reader.
 - The shelf state each run touched was read before and written back after, and the stored
   x/y are byte-identical (only `zOrder`, which is a session counter, moved).
+
+## M23 §E — the opening, finished in 3D — 2026-08-13
+
+The last of the four surfaces. The brief the operator added to the task: **treat the book
+as a 3D object with object permanence** — everything flows into the reader view over about
+a second.
+
+### The camera never moves, and that decision made the milestone small
+
+The obvious build is an opening with a camera of its own, flying from wherever the book
+was to a view of the open spread. It is also the one build that cannot have object
+permanence: a camera change is a discontinuity on the *first* frame, and no easing
+afterwards puts it back.
+
+So the opening **borrows the source surface's camera unchanged** — `deskViewFrame` or
+`shelfViewFrame`, both pure functions of the viewport, so reproducing exactly what the
+user was looking through a moment ago costs one function call — and moves only the book.
+
+That turned out to cost nothing at the far end either, because §B and §D had already built
+the two cameras out of the same construction: each has a plane that maps to the viewport
+**1:1**, and a cover turned to face the camera lies in that plane. The Desk's is `y = 0`
+seen from above; the shelf's is `z = 0` seen from the front. Different planes, identical
+arithmetic — which is why `reader/openingGeometry.ts` is written entirely in "stage px"
+(x right, y down, z toward the camera) and `BookOpening3D.tsx` converts once, by either
+rotating the whole frame onto the Desk's plane or leaving it on the shelf's:
+
+```
+<group rotation={surface === "desk" ? [-π/2, 0, 0] : [0, 0, 0]}>
+```
+
+**That one line is the whole desk/shelf difference**, which is what TASKS.md's "share the
+open/land phases in code, not by copy" asked for, arrived at by construction rather than
+by discipline. The shelf's only extra is a control point in the travel's Bézier that
+pulls the book straight out of the row before it goes anywhere.
+
+### The spread is two boards, not two footprints
+
+TASKS.md says "twice the cover's width" and that is now exact — but exact against the
+**board**, not against the 168px DOM rect. `spineBulge` takes the round back's bulge *out*
+of the covers (they span `[bulge, width]`) precisely so the object never hangs outside the
+footprint its hit target claims, so an open spread runs `bulge − boardWidth … width`:
+`2 × boardWidth`, centred on the hinge, ~4.5% narrower than 2× the rect. The property the
+landing actually depends on — **the crease is the spread's own centre** — is exact, and is
+a test rather than a comment (`openingGeometry.test.ts`).
+
+### Two defects found by driving it, not by reading it
+
+1. **The landing overhung the reading pane by 7px on the left, and nothing on the right.**
+   The two halves of a spread are not coplanar: the page block's top is at
+   `blockThickness/2` and the swung-open board's paper a board thickness above it. The
+   landing planted the page block on the camera's 1:1 plane, which left the *cover* half
+   proud of it — and anything off that plane splays outward with distance from the optical
+   axis. On a 1204px pane that is 7px. `openSpread.paperZ` is now the **midpoint** between
+   the two, so each half is ~1px out in opposite directions.
+   The general shape, worth keeping: *"scaled correctly" and "lands correctly" are
+   different claims under a perspective camera.* Only the 1:1 plane makes them the same.
+
+2. **The book vanished for 250ms before the opening started.** `App.tsx` code-splits
+   `ReaderPage`, so clicking a book left the Desk mounted (React 18 holds the old route
+   while the new one suspends) and then swapped rooms a quarter-second later. Every frame
+   after that was continuous; the very first one was not, which is the only frame object
+   permanence is about. `reader/preload.ts` fetches the chunk on **hover or focus** — the
+   gesture that precedes every open — and the handoff drops to ~39ms, one commit, measured.
+   The code split survives it: `ReaderPage` is still its own 462KB chunk in the build.
+
+### The tint had to go, and that is a decision
+
+The old overlay tinted the screen at `z-index: 900`. The shared canvas is a fixed
+`z-index: 0` layer later in DOM order, so at that tier the tint paints over the very book
+it exists to sit behind — the layering contract, again. Dropping it to `z-index: 0` puts
+it under the canvas but *also* under most of ReaderView, whose stage, margin wrapper and
+page cards all claim z-indices of their own: measured live, the tint showed while the
+reader was loading and vanished the moment it wasn't. Worse than either option.
+
+So the 3D presentation carries **no tint**: a real object over a live room. The
+`contentReady` gate is what actually keeps the reveal honest; the tint was only ever
+hiding a room that had not arrived. The 2D presentation keeps its tint, because there the
+book is a DOM element at the same tier and the sandwich works.
+
+### The timings
+
+760ms of travel/open/recentre, then the `contentReady` hold, then 340ms of landing —
+about 1.1s, up from 540ms. Permitted by decisions.md 2026-08-12 ruling 8 (the overlay is
+`pointer-events: none`, so DESIGN.md's ~400ms bound, which governs *input blocking*, is
+not in play). The phases **overlap** rather than run in sequence — the book turns while it
+is still travelling and starts opening before it has quite arrived — which is what makes a
+second-long move read as one gesture instead of four. The 2D presentation was slowed to
+match: a lost context changes what the opening *is*, never how long the room takes.
+
+### Verified live
+Headless Chromium + SwiftShader, real fixture books, both entry points:
+- **Desk:** book lifts off the surface, arcs to centre, opens flat, crease lands on the
+  viewport's axis (measured at x = 640 of 1280), spread lands on the reading pane.
+- **Shelf:** book pulls out of the row toward the camera, turns its cover to the viewer,
+  then runs the same open and landing — one opening, two approaches.
+- **Escape** at 450 / 800 / 1050ms: back on the Desk, zero overlays mounted, canvas
+  visible and healthy. (At 150ms the click had not yet committed the route — not a
+  cancellable phase, because the phase has not started.)
+- **Reduced motion:** `0` canvases on the Desk, through the whole opening, and after it
+  settles; the opening completes and unmounts.
+- **`WEBGL_lose_context` mid-sequence:** falls to the 2D presentation in place and
+  finishes it, overlay unmounted, route intact.
+- **Context exhausted (4 losses, past `MAX_RECOVERY_ATTEMPTS`):** the whole opening runs
+  as the 2D presentation — cover flies, swings flat about its hinge, the 2× spread
+  recentres to the axis and lands on the pane.
+- One WebGL canvas throughout; the second canvas on the Desk is `CursorTrail`'s 2D one.
+
+### Not signed off here
+The operator's own judgement on §E's two subjective criteria — "does the slower opening
+read as deliberate rather than sluggish", and the final crossfade, where the 3D paper and
+the reader's own `--color-bg` are the same colour by construction but the text still
+arrives in one cut. Both are in §E's Verify box, unticked.
+
+## M23 §E.1 — the opening, reworked after the operator's review — 2026-08-14
+
+The operator watched the shipped opening and asked for five things: a slower travel, a
+slower open, page text in the miniature book, a slower zoom onto the pane, and — the one
+that turned out to be structural — *stay on the desk until the book has opened and zoomed
+in*. Plus, from the shelf, a spine-out-and-turn you can actually follow.
+
+### The one that was not a timing change
+
+Four of the five are numbers. The fifth is not: the reader was not "loading too early",
+it was **the only thing on screen for the entire sequence**. `App.tsx` renders one room
+at a time, so the click unmounted the Desk on the first frame and everything after it — a
+book climbing off a surface, turning, swinging open — played over the room the book had
+not reached yet. Every frame of that was continuous, correct, and measured (§E's own
+notes), and the whole thing still read as a jump, because the *subject* of a transition
+was being shown against its *destination*.
+
+**A transition played over its destination is not a transition.** That is the sentence
+worth carrying to the next one of these.
+
+### Why a held layer and not a second mounted room
+
+The obvious fix — keep the Desk mounted behind the reader, the way Settings and the Scan
+keep their background location — costs two live rooms: two of every fetch, every shortcut
+registration, every drag handler, and **two `CameraRig`s fighting over `set({ camera })`**
+on the one canvas. The cheap version is available because of how the seam is built: a
+registered layer's components live inside the `<Canvas>` tree in `Scene3DProvider`, not
+inside the room that registered them, so *keeping the registration alive* keeps the Desk
+drawing after `DeskPage` is gone. `useScene3DHold` is that, and the held room is scenery:
+no DOM, so nothing in it is hoverable, clickable or focusable — which is exactly right for
+a room the user has already left.
+
+Three things fell out of building it, each of which would have been a live bug:
+
+1. **The drop has to be deferred by a microtask.** React runs the unmounting room's effect
+   cleanups *before* the arriving overlay's effects, in the same commit — so the Desk
+   unregisters, and only then does the opening ask to hold it. A synchronous drop deletes
+   the layer in between. (Caught by the test, not by driving it, which is the right order
+   for this one.) It also makes StrictMode's mount/cleanup/mount a no-op rather than a
+   dropped room.
+2. **A held room needs a book-shaped hole in it** — otherwise the book is drawn twice, once
+   flying and once still lying where it was. Nothing above those components can re-render
+   them any more (their props froze when their room went away), so the hole arrives through
+   a store they subscribe to themselves (`departedBook.ts`). The opening declares it, not
+   the click: set when the 3D layer starts drawing the book, cleared when it stops, so the
+   object is never in neither place.
+3. **The reader has to be invisible, not absent.** It mounts and loads on the first frame
+   exactly as before — the landing's target rect and the spread's snapshot are both
+   measured off the live pane — but its own chrome is ordinary DOM with z-indices of its
+   own, and a reader rendering normally paints its title bar over the desk it is standing
+   behind. `.roomHidden` is an **opacity**, never a `display`, for exactly that reason.
+   Pleasant accident: an opacity below 1 makes the room one atomic paint that lands *under*
+   the canvas, so the handover to "reader above the canvas" happens on the frame the fade
+   completes, which is the frame the landing ends.
+
+### The shelf's approach was a control point, not a phase
+
+"The book comes out of the row and turns" was implemented as a Bézier control point in
+front of the book. **A control point is not a duration** — the move that gives the shelf
+its whole character got whatever fraction of the travel the curve happened to spend near
+its start, about a tenth of a second, which is what the operator saw as "almost
+instantaneous". It is now a phase with a clock (475ms), the turn is its own (575ms), and
+the travel starts from wherever the pull has reached, which keeps the two continuous at
+every t. Everything after the cover faces the camera is the Desk's sequence **unscaled**,
+and that is now asserted in ms in `openingGeometry.test.ts` rather than left to two sets
+of fractions looking similar.
+
+### The printed spread
+
+DESIGN.md said "blank paper planes, never real epub pages". Amended rather than dropped
+(decisions.md this date): the rule was protecting against *animating* real page content,
+which PAGE_CURL.md prices in detail. This is the opposite case — **one** rasterization, at
+the one moment in the sequence when nothing is moving, of a pane that is already sitting
+there laid out. `capturePageSnapshot` is the page curl's own capture, deadline and all, and
+one texture is split down the middle by `offset`/`repeat` onto the two pages, so the two
+halves cannot disagree about where the crease is. A failed or timed-out capture lands blank
+paper exactly as before.
+
+The left page needs `rotation={[0, π, 0]}`, and it is worth knowing why rather than
+discovering it: the plane has to face the board's inner (−z) face, and turning it about y
+does that *and* puts its +u back along world +x once the board itself has swung through π.
+Two mirrorings that cancel. Without it the page is legible only in a mirror.
+
+### The timings
+
+| | before | after |
+|---|---|---|
+| Desk travel/open/recentre | 760ms | 1900ms |
+| Shelf, same | 760ms | 2500ms (600ms of approach, then the Desk's 1900) |
+| Landing | 340ms | 850ms |
+| 2D fallback (fly + open) | 320 + 300 | 800 + 750 |
+
+### Verified live
+Headless Chromium + SwiftShader, real fixture books, 1440×900:
+- **Desk:** at 600ms and 1500ms the *desk* is on screen — surface, neighbours, turntable —
+  with the clicked book arcing across it and no second copy left behind. At ~2200ms the
+  book is open at centre with **the real page printed across the spread, upright and
+  unmirrored on both halves** ("Chapter 23" reads correctly on the left page). The spread
+  then grows onto the pane and the room takes over; the settled state is the reader, no
+  desk.
+- **Shelf:** at 500ms the book has come forward out of the row; at 900ms it is turned
+  square to the camera in clear air in front of its neighbours; then the same travel, the
+  same open, the same printed spread, the same landing.
+- **Escape at 700ms and at 1600ms:** back on a *complete* desk — every book present,
+  including the one that had left — canvas healthy, route back at `/`.
+- **Reduced motion:** zero canvases on the Desk, through the whole opening, and after it
+  settles; the opening completes and the reader arrives.
+
+### Not signed off here
+The operator's own judgement on the pacing (1.9s / 2.5s / 0.85s), which is the whole point
+of the exercise, and on whether the printed spread reads as charming or as a screenshot
+glued to a book. Both are in §E's Verify box, unticked.

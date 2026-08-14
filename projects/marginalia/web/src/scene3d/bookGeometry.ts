@@ -79,3 +79,118 @@ export function spineArc(thickness: number, bulge: number): SpineArc {
 export function spineBulge(width: number, thickness: number): number {
   return Math.min(Math.max(thickness, 0) * 0.4, Math.max(width, 0) * 0.045);
 }
+
+export interface BookParts {
+  /** How far the round back stands proud of the boards (`spineBulge`). */
+  bulge: number;
+  /** A board's width — the *cover*, which is the book's footprint less the
+   * bulge the round back takes out of it. */
+  boardWidth: number;
+  boardThickness: number;
+  /** The page block, between the two boards. */
+  blockThickness: number;
+  pageInset: number;
+  pageWidth: number;
+  pageHeight: number;
+}
+
+/**
+ * Every derived dimension of the shared book asset, in one place.
+ *
+ * Extracted from `Book3D.tsx` at M23 §E, where a second consumer needs them:
+ * the opening has to know where the crease falls and how wide the spread ends
+ * up in order to land it on the reading pane *measurably* rather than by eye.
+ * Two components deriving the same numbers from the same three inputs is
+ * exactly the drift this file exists to prevent.
+ */
+export function bookParts(width: number, height: number, thickness: number): BookParts {
+  const bulge = spineBulge(width, thickness);
+  const boardThickness = Math.max(thickness * 0.09, 0.008 * width);
+  const blockThickness = Math.max(thickness - boardThickness * 2, thickness * 0.35);
+  const boardWidth = width - bulge;
+  // Pages sit a hair inside the boards on the three cut edges and flush at the
+  // spine — the overhang is most of what makes a closed book read as a bound
+  // object rather than a slab.
+  const pageInset = width * 0.022;
+  return {
+    bulge,
+    boardWidth,
+    boardThickness,
+    blockThickness,
+    pageInset,
+    pageWidth: boardWidth - pageInset,
+    pageHeight: height - pageInset * 2,
+  };
+}
+
+/**
+ * How far a printed page floats above the board it is printed on, in the book's
+ * own units. Enough to win the depth test against the page block and the
+ * board's inner face without being a visible gap: on a 22px-thick desk book
+ * this is a hundredth of the thickness, and it scales with nothing because the
+ * surfaces it clears do not move.
+ *
+ * Lives here rather than in `Book3D.tsx` because `openSpread` has to know it:
+ * the landing puts the *paper* on the camera's 1:1 plane, and the paper is one
+ * of these above the board.
+ */
+export const PAGE_LIFT = 0.25;
+
+export interface OpenSpread {
+  /** The crease, in the book's own x — the hinge the front board turns about. */
+  creaseX: number;
+  /** The spread's outer bounds in the book's own x. */
+  left: number;
+  right: number;
+  /** `right - left`, which is exactly **two boards** wide. */
+  width: number;
+  /** Head to tail — the boards' own height. */
+  height: number;
+  /**
+   * Where the spread's paper sits on the book's z once it is open.
+   *
+   * ⚠️ **The two halves are coplanar, and have to be** (2026-08-14). They were
+   * not: the right page lay on the page block's top face at `blockThickness/2`
+   * while the left lay on the swung-open front board at `thickness/2` — a board
+   * thickness higher, because a board is thicker than a page. Two pages on two
+   * planes under a *perspective* camera are two pages at two magnifications, and
+   * the operator saw it exactly as it behaves: "when it opens the left page and
+   * right page aren't equal in size", worst while the book is floating out at
+   * `FLOAT_Z` and far from the optical axis. Splitting the difference (this used
+   * to be the midpoint of the two) halves the error without removing it, because
+   * the error is a *separation*, not an offset.
+   *
+   * So the printed pages both float `PAGE_LIFT` above the **open front board's**
+   * face — the higher of the two — and the right one clears the page block by a
+   * board thickness rather than resting on it. `Book3D.tsx` places them; this is
+   * the plane it places them on, and the plane the landing puts on the camera's
+   * 1:1 plane.
+   */
+  paperZ: number;
+}
+
+/**
+ * The spread a book of these dimensions reveals when its front board is opened
+ * a full 180° about the hinge — M23 §E, and TASKS.md's "the spread is twice the
+ * cover's width, creased at the hinge".
+ *
+ * ⚠️ **Twice the cover, not twice the footprint.** The board spans
+ * `[bulge, width]`, because the round back takes its bulge *out* of the covers
+ * rather than hanging outside the book's footprint (`spineBulge`'s docstring,
+ * and the 1:1-plane invariant it protects). So the open spread runs from
+ * `bulge − boardWidth` to `width` — 2 × boardWidth exactly, centred on the
+ * hinge at `x = bulge`, which is ~4.5% narrower than 2 × the DOM cover rect.
+ * The crease being the spread's own centre is the property the landing depends
+ * on, and it is exact.
+ */
+export function openSpread(width: number, height: number, thickness: number): OpenSpread {
+  const parts = bookParts(width, height, thickness);
+  return {
+    creaseX: parts.bulge,
+    left: parts.bulge - parts.boardWidth,
+    right: parts.bulge + parts.boardWidth,
+    width: parts.boardWidth * 2,
+    height,
+    paperZ: thickness / 2 + PAGE_LIFT,
+  };
+}
