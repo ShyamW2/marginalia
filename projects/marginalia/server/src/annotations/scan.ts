@@ -5,7 +5,7 @@ import { listHighlightsWithThreadsForResource } from "./highlights.js";
 import { listMessagesForThread } from "./threads.js";
 import { listTagsByHighlightId } from "./tags.js";
 import { listThemesByHighlightId } from "./highlightThemes.js";
-import { computeHighlightPositionPercent } from "./position.js";
+import { buildSectionOffsetIndex, locateAnchor } from "./sectionOffsets.js";
 import { listChapterDigests } from "../digest/store.js";
 import { listThematicDigests } from "../digest/thematicStore.js";
 
@@ -26,7 +26,11 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
   if (!resource) return undefined;
 
   const sections = getResourceTextSections(db, resourceId);
-  const totalLength = sections.reduce((sum, s) => sum + s.text.length, 0);
+  // Built once and reused for every highlight below — computeHighlightPosition-
+  // Percent used to re-fetch and re-sum the whole book's text per highlight
+  // (M24 TASKS.md B).
+  const offsetIndex = buildSectionOffsetIndex(sections);
+  const totalLength = offsetIndex.totalLength;
 
   // M15 "real chapter axis": numbers are always available (a plain 1-based
   // sequence over spine order); names come from the EPUB's own NCX where its
@@ -51,11 +55,12 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
   const themesByHighlight = listThemesByHighlightId(db, resourceId);
 
   const highlights: ScanHighlight[] = highlightRows.map((h) => {
-    const positionPercent = computeHighlightPositionPercent(db, resourceId, h.spineIndex, {
-      exact: h.exact,
-      prefix: h.prefix,
-      suffix: h.suffix,
-    });
+    const positionPercent =
+      locateAnchor(offsetIndex, h.spineIndex, {
+        exact: h.exact,
+        prefix: h.prefix,
+        suffix: h.suffix,
+      })?.percent ?? null;
 
     let threadMessageCount = 0;
     let threadFirstLine: string | null = null;

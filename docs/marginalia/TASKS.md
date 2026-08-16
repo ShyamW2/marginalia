@@ -93,7 +93,7 @@ Concepts become one more vocabulary on the same filter surface, later.
 
 #### B — The seam: one search, server-side
 
-- [ ] **One endpoint, one module, one result shape.** `GET /api/resources/:id/search?q=`
+- [x] **One endpoint, one module, one result shape.** `GET /api/resources/:id/search?q=`
       → an ordered array of hits, each carrying `source` (`"text" | "highlight" | "note" |
       "thread"`), `spineIndex`, `offset`, `percent`, a display snippet, the
       `{prefix, exact, suffix}` anchor, and `highlightId` when the hit *is* one. Ordered by
@@ -106,7 +106,7 @@ Concepts become one more vocabulary on the same filter surface, later.
       _Acceptance: a query matching both book text and a highlight's own quote returns both,
       correctly typed, with the highlight hit carrying its id; every returned anchor
       round-trips — feeding it back through `findAnchorInText` lands on the same offset._
-- [ ] **Precompute the section offsets once per search.** `computeHighlightPositionPercent`
+- [x] **Precompute the section offsets once per search.** `computeHighlightPositionPercent`
       calls `getResourceTextSections` on *every* invocation, so building the Scan already
       re-reads the whole book once per highlight. Search over hundreds of hits would
       multiply that. Factor the offset table out and pass it in; the Scan build should take
@@ -116,11 +116,11 @@ Concepts become one more vocabulary on the same filter surface, later.
       _Acceptance: one search over the Jekyll fixture reads each section's text at most once
       (assert on a counting fake, not a stopwatch); the Scan renders identically after the
       refactor._
-- [ ] **Annotations are searched properly now that it is server-side** — full thread
+- [x] **Annotations are searched properly now that it is server-side** — full thread
       bodies and full notes, not `threadFirstLine`. This is a real capability change, not a
       refactor: questions you asked are findable for the first time.
       _Acceptance: a phrase appearing only in the third message of a thread is found._
-- [ ] **No FTS5 in this milestone.** Brute-force scanning over a single book's sections is
+- [x] **No FTS5 in this milestone.** Brute-force scanning over a single book's sections is
       the boring choice and is expected to be fast enough; measure and record it. FTS5
       arrives with M28, where it is actually needed.
       _Acceptance: a full search over the Jekyll fixture measured and written into NOTES.md

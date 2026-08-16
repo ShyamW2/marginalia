@@ -5843,3 +5843,24 @@ captured** — which is the change to how this gets verified, given the above:
 ### Not signed off here
 The operator's own judgement on how much flattening is "a tad" (`SPREAD_FLATTEN` /
 `SPREAD_FLATTEN_FLOOR` are one constant each), and on the new margin.
+
+## M24 §B — search timing, brute-force over the Jekyll fixture
+
+TASKS.md B's "no FTS5 in this milestone" bullet asks for the brute-force scan to be
+measured rather than assumed fast. Method: a throwaway script (not committed, same
+pattern as M17.5's `web/measure.mjs`) that imports `fixtures/jekyll-and-hyde.epub` into
+an in-memory db via `importEpub`, then calls `searchResource` 20 times per query and
+averages `performance.now()` deltas, against a real `tsc -b` build (not `tsx`, to avoid
+counting transpilation).
+
+| Query | Hits | Avg time |
+|---|---|---|
+| `"the"` (worst case: matches almost every sentence) | 2311 | 1.33ms |
+| `"Hyde"` | 105 | 0.73ms |
+| `"laboratory"` | 10 | 0.66ms |
+| a phrase that matches nothing | 0 | 0.52ms |
+
+All two orders of magnitude under the ~50ms budget, on one of the two fixture books.
+`buildSectionOffsetIndex` (built once per search, TASKS.md B's other bullet) and a
+single case-insensitive `indexOf` sweep per section are enough; FTS5 stays parked for
+M28, where cross-book scanning actually needs it.

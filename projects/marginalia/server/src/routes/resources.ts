@@ -21,6 +21,7 @@ import {
 } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
 import { buildScanData } from "../annotations/scan.js";
+import { searchResource } from "../annotations/search.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -185,4 +186,14 @@ resourcesRouter.get("/:id/scan", (req, res) => {
     return;
   }
   res.json(data);
+});
+
+resourcesRouter.get("/:id/search", (req, res) => {
+  const query = typeof req.query.q === "string" ? req.query.q : "";
+  const hits = searchResource(getDb(), req.params.id, query);
+  if (!hits) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json(hits);
 });

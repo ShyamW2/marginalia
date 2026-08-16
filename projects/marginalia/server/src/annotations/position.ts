@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
-import { findAnchorInText, type AnchorText } from "@marginalia/shared";
+import type { AnchorText } from "@marginalia/shared";
 import { getResourceTextSections } from "../library/store.js";
+import { buildSectionOffsetIndex, locateAnchor } from "./sectionOffsets.js";
 
 /**
  * The Scan's heat bands need a highlight's position as a 0-1 fraction of the
@@ -19,6 +20,11 @@ import { getResourceTextSections } from "../library/store.js";
  * code, not reproduced deterministically enough to chase down there). Rather
  * than silently dropping those highlights from the scan, fall back to
  * searching every section in spine order.
+ *
+ * A single-lookup convenience over `locateAnchor` (M24 TASKS.md B): fetches
+ * and indexes the book's sections itself, which is fine for one call but
+ * wasteful for many — the Scan and search build the index once and call
+ * `locateAnchor` directly instead of this.
  */
 export function computeHighlightPositionPercent(
   db: Database.Database,
@@ -29,27 +35,8 @@ export function computeHighlightPositionPercent(
   const sections = getResourceTextSections(db, resourceId);
   if (sections.length === 0) return null;
 
-  const totalLength = sections.reduce((sum, s) => sum + s.text.length, 0);
-  if (totalLength === 0) return null;
+  const index = buildSectionOffsetIndex(sections);
+  if (index.totalLength === 0) return null;
 
-  function offsetWithin(target: (typeof sections)[number]): number | null {
-    const match = findAnchorInText(target.text, anchor);
-    if (!match) return null;
-    const precedingLength = sections
-      .filter((s) => s.spineIndex < target.spineIndex)
-      .reduce((sum, s) => sum + s.text.length, 0);
-    return precedingLength + match.start;
-  }
-
-  const claimed = sections.find((s) => s.spineIndex === spineIndex);
-  const claimedOffset = claimed ? offsetWithin(claimed) : null;
-  const globalOffset =
-    claimedOffset ??
-    sections
-      .map((s) => offsetWithin(s))
-      .find((offset): offset is number => offset !== null) ??
-    null;
-
-  if (globalOffset === null) return null;
-  return Math.min(1, Math.max(0, globalOffset / totalLength));
+  return locateAnchor(index, spineIndex, anchor)?.percent ?? null;
 }

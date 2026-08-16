@@ -796,6 +796,34 @@ export const ScanDataSchema = z.object({
 export type ScanData = z.infer<typeof ScanDataSchema>;
 
 // ---------------------------------------------------------------------------
+// Search (M24 — "one result set, two views", docs/decisions.md 2026-08-14)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where a hit was found. `"text"` is a literal occurrence in the book's own
+ * prose; `"highlight" | "note" | "thread"` are annotation hits, anchored not
+ * to the query's own position (a note/thread body isn't book text) but to
+ * the highlight they belong to — the same anchor the highlight already
+ * carries, arriving by a different route (SPEC.md "Search notes (M24)").
+ */
+export const SearchHitSourceSchema = z.enum(["text", "highlight", "note", "thread"]);
+export type SearchHitSource = z.infer<typeof SearchHitSourceSchema>;
+
+export const SearchHitSchema = z.object({
+  source: SearchHitSourceSchema,
+  spineIndex: z.number().int().nonnegative(),
+  // Char offset local to its section's own text (the domain `resource_text`
+  // stores), not a global book offset — matches what `rangeFromTextOffsets`
+  // expects when re-resolving the anchor against a live rendered section.
+  offset: z.number().int().nonnegative(),
+  percent: z.number().min(0).max(1),
+  snippet: z.string(),
+  anchor: z.object({ prefix: z.string(), exact: z.string(), suffix: z.string() }),
+  highlightId: z.string().nullable(),
+});
+export type SearchHit = z.infer<typeof SearchHitSchema>;
+
+// ---------------------------------------------------------------------------
 // The book digest (M17 — docs/decisions.md 2026-07-28 later)
 // ---------------------------------------------------------------------------
 
