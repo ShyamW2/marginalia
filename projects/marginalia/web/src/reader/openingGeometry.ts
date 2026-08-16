@@ -159,14 +159,26 @@ export const HANDOFF_DELAY_MS = LANDING_MS - HANDOFF_LEAD_MS;
  * growth a scale to be read against, so it has to still be *going* while the
  * growth is happening, not already gone.
  *
- * So: the same duration as `LANDING_MS` and the same cubic ease-in-out
- * `FadingLayer` and `LANDING_EASE` both use, which makes "the background fades
- * out whilst the pages zoom in" true by construction rather than by two clocks
- * that happen to overlap. The room passes 50% as the spread passes half its
- * growth. The last 90ms sit under the handoff, at an opacity of about 2% — below
- * anything the crossfade could be said to be assuming about it.
+ * ⚠️ **Neither the whole landing, though — the operator cut the window on
+ * 2026-08-16**: "have it start to fade when the book opened, and has zoomed 10%
+ * of the way, and the fade completed by 60% of the way in. So it looks smooth."
+ * The room ran the landing's full 850ms, which put its last visible frames under
+ * the moment the spread is arriving on the pane; the ask is for the desk to be
+ * *gone* by then, so the final 40% of the growth happens over nothing but the
+ * reader's own paper. Both numbers are fractions of `LANDING_MS`, so the two
+ * clocks cannot drift apart if the landing is retimed again.
+ *
+ * The curve stays the cubic ease-in-out `FadingLayer` and `LANDING_EASE` both
+ * use, which is what makes "the background fades out whilst the pages zoom in"
+ * one gesture rather than two that happen to overlap.
  */
-export const ROOM_FADE_MS = LANDING_MS;
+export const ROOM_FADE_MS = LANDING_MS * 0.5;
+
+/** How long the room holds at full opacity once the landing starts. The spread
+ * gets the first tenth of its growth against the room it is leaving — a zoom
+ * needs something to be read against, and a desk that starts dissolving on the
+ * same frame the book starts moving gives it nothing. See `ROOM_FADE_MS`. */
+export const ROOM_FADE_DELAY_MS = LANDING_MS * 0.1;
 
 /**
  * The landing's own easing, shared with the room fade above.
@@ -364,6 +376,66 @@ export function openingStep(t: number, pose: OpeningPose, viewport: { width: num
     openProgress: easeInOut(segment(t, phases.open)),
     recentre: recentreDistance(pose) * easeInOut(segment(t, phases.recentre)),
   };
+}
+
+/**
+ * How much of the spread's aspect mismatch with the reading pane is taken out
+ * while the book is held open, and the floor on what that may do to the book.
+ *
+ * ⚠️ **A screen is not a book, and printing one on the other stretches type.**
+ * A spread is a shade wider than it is tall (two 2:3 boards → about 1.33); a
+ * reading pane is far wider than that (measured 1.94 on a 1440px window). Laying
+ * the pane's picture across the spread therefore stretches it vertically by the
+ * ratio of the two — half again, at those numbers — and the operator saw it:
+ * "it already looks slightly vertically stretched, maybe we can reduce the
+ * vertical stretch a tad" (2026-08-16).
+ *
+ * It cannot be fixed in the texture. Cropping to the right aspect would have to
+ * cut the *sides* off each page, and a landing that ends on a cropped picture
+ * breaks the one property the final crossfade rests on — that the spread and the
+ * pane are the same picture. So the correction is geometric: the open book
+ * flattens **toward** the pane's proportions, which is also the thing it is
+ * about to become.
+ *
+ * Partial, and floored, on purpose. A full correction (`1`) would square the
+ * book off into a letterbox before it had gone anywhere, which is a different
+ * object rather than a slightly relieved one; `0.5` with a floor of `0.82`
+ * takes out about a fifth of the stretch at the measured aspects and leaves the
+ * book recognisably a book. "A tad" is the whole brief.
+ */
+export const SPREAD_FLATTEN = 0.5;
+export const SPREAD_FLATTEN_FLOOR = 0.82;
+
+/**
+ * The spread's own aspect (width ÷ height) when the front board lies flat.
+ * Board-sized, not rect-sized — see `openSpread`.
+ */
+export function spreadAspect(pose: OpeningPose): number {
+  const spread = openSpread(pose.width, pose.height, pose.thickness);
+  return spread.height > 0 ? spread.width / spread.height : 1;
+}
+
+/**
+ * `step`, shortened toward the proportions of a pane of aspect `paneAspect`, `t`
+ * of the way (0 = untouched, 1 = the full `SPREAD_FLATTEN`). Height only: making
+ * the book *wider* would take the spread off the sides of a narrow window, and
+ * shortening it walks toward the same aspect from the safe direction.
+ *
+ * A pane narrower than the spread returns `step` unchanged — there is no stretch
+ * to relieve, and stretching the book *taller* to meet it is not what was asked.
+ */
+export function flattenTowardPane(
+  step: OpeningStep,
+  pose: OpeningPose,
+  paneAspect: number | null,
+  t: number,
+): OpeningStep {
+  if (!paneAspect || paneAspect <= 0) return step;
+  const full = spreadAspect(pose) / paneAspect;
+  if (full >= 1) return step;
+  const target = Math.max(SPREAD_FLATTEN_FLOOR, 1 + SPREAD_FLATTEN * (full - 1));
+  const factor = lerp(1, target, easeInOut(clamp01(t)));
+  return { ...step, scale: { ...step.scale, y: step.scale.y * factor } };
 }
 
 /**

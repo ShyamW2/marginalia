@@ -6,13 +6,17 @@ import {
   HANDOFF_DELAY_MS,
   LANDING_EASE,
   LANDING_MS,
+  ROOM_FADE_DELAY_MS,
   ROOM_FADE_MS,
   SHELF_SEQUENCE_MS,
+  SPREAD_FLATTEN_FLOOR,
   creaseX,
+  flattenTowardPane,
   landingStep,
   lerpToLanding,
   openingStep,
   recentreDistance,
+  spreadAspect,
   spreadRect,
 } from "./openingGeometry.js";
 
@@ -242,16 +246,64 @@ describe("landingStep", () => {
   });
 });
 
+describe("flattenTowardPane", () => {
+  // The pane the operator was looking at when they called the printed page
+  // "slightly vertically stretched" — measured live on a 1440×900 window, and
+  // far wider than any book's spread. (`STAGE` above is a *narrow* pane, which
+  // this deliberately is not: it is the case where there is stretch to relieve.)
+  const WIDE_STAGE = { x: 16, y: 102, width: 1364, height: 703 };
+  const WIDE = WIDE_STAGE.width / WIDE_STAGE.height;
+
+  it("leaves the book alone until the settle runs", () => {
+    const held = openingStep(1, DESK_POSE, VIEWPORT);
+    expect(flattenTowardPane(held, DESK_POSE, WIDE, 0).scale.y).toBeCloseTo(held.scale.y, 10);
+    // And with no measurement at all — a failed capture prints nothing, so
+    // there is no stretched type to relieve.
+    expect(flattenTowardPane(held, DESK_POSE, null, 1).scale.y).toBeCloseTo(held.scale.y, 10);
+  });
+
+  it("takes out some of the stretch, and stops well short of a letterbox", () => {
+    const held = openingStep(1, DESK_POSE, VIEWPORT);
+    const flat = flattenTowardPane(held, DESK_POSE, WIDE, 1);
+    expect(flat.scale.y).toBeLessThan(held.scale.y);
+    // "A tad", not "a different object": never past the floor, and never all
+    // the way to the pane's own proportions.
+    expect(flat.scale.y).toBeGreaterThanOrEqual(held.scale.y * SPREAD_FLATTEN_FLOOR);
+    expect(flat.scale.y).toBeGreaterThan(held.scale.y * (spreadAspect(DESK_POSE) / WIDE));
+    // Width is untouched — the relief comes off the height, so a narrow window
+    // can never push the spread off its own sides.
+    expect(flat.scale.x).toBeCloseTo(held.scale.x, 10);
+  });
+
+  it("does nothing for a pane narrower than the spread", () => {
+    const held = openingStep(1, DESK_POSE, VIEWPORT);
+    const narrow = spreadAspect(DESK_POSE) / 2;
+    expect(flattenTowardPane(held, DESK_POSE, narrow, 1).scale.y).toBeCloseTo(held.scale.y, 10);
+  });
+
+  it("does not move where the landing ends", () => {
+    // The whole reason the flattening is applied *before* the lerp: it changes
+    // where the zoom starts, never the pane it finishes on.
+    const held = flattenTowardPane(openingStep(1, DESK_POSE, VIEWPORT), DESK_POSE, WIDE, 1);
+    const rect = spreadRect(lerpToLanding(held, landingStep(DESK_POSE, WIDE_STAGE), 1), DESK_POSE);
+    expect(rect.width).toBeCloseTo(WIDE_STAGE.width, 6);
+    expect(rect.height).toBeCloseTo(WIDE_STAGE.height, 6);
+  });
+});
+
 describe("the landing's clock", () => {
-  it("empties the room the book left over exactly the zoom, not before it", () => {
-    // The 2026-08-14 fix for a desk still fully drawn behind an almost-open
-    // reader — and then for the fix's own first cut, which ran the fade shorter
-    // than the landing *and* on an ease-out, so the room was gone before the
-    // spread had grown and the zoom read as nothing at all ("we've now lost the
-    // zoom"). One duration, one curve: the two are one gesture.
-    expect(ROOM_FADE_MS).toBe(LANDING_MS);
-    // The handoff still overlaps the tail, where the room is all but gone.
-    expect(HANDOFF_DELAY_MS).toBeLessThan(ROOM_FADE_MS);
+  it("empties the room inside the zoom's own window: 10% in, done by 60%", () => {
+    // The operator's 2026-08-16 cut. The room used to run the landing's whole
+    // 850ms, which is the *other* failure mode from the one before it (a fade
+    // shorter than the landing and on an ease-out, which emptied the room before
+    // the spread had grown: "we've now lost the zoom"). Both numbers are
+    // fractions of the landing, so retiming the landing can never leave the two
+    // clocks disagreeing.
+    expect(ROOM_FADE_DELAY_MS).toBeCloseTo(LANDING_MS * 0.1, 6);
+    expect(ROOM_FADE_DELAY_MS + ROOM_FADE_MS).toBeCloseTo(LANDING_MS * 0.6, 6);
+    // And the room is gone well before the handoff rather than under it: the
+    // last 40% of the growth happens over the reader's own paper.
+    expect(ROOM_FADE_DELAY_MS + ROOM_FADE_MS).toBeLessThan(HANDOFF_DELAY_MS);
   });
 
   it("spends the landing's middle on the growth, not on a settle", () => {

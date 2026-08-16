@@ -10,6 +10,7 @@ import { DESK_CAMERA_UP, deskViewFrame } from "../desk/deskDepthMath.js";
 import { shelfViewFrame } from "../desk/shelfLayout.js";
 import type { OpeningPose } from "../scene3d/openingPose.js";
 import {
+  flattenTowardPane,
   landingStep,
   lerpToLanding,
   openingStep,
@@ -36,15 +37,24 @@ export interface BookOpening3DProps {
   progress: MotionValue<number>;
   /** 0 → 1 across the landing. Only meaningful once `stage` is set. */
   landing: MotionValue<number>;
+  /** 0 → 1 across the settle beat, once the page is printed: how far the book
+   * has relaxed toward the pane's proportions (`flattenTowardPane`). */
+  settle: MotionValue<number>;
   /** The live reading pane's rect, measured when the landing starts. Null until
    * then — and null forever if the reader never produced one, in which case the
    * book simply holds its open pose and the overlay fades. */
   stage: Rect | null;
+  /** The pane's width ÷ height, known a beat before its rect is (see
+   * `BookOpening.tsx`). Null until the page has been printed. */
+  paneAspect: number | null;
   /** A still of the reading pane, laid across the open spread once the reader
    * underneath has produced one (`BookOpening.tsx`'s hold). Null until then,
    * and null if the capture failed — in which case the spread stays blank
    * paper, exactly as it was before. */
   spreadImage: string | null;
+  /** The pane's margin band, which the still does not depict — printed as the
+   * page's own margins rather than stretched over (`snapshotInset`). */
+  spreadInset: { x: number; y: number } | null;
 }
 
 /**
@@ -72,8 +82,11 @@ export function BookOpening3D({
   title,
   progress,
   landing,
+  settle,
   stage,
+  paneAspect,
   spreadImage,
+  spreadInset,
 }: BookOpening3DProps) {
   const poseRef = useRef<Group>(null!);
   const bookRef = useRef<Group>(null!);
@@ -86,7 +99,15 @@ export function BookOpening3D({
   const [openProgress, setOpenProgress] = useState(0);
 
   useFrame(() => {
-    const step = currentStep(progress.get(), landing.get(), pose, size, stage);
+    const step = currentStep(
+      progress.get(),
+      landing.get(),
+      settle.get(),
+      pose,
+      size,
+      stage,
+      paneAspect,
+    );
     const group = poseRef.current;
     // Stage coords → the frame group's local space: y runs down on screen and
     // up in the world, and that negation is the entire conversion (settled
@@ -129,6 +150,7 @@ export function BookOpening3D({
               maxOpenAngle={FLAT}
               paperColor={paper}
               spreadImage={spreadImage}
+              spreadInset={spreadInset}
             />
           </group>
         </group>
@@ -137,16 +159,23 @@ export function BookOpening3D({
   );
 }
 
-/** The sequence, then the landing over the top of it — kept out of the frame
- * callback so it is a plain function of its inputs. */
+/** The sequence, the settle's flattening over the top of it, then the landing
+ * over the top of that — kept out of the frame callback so it is a plain
+ * function of its inputs.
+ *
+ * Order matters: the flattening is part of *where the landing starts from*, so
+ * it goes on before the lerp, never after. Applying it afterwards would drag
+ * the landing's own endpoint off the pane. */
 function currentStep(
   progress: number,
   landing: number,
+  settle: number,
   pose: OpeningPose,
   viewport: { width: number; height: number },
   stage: Rect | null,
+  paneAspect: number | null,
 ): OpeningStep {
-  const step = openingStep(progress, pose, viewport);
+  const step = flattenTowardPane(openingStep(progress, pose, viewport), pose, paneAspect, settle);
   if (!stage || landing <= 0) return step;
   return lerpToLanding(step, landingStep(pose, stage), landing);
 }

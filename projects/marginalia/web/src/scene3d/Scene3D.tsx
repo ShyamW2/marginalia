@@ -14,11 +14,16 @@ import { useReducedMotion } from "motion/react";
 import { SceneLights } from "./SceneLights.js";
 import styles from "./Scene3D.module.css";
 
-/** A layer on its way out: where its opacity is going, and how long it takes to
- * get there. See `useScene3DLayerFade`. */
+/** A layer on its way out: where its opacity is going, how long it takes to get
+ * there, and how long it holds first. See `useScene3DLayerFade`. */
 export interface LayerFade {
   to: number;
   ms: number;
+  /** Held at full opacity for this long before the fade starts, measured from
+   * the frame the fade was asked for. The opening's landing uses it to let the
+   * spread begin growing against a room that is still there — see
+   * `openingGeometry.ts`'s `ROOM_FADE_DELAY_MS`. */
+  delayMs?: number;
 }
 
 interface Scene3DContextValue {
@@ -151,7 +156,13 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
         return next;
       }
       const current = prev[id];
-      if (current && current.to === fade.to && current.ms === fade.ms) return prev;
+      if (
+        current &&
+        current.to === fade.to &&
+        current.ms === fade.ms &&
+        current.delayMs === fade.delayMs
+      )
+        return prev;
       return { ...prev, [id]: fade };
     });
   }, []);
@@ -321,6 +332,20 @@ function FadingLayer({ fade, children }: { fade: LayerFade | null; children: Rea
       if (!mesh.material) return;
       const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const material of materials) {
+        // ⚠️ **A multi-material mesh may have empty slots, and one of them cost
+        // the whole canvas** (2026-08-16). `mesh.material` is an array whenever
+        // a consumer attaches per-group materials, and R3F leaves a hole in it
+        // if the same material *object* is attached to two slots of one mesh —
+        // which the turntable's record did (`desk/Turntable3D.tsx`, fixed at the
+        // same time). Reading `.opacity` off that hole threw **inside
+        // `useFrame`**, and an exception in a frame callback stops R3F's render
+        // loop for the *entire* canvas: the room stopped fading, the book
+        // stopped moving, and the opening's landing — the whole zoom onto the
+        // reading pane — never drew a frame, which is exactly what the operator
+        // saw as "the zoom has disappeared". The traversal is the one place that
+        // touches every material in a layer it did not author, so it is the
+        // place that owes the check.
+        if (!material) continue;
         let base = original.current.get(material);
         if (!base) {
           base = { opacity: material.opacity, transparent: material.transparent };
@@ -346,7 +371,12 @@ function FadingLayer({ fade, children }: { fade: LayerFade | null; children: Rea
       return;
     }
     if (startedAt.current === null) startedAt.current = performance.now();
-    const t = fade.ms <= 0 ? 1 : Math.min(1, (performance.now() - startedAt.current) / fade.ms);
+    const elapsed = performance.now() - startedAt.current - (fade.delayMs ?? 0);
+    if (elapsed < 0) {
+      if (applied.current !== 1) write(1);
+      return;
+    }
+    const t = fade.ms <= 0 ? 1 : Math.min(1, elapsed / fade.ms);
     // ⚠️ **Ease-in-out, and it was ease-out for one build.** A layer fades out
     // because something else is taking its place, so the curve has to leave it
     // legible for as long as that something is still arriving — an ease-out is a

@@ -134,6 +134,16 @@ export function Turntable3D({ toolRef, engaged, dropActive }: Turntable3DProps) 
       plinth: new MeshStandardMaterial({ roughness: 0.55, metalness: 0.08 }),
       metal: new MeshStandardMaterial({ roughness: 0.34, metalness: 0.5 }),
       vinylEdge: new MeshStandardMaterial({ color: "#15120f", roughness: 0.42 }),
+      // ⚠️ The record's rim and its underside are the *same* black, and they
+      // still get an instance each. R3F attaches a `<primitive>` by remembering
+      // what it displaced, so attaching one material object to two slots of one
+      // mesh leaves the first slot **empty** once the second attaches — measured
+      // 2026-08-16: `mesh.material` came out `[null, face, edge]`, so the rim
+      // was drawn with three.js's default white, and any traversal that reads
+      // every material in the layer hit a hole. That traversal exists
+      // (`Scene3D.tsx`'s `FadingLayer`), and the hole stopped the shared
+      // canvas's frame loop dead during the opening's landing.
+      vinylUnder: new MeshStandardMaterial({ color: "#15120f", roughness: 0.42 }),
       vinylFace: new MeshStandardMaterial({ roughness: 0.36 }),
       lamp: new MeshStandardMaterial({ roughness: 0.4 }),
       ring: new MeshStandardMaterial({ roughness: 0.5, transparent: true, opacity: 0.85 }),
@@ -237,7 +247,7 @@ export function Turntable3D({ toolRef, engaged, dropActive }: Turntable3DProps) 
           <cylinderGeometry args={[1, 1, PLATTER_THICKNESS, 64]} />
           <primitive object={materials.vinylEdge} attach="material-0" />
           <primitive object={materials.vinylFace} attach="material-1" />
-          <primitive object={materials.vinylEdge} attach="material-2" />
+          <primitive object={materials.vinylUnder} attach="material-2" />
         </mesh>
       </group>
 

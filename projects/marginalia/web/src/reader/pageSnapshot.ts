@@ -103,18 +103,21 @@ export interface CaptureViewport {
  * to rely on. The first ancestor whose content overflows it is the scroller
  * by definition, whatever it is called.
  */
+export function findScroller(container: HTMLElement, frame: HTMLElement): HTMLElement {
+  for (let el = frame.parentElement; el; el = el.parentElement) {
+    if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) {
+      return el;
+    }
+    if (el === container) break;
+  }
+  return container;
+}
+
 export function captureViewport(
   container: HTMLElement,
   frame: HTMLElement,
 ): CaptureViewport {
-  let scroller: HTMLElement = container;
-  for (let el = frame.parentElement; el; el = el.parentElement) {
-    if (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1) {
-      scroller = el;
-      break;
-    }
-    if (el === container) break;
-  }
+  const scroller = findScroller(container, frame);
   return {
     width: Math.max(1, scroller.clientWidth),
     height: Math.max(1, scroller.clientHeight),
@@ -408,6 +411,44 @@ async function buildSnapshot(container: HTMLElement): Promise<string | null> {
   const overlays = serializeOverlays(frame);
   if (overlays) layers.push(buildOverlaySvg(viewport, overlays));
   return await rasterize(layers, viewport);
+}
+
+/**
+ * How much of `container` the snapshot does **not** cover, as a fraction of the
+ * container's own width and height on each side.
+ *
+ * The capture depicts the *scroller* — epub.js's paginated window — and that
+ * window sits inside `.marginWrapper`'s padding, which is the reading pane's
+ * own margin band (`--reader-margin`). So a snapshot is the page's **text
+ * block**, not the pane, and anything that lays it across a rect the size of
+ * the pane is silently throwing that band away.
+ *
+ * The opening did exactly that: the printed spread stretched the text block
+ * over the whole page, so a book that had just opened had type running to its
+ * very top edge where a real page has a head margin — "it would be nice if we
+ * preserved margins (particularly at the top)" (operator, 2026-08-16). With
+ * this, the printed leaf is inset by the same fraction the pane insets its own
+ * text, and the paper the book is already drawing shows through as the margin.
+ *
+ * Symmetric by construction (the wrapper's padding is one value on all four
+ * sides), so one x and one y are the whole answer. `null` when there is nothing
+ * to reach through, or when the band is too small to be worth the arithmetic —
+ * both mean "print it full bleed", which is what it did before.
+ */
+export function snapshotInset(container: HTMLElement): { x: number; y: number } | null {
+  const frame = container.querySelector("iframe");
+  if (!frame) return null;
+  const scroller = findScroller(container, frame);
+  if (scroller === container) return null;
+  const outer = container.getBoundingClientRect();
+  const inner = scroller.getBoundingClientRect();
+  if (outer.width <= 0 || outer.height <= 0) return null;
+  // Halved: `inner` is inset on both sides, and the fraction wanted is the
+  // band on *one* of them.
+  const x = (outer.width - inner.width) / 2 / outer.width;
+  const y = (outer.height - inner.height) / 2 / outer.height;
+  if (!(x >= 0) || !(y >= 0) || x >= 0.5 || y >= 0.5) return null;
+  return { x, y };
 }
 
 export async function capturePageSnapshot(container: HTMLElement): Promise<string | null> {

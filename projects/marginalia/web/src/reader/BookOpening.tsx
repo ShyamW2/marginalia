@@ -13,12 +13,13 @@ import {
 import { setDepartedBook } from "../scene3d/departedBook.js";
 import type { OpeningPose } from "../scene3d/openingPose.js";
 import { BookOpening3D } from "./BookOpening3D.js";
-import { capturePageSnapshot } from "./pageSnapshot.js";
+import { capturePageSnapshot, snapshotInset } from "./pageSnapshot.js";
 import {
   HANDOFF_DELAY_MS,
   HANDOFF_MS,
   LANDING_EASE,
   LANDING_MS,
+  ROOM_FADE_DELAY_MS,
   ROOM_FADE_MS,
   openSequenceMs,
   type Rect,
@@ -134,12 +135,23 @@ export function BookOpening({
   const [stage, setStage] = useState<Rect | null>(null);
   // A still of that pane, printed on the held-open spread — see the hold below.
   const [spreadImage, setSpreadImage] = useState<string | null>(null);
+  // The pane's margin band, as a fraction of its own box: the part of the pane
+  // the snapshot does *not* depict, and so the margin the printed leaf leaves
+  // around itself (`pageSnapshot.ts`'s `snapshotInset`).
+  const [spreadInset, setSpreadInset] = useState<{ x: number; y: number } | null>(null);
+  // The pane's aspect, measured with the capture rather than with the landing's
+  // target — the settle below needs it a beat earlier than the exact rect, and
+  // an aspect survives a resize that a rect does not.
+  const [paneAspect, setPaneAspect] = useState<number | null>(null);
 
   // The 3D layer reads these every frame; the DOM owns the sequence and the
   // object owns how it looks — the same split the Desk and the shelf use for
   // hover lift (`DeskScene3D.tsx`).
   const progress = useMotionValue(0);
   const landing = useMotionValue(0);
+  // 0 → 1 across the settle beat: the book relaxing toward the pane's
+  // proportions once the page is printed on it (`flattenTowardPane`).
+  const settle = useMotionValue(0);
 
   const sceneRef = useRef<HTMLDivElement>(null);
   // The 2D landing, driven the same way FlyPanel drives its own entrance:
@@ -162,11 +174,26 @@ export function BookOpening({
           title={title}
           progress={progress}
           landing={landing}
+          settle={settle}
           stage={stage}
+          paneAspect={paneAspect}
           spreadImage={spreadImage}
+          spreadInset={spreadInset}
         />
       ) : null,
-    [use3D, pose, resourceId, title, progress, landing, stage, spreadImage],
+    [
+      use3D,
+      pose,
+      resourceId,
+      title,
+      progress,
+      landing,
+      settle,
+      stage,
+      paneAspect,
+      spreadImage,
+      spreadInset,
+    ],
   );
   useScene3DLayer("book-opening", sceneNode);
 
@@ -237,7 +264,18 @@ export function BookOpening({
         const image = await capturePageSnapshot(target);
         if (cancelled) return;
         if (image) {
+          // Measured with the picture, and both for the same reason: what the
+          // snapshot leaves out is the pane's margin band, and what it is
+          // stretched across is a book, not a screen. The leaf is inset by the
+          // one and the book relaxes toward the other — see `snapshotInset` and
+          // `flattenTowardPane`. The exact landing rect is still taken after the
+          // settle, below, because the settle is time the pane could have been
+          // resized in.
+          const shape = target.getBoundingClientRect();
+          setSpreadInset(snapshotInset(target));
+          setPaneAspect(shape.height > 0 ? shape.width / shape.height : null);
           setSpreadImage(image);
+          animate(settle, 1, { duration: PAGE_SETTLE_MS / 1000, ease: "easeOut" });
           await new Promise((resolve) => setTimeout(resolve, PAGE_SETTLE_MS));
           if (cancelled) return;
         }
@@ -298,7 +336,10 @@ export function BookOpening({
   // canvas-wide fade below cannot be the thing that does it.
   // Memoized because the hook's effect keys on it: a fresh object every render
   // would restart the fade from full opacity on any parent render.
-  const roomFade = useMemo(() => (landed ? { to: 0, ms: ROOM_FADE_MS } : null), [landed]);
+  const roomFade = useMemo(
+    () => (landed ? { to: 0, ms: ROOM_FADE_MS, delayMs: ROOM_FADE_DELAY_MS } : null),
+    [landed],
+  );
   useScene3DLayerFade(use3D && pose ? pose.surface : null, roomFade);
 
   useScene3DFade(use3D && phase === "handoff" ? HANDOFF_MS : null);

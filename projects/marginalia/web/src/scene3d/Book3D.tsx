@@ -53,6 +53,19 @@ export interface Book3DProps {
    * animating real page content, which PAGE_CURL.md prices — is untouched.
    */
   spreadImage?: string | null;
+  /**
+   * How far in from the spread's own edges the `spreadImage` is printed, as a
+   * fraction of the whole spread's width and height — the reading pane's margin
+   * band (`reader/pageSnapshot.ts`'s `snapshotInset`), which the snapshot does
+   * not depict because epub.js paginates *inside* it.
+   *
+   * Zero (the default) prints the picture full bleed, which is what this did
+   * before and what it still does when the band cannot be measured. Anything
+   * else leaves that much of the book's own paper showing as the page's head,
+   * foot and outer margins — a page with type running to its top edge is the
+   * one thing a real book never has.
+   */
+  spreadInset?: { x: number; y: number } | null;
 }
 
 /**
@@ -99,6 +112,7 @@ export function Book3D({
   maxOpenAngle = MAX_OPEN_ANGLE,
   paperColor,
   spreadImage = null,
+  spreadInset = null,
 }: Book3DProps) {
   const texture = useCoverTexture(resourceId);
   const palette = useSpinePalette(resourceId);
@@ -209,6 +223,19 @@ export function Book3D({
   const leftPage = pageMaterials?.left ?? paperMaterial;
   const rightPage = pageMaterials?.right ?? paperMaterial;
 
+  // The margin band, in the book's own units. `spreadInset.x` is a fraction of
+  // the *whole* spread (two boards), so one board's outer margin is twice it;
+  // `spreadInset.y` is a fraction of the height, which the two leaves share.
+  // Only the printed leaf is inset — the paper it sits on is still the full
+  // board, which is what makes the band read as margin rather than as a gap.
+  // Blank paper takes no inset at all: an unprinted spread has nothing to leave
+  // a margin around, and shrinking it would show the board's own colour instead.
+  const printed = Boolean(pageMaterials);
+  const marginX = printed && spreadInset ? boardWidth * 2 * spreadInset.x : 0;
+  const marginY = printed && spreadInset ? height * spreadInset.y : 0;
+  const leafWidth = boardWidth - marginX;
+  const leafHeight = height - 2 * marginY;
+
   return (
     <group name={`book-${resourceId}`}>
       {/* Back board. */}
@@ -253,8 +280,8 @@ export function Book3D({
           left page. Realism lost to the crossfade: the last frame of this and
           the first frame of the reader have to be the same picture. */}
       {spreadOpen && (
-        <mesh key={rightPage.uuid} position={[bulge + boardWidth / 2, 0, thickness / 2 + PAGE_LIFT]}>
-          <planeGeometry args={[boardWidth, height]} />
+        <mesh key={rightPage.uuid} position={[bulge + leafWidth / 2, 0, thickness / 2 + PAGE_LIFT]}>
+          <planeGeometry args={[leafWidth, leafHeight]} />
           <primitive object={rightPage} attach="material" />
         </mesh>
       )}
@@ -294,10 +321,10 @@ export function Book3D({
         {spreadOpen && (
           <mesh
             key={leftPage.uuid}
-            position={[boardWidth / 2, 0, -(boardThickness / 2 + PAGE_LIFT)]}
+            position={[leafWidth / 2, 0, -(boardThickness / 2 + PAGE_LIFT)]}
             rotation={[0, Math.PI, 0]}
           >
-            <planeGeometry args={[boardWidth, height]} />
+            <planeGeometry args={[leafWidth, leafHeight]} />
             <primitive object={leftPage} attach="material" />
           </mesh>
         )}

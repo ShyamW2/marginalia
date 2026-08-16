@@ -3,6 +3,54 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-16 — An exception in `useFrame` is a canvas-wide outage, and a printed page keeps its margins
+
+Three things, from the operator's fifth review of the opening ("the transition where it
+zooms in has disappeared"; "it already looks slightly vertically stretched, maybe we can
+reduce the vertical stretch a tad to preserve top margins").
+
+1. **A thrown frame callback stops the whole shared canvas, not one layer.** The landing's
+   room fade walks every material under the layer it is fading (`Scene3D.tsx`'s
+   `FadingLayer` — three.js has no group opacity). `mesh.material` is an *array* on a
+   multi-material mesh, and R3F leaves a **hole** in that array if the same material object
+   is attached to two of one mesh's slots — which the turntable's record did
+   (`vinylEdge` on `material-0` and `material-2`, measured `[null, face, edge]`). Reading
+   `.opacity` off the hole threw, inside `useFrame`, and R3F's render loop stopped for the
+   entire canvas: the book froze mid-air at its held-open size while the DOM went on
+   running the landing's clock underneath it, so the zoom onto the reading pane never drew
+   a single frame. Two rules out of it, both now in code: **a traversal over materials it
+   did not author owes a null check**, and **no material object is attached to two slots of
+   one mesh**. The second is the cause; the first is why the cause was survivable-looking
+   (the record's rim had been drawing in three.js's default white the whole time and nobody
+   had noticed).
+   *The general lesson is the one worth carrying:* on the one shared canvas, a fault in any
+   consumer is an outage in **all** of them, and it presents as "the animation is gone"
+   rather than as an error anyone sees. The console had the exception; the screenshots did
+   not.
+
+2. **The room leaves inside the zoom's window, not across it.** `ROOM_FADE_MS` was the
+   landing's full 850ms, which put the desk's last visible frames under the moment the
+   spread arrives on the pane. It is now `10% → 60%` of the landing (`ROOM_FADE_DELAY_MS`
+   plus a halved `ROOM_FADE_MS`, both fractions of `LANDING_MS` so the clocks cannot
+   drift): the spread gets its first tenth of growth against the room it is leaving —
+   a zoom needs something to be read against — and the last 40% happens over nothing but
+   the reader's own paper. `LayerFade` grew a `delayMs` for it.
+
+3. **The snapshot is the page's text block, not the pane.** `capturePageSnapshot`
+   depicts the *scroller*, which sits inside `.marginWrapper`'s padding, and the opening
+   was stretching it across the whole spread — so a book that had just opened had type
+   running to its very top edge, where a real page has a head margin. `snapshotInset` now
+   reports that band and `Book3D` insets the printed leaf by it, leaving the book's own
+   paper showing as the margin. The landing is unaffected: the *board* still lands on the
+   pane's rect, and the printed leaf inside it lands on the pane's text block, which makes
+   the final crossfade agree about more than it did before, not less.
+   The residual stretch is not a bug and cannot be fixed in the texture: a spread is about
+   1.33 wide and a reading pane was measured at 1.94, and cropping to the right aspect
+   would cut the sides off each page — breaking the one property the crossfade rests on.
+   So the open book **flattens toward the pane's proportions** instead
+   (`flattenTowardPane`), partially (half the mismatch) and floored (never past 0.82), over
+   the settle beat that already existed and previously did nothing. "A tad" was the brief.
+
 ## 2026-08-14 — Search: one result set, two views (the M24 design pass)
 
 M24's four open questions, answered. The milestone is now an implementation milestone;

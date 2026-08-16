@@ -5770,3 +5770,76 @@ Headless Chromium + SwiftShader, real fixture books, 1440×900:
 The operator's own judgement on the pacing (1.9s / 2.5s / 0.85s), which is the whole point
 of the exercise, and on whether the printed spread reads as charming or as a screenshot
 glued to a book. Both are in §E's Verify box, unticked.
+
+## M23 §E.3 — the zoom that was never drawn — 2026-08-16
+
+The operator's fifth review of the opening: the zoom onto the reading pane "has
+disappeared", and the page printed on the held-open book "already looks slightly
+vertically stretched … reduce the vertical stretch a tad to preserve top margins".
+
+### The zoom was running perfectly and nothing was drawing it
+
+Worth writing down because every instinct was wrong. The DOM half of the landing was
+provably fine — the motion value went 0 → 1 over its 850ms, on its curve, and the handoff
+fired 760ms in exactly as designed. What never happened was a **frame**: `BookOpening3D`'s
+`useFrame` logged zero calls for the whole landing, having logged them normally up to that
+point.
+
+The cause was in a different consumer of the shared canvas entirely. `FadingLayer` walks
+every material under the layer it is fading (three.js has no group opacity), the desk layer
+contains the turntable, and the turntable's record attaches **one** `MeshStandardMaterial`
+object to two slots of one mesh. R3F's attach bookkeeping leaves the first slot `null` when
+that happens — measured `[null, vinylFace, vinylEdge]` — and `base = { opacity:
+material.opacity }` on the hole throws. Inside `useFrame`, that stops R3F's render loop for
+the **entire canvas**.
+
+So: the room stopped fading, the book stopped moving, and the reader arrived on schedule
+over a frozen photograph of a desk with a small book on it. Nothing in the screenshots said
+"exception" — it looked exactly like a missing animation, which is why the previous pass
+went hunting in the timings.
+
+**The rule this leaves:** on one shared canvas, a fault in any consumer is an outage in
+*all* of them, and it presents as "the animation is gone". Check the console before the
+easing curves. The traversal now skips empty slots, and the turntable's rim and underside
+get an instance each — which also fixed a thing nobody had reported, the record's rim
+having been drawn in three.js's default white since §C.
+
+### The snapshot was never the pane
+
+`capturePageSnapshot` depicts the **scroller** — epub.js's paginated window — and that sits
+inside `.marginWrapper`'s padding. The opening was stretching it across the whole spread,
+so the printed page had no head margin at all where the pane has ~6% of its height. That is
+the operator's "preserve margins (particularly at the top)", and it was a real defect
+rather than a taste note. `snapshotInset` reports the band; `Book3D` insets the printed leaf
+by it and lets the book's own paper be the margin. The *board* still lands on the pane's
+rect, so the landing is untouched and the crossfade now agrees about the margins too.
+
+### The stretch is geometry, and could not be fixed in the texture
+
+A spread is about 1.33 wide; the reading pane measured 1.94. Printing one on the other
+stretches type vertically by half again, and no UV trick fixes it — cropping to the right
+aspect means cutting the sides off each page, which breaks the property the final crossfade
+rests on (the spread and the pane are the same picture). So the open book flattens *toward*
+the pane's proportions: `flattenTowardPane`, half the mismatch, floored at 0.82, ramped over
+the 260ms settle beat that already existed and previously did nothing. It is applied
+**before** the landing's lerp, so it changes where the zoom starts and never where it ends —
+asserted, not assumed.
+
+### The room's window
+
+`ROOM_FADE_MS` ran the landing's whole 850ms. Now `10% → 60%` of it, per the operator's own
+numbers, both as fractions of `LANDING_MS`. The spread gets its first tenth of growth
+against the room it is leaving, and the last 40% happens over the reader's paper alone.
+
+### Verified live
+Headless Chromium + SwiftShader, real fixture books, 1440×900, and **with `pageerror`
+captured** — which is the change to how this gets verified, given the above:
+- **Desk:** the held-open book now shows paper margins around the printed page and sits
+  slightly flatter; the spread then grows onto the pane while the desk washes out and is
+  gone by the time it is two thirds of the way there; settled state is the reader.
+- **Shelf:** same, off the shelf's own approach.
+- Zero page errors across both runs (there were eight per landing before).
+
+### Not signed off here
+The operator's own judgement on how much flattening is "a tad" (`SPREAD_FLATTEN` /
+`SPREAD_FLATTEN_FLOOR` are one constant each), and on the new margin.
