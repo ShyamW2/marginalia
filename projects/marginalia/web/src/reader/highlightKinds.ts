@@ -82,3 +82,25 @@ export function audioTintStyle(
     "mix-blend-mode": isDark ? "screen" : "multiply",
   };
 }
+
+/**
+ * M24: a find-bar match. "Distinguishable from the others, without
+ * borrowing any of the four highlight-kind hues — a search hit is not a
+ * highlight" (TASKS.md M24 A). Reuses `--color-highlight`/`-active`, the
+ * same pair the app's own controls already use for hover/pressed states
+ * (registers.css), rather than inventing a fifth hue: `current` gets the
+ * stronger of the two, every other match on the page gets the quieter one.
+ */
+export function searchMarkStyle(
+  vars: { highlight: string; highlightActive: string; colorScheme: "light" | "dark" },
+  current: boolean,
+  hidden = false,
+): Record<string, string> {
+  if (hidden) return { fill: "transparent", "fill-opacity": "0" };
+  const isDark = vars.colorScheme === "dark";
+  return {
+    fill: current ? vars.highlightActive : vars.highlight,
+    "fill-opacity": current ? "1" : isDark ? "0.55" : "0.6",
+    "mix-blend-mode": isDark ? "screen" : "multiply",
+  };
+}

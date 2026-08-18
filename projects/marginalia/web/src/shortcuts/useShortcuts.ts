@@ -16,6 +16,11 @@ export interface ShortcutBinding {
    * lets "f" and "shift+f" (focus mode vs. fullscreen) coexist as separate
    * bindings in the same scope. */
   shift?: boolean;
+  /** M24: Cmd (Mac) or Ctrl (elsewhere) required — every other binding in
+   * this registry explicitly rejects both (a plain letter shortcut must
+   * never fire under a Cmd/Ctrl chord meant for the browser or OS), so this
+   * is its own opt-in rather than a third state on some existing flag. */
+  meta?: boolean;
   handler: (event: KeyboardEvent) => void;
   /** Fire even while focus is in a text input/textarea/contentEditable.
    * Default false — almost every existing shortcut ("f", "[", arrows) is a
@@ -47,8 +52,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
 function matches(binding: ShortcutBinding, event: KeyboardEvent): boolean {
   if (event.key.toLowerCase() !== binding.key.toLowerCase()) return false;
   if (binding.shift !== undefined && event.shiftKey !== binding.shift) return false;
-  if (event.metaKey || event.ctrlKey || event.altKey) return false;
-  return true;
+  if (event.altKey) return false;
+  if (binding.meta) return event.metaKey || event.ctrlKey;
+  return !event.metaKey && !event.ctrlKey;
 }
 
 /**

@@ -15,3 +15,11 @@ if (typeof window !== "undefined" && !window.matchMedia) {
     dispatchEvent: () => false,
   }) as unknown as MediaQueryList;
 }
+
+// jsdom implements no scrolling at all, so `Element.scrollIntoView` is
+// simply absent — the search result card calls it to keep the stepped hit
+// visible (M24.1 D). A no-op is enough: no test asserts on scroll position,
+// only that a component using it mounts and updates.
+if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}

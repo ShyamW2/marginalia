@@ -56,6 +56,26 @@ export function panByViewFraction(state: ZoomState, fraction: number): ZoomState
   return { zoom: state.zoom, pan: clampPan(state.pan + fraction * viewWidth, state.zoom) };
 }
 
+/**
+ * Adjusts `pan` (never `zoom`) so `domainFraction` lands inside the current
+ * view, with a small margin — the find cursor's own auto-pan (TASKS.md
+ * M24 C: "the strip auto-pans to keep the cursor in view"). A no-op both
+ * when the fraction is already visible and at the default zoom (`clampPan`
+ * forces `pan` to 0 whenever the whole domain already fits).
+ */
+export function panToReveal(state: ZoomState, domainFraction: number, margin = 0.05): ZoomState {
+  const viewWidth = 1 / state.zoom;
+  const marginFraction = Math.min(viewWidth / 2, viewWidth * margin);
+  const viewStart = state.pan + marginFraction;
+  const viewEnd = state.pan + viewWidth - marginFraction;
+  if (domainFraction >= viewStart && domainFraction <= viewEnd) return state;
+  const pan =
+    domainFraction < viewStart
+      ? domainFraction - marginFraction
+      : domainFraction - viewWidth + marginFraction;
+  return { zoom: state.zoom, pan: clampPan(pan, state.zoom) };
+}
+
 /** Raw domain fraction (0-1) -> position within the current view (0-1),
  * before the barrel warp. Composes with warp.ts by feeding its result (in
  * strip px) into `warpPoint` — this function only handles the zoom/pan

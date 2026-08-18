@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { SearchHit } from "@marginalia/shared";
+import { containsMatch, findAllOccurrences, type SearchHit, type SearchMatchMode } from "@marginalia/shared";
 import { getResourceById, getResourceTextSections } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "./highlights.js";
 import { listMessagesForThread } from "./threads.js";
@@ -30,32 +30,21 @@ function snippetAround(text: string, start: number, end: number): string {
   return `${ellipsisBefore}${text.slice(from, to)}${ellipsisAfter}`;
 }
 
-/** Every non-overlapping, case-insensitive occurrence of `query` in `text`. */
-function findAllOccurrences(text: string, query: string): { start: number; end: number }[] {
-  if (query.length === 0) return [];
-  const haystack = text.toLowerCase();
-  const needle = query.toLowerCase();
-  const hits: { start: number; end: number }[] = [];
-  let from = 0;
-  for (;;) {
-    const index = haystack.indexOf(needle, from);
-    if (index === -1) break;
-    hits.push({ start: index, end: index + query.length });
-    from = index + query.length;
-  }
-  return hits;
-}
-
 /**
- * Book-text hits: every literal occurrence of `query`, found by scanning
- * `resource_text` directly — independent of whether any of it is also
- * highlighted (that's the annotation pass below; a phrase can produce both).
+ * Book-text hits: every occurrence of `query` under the matching rule,
+ * found by scanning `resource_text` directly — independent of whether any of
+ * it is also highlighted (that's the annotation pass below; a phrase can
+ * produce both).
+ *
+ * The occurrence scan itself is `@marginalia/shared`'s (M24.1 C): the reader
+ * re-finds these same occurrences in the live rendered DOM, and a rule that
+ * lived only here would mean the two counted different things.
  */
-function textHits(index: SectionOffsetIndex, query: string): SearchHit[] {
+function textHits(index: SectionOffsetIndex, query: string, mode: SearchMatchMode): SearchHit[] {
   const hits: SearchHit[] = [];
   for (const section of index.sections) {
     const preceding = index.precedingLength.get(section.spineIndex) ?? 0;
-    for (const occurrence of findAllOccurrences(section.text, query)) {
+    for (const occurrence of findAllOccurrences(section.text, query, mode)) {
       const { prefix, suffix } = contextAround(section.text, occurrence.start, occurrence.end);
       const globalOffset = preceding + occurrence.start;
       hits.push({
@@ -87,8 +76,8 @@ function annotationHits(
   resourceId: string,
   index: SectionOffsetIndex,
   query: string,
+  mode: SearchMatchMode,
 ): SearchHit[] {
-  const needle = query.toLowerCase();
   const hits: SearchHit[] = [];
 
   for (const highlight of listHighlightsWithThreadsForResource(db, resourceId)) {
@@ -107,16 +96,16 @@ function annotationHits(
       highlightId: highlight.id,
     };
 
-    if (highlight.exact.toLowerCase().includes(needle)) {
+    if (containsMatch(highlight.exact, query, mode)) {
       hits.push({ ...base, source: "highlight", snippet: highlight.exact });
     }
 
-    if (highlight.note && highlight.note.toLowerCase().includes(needle)) {
-      const at = highlight.note.toLowerCase().indexOf(needle);
+    const noteMatch = highlight.note ? findAllOccurrences(highlight.note, query, mode)[0] : undefined;
+    if (highlight.note && noteMatch) {
       hits.push({
         ...base,
         source: "note",
-        snippet: snippetAround(highlight.note, at, at + query.length),
+        snippet: snippetAround(highlight.note, noteMatch.start, noteMatch.end),
       });
     }
 
@@ -125,12 +114,12 @@ function annotationHits(
       // real gap (TASKS.md M24 B): a question asked three messages deep was
       // never findable before.
       for (const message of listMessagesForThread(db, highlight.thread.id)) {
-        const at = message.content.toLowerCase().indexOf(needle);
-        if (at === -1) continue;
+        const match = findAllOccurrences(message.content, query, mode)[0];
+        if (!match) continue;
         hits.push({
           ...base,
           source: "thread",
-          snippet: snippetAround(message.content, at, at + query.length),
+          snippet: snippetAround(message.content, match.start, match.end),
         });
       }
     }
@@ -140,17 +129,25 @@ function annotationHits(
 }
 
 /**
- * `GET /api/resources/:id/search?q=` (SPEC.md "HTTP API"): one book's text
- * and its annotations, ordered by position in the book, undefined when the
- * resource doesn't exist. Deliberately without FTS5 (M28's job, not this
- * milestone's — TASKS.md B) and without a new anchoring model — every hit's
- * anchor round-trips through `findAnchorInText`, which is how it becomes a
- * painted mark in the reader and a band on the Scan.
+ * `GET /api/resources/:id/search?q=&mode=` (SPEC.md "HTTP API"): one book's
+ * text and its annotations, ordered by position in the book, undefined when
+ * the resource doesn't exist. Deliberately without FTS5 (M28's job, not this
+ * milestone's — TASKS.md B) and without a new anchoring model.
+ *
+ * How a hit becomes a painted mark, amended by M24.1 C: an *annotation* hit
+ * still round-trips through `findAnchorInText`, which is the forgiving
+ * re-locate a highlight needs. A *text* hit no longer does — its anchor is
+ * one occurrence among many identical ones, and a forgiving search collapses
+ * every one of them onto the first. The reader re-finds text hits by
+ * occurrence instead (web/src/search/hitLocation.ts), using the same
+ * matching rule this scanned with, which is why `mode` travels with the
+ * query rather than being a server-side preference.
  */
 export function searchResource(
   db: Database.Database,
   resourceId: string,
   query: string,
+  mode: SearchMatchMode = "word",
 ): SearchHit[] | undefined {
   const resource = getResourceById(db, resourceId);
   if (!resource) return undefined;
@@ -161,7 +158,10 @@ export function searchResource(
   const sections = getResourceTextSections(db, resourceId);
   const index = buildSectionOffsetIndex(sections);
 
-  const hits = [...textHits(index, trimmed), ...annotationHits(db, resourceId, index, trimmed)];
+  const hits = [
+    ...textHits(index, trimmed, mode),
+    ...annotationHits(db, resourceId, index, trimmed, mode),
+  ];
   hits.sort((a, b) => (a.spineIndex !== b.spineIndex ? a.spineIndex - b.spineIndex : a.offset - b.offset));
   return hits;
 }

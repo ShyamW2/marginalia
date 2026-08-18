@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
-import type { ReaderPaneWidth, Resource, Settings, SpreadMode } from "@marginalia/shared";
+import type {
+  ReaderPaneWidth,
+  Resource,
+  SearchMatchMode,
+  Settings,
+  SpreadMode,
+} from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
@@ -29,6 +35,12 @@ interface ReaderLocationState {
    * listening once the book is open, same "captured once at mount" story
    * as the other two fields above. */
   listenOnOpen?: boolean;
+  /** M24: the Scan's own search cursor opening the reader on a specific hit
+   * — the reverse of `onFindHandoffToScan` below. `jumpToFindHitIndex` is
+   * only meaningful alongside `jumpToFindQuery`. */
+  jumpToFindQuery?: string;
+  jumpToFindHitIndex?: number;
+  jumpToFindMatchMode?: SearchMatchMode;
 }
 
 interface ReaderPageProps {
@@ -143,18 +155,40 @@ export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }:
       });
   }, [id]);
 
-  function openScanFrom(el: Element) {
+  function openScanFrom(
+    el: Element,
+    extra?: { findQuery?: string; findCursorHitIndex?: number; findMatchMode?: SearchMatchMode },
+  ) {
     if (!id) return;
     // M20.5 "the Scan becomes a popup": flies in from the control that
     // opened it — the same background-location pattern Settings already
     // uses, not the old Book<->Scan airlock (decisions.md 2026-07-30:
     // there's no longer a room to travel to).
     setPendingOverlayOrigin(captureOverlayOrigin(el));
-    navigate(`/scan/${id}`, { state: { background: location } });
+    navigate(`/scan/${id}`, { state: { background: location, ...extra } });
   }
 
   function handleOpenScan(event: MouseEvent<HTMLElement>) {
     openScanFrom(event.currentTarget);
+  }
+
+  // M24: the find bar's "see in Scan" affordance — never invoked any other
+  // way (TASKS.md M24 A: "not the default and not automatic"). Flies in from
+  // the same Scan button a plain `q` press would, since there's no click
+  // target for this keyboard-driven handoff either.
+  function handleFindHandoffToScan(
+    query: string,
+    cursorHitIndex: number,
+    matchMode: SearchMatchMode,
+  ) {
+    if (!scanButtonRef.current) return;
+    openScanFrom(scanButtonRef.current, {
+      findQuery: query,
+      findCursorHitIndex: cursorHitIndex,
+      // M24.1 C: the rule travels with the query, or the Scan re-searches
+      // under a different one and the "one result set" stops being one.
+      findMatchMode: matchMode,
+    });
   }
 
   // M20.5 "the Digest becomes a popup too": the exact same background-
@@ -277,6 +311,10 @@ export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }:
             scanButtonRef={scanButtonRef}
             digestButtonRef={digestButtonRef}
             stageRef={readerStageRef}
+            initialFindQuery={initialLocationState?.jumpToFindQuery}
+            initialFindHitIndex={initialLocationState?.jumpToFindHitIndex}
+            initialFindMatchMode={initialLocationState?.jumpToFindMatchMode}
+            onFindHandoffToScan={handleFindHandoffToScan}
           />
         </div>
       )}

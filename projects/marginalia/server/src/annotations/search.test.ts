@@ -182,4 +182,45 @@ describe("searchResource", () => {
     searchResource(db, "res-1", "target");
     expect(resourceTextReads).toBe(1);
   });
+
+  // M24.1 C: "decide the matching rule; substring is why 'the' blankets a
+  // paragraph".
+  it("matches whole words by default, so 'the' stops matching other/there/father", () => {
+    seedResource(db, "res-1");
+    seedSection(db, "res-1", 0, "there, the other father said the truth");
+
+    const hits = searchResource(db, "res-1", "the")!;
+    expect(hits).toHaveLength(2);
+    expect(hits.map((h) => h.offset)).toEqual([7, 29]);
+  });
+
+  it("still matches substrings when asked to explicitly", () => {
+    seedResource(db, "res-1");
+    seedSection(db, "res-1", 0, "there, the other father said the truth");
+
+    expect(searchResource(db, "res-1", "the", "substring")!).toHaveLength(5);
+  });
+
+  it("applies the same rule to notes and threads as to book text", () => {
+    seedResource(db, "res-1");
+    seedSection(db, "res-1", 0, "a quoted passage sits here in the book");
+
+    const highlight = createHighlight(db, {
+      resourceId: "res-1",
+      exact: "quoted passage",
+      prefix: "a ",
+      suffix: " sits",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose",
+    });
+    setHighlightNote(db, highlight.id, "a note about fathers");
+    const thread = createThread(db, highlight.id);
+    createMessage(db, thread.id, "user", "why fathers?");
+
+    // "father" is inside "fathers" — a substring match, not a word one.
+    expect(searchResource(db, "res-1", "father")!).toEqual([]);
+    const substringHits = searchResource(db, "res-1", "father", "substring")!;
+    expect(substringHits.map((h) => h.source).sort()).toEqual(["note", "thread"]);
+  });
 });

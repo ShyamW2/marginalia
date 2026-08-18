@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import type { SearchMatchMode } from "@marginalia/shared";
 import { motion, useReducedMotion } from "motion/react";
 import { FlyPanel } from "../controls/FlyPanel.js";
 import { IconButton } from "../controls/IconButton.js";
@@ -11,6 +12,11 @@ import styles from "./ScanOverlay.module.css";
 interface ScanOverlayProps {
   resourceId: string;
   onClose: () => void;
+  /** M24: the reader find bar's "see in Scan" handoff — see ScanPage's own
+   * prop for the full story. */
+  initialQuery?: string;
+  initialCursorHitIndex?: number;
+  initialMatchMode?: SearchMatchMode;
 }
 
 /**
@@ -21,7 +27,13 @@ interface ScanOverlayProps {
  * that's new: a frame that must never enter the warp filter's ancestor
  * chain, so it sits here, outside `ScanPage`'s own warped wrapper.
  */
-export function ScanOverlay({ resourceId, onClose }: ScanOverlayProps) {
+export function ScanOverlay({
+  resourceId,
+  onClose,
+  initialQuery,
+  initialCursorHitIndex,
+  initialMatchMode,
+}: ScanOverlayProps) {
   const reducedMotion = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
   const [origin] = useState<OverlayOrigin | null>(() => readPendingOverlayOrigin());
@@ -57,7 +69,13 @@ export function ScanOverlay({ resourceId, onClose }: ScanOverlayProps) {
             className={styles.closeButton}
             onClick={onClose}
           />
-          <ScanPage resourceId={resourceId} onClose={onClose} />
+          <ScanPage
+            resourceId={resourceId}
+            onClose={onClose}
+            initialQuery={initialQuery}
+            initialCursorHitIndex={initialCursorHitIndex}
+            initialMatchMode={initialMatchMode}
+          />
         </CrtBezel>
       </FlyPanel>
     </motion.div>

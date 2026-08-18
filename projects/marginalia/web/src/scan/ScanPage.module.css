@@ -233,13 +233,53 @@
   font-size: 0.9rem;
 }
 
+/* M24 C "the search field becomes the Scan's primary control — large and
+   prominent, in the spirit of macOS Spotlight... visually of a piece with
+   the reader's find bar": its own row above the kind/tag/theme filters,
+   not one more item competing for space inside them. */
+.searchRow {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
 .searchInput {
   flex: 1;
   min-width: 160px;
+  font-size: 1.05rem;
+  padding: 0.55rem 0.9rem;
 }
 
 .searchInput::placeholder {
   color: var(--color-text-muted);
+}
+
+.searchStatus {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  min-width: 5.5rem;
+  text-align: right;
+}
+
+/* M24.1 C: the matching rule, stated on the Scan's own search field too —
+   the same words as the reader's find bar, in this surface's register. */
+.searchRule {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.searchRule input {
+  accent-color: var(--color-accent);
+  cursor: pointer;
 }
 
 .stripSection {

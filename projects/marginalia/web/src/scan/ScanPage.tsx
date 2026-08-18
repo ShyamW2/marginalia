@@ -7,12 +7,16 @@ import type {
   HighlightKind,
   ScanData,
   ScanHighlight,
+  SearchHit,
+  SearchMatchMode,
 } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { updateHighlightImportance, updateHighlightTags } from "../highlights/highlightMeta.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
+import { stepFindCursor } from "../search/findCursor.js";
+import { useSearchHits } from "../search/useSearchHits.js";
 import { DigestSpotlight } from "./DigestSpotlight.js";
 import { HeatStrip } from "./HeatStrip.js";
 import { RevisitQueue } from "./RevisitQueue.js";
@@ -66,6 +70,15 @@ interface ScanPageProps {
    * overlay, revealing whatever room was behind it — wired to Escape below
    * and to ScanOverlay's own × button, exactly like SettingsModal's onClose. */
   onClose: () => void;
+  /** M24: the reader find bar's "see in Scan" handoff — seeds the search
+   * field and jumps the cursor to the same hit once results resolve, so the
+   * two surfaces agree on query, hit count and cursor from the first frame
+   * (TASKS.md M24 A acceptance). */
+  initialQuery?: string;
+  initialCursorHitIndex?: number;
+  /** M24.1 C: the matching rule the handed-off result set was produced
+   * with — arriving with the query so both surfaces count the same set. */
+  initialMatchMode?: SearchMatchMode;
 }
 
 /**
@@ -75,7 +88,13 @@ interface ScanPageProps {
  * uses, so the strip renders instantly even for a book that's never been
  * opened this session.
  */
-export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
+export function ScanPage({
+  resourceId: id,
+  onClose,
+  initialQuery,
+  initialCursorHitIndex,
+  initialMatchMode,
+}: ScanPageProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const reducedMotion = Boolean(useReducedMotion());
@@ -85,7 +104,36 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
   const [filterKind, setFilterKind] = useState<HighlightKind | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [filterTheme, setFilterTheme] = useState<string | null>(null);
-  const [searchText, setSearchText] = useState("");
+  // M24 C: "the search field becomes the Scan's primary control" — one text
+  // box, wired to the same server-side search the reader's find bar uses
+  // (useSearchHits), still composing with the kind/tag/theme filters below
+  // exactly as the old client-side substring match did (see `litIds`).
+  const [searchText, setSearchText] = useState(initialQuery ?? "");
+  // M24.1 C: whole words by default here too — one rule, named on both
+  // surfaces, arriving with a handoff rather than being re-chosen.
+  const [matchMode, setMatchMode] = useState<SearchMatchMode>(initialMatchMode ?? "word");
+  const { hits: searchHits, loading: searchLoading } = useSearchHits(
+    searchText.trim() ? id : null,
+    searchText,
+    matchMode,
+  );
+  const [searchCursorIndex, setSearchCursorIndex] = useState(-1);
+  useEffect(() => {
+    setSearchCursorIndex(-1);
+  }, [searchHits]);
+  // M24 A/C: the reader find bar's own handoff — consumed once, the same
+  // "captured once at mount" story as ReaderPage's initialLocationState.
+  const initialCursorConsumedRef = useRef(false);
+  useEffect(() => {
+    if (initialCursorHitIndex === undefined || initialCursorConsumedRef.current) return;
+    if (searchHits.length === 0) return;
+    initialCursorConsumedRef.current = true;
+    setSearchCursorIndex(Math.min(initialCursorHitIndex, searchHits.length - 1));
+  }, [searchHits, initialCursorHitIndex]);
+  const searchHitHighlightIds = useMemo(
+    () => new Set(searchHits.map((h) => h.highlightId).filter((hid): hid is string => hid !== null)),
+    [searchHits],
+  );
   const [crtIntensity, setCrtIntensity] = useState(0.6);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleChoice>("custom");
   const [spotlightOpen, setSpotlightOpen] = useState(false);
@@ -185,6 +233,26 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
     navigate(`/read/${id}`, { state: { jumpToHighlightId: highlight.id } });
   }
 
+  // M24 C: the search cursor steps inside the Scan; Enter is what opens the
+  // reader (decisions.md 2026-08-14 point 4 — stepping never drives the
+  // reader live underneath). Goes through `jumpToFindQuery`/
+  // `jumpToFindHitIndex` rather than `jumpToHighlightId`: a "text" source
+  // hit has no highlight to jump to at all, and this way the reader lands
+  // on the exact same ordered hit either kind produces.
+  function handleStepSearchCursor(direction: "next" | "prev") {
+    setSearchCursorIndex((prev) => stepFindCursor(prev, searchHits.length, direction));
+  }
+
+  function handleOpenSearchHit(_hit: SearchHit) {
+    navigate(`/read/${id}`, {
+      state: {
+        jumpToFindQuery: searchText.trim(),
+        jumpToFindHitIndex: searchCursorIndex,
+        jumpToFindMatchMode: matchMode,
+      },
+    });
+  }
+
   /**
    * M19.5 "book bands click through to the chapter start" (decisions.md
    * 2026-07-29 later): reuses the same chapter-anchor endpoint the digest
@@ -245,22 +313,23 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
   const filtersActive =
     filterKind !== null || filterTag !== null || filterTheme !== null || searchText.trim() !== "";
 
+  // M24 C: the query half moved server-side (searchHitHighlightIds, above)
+  // — full thread bodies and notes are searched there now, not just
+  // threadFirstLine — but composes with kind/tag/theme exactly as it did
+  // when it was a local substring match (TASKS.md acceptance).
   const litIds = useMemo(() => {
     if (!data || !filtersActive) return null;
-    const needle = searchText.trim().toLowerCase();
+    const hasQuery = searchText.trim() !== "";
     const set = new Set<string>();
     for (const h of data.highlights) {
       if (filterKind && h.kind !== filterKind) continue;
       if (filterTag && !h.tags.includes(filterTag)) continue;
       if (filterTheme && !h.themes.includes(filterTheme)) continue;
-      if (needle) {
-        const haystack = `${h.exact} ${h.note} ${h.threadFirstLine ?? ""}`.toLowerCase();
-        if (!haystack.includes(needle)) continue;
-      }
+      if (hasQuery && !searchHitHighlightIds.has(h.id)) continue;
       set.add(h.id);
     }
     return set;
-  }, [data, filterKind, filterTag, filterTheme, searchText, filtersActive]);
+  }, [data, filterKind, filterTag, filterTheme, searchText, searchHitHighlightIds, filtersActive]);
 
   const pageClassName = `${styles.page} register-glass${
     cursorStyle === "system" ? ` ${styles.systemCursor}` : ""
@@ -330,6 +399,37 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
           <DigestSpotlight resourceId={id} chapters={data.chapters} onClose={() => setSpotlightOpen(false)} />
         )}
 
+        {/* M24 C: the Scan's primary control — searches the book's own text
+            as well as annotations (the server does both now), composing
+            with the kind/tag/theme filters below exactly as the old local
+            substring match did. */}
+        <div className={styles.searchRow}>
+          <input
+            type="search"
+            className={styles.searchInput}
+            placeholder="Search the book and your annotations…"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            aria-label="Search the book and your annotations"
+          />
+          <span className={styles.searchStatus} aria-live="polite">
+            {searchText.trim() === ""
+              ? ""
+              : searchLoading
+                ? "Searching…"
+                : `${searchHits.length} result${searchHits.length === 1 ? "" : "s"}`}
+          </span>
+          {/* M24.1 C: "whichever is chosen, say it in the UI." */}
+          <label className={styles.searchRule}>
+            <input
+              type="checkbox"
+              checked={matchMode === "word"}
+              onChange={(e) => setMatchMode(e.target.checked ? "word" : "substring")}
+            />
+            Whole word
+          </label>
+        </div>
+
         <div className={styles.readouts}>
           <div className={styles.readoutTile}>
             <div className={styles.readoutLabel}>Highlights</div>
@@ -394,15 +494,6 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
               ))}
             </select>
           )}
-
-          <input
-            type="search"
-            className={styles.searchInput}
-            placeholder="Search quotes and threads…"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            aria-label="Search highlights"
-          />
         </div>
 
         {/* M19.5 "the semantic scan: two layers" (decisions.md 2026-07-29
@@ -474,6 +565,10 @@ export function ScanPage({ resourceId: id, onClose }: ScanPageProps) {
               onOpen={handleOpenHighlight}
               onImportanceChange={handleImportanceChange}
               onTagsChange={handleTagsChange}
+              searchHits={searchHits}
+              searchCursorIndex={searchCursorIndex}
+              onStepSearchCursor={handleStepSearchCursor}
+              onOpenSearchHit={handleOpenSearchHit}
             />
           )}
         </div>

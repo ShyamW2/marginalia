@@ -27,6 +27,8 @@ import {
   type ReaderMargin,
   type ReaderPaneWidth,
   type ReadingPosition,
+  type SearchHit,
+  type SearchMatchMode,
   type Settings,
   type SpreadMode,
   type ThreadSummary,
@@ -47,7 +49,13 @@ import { IconButton } from "../controls/IconButton.js";
 import { Slider } from "../controls/Slider.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
-import { audioTintStyle, hoverFillOpacity, markStyleForKind } from "./highlightKinds.js";
+import { audioTintStyle, hoverFillOpacity, markStyleForKind, searchMarkStyle } from "./highlightKinds.js";
+import { FindBar } from "./FindBar.js";
+import { useSearchHits } from "../search/useSearchHits.js";
+import { hitsForSection, stepFindCursor } from "../search/findCursor.js";
+import { locateTextHits } from "../search/hitLocation.js";
+import { SearchResultsCard } from "../search/SearchResultsCard.js";
+import { buildSearchResultRows, buildSectionSpans, type SectionSpan } from "../search/searchRows.js";
 import { usePlayer, type AudioPlayer } from "../audio/usePlayer.js";
 import { fetchSectionManifest, updateAudioState } from "../audio/audioApi.js";
 import { resolveSegmentIndexForOffset } from "../audio/segmentLookup.js";
@@ -117,6 +125,12 @@ const POSITION_SAVE_DEBOUNCE_MS = 600;
 const LOCATIONS_CHAR_STEP = 1600;
 const SELECTION_CONTEXT_MAX_LEN = 64;
 const HIGHLIGHT_MARK_CLASS = "marginalia-highlight";
+// M24: the find bar's own mark class — never shares cfiOwnersRef's highlight
+// ownership bookkeeping (a search mark and a highlight mark can legitimately
+// coexist at the same CFI, same precedent as AUDIO_TINT_MARK_CLASS below)
+// and is cleared as a whole rather than diffed, so a repaint is always
+// "remove everything this class owns, then draw the current set".
+const SEARCH_MARK_CLASS = "marginalia-search-mark";
 // M19.6 "hover emphasises without obscuring" (decisions.md 2026-07-30): the
 // original bug was switching to mix-blend-mode: normal at a near-opaque fill,
 // which turns the wash into paint. Every pass since has stayed in the kind's
@@ -410,6 +424,25 @@ interface ReaderViewProps {
    * only `ReaderPage` (the real book-opening flow) passes one.
    * `MutableRefObject`, not `RefObject`: this component writes to it. */
   stageRef?: MutableRefObject<HTMLDivElement | null>;
+  /** M24 "the reader never hands off to the Scan on its own" — the other
+   * direction does exist: the Scan's own search cursor opens the reader
+   * through this, the same `jumpToHighlightId` airlock's sibling for a hit
+   * that may not be a highlight at all. Opens the find bar pre-filled and
+   * jumps straight to that hit once its own search request resolves. */
+  initialFindQuery?: string;
+  initialFindHitIndex?: number;
+  /** M24.1 C: the matching rule arrives with the query, so a handoff from
+   * the Scan lands on the same result set it was looking at rather than
+   * silently re-searching under a different rule. */
+  initialFindMatchMode?: SearchMatchMode;
+  /** Carries the find bar's live query, matching rule and cursor to the Scan
+   * when the reader's "see in Scan" affordance fires — never called any
+   * other way (TASKS.md M24 A: "not the default and not automatic"). */
+  onFindHandoffToScan?: (
+    query: string,
+    cursorHitIndex: number,
+    matchMode: SearchMatchMode,
+  ) => void;
 }
 
 export function ReaderView({
@@ -428,6 +461,10 @@ export function ReaderView({
   scanButtonRef,
   digestButtonRef,
   stageRef: externalStageRef,
+  initialFindQuery,
+  initialFindHitIndex,
+  initialFindMatchMode,
+  onFindHandoffToScan,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -509,6 +546,11 @@ export function ReaderView({
   // separately from cfiOwnersRef (real highlights) since exactly one tint
   // is ever live and it is never co-owned.
   const tintCfiRef = useRef<string | null>(null);
+  // M24 A: the distinct CFIs the find bar currently has marks painted at —
+  // a Set, not one entry per hit index, since two hits can legitimately
+  // collapse onto the same CFI (see paintSearchMarksForSection's own
+  // comment) and each CFI must only ever be cleared once.
+  const searchMarkCfisRef = useRef<Set<string>>(new Set());
   const highlightsRef = useRef<HighlightWithThread[]>([]);
   const resolvedIdsRef = useRef<Set<string>>(new Set());
   // Tracks the CFI each highlight's mark was actually attached at, which can
@@ -712,6 +754,11 @@ export function ReaderView({
   // the layout changes, since every page count in it is layout-specific.
   const sectionWeightRef = useRef<Map<number, number> | null>(null);
   const bookPageMapRef = useRef<BookPageMap | null>(null);
+  // M24.1 D: the same weights as a start-and-length span per section. Real
+  // state rather than a second ref, because unlike handleRelocated the result
+  // card's rows are built during render — they need "where does this section
+  // start" to place a hit's page number (searchRows.ts).
+  const [sectionSpans, setSectionSpans] = useState<Map<number, SectionSpan> | null>(null);
   // M20.5 "S<n> is the only number that appears in any UI": real state, not
   // a ref like sectionWeightRef above — ChapterNav needs to re-render once
   // this resolves, not just read it inside an event-handler closure.
@@ -756,6 +803,136 @@ export function ReaderView({
     cursorStyleRef.current = cursorStyle;
   }, [cursorStyle]);
 
+  // M24 A: the find bar's own state — "one result set" (decisions.md
+  // 2026-08-14), fetched through the same hook the Scan's search field uses.
+  // findHits/findCursorIndex/findOpen are mirrored into refs (same story as
+  // themeVarsRef/focusModeRef above) so the book-loading effect's
+  // `handleRendered`, which closes over this render only once per book load,
+  // can still read the live values.
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findCursorIndex, setFindCursorIndex] = useState(-1);
+  const [findFocusToken, setFindFocusToken] = useState(0);
+  // M24.1 C: whole words by default — a substring scan is why "the" used to
+  // blanket a paragraph with dozens of three-character marks. The rule is
+  // named in the bar rather than inferred from the results, and it travels
+  // with the query to the Scan so the two surfaces keep counting the same
+  // set.
+  const [findMatchMode, setFindMatchMode] = useState<SearchMatchMode>(initialFindMatchMode ?? "word");
+  const { hits: findHits, loading: findLoading } = useSearchHits(
+    findOpen ? resourceId : null,
+    findQuery,
+    findMatchMode,
+  );
+  const findHitsRef = useRef<SearchHit[]>(findHits);
+  useEffect(() => {
+    findHitsRef.current = findHits;
+  }, [findHits]);
+  const findCursorIndexRef = useRef(findCursorIndex);
+  useEffect(() => {
+    findCursorIndexRef.current = findCursorIndex;
+  }, [findCursorIndex]);
+  const findOpenRef = useRef(findOpen);
+  useEffect(() => {
+    findOpenRef.current = findOpen;
+  }, [findOpen]);
+  const findMatchModeRef = useRef(findMatchMode);
+  useEffect(() => {
+    findMatchModeRef.current = findMatchMode;
+  }, [findMatchMode]);
+  // A fresh set of results starts unstepped — cursor movement is always an
+  // explicit ‹ ›/Enter action (TASKS.md), never an auto-jump while typing.
+  useEffect(() => {
+    setFindCursorIndex(-1);
+  }, [findHits]);
+
+  // M24.1 D: the result card is a view of the find bar's own result set, so
+  // it lives and dies with the bar — closing the bar takes the card with it
+  // rather than leaving a list of hits for a search that is no longer on.
+  const [findCardOpen, setFindCardOpen] = useState(false);
+
+  const closeFindBar = useCallback(() => {
+    setFindOpen(false);
+    setFindQuery("");
+    setFindCursorIndex(-1);
+    setFindCardOpen(false);
+  }, []);
+  const handleFindShortcut = useCallback((event?: KeyboardEvent) => {
+    event?.preventDefault();
+    setFindOpen(true);
+    setFindFocusToken((t) => t + 1);
+  }, []);
+
+  // M24: resolves a hit's anchor against a live section and jumps there via
+  // `rendition.display(cfi)` — the same CFI-navigation primitive the book-
+  // open effect already uses for a stored jumpTarget. A hit in a different
+  // section is reached by loading that section first (reusing the audio
+  // tint's own turnPageSlideToSectionGuarded rather than inventing a second
+  // way to jump sections), then resolving against *its* live DOM once
+  // rendered — display() a second time lands on the exact page, not just
+  // the section's start.
+  // M24.1 C: takes the hit's index in the result set as well as the hit,
+  // because that index is what identifies *which* occurrence this is —
+  // `locateSectionHits` locates the whole section's hits at once and this
+  // picks its own out by index. Travelling by content instead is what landed
+  // steps 2, 7, 8 and 9 all on occurrence #1.
+  const goToFindHit = useCallback(
+    async (hit: SearchHit, index: number) => {
+      let contents = currentContentsRef.current;
+      if (!contents || contents.sectionIndex !== hit.spineIndex) {
+        await turnPageSlideToSectionGuarded(hit.spineIndex);
+        contents = currentContentsRef.current;
+      }
+      if (!contents) return;
+      const match = locateSectionHits(contents).find((entry) => entry.index === index)?.match;
+      if (!match) return; // no longer resolvable live — skip silently, same philosophy as the audio tint
+      const range = rangeFromTextOffsets(contents.document, match.start, match.end);
+      if (!range) return;
+      await renditionRef.current?.display(contents.cfiFromRange(range));
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [turnPageSlideToSectionGuarded],
+  );
+
+  // M24: arriving from the Scan's own search cursor (the reverse handoff —
+  // see `initialFindHitIndex` on ReaderViewProps) opens the bar pre-filled
+  // and, once its own search request resolves, jumps straight to that hit —
+  // consumed once via the ref guard, not re-run on every later refetch.
+  useEffect(() => {
+    if (initialFindQuery === undefined) return;
+    setFindOpen(true);
+    setFindQuery(initialFindQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFindQuery]);
+  const initialFindHitConsumedRef = useRef(false);
+  useEffect(() => {
+    if (initialFindHitIndex === undefined || initialFindHitConsumedRef.current) return;
+    if (findHits.length === 0) return;
+    initialFindHitConsumedRef.current = true;
+    const index = Math.min(initialFindHitIndex, findHits.length - 1);
+    setFindCursorIndex(index);
+    const hit = findHits[index];
+    if (hit) void goToFindHit(hit, index);
+  }, [findHits, initialFindHitIndex, goToFindHit]);
+
+  // M24.1 D acceptance: "a row click lands on exactly the hit that stepping
+  // to that index does". Structurally, not by coincidence — the card's row
+  // click and `‹ ›` both come through here, so there is one way to move the
+  // cursor and one way to travel to where it now points.
+  function goToFindHitIndex(index: number) {
+    setFindCursorIndex(index);
+    const hit = findHits[index];
+    if (hit) void goToFindHit(hit, index);
+  }
+
+  function handleFindStep(direction: "next" | "prev") {
+    goToFindHitIndex(stepFindCursor(findCursorIndex, findHits.length, direction));
+  }
+
+  function handleSeeInScan() {
+    onFindHandoffToScan?.(findQuery.trim(), findCursorIndex, findMatchMode);
+  }
+
   const {
     wrapperRef,
     fullscreenMode,
@@ -794,11 +971,18 @@ export function ReaderView({
     else playerRef.current.skipChapter(1);
   }, []);
   const handleEscapeShortcut = useCallback(() => {
+    // M24: the find bar is the innermost thing Escape can close — same
+    // "closest layer first" order every other nested dismissal in this app
+    // follows (a Settings-over-Scan closes Settings first, not both).
+    if (findOpenRef.current) {
+      closeFindBar();
+      return;
+    }
     setPendingSelection(null);
     setExpandedThread(null);
     setProgressPopoverOpen(false);
     if (fullscreenModeRef.current) toggleFullscreen();
-  }, [toggleFullscreen]);
+  }, [closeFindBar, toggleFullscreen]);
   const handleFocusModeShortcut = useCallback(() => {
     setFocusMode((prev) => {
       const next = !prev;
@@ -842,6 +1026,7 @@ export function ReaderView({
     { key: SHORTCUT_KEYS.escape, handler: handleEscapeShortcut },
     { key: SHORTCUT_KEYS.focusMode, shift: false, handler: handleFocusModeShortcut },
     { key: SHORTCUT_KEYS.fullscreen, shift: true, handler: toggleFullscreen },
+    { key: SHORTCUT_KEYS.find, meta: true, handler: handleFindShortcut, allowWhileTyping: true },
   ]);
 
   // M11 semicircular turn zones: which edge (if any) the pointer is
@@ -922,6 +1107,17 @@ export function ReaderView({
     if (!owners.includes(highlightId)) owners.push(highlightId);
     cfiOwnersRef.current.set(cfi, owners);
     if (alreadyOwned) return;
+    // M24.1 C, the other half of the rule stated in paintSearchMarksForSection:
+    // epub.js's annotation store is keyed by `cfiRange + type`, and a search
+    // mark is type "highlight" too — so adding this one on top of a search
+    // mark at the identical CFI would evict *it* from the store and strand
+    // its rect in the pane, unremovable. Take the CFI back first; the search
+    // mark is repainted from the result set whenever the bar next changes,
+    // and declines this CFI while a highlight owns it.
+    if (searchMarkCfisRef.current.has(cfi)) {
+      renditionRef.current?.annotations.remove(cfi, "highlight");
+      searchMarkCfisRef.current.delete(cfi);
+    }
     renditionRef.current?.annotations.highlight(
       cfi,
       { highlightId },
@@ -991,6 +1187,102 @@ export function ReaderView({
         undefined,
         AUDIO_TINT_MARK_CLASS,
         audioTintStyle(themeVarsRef.current, focusModeRef.current),
+      );
+    }
+  }
+
+  // M24 A: the find bar's marks. Cleared and repainted as a whole rather
+  // than diffed — cheap enough at find-bar scale, and much simpler than
+  // reconciling which marks moved when the cursor steps or the section
+  // changes. A search mark stacking with a real highlight's own mark at the
+  // identical CFI is correct, not a collision (same precedent as the audio
+  // tint above): the passage genuinely is both.
+  function clearSearchMarks() {
+    for (const cfi of searchMarkCfisRef.current) {
+      renditionRef.current?.annotations.remove(cfi, "highlight");
+    }
+    searchMarkCfisRef.current.clear();
+  }
+
+  /**
+   * M24.1 C: where this section's hits actually are, in the live DOM's own
+   * flattened text — the one place the reader answers that question, so a
+   * painted mark and a step to the same hit cannot disagree.
+   *
+   * The split is the whole fix. A **text** hit is located by *occurrence*
+   * (hitLocation.ts): its content is the query, every occurrence of it looks
+   * identical, so content can never say which one it is — while
+   * `findAnchorInText`'s last resort is `indexOf(exact)`, the first one,
+   * which is how "every hit in a section collapsed onto one mark" happened.
+   * An **annotation** hit keeps `findAnchorInText`: it anchors to a
+   * highlight, there is exactly one of that highlight, and the forgiving
+   * fallback is precisely what it exists for.
+   */
+  function locateSectionHits(contents: Contents) {
+    const sectionText = contents.document.body.textContent ?? "";
+    const inSection = hitsForSection(findHitsRef.current, contents.sectionIndex);
+    const locatedText = locateTextHits(
+      sectionText,
+      inSection.filter(({ hit }) => hit.source === "text"),
+      findMatchModeRef.current,
+    );
+    const located: { index: number; hit: SearchHit; match: { start: number; end: number } }[] = [];
+    for (const { hit, index } of inSection) {
+      const match =
+        hit.source === "text" ? locatedText.get(index) : findAnchorInText(sectionText, hit.anchor);
+      if (match) located.push({ index, hit, match });
+    }
+    return located;
+  }
+
+  function paintSearchMarksForSection(contents: Contents | null) {
+    clearSearchMarks();
+    if (!contents || !findOpenRef.current) return;
+    // ⚠️ Two different hits can resolve to the identical CFI (adjacent or
+    // overlapping occurrences) — epub.js creates a second, unreachable
+    // orphan mark if `.highlight()` is called twice for one CFI, the exact
+    // bug cfiOwnersRef exists to prevent for real highlights (found live,
+    // 2026-08-16: closing the bar left orphaned marks behind — TASKS.md's
+    // "zero residual marks" acceptance failed until this deduped). At most
+    // one mark per distinct CFI; the current hit wins the style if it
+    // collides with a non-current one.
+    //
+    // ⚠️ The same collision, across mark *kinds*, is why a mark could
+    // survive with no hit behind it (TASKS.md M24.1 C, "no mark without a
+    // hit"). epub.js keys its annotation store by `cfiRange + type`
+    // (epubjs/lib/annotations.js `add`: `hash = encodeURI(cfiRange + type)`)
+    // and both kinds are type "highlight", so a search mark painted at a
+    // CFI a *highlight* already occupies evicts that highlight from the
+    // store while leaving its rect in the pane — where no later `remove()`
+    // can reach it, because the hash it would look up now belongs to the
+    // search mark. Clearing the search marks then leaves the highlight's
+    // orphaned rect behind for good: a mark on text that is not a hit and
+    // that stepping never visits.
+    //
+    // It is not a rare coincidence either: an annotation hit (a note or a
+    // thread message matching) anchors to its highlight, so its CFI *is*
+    // that highlight's CFI, every time. The highlight is the durable mark
+    // and keeps the CFI; the search mark stands down there. Nothing is lost
+    // visually — that passage is already marked, which is what a highlight
+    // is — and `attachOwnedMark` enforces the same rule in the other
+    // direction, for a highlight made while the find bar is open.
+    const currentByCfi = new Map<string, boolean>();
+    for (const { index, match } of locateSectionHits(contents)) {
+      const range = rangeFromTextOffsets(contents.document, match.start, match.end);
+      if (!range) continue;
+      const cfi = contents.cfiFromRange(range);
+      if (cfiOwnersRef.current.has(cfi)) continue;
+      const isCurrent = index === findCursorIndexRef.current;
+      currentByCfi.set(cfi, isCurrent || (currentByCfi.get(cfi) ?? false));
+    }
+    for (const [cfi, isCurrent] of currentByCfi) {
+      searchMarkCfisRef.current.add(cfi);
+      renditionRef.current?.annotations.highlight(
+        cfi,
+        {},
+        undefined,
+        SEARCH_MARK_CLASS,
+        searchMarkStyle(themeVarsRef.current, isCurrent, focusModeRef.current),
       );
     }
   }
@@ -1092,6 +1384,19 @@ export function ReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [player.currentSegment, turnTick, detached]);
 
+  // M24 A: repaints the find bar's marks whenever the result set, the
+  // stepped cursor, or the bar's open/closed state changes, for whichever
+  // section is currently on screen — `handleRendered` (above, in the
+  // book-loading effect) is the other caller, for when the *section*
+  // changes instead. Closing the bar clears query too, which alone would
+  // make this a no-op via findOpen/findHits both changing — the explicit
+  // findOpen check is what actually guarantees zero residual marks the
+  // instant Escape/× fires, not incidentally.
+  useEffect(() => {
+    paintSearchMarksForSection(currentContentsRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findHits, findCursorIndex, findOpen]);
+
   // AUDIO.md: "making a selection, opening a thread, or opening the
   // annotations overview pauses [playback]; it does not stop. You cannot
   // read an answer while being talked at." One effect covers all three
@@ -1172,6 +1477,7 @@ export function ReaderView({
     currentSpineIndexRef.current = null;
     setToc([]);
     setChapterNumbers(null);
+    setSectionSpans(null);
     setProgressPopoverOpen(false);
     setScrubPreviewPercent(null);
     setHighlights([]);
@@ -1525,6 +1831,7 @@ export function ReaderView({
       if (!contents) return;
       currentContentsRef.current = contents;
       resolveHighlightsForSection(contents);
+      paintSearchMarksForSection(contents);
 
       // The section's fonts may still be loading at this point; when they
       // land, the text re-breaks at the same expanded width and every overlay
@@ -1886,7 +2193,13 @@ export function ReaderView({
       else if (event.key === "[") handleChapterPrevShortcut();
       else if (event.key === "]") handleChapterNextShortcut();
       else if (event.key === "Escape") handleEscapeShortcut();
-      else if (
+      else if (event.key.toLowerCase() === "f" && (event.metaKey || event.ctrlKey) && !event.altKey) {
+        // M24: Cmd/Ctrl+F, forwarded the same way every other reader
+        // shortcut crosses the iframe boundary — see useShortcuts above for
+        // why this needs its own branch rather than the shared registry.
+        event.preventDefault();
+        handleFindShortcut();
+      } else if (
         event.key.toLowerCase() === "f" &&
         !event.metaKey &&
         !event.ctrlKey &&
@@ -1912,6 +2225,7 @@ export function ReaderView({
         if (chapterMeta) {
           sectionWeightRef.current = chapterMeta.weights;
           setChapterNumbers(chapterMeta.chapterNumbers);
+          setSectionSpans(buildSectionSpans(chapterMeta.weights));
         }
         if (cancelled) return;
         highlightsRef.current = resourceHighlights;
@@ -2079,6 +2393,46 @@ export function ReaderView({
   const chapterDialTicks = chapterStopsList
     .filter((stop): stop is TocEntry & { percent: number } => stop.percent !== null)
     .map((stop) => ({ value: stop.percent, label: stop.label }));
+  // M24.1 D: the result card's rows, built here rather than inside the card
+  // because everything a row carries beyond the hit itself belongs to the
+  // reader — the TOC, the footer's page map, and the page-number setting the
+  // footer is already reading. The card renders them; it never searches,
+  // orders or counts anything of its own.
+  //
+  // `bookPage` is a dependency for a reason worth stating: the page map is a
+  // ref (bookPages.ts writes it during relocate), so this memo cannot see it
+  // calibrate. `bookPage` moves on the same relocate, which makes it the
+  // signal that the map did. Until the first one lands, rows simply carry no
+  // page — the same "nothing rather than a provisional number" the footer
+  // itself takes.
+  const findRows = useMemo(() => {
+    if (!findCardOpen) return [];
+    // Both of these are per-section answers asked once per *hit*, and a
+    // common word's result set runs to thousands of hits — so the chapter
+    // stops are derived once for the whole build rather than per row, and
+    // each section's label is remembered the first time it is looked up.
+    const stops = deriveChapterStops(toc);
+    const labelCache = new Map<number, string | null>();
+    return buildSearchResultRows(findHits, {
+      query: findQuery.trim(),
+      pageNumberMode,
+      chapterLabelFor: (spineIndex) => {
+        const cached = labelCache.get(spineIndex);
+        if (cached !== undefined) return cached;
+        const label = deriveCurrentChapter(stops, spineIndex)?.label ?? null;
+        labelCache.set(spineIndex, label);
+        return label;
+      },
+      pagesInSection: (spineIndex) => bookPageMapRef.current?.pages.get(spineIndex) ?? null,
+      bookPageFor: (spineIndex, chapterPage) => {
+        const map = bookPageMapRef.current;
+        return map ? (lookupBookPage(map, spineIndex, chapterPage)?.page ?? null) : null;
+      },
+      sectionSpan: (spineIndex) => sectionSpans?.get(spineIndex) ?? null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [findCardOpen, findHits, findQuery, pageNumberMode, toc, sectionSpans, bookPage]);
+
   const activeChapter = deriveCurrentChapter(chapterStopsList, currentSpineIndex);
   const activeChapterStopIndex = activeChapter
     ? chapterStopsList.findIndex((s) => s.href === activeChapter.href)
@@ -2525,6 +2879,25 @@ export function ReaderView({
               (topRow/revealTop) as everything else in this row. */}
           {fullscreenMode && <NavCluster settingsTab="reading" floating={false} />}
         </div>
+        {findOpen && (
+          <div className={styles.findBarRow}>
+            <FindBar
+              query={findQuery}
+              onQueryChange={setFindQuery}
+              hits={findHits}
+              currentIndex={findCursorIndex}
+              loading={findLoading}
+              onStep={handleFindStep}
+              onClose={closeFindBar}
+              onSeeInScan={handleSeeInScan}
+              resultsOpen={findCardOpen}
+              onToggleResults={() => setFindCardOpen((open) => !open)}
+              matchMode={findMatchMode}
+              onMatchModeChange={setFindMatchMode}
+              focusToken={findFocusToken}
+            />
+          </div>
+        )}
       </div>
 
       <div className={styles.readerRow} ref={readerRowRef}>
@@ -2671,6 +3044,20 @@ export function ReaderView({
                 onNoteChange={handleNoteChange}
                 onPanelOffsetChange={handlePanelOffsetChange}
                 onPanelSizeChange={handlePanelSizeChange}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {findOpen && findCardOpen && (
+              <SearchResultsCard
+                key="search-results-card"
+                rows={findRows}
+                currentIndex={findCursorIndex}
+                query={findQuery}
+                loading={findLoading}
+                onSelect={goToFindHitIndex}
+                onClose={() => setFindCardOpen(false)}
+                appBoundsRef={appBoundsRef}
               />
             )}
           </AnimatePresence>

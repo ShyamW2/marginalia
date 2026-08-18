@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { preloadReaderPage } from "../reader/preload.js";
 import { AnimatePresence } from "motion/react";
 import { Route, Routes, matchPath, useLocation, useNavigate, type Location } from "react-router-dom";
+import type { SearchMatchMode } from "@marginalia/shared";
 import { NavCluster } from "./NavCluster.js";
 import { ServerStatusBanner } from "./ServerStatusBanner.js";
 import { ChromeSlotProvider } from "./chromeSlot.js";
@@ -41,6 +42,14 @@ interface NavigationState {
    * keep mounted and visible behind the overlay. Absent on a direct/deep
    * link, which falls back to rendering the Desk underneath, per TASKS.md. */
   background?: Location;
+  /** M24: the reader find bar's "see in Scan" handoff — carries the live
+   * query and which hit was current, so the Scan opens already on it
+   * (TASKS.md M24 A acceptance: "same query, same hit count, cursor on the
+   * same hit"). Absent on every other way into the Scan. */
+  findQuery?: string;
+  findCursorHitIndex?: number;
+  /** M24.1 C: and which matching rule produced that set. */
+  findMatchMode?: SearchMatchMode;
 }
 
 function isOverlayPath(pathname: string): boolean {
@@ -53,13 +62,17 @@ function isOverlayPath(pathname: string): boolean {
  * Settings stacked on a Scan used to stop after one hop and lose the Scan
  * (M22.5, decisions.md 2026-08-04). Shared by the Scan and Digest checks
  * below so a Settings-on-top-of-either case doesn't need writing out twice. */
-export function findOverlayPathname(location: Location, prefix: string): string | null {
+export function findOverlayLocation(location: Location, prefix: string): Location | null {
   let current: Location | undefined = location;
   while (current) {
-    if (current.pathname.startsWith(prefix)) return current.pathname;
+    if (current.pathname.startsWith(prefix)) return current;
     current = (current.state as NavigationState | null)?.background;
   }
   return null;
+}
+
+export function findOverlayPathname(location: Location, prefix: string): string | null {
+  return findOverlayLocation(location, prefix)?.pathname ?? null;
 }
 
 /** The chrome cluster's gear icon stays mounted above every overlay, so
@@ -112,10 +125,14 @@ export function App() {
   const settingsOpen = location.pathname === "/settings";
   // The Scan/Digest overlays are open either directly, or one level further
   // back behind an open Settings — both render the same overlay underneath.
-  const scanPathname = findOverlayPathname(location, "/scan/");
+  const scanLocation = findOverlayLocation(location, "/scan/");
   const digestPathname = findOverlayPathname(location, "/digest/");
-  const scanId = scanPathname ? matchPath("/scan/:id", scanPathname)?.params.id ?? null : null;
+  const scanId = scanLocation ? matchPath("/scan/:id", scanLocation.pathname)?.params.id ?? null : null;
   const digestId = digestPathname ? matchPath("/digest/:id", digestPathname)?.params.id ?? null : null;
+  // M24: read from `scanLocation`'s own state, not the raw (possibly
+  // Settings-stacked) `location` — the handoff's query/cursor live on
+  // whichever location entry actually opened the Scan.
+  const scanState = scanLocation?.state as NavigationState | null;
 
   // M22.5: whether some overlay is genuinely showing right now — from the
   // *raw* location, not `roomLocation`'s walked-back one, which resolves to
@@ -187,7 +204,14 @@ export function App() {
               <AnimatePresence>
                 {scanId && (
                   <Suspense key="scan-overlay-suspense" fallback={null}>
-                    <ScanOverlay key="scan-overlay" resourceId={scanId} onClose={closeScan} />
+                    <ScanOverlay
+                      key="scan-overlay"
+                      resourceId={scanId}
+                      onClose={closeScan}
+                      initialQuery={scanState?.findQuery}
+                      initialCursorHitIndex={scanState?.findCursorHitIndex}
+                      initialMatchMode={scanState?.findMatchMode}
+                    />
                   </Suspense>
                 )}
               </AnimatePresence>

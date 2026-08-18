@@ -5,6 +5,7 @@ import {
   MAX_ZOOM,
   MIN_ZOOM,
   panByViewFraction,
+  panToReveal,
   zoomAtViewPosition,
   zoomIn,
   zoomOut,
@@ -108,5 +109,38 @@ describe("fractionToView", () => {
     const state = { zoom: 2, pan: 0.25 };
     expect(fractionToView(0.9, state)).toBeGreaterThan(1);
     expect(fractionToView(0.1, state)).toBeLessThan(0);
+  });
+});
+
+describe("panToReveal", () => {
+  it("is a no-op at the default zoom — the whole domain already fits", () => {
+    const state = { zoom: 1, pan: 0 };
+    expect(panToReveal(state, 0.9)).toEqual(state);
+  });
+
+  it("is a no-op when the fraction is already inside the view", () => {
+    const state = { zoom: 2, pan: 0.25 }; // view [0.25, 0.75]
+    expect(panToReveal(state, 0.5)).toEqual(state);
+  });
+
+  it("pans left to reveal a fraction past the view's right edge", () => {
+    const state = { zoom: 2, pan: 0 }; // view [0, 0.5]
+    const next = panToReveal(state, 0.9);
+    expect(next.zoom).toBe(2);
+    expect(fractionToView(0.9, next)).toBeGreaterThanOrEqual(0);
+    expect(fractionToView(0.9, next)).toBeLessThanOrEqual(1);
+  });
+
+  it("pans right to reveal a fraction before the view's left edge", () => {
+    const state = { zoom: 2, pan: 0.5 }; // view [0.5, 1]
+    const next = panToReveal(state, 0.05);
+    expect(next.zoom).toBe(2);
+    expect(fractionToView(0.05, next)).toBeGreaterThanOrEqual(0);
+    expect(fractionToView(0.05, next)).toBeLessThanOrEqual(1);
+  });
+
+  it("never changes zoom, only pan", () => {
+    const state = { zoom: 4, pan: 0.1 };
+    expect(panToReveal(state, 0.99).zoom).toBe(4);
   });
 });

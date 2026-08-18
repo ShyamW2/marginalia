@@ -190,7 +190,11 @@ resourcesRouter.get("/:id/scan", (req, res) => {
 
 resourcesRouter.get("/:id/search", (req, res) => {
   const query = typeof req.query.q === "string" ? req.query.q : "";
-  const hits = searchResource(getDb(), req.params.id, query);
+  // M24.1 C: whole-word unless the caller explicitly asks for substring —
+  // an unparseable value is the default, not an error, since the rule only
+  // changes which hits come back.
+  const mode = req.query.mode === "substring" ? "substring" : "word";
+  const hits = searchResource(getDb(), req.params.id, query, mode);
   if (!hits) {
     res.status(404).json({ error: "not_found" });
     return;

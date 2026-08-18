@@ -1,21 +1,43 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import type { HighlightImportance, ScanBookChapter, ScanChapter, ScanHighlight } from "@marginalia/shared";
+import type {
+  HighlightImportance,
+  ScanBookChapter,
+  ScanChapter,
+  ScanHighlight,
+  SearchHit,
+} from "@marginalia/shared";
 import { ImportanceStars } from "../highlights/ImportanceStars.js";
 import { TagEditor } from "../highlights/TagEditor.js";
 import { phosphorHue } from "./scanPalette.js";
 import { drawHeatField, type HeatColorMode, type HeatPoint } from "./heatField.js";
 import { chapterLabelText, thinLabels } from "./chapterAxis.js";
+import { searchHitSourceLabel } from "../search/findCursor.js";
 import { warpPoint, type WarpGeometry } from "./warp.js";
 import {
   fractionToView,
   panByViewFraction,
+  panToReveal,
   zoomAtViewPosition,
   zoomIn,
   zoomOut,
   type ZoomState,
 } from "./zoom.js";
 import styles from "./HeatStrip.module.css";
+
+/** "hit 4 of 17, chapter 9" (TASKS.md M24 C) — the search cursor's own
+ * screen-reader announcement, shared between the control's aria-valuetext
+ * and its visible label so the two can never say different things. */
+function searchCursorValueText(
+  hit: SearchHit,
+  cursorIndex: number,
+  total: number,
+  chapters: ScanChapter[],
+): string {
+  const chapter = [...chapters].reverse().find((c) => c.startPercent <= hit.percent);
+  const chapterLabel = chapter ? `, chapter ${chapter.chapterNumber}` : "";
+  return `Hit ${cursorIndex + 1} of ${total}${chapterLabel} — ${searchHitSourceLabel(hit.source)}`;
+}
 
 const MIN_BAND_HEIGHT = 16;
 const MAX_BAND_HEIGHT = 160;
@@ -88,6 +110,16 @@ interface HeatStripProps {
   onOpen: (highlight: ScanHighlight) => void;
   onImportanceChange: (highlightId: string, next: HighlightImportance) => void;
   onTagsChange: (highlightId: string, next: string[]) => void;
+  /** M24 C: the search result layer and its cursor — "one result set, two
+   * views" (decisions.md 2026-08-14), the same ordered hits the reader's
+   * find bar steps through. `-1` = nothing stepped to yet. */
+  searchHits: SearchHit[];
+  searchCursorIndex: number;
+  onStepSearchCursor: (direction: "next" | "prev") => void;
+  /** Enter opens the reader at the cursor's hit through the existing
+   * airlock — stepping itself never drives the reader live underneath
+   * (decisions.md 2026-08-14 point 4: surveying and reading stay separate). */
+  onOpenSearchHit: (hit: SearchHit) => void;
 }
 
 /**
@@ -114,6 +146,10 @@ export function HeatStrip({
   onOpen,
   onImportanceChange,
   onTagsChange,
+  searchHits,
+  searchCursorIndex,
+  onStepSearchCursor,
+  onOpenSearchHit,
 }: HeatStripProps) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [hoveredRect, setHoveredRect] = useState<DOMRect | null>(null);
@@ -238,6 +274,41 @@ export function HeatStrip({
 
   const viewWidthFraction = 1 / zoomState.zoom;
 
+  const currentSearchHit = searchCursorIndex >= 0 ? (searchHits[searchCursorIndex] ?? null) : null;
+
+  // TASKS.md M24 C: "the strip auto-pans to keep the cursor in view" — only
+  // ever moves `pan`, and only when the cursor (or the strip's own size,
+  // arriving after the first layout pass) actually changed.
+  useEffect(() => {
+    if (!currentSearchHit) return;
+    setZoomState((z) => panToReveal(z, currentSearchHit.percent));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSearchHit, stripSize.width]);
+
+  function handleSearchCursorKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      event.preventDefault();
+      onStepSearchCursor("next");
+    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      event.preventDefault();
+      onStepSearchCursor("prev");
+    } else if (event.key === "Enter" && currentSearchHit) {
+      event.preventDefault();
+      onOpenSearchHit(currentSearchHit);
+    }
+  }
+
+  const currentSearchHitPos =
+    currentSearchHit && stripSize.width > 0
+      ? warpLocal(fractionToView(currentSearchHit.percent, zoomState) * stripSize.width, 14)
+      : null;
+  const searchCursorValue =
+    currentSearchHit && searchHits.length > 0
+      ? searchCursorValueText(currentSearchHit, searchCursorIndex, searchHits.length, chapters)
+      : searchHits.length > 0
+        ? `${searchHits.length} result${searchHits.length === 1 ? "" : "s"}`
+        : null;
+
   return (
     <div className={styles.strip} ref={stripRef}>
       {/* M20.5: no CSS transform here anymore — the old `scaleX`/`translateX`
@@ -340,6 +411,23 @@ export function HeatStrip({
             ▶
           </button>
         </div>
+
+        {searchCursorValue && (
+          // TASKS.md M24 C: "the strip's first keyboard path" — a real
+          // focusable, arrow-steppable control, not just a visual readout.
+          // `role="group"` (not "slider": there's no single numeric value a
+          // screen reader could usefully read back, only the label text
+          // below, which already carries "hit N of M, chapter C").
+          <div
+            className={styles.searchCursorControl}
+            role="group"
+            tabIndex={0}
+            aria-label={searchCursorValue}
+            onKeyDown={handleSearchCursorKeyDown}
+          >
+            {searchCursorValue}
+          </div>
+        )}
       </div>
 
       {/* M19.5 "the semantic scan: two layers" (decisions.md 2026-07-29
@@ -422,6 +510,26 @@ export function HeatStrip({
         );
       })}
 
+      {/* M24 C: the search result layer — "a transient layer over the
+          strip, distinct from the persistent heat bands" (TASKS.md), riding
+          the same warpLocal every other hit-target on this face does (M18
+          "one filter, one wrapper"). Purely visual (pointer-events: none in
+          CSS) — the keyboard cursor control above and Enter are the way to
+          act on a hit, matching "stepping is the primary way to reach a
+          result" (decisions.md 2026-08-14 point 3). */}
+      {searchHits.map((hit, index) => {
+        const rawX = fractionToView(hit.percent, zoomState) * stripSize.width;
+        const warped = stripSize.width > 0 ? warpLocal(rawX, 14) : { x: rawX, y: 14 };
+        const current = index === searchCursorIndex;
+        return (
+          <div
+            key={`search-${index}`}
+            className={current ? `${styles.searchTick} ${styles.searchTickCurrent}` : styles.searchTick}
+            style={{ left: warped.x }}
+          />
+        );
+      })}
+
       {/* M18 "floating layers must be portalled out of the warped
           container" (decisions.md 2026-07-28): a `filter` on an ancestor
           both distorts descendants' paint and creates a containing block
@@ -457,6 +565,34 @@ export function HeatStrip({
               />
               <span>{Math.round(hoveredHighlight.positionPercent * 100)}%</span>
             </div>
+          </div>,
+          document.body,
+        )}
+
+      {/* M24 C: "the ghost readout follows [the cursor]" (TASKS.md) — the
+          same portal-out-of-the-warp trick as the hover readout above,
+          positioned from the current tick's own warped coordinates (already
+          computed for painting it) converted to viewport space, rather than
+          a second DOM measurement. */}
+      {currentSearchHit &&
+        currentSearchHitPos &&
+        createPortal(
+          <div
+            className={styles.searchReadout}
+            role="note"
+            style={{
+              left: stripRef.current
+                ? stripRef.current.getBoundingClientRect().left + currentSearchHitPos.x
+                : currentSearchHitPos.x,
+              top: stripRef.current
+                ? stripRef.current.getBoundingClientRect().top + currentSearchHitPos.y + 20
+                : currentSearchHitPos.y + 20,
+            }}
+          >
+            <div className={styles.searchReadoutSource}>
+              {searchHitSourceLabel(currentSearchHit.source)}
+            </div>
+            <div className={styles.readoutQuote}>{currentSearchHit.snippet}</div>
           </div>,
           document.body,
         )}

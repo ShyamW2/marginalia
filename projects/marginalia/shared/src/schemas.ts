@@ -809,6 +809,15 @@ export type ScanData = z.infer<typeof ScanDataSchema>;
 export const SearchHitSourceSchema = z.enum(["text", "highlight", "note", "thread"]);
 export type SearchHitSource = z.infer<typeof SearchHitSourceSchema>;
 
+/**
+ * How a query matches (TASKS.md M24.1 C): `"word"` — whole words only, the
+ * default — or `"substring"`, the raw scan this started as, kept as an
+ * explicit choice rather than as the silent behaviour. The rule itself is
+ * `textSearch.ts`; this is only its name on the wire.
+ */
+export const SearchMatchModeSchema = z.enum(["word", "substring"]);
+export type SearchMatchMode = z.infer<typeof SearchMatchModeSchema>;
+
 export const SearchHitSchema = z.object({
   source: SearchHitSourceSchema,
   spineIndex: z.number().int().nonnegative(),

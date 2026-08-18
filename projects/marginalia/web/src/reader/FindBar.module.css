@@ -1,0 +1,61 @@
+/* M24 A: lives inside ReaderView's `.topRow` (see ReaderView.module.css's
+   `.findBarRow`), so it inherits the fullscreen reveal/`:focus-within`
+   treatment every other piece of top-row chrome already has — nothing here
+   manages its own visibility. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  min-width: 0;
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--control-bg);
+  color: var(--control-text);
+  border: var(--control-border-width) solid var(--control-border-color);
+  border-radius: var(--control-radius);
+  font: inherit;
+  font-family: var(--control-font);
+  padding: 0.3rem 0.6rem;
+}
+
+.input:focus-visible {
+  outline: none;
+  box-shadow: var(--control-focus-ring);
+}
+
+.count {
+  flex: 0 0 auto;
+  min-width: 5.5rem;
+  font-size: 0.8rem;
+  color: var(--control-text-muted);
+  white-space: nowrap;
+}
+
+.scanButton {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/* M24.1 C: the matching rule, stated in the bar. A plain checkbox rather
+   than a bespoke control — it belongs to the paper register's own form
+   vocabulary (settled decision 12), and nothing about "whole word" needs a
+   new one. */
+.wholeWord {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--control-text-muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.wholeWord input {
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}

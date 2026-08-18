@@ -18,7 +18,8 @@
    inline fill-opacity/mix-blend-mode override; this rule only makes that
    change land as a quiet fade rather than a flash. mix-blend-mode itself
    doesn't animate — only the opacity step reads as a transition. */
-:global(.marginalia-highlight) {
+:global(.marginalia-highlight),
+:global(.marginalia-search-mark) {
   transition: fill-opacity var(--duration-standard) var(--ease-standard);
 }
 
@@ -60,6 +61,16 @@
 .topRowLeft {
   justify-self: start;
   min-width: 0;
+}
+
+/* M24 A: the find bar wraps onto its own line under the existing three
+ * columns rather than fighting them for space — `.topRow` only declares
+ * column tracks, so a fourth grid child not confined to one of them simply
+ * flows onto an implicit new row. Spans the full width so the input has
+ * real room. */
+.findBarRow {
+  grid-column: 1 / -1;
+  margin-top: 0.35rem;
 }
 
 .topRowRight {

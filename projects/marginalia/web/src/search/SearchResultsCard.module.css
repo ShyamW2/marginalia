@@ -1,0 +1,204 @@
+/* M24.1 D: the result card. Chrome and register are the annotation card's
+   (settled decision 12 — paper, in the reader), left-anchored so it and an
+   open thread panel don't land on top of each other by default. */
+.card {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  width: min(360px, calc(100% - 2rem));
+  max-height: calc(100% - 1.5rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-panel);
+  z-index: 10;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.6rem 0.55rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+  /* Draggable by the header (the close button inside it opts back out via
+     handleHeaderPointerDown). */
+  cursor: grab;
+  touch-action: none;
+  /* Above the resize strips, which are full-height for a simple hit-test —
+     the same stacking fix ThreadPanel's header needs. */
+  position: relative;
+  z-index: 2;
+}
+
+.headerDragging {
+  cursor: grabbing;
+}
+
+.title {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  color: var(--color-text);
+}
+
+.status {
+  flex: 1;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.closeButton {
+  flex-shrink: 0;
+}
+
+.empty {
+  padding: 1rem 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+/* "300+ hits scroll smoothly" (TASKS.md M24.1 D acceptance). A row is a
+   fixed two-line box, and `content-visibility` lets the browser skip layout
+   and paint for the rows that are off-screen — which keeps a result set of
+   thousands (a substring search for a common word produces exactly that)
+   scrolling at the same cost as a set of thirty, without a virtualization
+   layer that would break `scrollIntoView` for the stepped cursor. */
+.item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 3.4rem;
+}
+
+.entry {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  padding: 0.35rem 0.5rem;
+  cursor: pointer;
+  color: var(--color-text);
+}
+
+.entry:hover {
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+
+.entry:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* The current hit — the one `‹ ›` is standing on — reads as selected here
+   the same way it reads as the strongest mark on the page. */
+.entryCurrent {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.entryCurrent:hover {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+.snippet {
+  display: block;
+  font-family: var(--font-serif);
+  font-size: 0.82rem;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mark {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.meta {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.metaChapter {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metaCell {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Right, bottom and the corner between them: the card is left/top-anchored,
+   so those are the edges that move under the cursor when it grows. */
+.resizeEdge {
+  position: absolute;
+  z-index: 1;
+  touch-action: none;
+}
+
+.resizeEdgeRight {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.resizeEdgeBottom {
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+/* A diagonal stripe (not a solid square) reads as "grip" rather than as a
+   stray mark — the same corner handle the annotation card uses. */
+.resizeHandle {
+  position: absolute;
+  z-index: 3;
+  right: 2px;
+  bottom: 2px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(
+    135deg,
+    transparent 0%,
+    transparent 40%,
+    var(--color-border) 40%,
+    var(--color-border) 55%,
+    transparent 55%,
+    transparent 70%,
+    var(--color-border) 70%,
+    var(--color-border) 85%,
+    transparent 85%
+  );
+  opacity: 0.7;
+}
+
+.resizeHandle:hover {
+  opacity: 1;
+}

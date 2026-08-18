@@ -30,4 +30,8 @@ export const SHORTCUT_KEYS = {
   playPause: " ",
   skipSentencePrev: "ArrowLeft",
   skipSentenceNext: "ArrowRight",
+  // M24: Cmd/Ctrl+F opens the reader's find bar — reuses "f" (see `meta` on
+  // ShortcutBinding), the way playPause/skipSentence reuse prevPage/nextPage
+  // distinguished by a modifier instead of claiming a second letter.
+  find: "f",
 } as const;
