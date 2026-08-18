@@ -157,6 +157,7 @@ with proper status codes.
 | `POST /api/resources/:id/publish` | run vault compiler for this resource → `{notes: n, conceptsCreated: n, conceptsLinked: n}` |
 | `GET /api/settings` / `PUT` | provider config + vault path. Never return API keys in GET (return `"***"` if set). |
 | `GET /api/resources/:id/search?q=` | **M24.** One book's text *and* its annotations → hits ordered by position in the book. Each hit: `{source: "text" \| "highlight" \| "note" \| "thread", spineIndex, offset, percent, snippet, anchor: {prefix, exact, suffix}, highlightId?}`. One result set; the reader and the Scan are two views of it. |
+| `GET /api/resources/:id/theme-distillation` / `POST` | **M24.5.** GET returns `{bookThemes: [{id, name, colorIndex, children}]}` — this book's ~6-8 book-level themes, each holding the chapter-level theme strings distilled under it. POST starts (as a job) a pass over the book's already-stored chapter themes/analyses that regroups them and resolves each book-level name against the library-wide canonical vocabulary (`matchConcept`'s rule, reused from vault/concepts.ts). |
 
 **Search notes (M24).** The `anchor` is the contract: it must round-trip through
 `findAnchorInText` to the same offset, because that is how a hit becomes a painted mark in

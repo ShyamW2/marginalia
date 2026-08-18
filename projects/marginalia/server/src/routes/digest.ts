@@ -19,6 +19,8 @@ import { getRawSettings } from "../settings/store.js";
 import { estimateDigestRun, maybeRefreshBookDigestSnapshot, runDigest } from "../digest/build.js";
 import { runThematicDigest } from "../digest/thematicBuild.js";
 import { runThemeTagging } from "../digest/themeTagging.js";
+import { runThemeDistillation } from "../digest/themeDistillation.js";
+import { listBookThemes } from "../digest/canonicalThemes.js";
 import { chapterStartAnchor, locateQuoteAnchor } from "../digest/chapterAnchor.js";
 import { writeDigestMarkdown, renderDigestMarkdown } from "../digest/markdown.js";
 import {
@@ -551,5 +553,66 @@ digestRouter.post("/:id/theme-tagging", async (req, res) => {
       throw err;
     }
   });
+  res.status(202).json({ jobId: job.id });
+});
+
+/**
+ * M24.5 "themes worth colouring": this book's currently-distilled book-level
+ * themes, each with the chapter-level themes underneath it — what the
+ * Scan's colour-keyed filter renders (`ScanBookLayer.bookThemes`, computed
+ * the same way via `annotations/scan.ts`). A thin read here too so the
+ * digest page can show the result of a distillation run without pulling in
+ * the whole scan payload.
+ */
+digestRouter.get("/:id/theme-distillation", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  res.json({ bookThemes: listBookThemes(db, resource.id) });
+});
+
+/**
+ * Distils this book's per-chapter theme vocabulary into ~6-8 book-level
+ * themes (TASKS.md M24.5 §1) and resolves each against the library-wide
+ * canonical vocabulary (§3). A no-op (200, `{bookThemes: []}`) if no chapter
+ * has a thematic layer yet, same "nothing to do, not an error" shape as
+ * theme-tagging above.
+ */
+digestRouter.post("/:id/theme-distillation", async (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+
+  const provider = getProvider(db, "digest", "theme-distillation", resource.id);
+  if (!provider) {
+    res.status(400).json({ error: "provider_unconfigured" });
+    return;
+  }
+
+  const job = startJob(
+    "theme-distillation",
+    resource.id,
+    resource.title,
+    async (signal) => {
+      try {
+        await runThemeDistillation(db, provider, resource, signal);
+      } catch (err) {
+        if (err instanceof LLMError) {
+          // eslint-disable-next-line no-console
+          console.error(`[theme-distillation] ${err.code}: ${err.message}`);
+        } else {
+          // eslint-disable-next-line no-console
+          console.error("[theme-distillation]", err);
+        }
+        throw err;
+      }
+    },
+  );
   res.status(202).json({ jobId: job.id });
 });

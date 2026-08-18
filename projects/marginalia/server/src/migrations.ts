@@ -571,4 +571,47 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_llm_usage_profile ON llm_usage(profile_id);
     `,
   },
+  {
+    // M24.5 "themes worth colouring" (decisions.md, split out of M24
+    // 2026-08-14): a distillation pass folds a book's dozens of per-chapter
+    // theme strings under ~6-8 book-level themes, keyed to a colour a reader
+    // can actually hold in their head. `canonical_themes` is library-wide —
+    // not scoped to a resource, unlike every other table here — because the
+    // same book-level theme ("Isolation") is meant to be recognised as one
+    // entry across every book that surfaces it (TASKS.md M24.5 §3), matched
+    // by the same slug/alias/Levenshtein rule vault/concepts.ts already uses
+    // for vault concepts (settled decision 6: canonical themes live in
+    // SQLite, never the vault, so this stays independent of that table).
+    // `color_index` is assigned once, at creation, and never recomputed —
+    // TASKS.md's "rebuilding a digest does not reshuffle the colours" is
+    // true *because* a rebuild re-matches by name onto the same row rather
+    // than re-deriving a colour from scratch.
+    version: 24,
+    sql: `
+      CREATE TABLE canonical_themes (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        slug          TEXT NOT NULL UNIQUE,
+        color_index   INTEGER NOT NULL,
+        created_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE book_themes (
+        resource_id         TEXT NOT NULL REFERENCES resources(id),
+        canonical_theme_id  TEXT NOT NULL REFERENCES canonical_themes(id),
+        generated_at        TEXT NOT NULL,
+        PRIMARY KEY (resource_id, canonical_theme_id)
+      );
+
+      CREATE TABLE theme_parents (
+        resource_id         TEXT NOT NULL REFERENCES resources(id),
+        chapter_theme       TEXT NOT NULL,
+        canonical_theme_id  TEXT NOT NULL REFERENCES canonical_themes(id),
+        PRIMARY KEY (resource_id, chapter_theme)
+      );
+
+      CREATE INDEX idx_book_themes_resource ON book_themes(resource_id);
+      CREATE INDEX idx_theme_parents_resource ON theme_parents(resource_id);
+    `,
+  },
 ];

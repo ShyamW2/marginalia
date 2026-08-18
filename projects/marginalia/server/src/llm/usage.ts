@@ -19,7 +19,7 @@ import { getProviderProfile } from "../settings/providers.js";
  * "broken down by operation" would lose the plot/thematic distinction this
  * milestone exists to draw if the two shared a tag).
  */
-export type LLMOperation = "thread" | "extract" | "digest" | "cast" | "thematic";
+export type LLMOperation = "thread" | "extract" | "digest" | "cast" | "thematic" | "theme-distillation";
 
 /**
  * Every number's provenance: `reported` (the provider returned real counts),

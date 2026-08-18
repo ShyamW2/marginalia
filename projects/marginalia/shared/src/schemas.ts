@@ -591,7 +591,14 @@ export type SetMaxResponseTokensBody = z.infer<typeof SetMaxResponseTokensBodySc
 // 2026-07-28 later / 2026-07-29 later)
 // ---------------------------------------------------------------------------
 
-export const UsageOperationSchema = z.enum(["thread", "extract", "digest", "cast", "thematic"]);
+export const UsageOperationSchema = z.enum([
+  "thread",
+  "extract",
+  "digest",
+  "cast",
+  "thematic",
+  "theme-distillation",
+]);
 export type UsageOperation = z.infer<typeof UsageOperationSchema>;
 
 export const UsageProvenanceSchema = z.enum(["reported", "measured", "estimated", "mixed"]);
@@ -770,6 +777,22 @@ export const ScanBookChapterSchema = z.object({
 export type ScanBookChapter = z.infer<typeof ScanBookChapterSchema>;
 
 /**
+ * One book-level theme (M24.5, "themes worth colouring") as this book sees
+ * it: a canonical identity shared library-wide (`id`, `name`, `colorIndex`
+ * — an index into `--theme-ramp-*`, theme.css) plus which of *this* book's
+ * chapter-level theme strings distil under it. Empty `children` is legal —
+ * a book-level theme with no chapters currently assigned to it just isn't
+ * shown expanded.
+ */
+export const ScanBookThemeSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  colorIndex: z.number().int().nonnegative(),
+  children: z.array(z.string()),
+});
+export type ScanBookTheme = z.infer<typeof ScanBookThemeSchema>;
+
+/**
  * ⚠️ Never merge with the Mine layer's data — the Book layer is chapter-
  * resolution, quantized, and must read as visually distinct from Mine's
  * exact-position bands (decisions.md 2026-07-29 later). `hasDigest` false
@@ -781,6 +804,11 @@ export const ScanBookLayerSchema = z.object({
    * union of every (unredacted) chapter's thematic themes, for the scan's
    * theme filter UI. */
   themeVocabulary: z.array(z.string()),
+  /** M24.5's distilled ~6-8 book-level themes, colour-keyed. Empty when no
+   * distillation pass has run yet — the Scan's filter falls back to the flat
+   * `themeVocabulary` dropdown above in that case, same as it does when
+   * `hasDigest` is false. */
+  bookThemes: z.array(ScanBookThemeSchema),
   chapters: z.array(ScanBookChapterSchema),
 });
 export type ScanBookLayer = z.infer<typeof ScanBookLayerSchema>;
@@ -1086,7 +1114,14 @@ export type UpdateContextLadderBody = z.infer<typeof UpdateContextLadderBodySche
 
 // M21 adds "audio-render" (rendering one spine section's sentence audio);
 // M22 adds "cast-scan" (pass 1: ensure/resume the digest, then assign voices).
-export const JobKindSchema = z.enum(["digest", "thematic", "theme-tagging", "audio-render", "cast-scan"]);
+export const JobKindSchema = z.enum([
+  "digest",
+  "thematic",
+  "theme-tagging",
+  "theme-distillation",
+  "audio-render",
+  "cast-scan",
+]);
 export type JobKind = z.infer<typeof JobKindSchema>;
 
 export const JobStatusSchema = z.enum(["running", "completed", "failed", "cancelled"]);

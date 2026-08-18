@@ -52,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(23);
+    expect(version).toBe(24);
     db.close();
   });
 
@@ -255,7 +255,7 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(23);
+      expect(second.pragma("user_version", { simple: true })).toBe(24);
       second.close();
     } finally {
       cleanupDbFile(tmpPath);

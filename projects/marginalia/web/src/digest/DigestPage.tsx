@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation, useNavigate, type Location } from "react-router-dom";
-import type { AudioSectionsResponse, DigestStatus, ThematicStatus } from "@marginalia/shared";
+import type { AudioSectionsResponse, DigestStatus, ScanBookTheme, ThematicStatus } from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
@@ -8,6 +8,7 @@ import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { useJobs } from "../jobs/JobsContext.js";
 import { startJobRequest } from "../jobs/jobsApi.js";
 import { deleteAllAudio, deleteSectionAudio, fetchAudioSections } from "../audio/audioApi.js";
+import { themeRampColor } from "./themeRamp.js";
 import styles from "./DigestPage.module.css";
 
 /** M22.5 G: "N MB"/"N KB" for the rendered-audio column — no existing
@@ -50,6 +51,17 @@ async function fetchThematicStatus(resourceId: string, revealed: Set<number>): P
     return (await res.json()) as ThematicStatus;
   } catch {
     return null;
+  }
+}
+
+async function fetchBookThemes(resourceId: string): Promise<ScanBookTheme[]> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/theme-distillation`);
+    if (!res.ok) return [];
+    const body = (await res.json()) as { bookThemes: ScanBookTheme[] };
+    return body.bookThemes;
+  } catch {
+    return [];
   }
 }
 
@@ -121,6 +133,9 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const [thematicError, setThematicError] = useState<string | null>(null);
   const [taggingJobId, setTaggingJobId] = useState<string | null>(null);
   const [taggingError, setTaggingError] = useState<string | null>(null);
+  const [bookThemes, setBookThemes] = useState<ScanBookTheme[]>([]);
+  const [distillJobId, setDistillJobId] = useState<string | null>(null);
+  const [distillError, setDistillError] = useState<string | null>(null);
   const [audioSections, setAudioSections] = useState<AudioSectionsResponse | null>(null);
   const [deletingSpine, setDeletingSpine] = useState<number | null>(null);
   const [deletingAllAudio, setDeletingAllAudio] = useState(false);
@@ -138,6 +153,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
         setBriefDraft((prev) => (prev === "" ? result.brief.text : prev));
       }
     });
+    fetchBookThemes(id).then(setBookThemes);
   }
 
   function loadAudio() {
@@ -153,6 +169,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     setRevealed(new Set());
     setRevealBook(false);
     setAudioSections(null);
+    setBookThemes([]);
     load();
     loadAudio();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -223,8 +240,16 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
         if (job.status === "failed") setTaggingError(job.error ?? "theme_tagging_failed");
       }
     }
+    if (distillJobId) {
+      const job = jobs.find((j) => j.id === distillJobId);
+      if (job && job.status !== "running") {
+        setDistillJobId(null);
+        if (job.status === "failed") setDistillError(job.error ?? "theme_distillation_failed");
+        else if (id) fetchBookThemes(id).then(setBookThemes);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs, thematicJobId, taggingJobId]);
+  }, [jobs, thematicJobId, taggingJobId, distillJobId]);
 
   async function handleAnalyzeThemes() {
     if (!id || !status || thematicJobId) return;
@@ -255,6 +280,23 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
       registerStarted({ id: result.jobId, kind: "theme-tagging", resourceId: id, resourceTitle: null });
     } else {
       setTaggingError(result.error);
+    }
+  }
+
+  // "Distil book-level themes" (M24.5): folds the dozens of per-chapter
+  // theme strings under ~6-8 book-level ones. Same shape as handleTagThemes
+  // — a no-op the server handles gracefully when there's nothing to distil
+  // from yet, so there's no separate "vocabulary is empty" disabled state
+  // here either.
+  async function handleDistillThemes() {
+    if (!id || distillJobId) return;
+    setDistillError(null);
+    const result = await startJobRequest(`/api/resources/${id}/theme-distillation`, undefined);
+    if ("jobId" in result) {
+      setDistillJobId(result.jobId);
+      registerStarted({ id: result.jobId, kind: "theme-distillation", resourceId: id, resourceTitle: null });
+    } else {
+      setDistillError(result.error);
     }
   }
 
@@ -351,9 +393,28 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
               <Button variant="outline" size="sm" onClick={handleTagThemes} disabled={taggingJobId !== null}>
                 {taggingJobId ? "Tagging…" : "Tag highlights with themes"}
               </Button>
+              <Button variant="outline" size="sm" onClick={handleDistillThemes} disabled={distillJobId !== null}>
+                {distillJobId ? "Distilling…" : "Distil book-level themes"}
+              </Button>
             </div>
             {thematicError && <p className={styles.pausedNotice}>Thematic analysis failed: {thematicError}</p>}
             {taggingError && <p className={styles.pausedNotice}>Theme tagging failed: {taggingError}</p>}
+            {distillError && <p className={styles.pausedNotice}>Theme distillation failed: {distillError}</p>}
+            {bookThemes.length > 0 && (
+              <ul className={styles.bookThemeLegend} aria-label="Book-level themes">
+                {bookThemes.map((theme) => (
+                  <li key={theme.id} className={styles.bookThemeChip}>
+                    <span
+                      className={styles.bookThemeSwatch}
+                      style={{ backgroundColor: themeRampColor(theme.colorIndex) }}
+                      aria-hidden="true"
+                    />
+                    {theme.name}
+                    <span className={styles.bookThemeCount}>{theme.children.length}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
 
           {status.book && (status.book.safe || status.book.full) && (

@@ -6094,3 +6094,61 @@ ink.
   prose in TASKS.md for M24 §A/§C are intact and consistent with the shipped code, so the
   underlying verification likely happened — only its NOTES.md writeup is missing. Re-run or
   recover the write-up before treating that verification as fully documented.
+
+## M24.5 §1-3 — distillation, the colour ramp, and library-wide matching — 2026-08-18
+
+### Why the distillation pass reads analyses, not just theme strings
+
+TASKS.md's own instruction ("distil from the chapter themes and analyses already stored")
+could have been read as "the theme strings are enough, analysis is optional context." Went
+with including the full analysis paragraph per chapter anyway: theme *names* alone lose the
+nuance that would let a model tell "loneliness" and "alienation" apart when deciding whether
+they belong under the same book-level parent or two different ones — the analysis paragraph
+is where that distinction actually lives. Still cheap: a handful of chapter analyses is a
+small fraction of the digest tokens that produced them, nowhere near book-text scale.
+
+### "Code disposes" has two jobs here, not one
+
+`themeTagging.ts`'s existing pattern (filter the model's proposed themes down to the real
+vocabulary) only prevents *hallucination*. Distillation also has to prevent *omission* — the
+acceptance line ("every chapter theme is assigned a parent") is a coverage guarantee, and an
+LLM asked to group N things under 6-8 buckets will sometimes just drop one. Fixed in code,
+not by re-prompting: any chapter theme not present in *any* returned `children` list (after
+the hallucination filter) gets assigned to whichever book-level name it's Levenshtein-nearest
+to. Deterministic, and it means the acceptance line holds even against a sparse or lazy model
+reply — tested directly (`themeDistillation.test.ts`, "assigns a chapter theme the model
+dropped…").
+
+### Colour is a property of the canonical row, not of a render
+
+The task text's two colour requirements read like they pull in opposite directions: "derived
+from its position in the book's own distilled set" (implies recomputed per book) vs. "a match
+adopts the existing canonical theme (and its colour)" (implies colour travels with the
+canonical identity). Resolved by making position-based assignment a **creation-time** event
+only: `resolveCanonicalThemes` computes `index % THEME_RAMP_SIZE` exactly once, when a name
+has no match and a new `canonical_themes` row is born. Every subsequent mention — in the same
+book on a rebuild, or in a different book entirely — resolves through `matchConcept` and
+inherits the stored value. Position never re-enters the calculation after that first moment.
+This is what makes "rebuilding a digest does not reshuffle the colours" true by construction:
+there's nothing to reshuffle, because nothing is recomputed.
+
+### The hue-separation problem was solved directly rather than eyeballed
+
+The four kind hues (rose/sage/honey/slate) aren't evenly spaced around the wheel (gaps of
+39°/61°/111°/149°), so naively adding 8 more hues at even 45° intervals only reaches ~10° of
+separation from the nearest kind hue at its worst point — too close to trust without seeing it
+rendered. Solved as a real max-min spacing problem instead: distributed 8 new points across
+the 4 existing gaps proportional to each gap's size (a small script, not hand-picked hex
+values), reaching ~28° minimum separation across all 12 hues. Full method is in theme.css's
+own comment next to `--theme-ramp-0..7`. Not a substitute for a live look at the rendered
+legend — flagged as unverified in TASKS.md — but a considered starting point rather than a
+guess.
+
+### What's genuinely unverified
+
+No LLM provider was configured this session and no browser was available, so: the pass has
+never run against either real fixture book (Metamorphosis, Kafka on the Shore); "6-8 themes,
+judged actually good" (the Verify item) is untouched; the ramp has never been seen rendered,
+so confusability with the kind hues is reasoned-about, not observed; and the ledger's
+token-cost recording, while wired through the same `withUsageLedger` path every other
+operation uses, has no real number attached to it yet.

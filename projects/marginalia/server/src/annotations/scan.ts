@@ -8,6 +8,7 @@ import { listThemesByHighlightId } from "./highlightThemes.js";
 import { buildSectionOffsetIndex, locateAnchor } from "./sectionOffsets.js";
 import { listChapterDigests } from "../digest/store.js";
 import { listThematicDigests } from "../digest/thematicStore.js";
+import { listBookThemes } from "../digest/canonicalThemes.js";
 
 function firstLine(text: string, maxLength = 140): string {
   const line = text.split("\n").find((l) => l.trim().length > 0) ?? "";
@@ -108,7 +109,16 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
   // Vocabulary only draws from what's actually shown here — a theme that
   // exists solely in a past-the-bookmark chapter shouldn't appear as a
   // filterable option before the reader's read that far.
-  const themeVocabulary = [...new Set(bookChapters.flatMap((c) => c.themes))].sort();
+  const revealedThemes = new Set(bookChapters.flatMap((c) => c.themes));
+  const themeVocabulary = [...revealedThemes].sort();
+  // Same spoiler gate as bookChapters above, applied to the distilled layer:
+  // a book-level theme whose every child sits past the bookmark is dropped
+  // wholesale rather than shown as an empty, name-only legend entry — the
+  // name itself ("Betrayal") is exactly the kind of spoiler M19.5 exists to
+  // gate, so its mere presence in the list is withheld, not just its detail.
+  const bookThemes = listBookThemes(db, resourceId)
+    .map((t) => ({ ...t, children: t.children.filter((c) => revealedThemes.has(c)) }))
+    .filter((t) => t.children.length > 0);
 
   return {
     resource,
@@ -119,6 +129,7 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
     book: {
       hasDigest,
       themeVocabulary,
+      bookThemes,
       chapters: bookChapters,
     },
   };

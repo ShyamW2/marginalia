@@ -450,7 +450,7 @@ colours, keyed to the four highlight kinds; themes carry no colour at all.
 instrument than none. So bounding the vocabulary is the *prerequisite* for the colour key,
 not a companion improvement — do these in order or the second one cannot land.
 
-- [ ] **A distillation pass gives each book ~6–8 book-level themes**, with the existing
+- [x] **A distillation pass gives each book ~6–8 book-level themes**, with the existing
       specific chapter themes kept and folded underneath as children. Specific themes stay
       valuable; they stop being the top-level vocabulary.
       ⚠️ **Distil from the chapter themes and analyses already stored, never from the book
@@ -460,12 +460,43 @@ not a companion improvement — do these in order or the second one cannot land.
       _Acceptance: on both fixtures the distilled set is 6–8 themes, every chapter theme is
       assigned a parent, and the token cost of the pass is recorded in the ledger and is a
       small fraction of the digest that preceded it._
-- [ ] **Each book-level theme owns a phosphor colour**, derived deterministically from its
+      ✅ `server/src/digest/themeDistillation.ts`: one `extract()` call over every stored
+      chapter's `analysis` + `themes` (never the book text), asking for 6-8 book-level
+      groups. "Code disposes": a returned child not in the resource's real chapter-theme
+      vocabulary is dropped; any chapter theme the model left unassigned (or that got
+      dropped) is placed under its nearest book-level name by Levenshtein similarity in
+      code, so "every chapter theme is assigned a parent" is a guarantee the function
+      keeps rather than leaves to the model. Routed through `getProvider(db, "digest",
+      "theme-distillation", …)`, a new `LLMOperation`/`UsageOperationSchema` value, so its
+      cost lands in the ledger under its own tag automatically (`withUsageLedger`, same as
+      every other operation) — not separately measured against a real book this session
+      (no configured provider), so "a small fraction of the digest that preceded it" is
+      architecturally true (the input is a handful of short analyses, not book text) but
+      not measured. Ten unit tests (`themeDistillation.test.ts`) cover grouping, the
+      hallucinated-child drop, the unassigned-theme fallback, the no-chapters no-op, and
+      cross-book matching.
+      ⚠️ **Not run against either real fixture book this session** — no LLM provider
+      configured, no browser. The "6-8 themes, judged good" half of the acceptance line is
+      the Verify item below, still open.
+- [x] **Each book-level theme owns a phosphor colour**, derived deterministically from its
       position in the book's own distilled set, so a rebuild of the same digest produces the
       same key. The four kind hues stay reserved for kinds — themes need their own ramp.
       _Acceptance: the legend is readable at a glance; rebuilding a digest does not reshuffle
       the colours; theme colours are never confusable with kind colours in either mode._
-- [ ] **The canonical vocabulary self-populates across books.** When Book B's distilled
+      ✅ `--theme-ramp-0..7` (theme.css), one hue per book-level theme, solved
+      computationally for the 8 points (on top of the 4 existing, unevenly-spaced kind
+      hues) that maximise the *minimum* pairwise separation across all 12 — ~28° apart at
+      closest, vs. ~10° for naive even 45° spacing (method in the CSS comment). Colour is
+      assigned once, at canonical-theme *creation* (`resolveCanonicalThemes`, position in
+      that call's own list, mod 8), and never recomputed — a rebuild re-matches an
+      already-seen name onto its existing row rather than re-deriving a colour, which is
+      what makes "does not reshuffle" true by construction rather than by care at each
+      call site (`canonicalThemes.test.ts`: "never reshuffles a colour once assigned…").
+      `web/src/digest/themeRamp.ts` is the one place index → CSS var is decided, so the
+      Scan and the digest page's own legend can't disagree.
+      ⚠️ **Not judged by eye** — no browser this session; contrast/confusability against
+      the kind hues was reasoned about via hue separation, not measured live.
+- [x] **The canonical vocabulary self-populates across books.** When Book B's distilled
       themes are computed, each is matched against the themes already seen in the library:
       a match adopts the existing canonical theme (and its colour), a miss creates one. So
       the shared vocabulary is *discovered* from reading rather than authored up front, and
@@ -480,6 +511,20 @@ not a companion improvement — do these in order or the second one cannot land.
       canonical entry with one colour; digest two books sharing nothing and confirm no
       spurious merge; a near-miss pair ("Doubling" / "The double") is decided by the rule
       and the outcome is recorded either way._
+      ✅ `resolveCanonicalThemes` (`server/src/digest/canonicalThemes.ts`) calls
+      `matchConcept` directly, passing `aliases: []` throughout — the distillation pass
+      never collects aliases (the model returns a name, nothing else, per decision 11), so
+      only the slug-equality and Levenshtein tiers are actually reachable here; alias
+      equality is dead code for themes specifically, inherited for free rather than
+      reimplemented. A new `canonical_themes` table (migration v24), library-wide (no
+      `resource_id`), plus `book_themes`/`theme_parents` junction tables scoping the
+      canonical vocabulary to what each book actually surfaces. Unit-tested: two books
+      sharing "Isolation"/"isolation" land on one canonical id with one colour
+      (`themeDistillation.test.ts`); within a single call, near-duplicate names also
+      collapse (`canonicalThemes.test.ts`). The "Doubling"/"The double" near-miss pair the
+      acceptance line names: slugified similarity is **0.30**, well under the 0.85
+      threshold — the rule keeps them as two separate canonical themes (asserted in
+      `canonicalThemes.test.ts`). NOTES.md M24.5 has the full design writeup.
 - [ ] **The Scan's theme filter becomes the colour key** rather than a dropdown of dozens:
       book-level themes as coloured, toggleable entries, specific themes reachable
       underneath.
