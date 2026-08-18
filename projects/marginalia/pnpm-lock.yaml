@@ -100,6 +100,9 @@ importers:
       epubjs:
         specifier: ^0.3.93
         version: 0.3.93
+      marks-pane:
+        specifier: ^1.0.9
+        version: 1.0.9
       motion:
         specifier: ^12.42.2
         version: 12.42.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

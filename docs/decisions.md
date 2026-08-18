@@ -3,6 +3,47 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-18 — Search matches whole words, and a hit is identified by its position (M24.1 C/D)
+
+Three decisions taken while implementing M24.1 §C and §D. The tasks delegated the first
+with a recommendation, forced the second, and the third was the operator's own call on an
+ambiguity in the task text.
+
+1. **Whole-word by default; substring is an explicit choice, named on screen.** TASKS.md
+   recommended it and the recommendation holds: a raw substring scan is why "the" matched
+   *other*, *there* and *father* and blanketed a paragraph in three-character marks. The
+   part worth recording is where the rule *lives* — `shared/src/textSearch.ts`, one
+   module — and that `mode` travels with the query, in the request and in the
+   reader↔Scan handoff, rather than sitting in server settings. Both follow from
+   "one result set, two views" (2026-08-14 point 1): the server produces hits with this
+   rule and the reader re-finds them in the live DOM with it, so a second copy, or two
+   surfaces holding different modes, would quietly become two result sets. Cost, accepted:
+   a reader who wants stems ("run" finding "running") must tick a box.
+
+2. **A highlight is identified by its content; a search hit is identified by its
+   position.** This is the M24.1 C fix stated as a rule, because the old code applied the
+   first idea to both. `findAnchorInText` — prefix+exact+suffix, falling back to
+   `indexOf(exact)` — is right for a highlight: there is one of it, and the forgiving
+   fallback is the whole point. It cannot work for a search hit, whose `exact` *is* the
+   query and therefore looks identical at every occurrence; every hit in a section
+   collapsed onto the first one. Occurrence order is what identifies a hit, and it needs
+   nothing new on the wire, only that both sides scan under the same rule (point 1). The
+   server's own `hit.offset` sounds like the obvious answer and isn't: it indexes
+   `resource_text`, the reader paints into the live DOM's flattened text, and the two
+   share no coordinate system. Consequence to keep in mind: when the counts disagree the
+   reader will paint *fewer* marks than there are hits, never marks in wrong places —
+   under-painting is the chosen failure direction.
+
+3. **A search-result card belongs to the reader, not the Scan.** TASKS.md §D said "the
+   Scan's results get a card" and, in the same breath, that page numbering must reuse the
+   reader footer's own. Those cannot both hold: the Scan never loads epub.js, so it has no
+   pagination and no honest page number to show. Put to the operator, who chose the
+   reader. The Scan keeps its strip, ticks and cursor readout — it is the distribution
+   view, and a scrollable list of rows is the reading-side view. The card holds no hits,
+   no query and no cursor of its own; it renders what the find bar already owns and calls
+   back with an index into that one result set, which is what makes "a row click lands
+   exactly where stepping to that index lands" structural instead of coincidental.
+
 ## 2026-08-16 — An exception in `useFrame` is a canvas-wide outage, and a printed page keeps its margins
 
 Three things, from the operator's fifth review of the opening ("the transition where it

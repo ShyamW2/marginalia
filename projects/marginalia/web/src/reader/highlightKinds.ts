@@ -16,6 +16,24 @@ interface MarkThemeInput {
 }
 
 /**
+ * M24.1 A: `mix-blend-mode` is not an SVG presentation attribute — unlike
+ * `fill`/`fill-opacity`, `element.setAttribute("mix-blend-mode", ...)` is
+ * silently a no-op (confirmed live: the attribute lands in the DOM,
+ * `getComputedStyle` still reports `normal`). marks-pane's `Highlight.bind()`
+ * applies every key of the `attributes` object via bare `setAttribute` (no
+ * exceptions), so the *only* channel that actually parses as CSS is the
+ * `style` attribute itself — hence this key, rather than a `mix-blend-mode`
+ * key that epub.js/marks-pane would set the same broken way. `fill`/
+ * `fill-opacity` deliberately stay separate presentation-attribute keys
+ * (not folded into this string): clearMarkHover's `el.style.fillOpacity = ""`
+ * clear-to-fallback trick depends on the base fill-opacity living on the
+ * attribute, not inside the inline style block it's clearing.
+ */
+function blendStyle(blendMode: "multiply" | "screen"): string {
+  return `mix-blend-mode: ${blendMode};`;
+}
+
+/**
  * epub.js's `Annotations#highlight()` 5th argument — SVG presentation
  * attributes applied straight to the mark's `<rect>` (marks-pane's
  * `Highlight` class; see NOTES.md — these marks render in an SVG pane in
@@ -39,7 +57,7 @@ export function markStyleForKind(
   return {
     fill: vars.kindColors[kind],
     "fill-opacity": isDark ? "0.34" : "0.22",
-    "mix-blend-mode": isDark ? "screen" : "multiply",
+    style: blendStyle(isDark ? "screen" : "multiply"),
   };
 }
 
@@ -79,7 +97,7 @@ export function audioTintStyle(
   return {
     fill: vars.accent,
     "fill-opacity": isDark ? "0.22" : "0.14",
-    "mix-blend-mode": isDark ? "screen" : "multiply",
+    style: blendStyle(isDark ? "screen" : "multiply"),
   };
 }
 
@@ -101,6 +119,6 @@ export function searchMarkStyle(
   return {
     fill: current ? vars.highlightActive : vars.highlight,
     "fill-opacity": current ? "1" : isDark ? "0.55" : "0.6",
-    "mix-blend-mode": isDark ? "screen" : "multiply",
+    style: blendStyle(isDark ? "screen" : "multiply"),
   };
 }

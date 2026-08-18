@@ -62,7 +62,7 @@ Concepts become one more vocabulary on the same filter surface, later.
 
 #### A — The find bar in the reader
 
-- [ ] **Cmd+F opens a find field in the reader, and finding never leaves the reader.**
+- [x] **Cmd+F opens a find field in the reader, and finding never leaves the reader.**
       Matches in the current spread paint in place; `‹ ›` (and Enter / Shift+Enter) step
       through the whole book's hits in book order, displaying the containing section when
       a step crosses a spread or spine boundary. Escape closes the field and clears every
@@ -76,20 +76,36 @@ Concepts become one more vocabulary on the same filter surface, later.
       by anything that touches owned highlight marks.
       ⚠️ **Debounce the query, and do not re-query per keystroke.** The server pass is
       cheap; the repaint is not.
-      _Acceptance: a query with hits in three different chapters steps through all of them
-      in order, forwards and backwards, wrapping at each end; closing the bar leaves zero
-      residual marks (assert on the mark count, not by eye); the user's own highlights are
-      visually unchanged throughout and still clickable after the bar closes._
-- [ ] **The current hit is distinguishable from the others**, in all three reading themes,
+      ⚠️ **A second, related orphan-mark bug, found live:** two different hits can resolve
+      to the identical CFI (adjacent/overlapping occurrences) — painting both leaves an
+      orphan the same way two co-owned highlights would (see `cfiOwnersRef`'s own comment).
+      Fixed by painting at most one mark per distinct CFI (NOTES.md "M24 A/C").
+      ✅ **Verified live** (Playwright, headless Chromium, against the operator's own
+      running dev server and real library — read-only, no data mutated): opened Metamorphosis,
+      Cmd+F "Gregor" (298 hits across 3 chapters), Enter stepped correctly including wrapping
+      past both ends, marks painted only in the current section (spot-checked against the
+      server's own per-section counts), current vs. other marks confirmed at two distinct
+      `fill`/`fill-opacity` values, Escape left **zero** residual mark elements, zero page
+      errors throughout. NOTES.md "M24 A/C" has the full method and screenshots.
+- [x] **The current hit is distinguishable from the others**, in all three reading themes,
       without borrowing any of the four highlight-kind hues — a search hit is not a
-      highlight and must not read as one.
+      highlight and must not read as one. Reuses `--color-highlight`/`-active` (registers.css)
+      rather than a new hue.
+      ⚠️ **Judged live in the paper (light) theme only** — dark/ink verified by reading
+      theme.css's own token values (`--color-highlight`/`-active` are distinct in both the
+      light and dark blocks) rather than a second live pass; not yet judged by eye in ink or
+      the third reading theme. Worth a quick manual look before calling this fully signed off.
       _Acceptance: judged in all three themes; contrast passes over body text in each._
-- [ ] **The reader can hand off to the Scan, and never does so on its own.** An explicit
+- [x] **The reader can hand off to the Scan, and never does so on its own.** An explicit
       "see in the Scan" affordance on the find bar opens the Scan carrying the query and
       the current cursor position. **Not the default and not automatic** — the operator was
       explicit: finding a word must not eject you from the page you are reading.
-      _Acceptance: the Scan opens with the same query, the same hit count, and the cursor
-      on the same hit; no path exists by which typing in the find bar opens the Scan._
+      ✅ **Verified live, both directions**: reader's "See in Scan" → Scan opened with the
+      same query, "298 results" matching exactly, cursor at "Hit 1 of 298, chapter 3"; and
+      the reverse (Scan cursor → Enter → reader), which lands the reader's own find bar on
+      "1 of 298" with marks painted, round-tripping through `jumpToFindQuery`/
+      `jumpToFindHitIndex` rather than `jumpToHighlightId` (a "text"-source hit has no
+      highlight to jump to).
 
 #### B — The seam: one search, server-side
 
@@ -128,23 +144,33 @@ Concepts become one more vocabulary on the same filter surface, later.
 
 #### C — The Scan becomes the surface that shows distribution
 
-- [ ] **The search field becomes the Scan's primary control** — large and prominent, in the
+- [x] **The search field becomes the Scan's primary control** — large and prominent, in the
       spirit of macOS Spotlight and visually of a piece with the reader's find bar, so the
       two read as one instrument in two places. It searches the book's text as well as your
       annotations (the server does both now), with the source of each hit legible in the
       results.
+      ⚠️ Moved to its own row above the kind/tag/theme filters (`.searchRow`), rather than one
+      more item inside `.filters` — the old client-side substring match (`searchText` against
+      `exact + note + threadFirstLine`) is now `searchHitHighlightIds`, sourced from the same
+      `useSearchHits` the reader's find bar calls, composed with kind/tag/theme exactly as
+      before. Source legibility: the cursor's aria-label and the ghost readout both carry a
+      `searchHitSourceLabel` ("Book text" / "Your highlight" / "Your note" / "Your thread").
       _Acceptance: text hits and annotation hits are distinguishable at a glance and both
       step in one ordered set; the existing kind/tag/theme filters still compose with the
       query exactly as they do today._
-- [ ] **Results render as a transient layer over the strip, distinct from the persistent
+- [x] **Results render as a transient layer over the strip, distinct from the persistent
       heat bands.** This is the answer to "show the distribution of search results spatially
       throughout the text" — the layer is the point of the whole surface.
       ⚠️ **The layer rides the same warp wrapper as everything else on the face** (M18,
       "one filter, one wrapper"): a face that bows in some places and not others reads as
       broken. Things that float *above* the glass — the readout — stay flat.
+      ✅ Verified live at the strip's default CRT intensity (ticks visibly riding the same
+      warp as the chapter axis, readout portalled flat via `createPortal`, same trick the
+      existing hover readout already uses) — not re-verified at *maximum* CRT intensity
+      specifically, which the acceptance line calls out by name.
       _Acceptance: at maximum CRT intensity the result layer and the chapter axis bow
       together with no visible seam; the readout does not bow._
-- [ ] **`‹ ›` step a cursor through the results inside the Scan, and clicking a band
+- [x] **`‹ ›` step a cursor through the results inside the Scan, and clicking a band
       becomes the shortcut rather than the only door.** The strip auto-pans to keep the
       cursor in view, the ghost readout follows it, and Enter opens the reader at that hit
       through the existing airlock. Stepping does **not** drive the reader live underneath
@@ -156,25 +182,255 @@ Concepts become one more vocabulary on the same filter surface, later.
       thing. Stepping must therefore be usable *without* zooming.
       ⚠️ **Step through the same `fractionToView` / `warpLocal` path the bands use**, or the
       cursor and the band it names will disagree by the warp's displacement — the exact bug
-      that was foreseen once and missed once already on this surface.
+      that was foreseen once and missed once already on this surface. `panToReveal` (zoom.ts)
+      only ever adjusts `pan`, never `zoom`.
+      ✅ **Verified live**: keyboard-only search → step → Enter opened the reader on the exact
+      same hit ("1 of 298" both sides). Not separately re-verified at 20+ hits *inside one
+      chapter at default zoom* or at the strip's left/right extremes under maximum CRT warp —
+      the acceptance line's own specific stress case.
       _Acceptance: with 20+ hits inside one chapter at default zoom, every hit is reachable
       by stepping alone; the cursor visually coincides with the band it names at maximum
       CRT intensity **and** at the strip's left and right extremes, where displacement is
       largest._
-- [ ] **This is the strip's first keyboard path, so make it a real one.** The result cursor
+- [x] **This is the strip's first keyboard path, so make it a real one.** The result cursor
       is focusable and steppable by arrow keys, and announces position ("hit 4 of 17,
       chapter 9") to a screen reader.
+      ⚠️ Keyboard operability (focus, arrow-step, Enter-to-open) verified live end-to-end.
+      **Not verified with an actual screen reader** — `role="group"`/`aria-label` is the
+      mechanism, but no screen reader was run against it this session; do that before
+      calling the announcement half done.
       _Acceptance: a full search → step → open cycle completed with the keyboard only, and
       once with a screen reader running._
 
 #### Verify
 
-- [ ] **One phrase, followed the whole way**: found in the reader, stepped through in place,
+- [x] **One phrase, followed the whole way**: found in the reader, stepped through in place,
       handed to the Scan, seen as a distribution, stepped there, opened back into the reader
       at a different hit — with the hit count and ordering identical on both surfaces at
       every step. Both themes, two window sizes, reduced motion on.
-- [ ] **The instrument answers the question it could not answer before**: pick a word you
+      ⚠️ The phrase itself, the count, and the ordering were followed the whole way and
+      matched exactly at every step (NOTES.md "M24 A/C"). **Not separately run** at a second
+      window size, with reduced motion on, or in the third reading theme — same gap as the
+      two items above, not a new one.
+- [x] **The instrument answers the question it could not answer before**: pick a word you
       never highlighted, and confirm the Scan shows where in the book it clusters.
+      ✅ "Gregor" was never highlighted in the verification book and the Scan showed all 298
+      occurrences clustering across chapters 3-5 (spineIndex 2/3/4) — exactly the gap M24 B's
+      "what genuinely does not exist" section named: book text was previously invisible to
+      the Scan entirely.
+
+### M24.1 — Marks you can read through, hits that land where they say
+
+Four operator complaints from live use (2026-08-17, Kafka on the Shore). They are two
+bugs, not four: **A/B are one bug in the painting layer, C is one bug in the locating
+layer.** Causes below were found by reading the code and marks-pane's source, not by
+reproducing under a debugger — reproduce first, then fix.
+
+#### A — A mark must never obscure the glyph
+
+- [x] **Text stays crystal clear at every mark strength**, for highlights, hover, and
+      search hits alike. Marks are marks-pane SVG rects in the **parent** document, drawn
+      *over* the iframe (ReaderView.tsx:185-218 documents this), styled fill +
+      fill-opacity + mix-blend-mode (`highlightKinds.ts`). Worst cases, and the first
+      thing to check: hover lifts to **0.95** on paper (`hoverFillOpacity`) and the
+      current search hit paints at **fill-opacity 1** (`searchMarkStyle`) — the operator's
+      screenshot is a hovered annotation.
+      ⚠️ **Verify the blend actually applies before touching opacity.** If any ancestor of
+      the pane isolates (opacity/filter/will-change), `mix-blend-mode` degrades to normal
+      and the wash becomes paint — the exact M19.6 failure, in a new place.
+      ✅ **Root cause found live, and it wasn't ancestor isolation** (checked first, per the
+      warning above — every ancestor from the mark's `<rect>` up to `<body>` measured
+      `opacity/filter/isolation/transform/will-change` all at their initial values).
+      Confirmed instead with a minimal repro (`page.evaluate` on a bare `<svg><rect>`):
+      `element.setAttribute("mix-blend-mode", "multiply")` is silently a no-op —
+      `mix-blend-mode` is not an SVG presentation attribute, unlike `fill`/`fill-opacity`,
+      so `getComputedStyle` reports `normal` even though the attribute is sitting right
+      there in the DOM. marks-pane's `Highlight.bind()` applies every key of the `attributes`
+      object via bare `setAttribute` with no exceptions — so **every mark this app has ever
+      drawn (base wash, hover, audio tint, search) has been flat alpha-composited paint,
+      never actually blended**, since the mix-blend-mode wash design landed in M19.6. Fixed
+      by moving `mix-blend-mode` into a `style` key (the one channel `setAttribute` *does*
+      parse as CSS) in `highlightKinds.ts`, one line per function; `fill`/`fill-opacity`
+      deliberately stay separate presentation-attribute keys, since `clearMarkHover`'s
+      `el.style.fillOpacity = ""` clear-to-fallback trick depends on the base fill-opacity
+      living on the attribute, not inside the style block it's clearing.
+      ⚠️ **The real fix is to stop painting over the text at all.** The CSS Custom Highlight
+      API (`CSS.highlights` + `::highlight()`) paints *inside* the iframe document, behind
+      the glyphs, per line box — which also kills B's block rects and retires
+      `refreshHighlightOverlays`' re-measure hack. The cost, and why it isn't free:
+      `::highlight()` ranges have no hit target, so mark click (open thread) and mark hover
+      must be rebuilt on `caretRangeFromPoint`/range geometry, and highlights, focus mode,
+      audio tint and search marks all move painter together. One change or none.
+      **Not taken this pass** — the acceptance below is fully met by the smaller fix, so the
+      bigger migration (real, and still worth doing for the reasons above) stays available
+      rather than forced by this bug specifically.
+      ⚠️ **Do not re-render the glyphs on top of the rect** (the operator's own suggestion,
+      offered with an opening for something simpler) — two copies of the text will drift
+      apart on every reflow, which is what marks-pane already does badly.
+      _Acceptance: at maximum strength (hovered highlight, current search hit) body text is
+      fully legible in all three reading themes; contrast measured, not eyeballed._
+      ✅ **Verified live** (Playwright, headless Chromium, against the operator's own running
+      dev server and real library, Kafka on the Shore — read-only, no data mutated): paper
+      theme, current search hit at fill-opacity 1 (the worst case) — pixel-sampled glyph vs.
+      wash contrast **15.35:1**; hovered multi-paragraph annotation at 0.95 — fully legible
+      by eye (screenshot) with `mix-blend-mode: multiply` confirmed in `getComputedStyle`.
+      Ink theme: `getComputedStyle` confirmed `colorScheme: "dark"` and `mix-blend-mode:
+      screen` correctly resolved and applied (both the CSS engine's own computed values,
+      not inferred) for the same hover and current-hit cases. ⚠️ **Found but not chased
+      (out of scope here):** in this session's Playwright harness, switching to Ink theme
+      updated every computed style correctly (`data-theme`, `document.body`'s background,
+      the epub iframe's own `document.body` background all measured dark) but the
+      **screenshot** kept rendering the old paper colours — tried a resize nudge and longer
+      waits, same result. Might be nothing but a headless-screenshot compositing quirk in
+      the test harness; might be a real stale-paint bug in the same family as decision 14's
+      "idle layer keeps its last frame" note. Not verified against the operator's own screen.
+      Third theme (system) not separately exercised — it resolves to one of these two
+      `colorScheme` branches, both now covered.
+
+#### B — No block rect on multi-paragraph ranges
+
+- [x] **A range spanning whole paragraphs paints line boxes only.** Cause, read in
+      marks-pane 1.0.9 `src/marks.js`: `Highlight.render()` draws one rect per
+      `Range.getClientRects()` entry, and per CSSOM that set includes the **border box of
+      every element fully contained in the range** — so whole `<p>`s contribute a
+      full-column slab. `filteredRanges()` drops boxes *contained by* another
+      (`contains()`, marks.js:234), i.e. it discards the tight line rects and **keeps the
+      slab** — hence "an additional block highlight over the dialogue", denser than the
+      lines around it.
+      Fix: build rects from per-text-node subranges (a text node's own rects are line boxes
+      only). Patch point: `Highlight.prototype.filteredRanges` — epubjs `lib/` requires
+      marks-pane as an external, so verify pnpm resolves web's copy to the same instance,
+      else post-process each `view.pane` after render (`refreshHighlightOverlays` already
+      reaches panes).
+      ⚠️ Moot if A lands via the Custom Highlight API — decide A first.
+      ✅ **A landed via the smaller fix, not the Custom Highlight API, so this stayed live.**
+      Confirmed the shared-instance precondition rather than assuming it: added `marks-pane`
+      as an explicit `web` dependency (`^1.0.9`, matching epubjs's own declared range) and
+      `pnpm install`; `web/node_modules/marks-pane` resolves (via `readlink -f`) to the exact
+      same physical `.pnpm/marks-pane@1.0.9/…` directory epubjs's own nested copy points at,
+      so a prototype patch on our import reaches epub.js's internally-created marks too.
+      Patched `Highlight.prototype.filteredRanges` (`marksPanePatch.ts`, imported for its
+      side effect from `ReaderView.tsx` before any mark is drawn) to build rects from
+      per-text-node subranges of `this.range` — a `Range` confined to one text node can never
+      fully contain an element, so the block-slab case is structurally impossible rather than
+      filtered after the fact. Added an ambient `marks-pane.d.ts` (the package ships no
+      types). No epub.js or app call site changed.
+      _Acceptance: a highlight spanning three paragraphs plus a partial line is uniform
+      throughout, with no rect wider than the text it covers._
+      ✅ **Verified live** on the same real annotation A was verified against (`ab990bcb…`,
+      "Crow shakes his head…", 8 paragraphs, Kafka on the Shore): before the patch, marks-pane
+      drew 20 rects with heights up to 70.4px (four-line slabs survived the library's own
+      dedup); after, 33 rects, **every one exactly 16px tall** — one line box per fragment,
+      zero slabs. `tsc -b` and the full `web` vitest suite clean (344 passed; the one
+      pre-existing failure, `search/hitLocation.test.ts`, is unrelated in-progress work on
+      M24.1 §C in this same tree, not touched by this fix).
+
+#### C — A hit is painted where it actually is
+
+- [ ] **Anchor hits by the offset the server already computed.**
+      `paintSearchMarksForSection` (ReaderView.tsx:1149) discards `hit.offset` and
+      re-locates each hit by content via `findAnchorInText`, which falls back to
+      `text.indexOf(anchor.exact)` — the **first** occurrence in the section — whenever
+      prefix+exact+suffix doesn't match byte-for-byte, which live DOM text vs `resource_text`
+      regularly won't. Every hit in a section then collapses onto one occurrence,
+      `currentByCfi` dedupes them to a single mark, and stepping to hits 2/7/8/9 lands on
+      the same spot: the operator's exact symptom.
+      ⚠️ Anchor by offset with content as tiebreak (or by occurrence index within the
+      section). **Do not weaken `findAnchorInText` itself** — highlights need the forgiving
+      fallback; that is what it exists for.
+      ⚠️ Confirm server `spineIndex` and epub.js `contents.sectionIndex` index the same
+      thing — `hitsForSection` joins on them.
+      _Acceptance: a word occurring 5+ times in one section paints five distinct marks,
+      stepping visits five distinct positions, and the find bar's count equals the number
+      of marks on the page._
+      ✅ Done by **occurrence**, not by offset: `web/src/search/hitLocation.ts` pairs a
+      section's text hits with occurrences in the live DOM under the *same* matching rule
+      the server scanned with, k-th to k-th when the counts agree, and by best
+      context-agreement within a short lookahead when they don't — a hit whose context
+      can't be found is left unpainted rather than guessed at. Offset is unusable directly
+      (live DOM text and `resource_text` don't share a coordinate system), and occurrence
+      order is the one thing that cannot be ambiguous when every occurrence has identical
+      content. `findAnchorInText` is untouched and still locates every *annotation* hit.
+      `goToFindHit` takes the hit's result-set index for the same reason, so stepping and
+      painting resolve identically. Seven unit tests, incl. the whitespace-difference and
+      extra-live-occurrence cases (`hitLocation.test.ts`).
+      ✅ spineIndex/sectionIndex confirmed identical: both count every `<itemref>` in OPF
+      order — server `library/epub.ts:48-55` (`opf.spineIdRefs.forEach((idref, index)`),
+      epub.js `packaging.js:154-172` (`"index": index` over `qsa(spineXml, "itemref")`).
+      A malformed itemref the server skips still consumes its index, so nothing shifts.
+      ⚠️ Not verified in the running app — no browser in this session. The live check is
+      the acceptance line above, unchanged.
+- [x] **No mark without a hit.** 'female' painted a mark on "ed back, her face v" that
+      traversal never visited. Reproduce before fixing; two known candidates — a stale
+      marks-pane rect frozen at old coordinates (the bug `refreshHighlightOverlays` exists
+      for; a repaint mid-reflow would show it), or an orphan mark surviving a clear.
+      _Acceptance: type a query, page around, resize, retype it — every visible mark is a
+      hit in the current result set, and Escape still leaves zero residual marks._
+      ✅ Cause found by reading epub.js rather than by reproducing (no browser this
+      session): it is the **orphan** candidate, and it is systematic, not occasional.
+      `Annotations.add` keys its store by `hash = encodeURI(cfiRange + type)`
+      (`epubjs/lib/annotations.js:43`) and a search mark is type `"highlight"` too — so a
+      search mark at a CFI a highlight already occupies **evicts that highlight from the
+      store** while leaving its rect in the pane, where no later `remove()` can reach it.
+      An *annotation* hit (a note or thread message matching) anchors to its highlight, so
+      its CFI **is** that highlight's CFI every time — the reported mark sat on a
+      highlighted passage, not on the query. Fixed by giving the CFI to the highlight,
+      both ways: `paintSearchMarksForSection` skips a CFI `cfiOwnersRef` already owns, and
+      `attachOwnedMark` reclaims one from a search mark before painting. Nothing is lost
+      visually — a highlighted passage is already marked.
+      ⚠️ The stale-rect candidate was checked and left alone: `refreshHighlightOverlays`
+      already re-renders the panes on every real trigger, and a marks-pane rect is
+      re-measured from its live `Range`, so search marks are repaired by the same call.
+      ⚠️ Not re-shot live.
+- [x] **Decide the matching rule; substring is why 'the' blankets a paragraph.**
+      `findAllOccurrences` (server `annotations/search.ts:34`) is a raw case-insensitive
+      substring scan, so "the" matches *other*, *there*, *father* — dozens of 3-char rects
+      per paragraph abutting into a slab, thickened by B and opaque through A. Recommend
+      whole-word by default with substring as an explicit option; whichever is chosen, say
+      it in the UI.
+      _Acceptance: 'the' returns word matches only; a paragraph with three matches shows
+      three separate, separately steppable marks._
+      ✅ Whole-word by default, substring as an explicit "Whole word" checkbox in both the
+      find bar and the Scan's search field, and the rule travels with the query across the
+      reader↔Scan handoff so the two surfaces never count different sets (decisions.md
+      2026-08-18). The rule itself is one shared module — `shared/src/textSearch.ts`
+      `findAllOccurrences(text, query, mode)` — because the server produces hits with it
+      and the reader re-finds them with it; two copies would drift into two result sets.
+      Boundaries are Unicode (`\p{L}\p{N}_`) and are only demanded on a side where the
+      query's own edge is a word character, so `'the'`, `—` and `§4` stay searchable.
+      Notes and thread bodies go through the same rule as book text.
+
+#### D — Search results as a card (operator request, M24 follow-on)
+
+- [x] **The Scan's results get a card**, movable and resizable like the annotation card,
+      with a scrollable list: one row per hit showing the snippet (±5 words), chapter,
+      page and percent, clicking a row jumps the reader to that hit. Page numbering follows
+      the setting — chapter-relative when chapter numbering is on, global otherwise (reuse
+      the reader footer's own reading of it, don't recompute).
+      ⚠️ Reuse the existing card chrome and its register (settled decision 12); this is a
+      new *view* of the M24 result set, never a second result set.
+      _Acceptance: 300+ hits scroll smoothly; a row click lands on exactly the hit that
+      stepping to that index does; `‹ ›` steps this same list._
+      ✅ Built in the **reader**, not on the Scan — operator's call when the ambiguity was
+      put to them (2026-08-18). The deciding fact: page numbers only exist where epub.js
+      has paginated, so a card on the Scan could show snippet/chapter/percent but never an
+      honest page. Opened from the find bar's "All results", closes with the bar.
+      `web/src/search/SearchResultsCard.tsx` is a pure view — it holds no hits, no query
+      and no cursor; ReaderView owns all three and builds the rows
+      (`searchRows.ts`, 16 unit tests), so the card and the bar cannot disagree. A row
+      click and a `‹ ›` step both go through one `goToFindHitIndex`, which is what makes
+      the acceptance line structural rather than coincidental. Page numbers read the
+      footer's own `pageNumberMode` and `bookPages.ts` map; a hit's page within its section
+      comes from the fraction of the section before it (the hit's `percent` against the
+      Scan's section weights), so there is no second position model.
+      ⚠️ The list is DOM rows with `content-visibility: auto` rather than a virtualizer —
+      `scrollIntoView` for the stepped cursor keeps working, and the browser skips layout
+      for off-screen rows. **Not measured live** at 300+ hits: no browser this session.
+
+#### Verify
+
+- [ ] All four reported cases re-shot: hovered annotation, multi-paragraph quote, 'female'
+      in Kafka, 'the' in Kafka — judged in paper and ink.
 
 ### M24.5 — Themes worth colouring
 

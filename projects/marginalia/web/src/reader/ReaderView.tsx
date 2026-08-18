@@ -11,6 +11,9 @@ import {
 } from "react";
 import ePub from "epubjs";
 import type { Book, Contents, Location, Rendition } from "epubjs";
+// M24.1 B: side-effect only — patches marks-pane's shared Highlight
+// prototype before any mark is drawn. See marksPanePatch.ts.
+import "./marksPanePatch.js";
 import { AnimatePresence, motion } from "motion/react";
 import {
   UNRESOLVABLE_CHAPTER_ANCHOR_CFI,

@@ -5864,3 +5864,233 @@ All two orders of magnitude under the ~50ms budget, on one of the two fixture bo
 `buildSectionOffsetIndex` (built once per search, TASKS.md B's other bullet) and a
 single case-insensitive `indexOf` sweep per section are enough; FTS5 stays parked for
 M28, where cross-book scanning actually needs it.
+
+## M24.1 A/B — mix-blend-mode was never applying, and B rode along on the fix
+
+Both bugs turned out smaller than TASKS.md's own two leading theories, once reproduced.
+
+### A: not ancestor isolation — `setAttribute` silently drops `mix-blend-mode`
+
+Checked the warned-about cause first: walked every ancestor from the mark's `<rect>` up to
+`<body>` live (`getComputedStyle`, `opacity`/`filter`/`isolation`/`transform`/`will-change`)
+on the operator's own "Crow shakes his head…" annotation. All at initial values — no
+isolating ancestor, anywhere.
+
+Minimal repro settled it instead: a bare `<svg><rect>`,
+`el.setAttribute("mix-blend-mode", "multiply")`. The attribute lands in the DOM
+(`getAttributeNames()` shows it), but `getComputedStyle(el).mixBlendMode` reads `"normal"`.
+`fill`/`fill-opacity` on the same element apply correctly the same way. The difference:
+`fill` and `fill-opacity` are real SVG presentation attributes; `mix-blend-mode` is a
+CSS-Compositing-only property with no presentation-attribute form, so a plain
+`setAttribute` for it is inert — the browser just stores an unrecognised attribute.
+
+epub.js's `view.highlight()`/`view.underline()` (`node_modules/epubjs/src/managers/views/
+iframe.js`) build an `attributes` object (`fill`, `fill-opacity`, `mix-blend-mode`, from
+whatever `styles` the caller passes) and hand it to marks-pane's `new Highlight(range,
+className, data, attributes)`. `Highlight.bind()` (`marks-pane/src/marks.js`) applies every
+key with a bare `element.setAttribute(attr, this.attributes[attr])` — no exceptions, no
+`style`-vs-attribute branching. So `mix-blend-mode` has been dead on arrival since the wash
+design landed (M19.6): every mark this app has ever drawn — base highlight wash, hover
+boost, audio tint, search hits — has been flat alpha-composited paint the whole time, never
+actually blended. The 0.22/0.34 base wash reads "fine" at a glance because a little flat
+colour over dark text still looks like tinting; the failure only becomes visible where the
+opacity climbs high enough to read as solid paint (hover 0.95, current search hit 1.0) —
+which is exactly the two cases the operator photographed.
+
+**Fix:** move `mix-blend-mode` into a `style` key (`highlightKinds.ts`, one line added per
+function) — the one channel `setAttribute` *does* parse as real CSS, since setting the
+`style` *attribute* is specified to parse its value as a CSS declaration block.
+`fill`/`fill-opacity` deliberately stay as separate attribute keys rather than folding
+everything into one `style` string: `clearMarkHover` (`ReaderView.tsx`) restores the base
+wash by doing `el.style.fillOpacity = ""`, which only works because the base fill-opacity
+lives on the *attribute* — clearing the inline override lets the attribute show through
+again. Folding fill-opacity into the same style block it's clearing would zero it out
+instead of restoring it.
+
+Did not take the CSS Custom Highlight API route the task also describes as "the real fix."
+It's real, and still worth doing for the reasons TASKS.md gives (kills B's slab bug too,
+retires the re-measure hack) — but the acceptance criterion is fully met without it, so
+forcing that migration onto this bug specifically would have been scope creep, not fidelity
+to the task.
+
+### B rode along, once the shared-instance precondition was checked rather than assumed
+
+TASKS.md flagged the precondition rather than asserting it ("verify pnpm resolves web's
+copy to the same instance"), so checked it: added `marks-pane` (`^1.0.9`, matching
+epubjs's own declared range) as an explicit `web` dependency, `pnpm install`, then
+`readlink -f web/node_modules/marks-pane` — resolves to the exact same
+`.pnpm/marks-pane@1.0.9/node_modules/marks-pane` directory epubjs's own nested copy points
+at. One file on disk, so a prototype patch on our own import reaches the `Highlight`
+instances epub.js creates internally too.
+
+`marksPanePatch.ts` (side-effect import from `ReaderView.tsx`, before any mark is drawn)
+replaces `Highlight.prototype.filteredRanges` with a version built from per-text-node
+subranges of `this.range`, rather than `this.range.getClientRects()` directly. A `Range`
+confined to one text node can never fully contain an *element*, so the slab case — a whole
+`<p>`'s border box riding along in the client-rects list — is structurally impossible,
+rather than something to filter back out after the fact (which is what the library's own
+`filteredRanges` tried and got backwards: its `contains()` dedup keeps whichever rect comes
+first in iteration order, which empirically is the slab, not the tight lines).
+
+Added `marks-pane.d.ts` (an ambient module declaration) since the package ships no types
+of its own — narrowed to exactly the one class and one method this app touches.
+
+### Verified live
+Playwright, headless Chromium, against the operator's own running dev server (already up:
+`:5173`/`:5175`) and real library — read-only throughout, no data mutated. Book: Kafka on
+the Shore, the same one the operator's report came from. Annotation: `ab990bcb…` ("Crow
+shakes his head…"), the multi-paragraph highlight already in the real data — no synthetic
+fixture needed.
+
+- **A, paper theme:** current search hit (fill-opacity 1, the worst case) —
+  `getComputedStyle` confirmed `mix-blend-mode: multiply` actually applied (was `normal`
+  before the fix, same repro); pixel-sampled glyph-vs-wash contrast **15.35:1**. Hovered
+  annotation at 0.95 — legible by eye in the screenshot, same blend confirmation.
+- **A, ink theme:** clicking "Ink theme" and reading `getComputedStyle` confirmed
+  `colorScheme: "dark"`, `document.documentElement`'s and the epub iframe's own `body`
+  background both genuinely dark, and `mix-blend-mode: screen` (not `multiply`) correctly
+  selected and applied for both the hover and current-hit cases — the CSS engine's actual
+  computed values, not inferred from source.
+  ⚠️ **Not fully closed:** in this harness, the **screenshot** kept showing paper colours
+  after the same click that made every computed style above measure as dark — tried a
+  resize nudge and longer waits, no change. Could be nothing but a headless-screenshot
+  compositing quirk specific to this test harness; could be a real stale-paint bug in the
+  family decision 14 already named ("idle layer keeps its last frame"). Not reproduced or
+  ruled out against the operator's own screen — flagging rather than chasing, since it's
+  outside what A/B asked for.
+- **B:** before the patch, the same annotation's marks-pane group had 20 rects, several up
+  to 70.4px tall (multi-line slabs survived the library's own dedup). After: 33 rects,
+  **every one exactly 16px** — one line box per fragment, zero slabs.
+- `tsc -b` (web) and the full `web` vitest suite both clean (344/345; the one failure,
+  `search/hitLocation.test.ts`, belongs to unrelated in-progress work on this same
+  milestone's §C, happening concurrently in this tree — not touched by this fix).
+
+### Not signed off here
+The ink-theme screenshot discrepancy above. Contrast in the third ("system") reading
+theme — it resolves to one of the two `colorScheme` branches already covered, not
+separately exercised. The Custom Highlight API migration TASKS.md describes as the real
+fix for A, deliberately not attempted this pass.
+
+## M24.1 C/D — a hit knows which occurrence it is, and results get a card — 2026-08-18
+
+Ran alongside A/B (painting layer) in the same tree; nothing here touches
+`highlightKinds.ts`, marks-pane, or the mark *styling* path. No browser in this session,
+so everything below was established by reading code and by unit tests — the live
+acceptance lines in TASKS.md are unchanged and still owed.
+
+### C — why "anchor by offset" turned into "anchor by occurrence"
+
+TASKS.md's instruction was "anchor by offset with content as tiebreak (or by occurrence
+index)". The offset half is unusable as written: `hit.offset` indexes `resource_text`,
+the reader paints into `body.textContent` of the *live* rendered section, and the two do
+not share a coordinate system — there is no scale factor to convert between them, and no
+way to learn one client-side (the section's server-side length isn't in the payload).
+
+Occurrence index is exact, though, and needs nothing new on the wire: the server emits
+one hit per occurrence in document order under a known matching rule, so the reader scans
+the live text under **the same rule** and pairs k-th with k-th. Identity comes from
+position in the sequence — the one property that can't be ambiguous when every occurrence
+has identical content, which is exactly why content-based re-location (`findAnchorInText`,
+whose last resort is `indexOf(exact)` = the *first* occurrence) collapsed a section's
+hits onto one mark.
+
+Counts can still disagree when the live DOM holds text `resource_text` never had. The
+fallback walks both sequences forward and scores each candidate by how much of the hit's
+recorded prefix/suffix it agrees with (`MIN_CONTEXT_SCORE = 10` characters out of 48).
+Deliberately a **score**, not an equality test: the texts differ — that is why the counts
+disagreed — so demanding exact agreement would drop legitimate hits near whatever the
+live DOM added. A hit that scores nothing is left **unpainted**. Under-painting is the
+right failure: over-painting is the other half of the bug report.
+
+`findAnchorInText` is untouched, and still locates every annotation hit. That split is
+the whole fix in one line: *a highlight is identified by its content; a search hit is
+identified by its position.*
+
+### The mark with no hit was epub.js's annotation store, not a stale rect
+
+Not reproduced live, but the mechanism is in the library's source and is systematic:
+
+```js
+// epubjs/lib/annotations.js:43
+add(type, cfiRange, ...) { let hash = encodeURI(cfiRange + type); ... this._annotations[hash] = annotation; }
+```
+
+Both a highlight mark and a search mark are type `"highlight"`, so at an identical CFI
+they share one hash. The second `add` overwrites the store entry and attaches a second
+rect to the pane; the evicted annotation's rect stays there forever, because the hash a
+later `remove()` would look up now belongs to the other mark. `attachOwnedMark` already
+defended highlights against *each other* for exactly this reason ("a second mark at an
+identical position would just orphan") — the search path simply wasn't covered.
+
+And the collision isn't a coincidence: an annotation hit (a note or thread message
+matching the query) anchors to its highlight, so its CFI **is** that highlight's CFI,
+every single time. That matches the report — 'female' painting a mark on
+"ed back, her face v", text that doesn't contain the query, because it was a *highlight's*
+orphaned rect. The rule now: **the highlight owns the CFI**, enforced in both directions
+(`paintSearchMarksForSection` skips a CFI in `cfiOwnersRef`; `attachOwnedMark` reclaims
+one from a search mark). Nothing is lost visually — a highlighted passage is already
+marked.
+
+The other candidate (a stale marks-pane rect) was checked and left alone:
+`refreshHighlightOverlays` re-renders the panes on every real trigger, and marks-pane
+re-measures from the mark's own live `Range`, so search marks are repaired by the same
+call that repairs highlights.
+
+### spineIndex ↔ sectionIndex, confirmed rather than assumed
+
+TASKS.md asked. Both count every `<itemref>` in OPF spine order:
+`server/src/library/epub.ts:48-55` (`opf.spineIdRefs.forEach((idref, index)`) and
+`epubjs/lib/packaging.js:154-172` (`"index": index` over `qsa(spineXml, "itemref")`).
+A malformed itemref that the server skips still consumes its index, so the two cannot
+drift. `hitsForSection`'s join is sound.
+
+### The matching rule lives in one module, and travels with the query
+
+`shared/src/textSearch.ts`. The server produces hits with it, the reader re-finds them
+with it, and the find bar's count is the number both agree on — a second copy would
+become a second result set. Whole-word is the default (decisions.md 2026-08-18); the
+boundary is only demanded on a side where the query's *own* edge is a word character, so
+`'the'`, `—` and `§4` remain searchable. `mode` rides in the query string and in the
+reader↔Scan handoff state rather than being a server preference, for the same
+"one result set" reason.
+
+### D — the card, and why it is in the reader
+
+TASKS.md said "the Scan's results get a card" but also "page and percent … reuse the
+reader footer's own reading of it". Those two pull opposite ways: the Scan never loads
+epub.js, so it has no pagination and cannot show an honest page number. Put to the
+operator, who chose the reader (2026-08-18).
+
+The card holds no state of its own — not the hits, not the query, not the cursor. It
+renders rows ReaderView builds and calls back with an *index into the result set*. That
+is what makes "a row click lands on exactly the hit that stepping to that index does"
+structural: both paths are `goToFindHitIndex`.
+
+Page numbers: `pageNumberMode` and the page map are the footer's own
+(`bookPages.ts`), and a hit's page *within* its section comes from the fraction of the
+section preceding it — derived from the hit's whole-book `percent` against the Scan's
+section weights, the same weights `bookPages.ts` already estimates from. No second
+position model, and no page shown at all until the map has calibrated (the same silence
+the footer keeps).
+
+The rows memo depends on `bookPage` for a non-obvious reason: the page map is a ref
+written during relocate, so a memo can't observe it calibrating — `bookPage` moves on the
+same relocate, which makes it the signal that the map did.
+
+### What is not signed off here
+
+Nothing was run in the app. Specifically owed, all of them live checks: five distinct
+marks for a five-occurrence word and five distinct stepped positions; "type a query, page
+around, resize, retype it" leaving no residual marks; 300+ hits scrolling smoothly in the
+card (the list is DOM rows with `content-visibility: auto`, chosen so `scrollIntoView`
+keeps working for the stepped cursor — not measured); and the card judged in paper and
+ink.
+
+## Blockers
+
+- **TASKS.md M24 §A/Verify cites a NOTES.md "M24 A/C" section (Playwright method,
+  screenshots, the Gregor/298-hits run) that does not exist in this file.** Found while
+  splitting the M24/M24.1 backlog into commits, 2026-08-18. The checkmarks and verification
+  prose in TASKS.md for M24 §A/§C are intact and consistent with the shipped code, so the
+  underlying verification likely happened — only its NOTES.md writeup is missing. Re-run or
+  recover the write-up before treating that verification as fully documented.

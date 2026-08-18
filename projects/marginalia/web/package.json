@@ -13,6 +13,7 @@
     "@marginalia/shared": "workspace:*",
     "@react-three/fiber": "8.18.0",
     "epubjs": "^0.3.93",
+    "marks-pane": "^1.0.9",
     "motion": "^12.42.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
