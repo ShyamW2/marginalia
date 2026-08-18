@@ -95,9 +95,12 @@ interface HeatStripProps {
   bookChapters: ScanBookChapter[];
   showBookLayer: boolean;
   /** null = no theme filter active, every book band is lit at its neutral
-   * tone. Set = only bands (and, via litIds, highlights) carrying that
-   * theme light up — the one shared vocabulary lighting both layers. */
-  litTheme: string | null;
+   * tone. Set = only bands (and, via litIds, highlights) carrying one of
+   * these theme names light up. A specific-theme selection is one name; a
+   * book-level selection (M24.5 §4) is every specific theme distilled
+   * under it — themeFilter.ts's `activeThemeNames` builds this array so
+   * ScanPage never has to know which case it is. */
+  litThemes: string[] | null;
   /** M19.5: a book band with no highlight under it "clicks through to the
    * chapter start" (decisions.md) — the only honest target at chapter
    * resolution. */
@@ -139,7 +142,7 @@ export function HeatStrip({
   showMineLayer,
   bookChapters,
   showBookLayer,
-  litTheme,
+  litThemes,
   onOpenChapter,
   warpGeometry,
   warpWrapperRef,
@@ -444,7 +447,7 @@ export function HeatStrip({
           if (!bc.hasThematic) return null;
           const chapter = chapters.find((c) => c.spineIndex === bc.spineIndex);
           if (!chapter) return null;
-          const lit = litTheme === null || bc.themes.includes(litTheme);
+          const lit = litThemes === null || bc.themes.some((t) => litThemes.includes(t));
           const rawStartX = fractionToView(chapter.startPercent, zoomState) * stripSize.width;
           const rawEndX =
             fractionToView(chapter.startPercent + chapter.lengthPercent, zoomState) * stripSize.width;

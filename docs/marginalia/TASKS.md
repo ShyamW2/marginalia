@@ -525,12 +525,36 @@ not a companion improvement — do these in order or the second one cannot land.
       acceptance line names: slugified similarity is **0.30**, well under the 0.85
       threshold — the rule keeps them as two separate canonical themes (asserted in
       `canonicalThemes.test.ts`). NOTES.md M24.5 has the full design writeup.
-- [ ] **The Scan's theme filter becomes the colour key** rather than a dropdown of dozens:
+- [x] **The Scan's theme filter becomes the colour key** rather than a dropdown of dozens:
       book-level themes as coloured, toggleable entries, specific themes reachable
       underneath.
       _Acceptance: a book with no digest still shows a coherent Scan (today's fallback
       behaviour is preserved); filtering by a book-level theme lights every child theme's
       highlights._
+      ✅ `ThemeFilterKey.tsx` replaces the flat `<select>` with one chip per book-level
+      theme (swatch + name, toggleable), a disclosure per chip revealing its specific/
+      chapter-level children as their own clickable chips underneath — falling back to
+      today's exact dropdown when `bookThemes` is empty (no distillation run yet), same
+      branch structure as the pre-existing `hasDigest`/no-digest fallback one level up, so
+      "a book with no digest still shows a coherent Scan" is unchanged.
+      `themeFilter.ts`'s `activeThemeNames(selection, bookThemes)` is the one place a
+      selection becomes "which specific theme names light up" — a book-level pick expands
+      to every child, a specific pick is unchanged from before distillation existed — and
+      both `HeatStrip`'s Book layer (`litTheme` generalised to `litThemes: string[] | null`)
+      and the Mine layer's own `litIds` filter consume that same array, so a selection can
+      never light one layer's themes and not the other's.
+      ⚠️ The chips use a *second*, separately-solved phosphor ramp
+      (`scanPalette.ts`'s `THEME_PHOSPHOR_RGB`) rather than `theme.css`'s
+      `--theme-ramp-*` directly — the Scan overrides `--color-bg` to near-black
+      (`ScanPage.module.css`'s own comment on this), the same reason the four kind hues
+      already get a separate neon translation (`phosphorHue`) rather than reusing
+      `--kind-*` verbatim. Not spotted until wiring this task, so `--theme-ramp-*` (used
+      by the digest page's legend, which sits on the normal paper/ink page) and
+      `THEME_PHOSPHOR_RGB` (used here) are deliberately two renderings of the same
+      `colorIndex` identity, exactly like kind colours already work.
+      11 new unit/component tests (`themeFilter.test.ts`, `ThemeFilterKey.test.tsx`).
+      ⚠️ **Not run in a browser this session** — selection/expansion logic and the fallback
+      branch are covered by tests; the legend has never been seen rendered.
 - [ ] **Verify:** rebuild a digest from scratch and confirm the key is stable; judge on both
       fixtures whether the distilled themes are actually *good* — if they are not, that is a
       prompt problem to solve here, not something to ship and route around.

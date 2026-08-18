@@ -27,3 +27,32 @@ export function phosphorRgb(kind: HighlightKind): [number, number, number] {
 }
 
 export const KIND_ORDER: HighlightKind[] = ["rose", "sage", "honey", "slate"];
+
+/**
+ * M24.5's book-level theme ramp (`theme.css`'s `--theme-ramp-0..7`), given
+ * the same "muted paper tint → saturated neon-on-black" translation as the
+ * four kind hues above — theme.css's own hex values would wash out against
+ * this page's `#05070a` override the same way the untranslated kind hues
+ * would. A *separate* set of 8 hues, not the same hues re-saturated: hue
+ * separation was solved fresh against these four phosphor kind hues
+ * (351°/150°/42°/200°, not the paper ramp's 0°/100°/39°/211° obstacles),
+ * so it's still ~25° minimum apart from everything on this specific
+ * surface. `colorIndex` (server/src/digest/canonicalThemes.ts) indexes
+ * this the same way it indexes `--theme-ramp-*` — same identity, two
+ * renderings, exactly like kind colours already work.
+ */
+const THEME_PHOSPHOR_RGB: [number, number, number][] = [
+  [243, 142, 104],
+  [222, 243, 104],
+  [160, 243, 104],
+  [104, 243, 110],
+  [104, 243, 231],
+  [104, 108, 243],
+  [187, 104, 243],
+  [243, 104, 212],
+];
+
+export function themePhosphorHue(colorIndex: number): string {
+  const [r, g, b] = THEME_PHOSPHOR_RGB[colorIndex % THEME_PHOSPHOR_RGB.length];
+  return `rgb(${r}, ${g}, ${b})`;
+}

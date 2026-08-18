@@ -23,6 +23,8 @@ import { RevisitQueue } from "./RevisitQueue.js";
 import { KIND_ORDER, phosphorHue } from "./scanPalette.js";
 import { ScanWarpFilter } from "./ScanWarpFilter.js";
 import { VhsOverlay } from "./VhsOverlay.js";
+import { activeThemeNames, type ThemeSelection } from "./themeFilter.js";
+import { ThemeFilterKey } from "./ThemeFilterKey.js";
 import { computeWarpGeometry } from "./warp.js";
 import styles from "./ScanPage.module.css";
 
@@ -103,7 +105,11 @@ export function ScanPage({
   const [notFound, setNotFound] = useState(false);
   const [filterKind, setFilterKind] = useState<HighlightKind | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
-  const [filterTheme, setFilterTheme] = useState<string | null>(null);
+  // M24.5 §4: a book-level or specific theme selection — activeThemeNames()
+  // expands either into the set of specific theme names both layers below
+  // actually filter against, so this component never has to branch on which
+  // case it is past this one point.
+  const [themeSelection, setThemeSelection] = useState<ThemeSelection>(null);
   // M24 C: "the search field becomes the Scan's primary control" — one text
   // box, wired to the same server-side search the reader's find bar uses
   // (useSearchHits), still composing with the kind/tag/theme filters below
@@ -311,7 +317,12 @@ export function ScanPage({
   }, [data]);
 
   const filtersActive =
-    filterKind !== null || filterTag !== null || filterTheme !== null || searchText.trim() !== "";
+    filterKind !== null || filterTag !== null || themeSelection !== null || searchText.trim() !== "";
+
+  const litThemes = useMemo(
+    () => activeThemeNames(themeSelection, data?.book.bookThemes ?? []),
+    [themeSelection, data],
+  );
 
   // M24 C: the query half moved server-side (searchHitHighlightIds, above)
   // — full thread bodies and notes are searched there now, not just
@@ -324,12 +335,12 @@ export function ScanPage({
     for (const h of data.highlights) {
       if (filterKind && h.kind !== filterKind) continue;
       if (filterTag && !h.tags.includes(filterTag)) continue;
-      if (filterTheme && !h.themes.includes(filterTheme)) continue;
+      if (litThemes && !h.themes.some((t) => litThemes.includes(t))) continue;
       if (hasQuery && !searchHitHighlightIds.has(h.id)) continue;
       set.add(h.id);
     }
     return set;
-  }, [data, filterKind, filterTag, filterTheme, searchText, searchHitHighlightIds, filtersActive]);
+  }, [data, filterKind, filterTag, litThemes, searchText, searchHitHighlightIds, filtersActive]);
 
   const pageClassName = `${styles.page} register-glass${
     cursorStyle === "system" ? ` ${styles.systemCursor}` : ""
@@ -526,19 +537,12 @@ export function ScanPage({
 
           {data.book.hasDigest ? (
             data.book.themeVocabulary.length > 0 && (
-              <select
-                className={styles.tagSelect}
-                value={filterTheme ?? ""}
-                onChange={(e) => setFilterTheme(e.target.value || null)}
-                aria-label="Filter by theme"
-              >
-                <option value="">All themes</option>
-                {data.book.themeVocabulary.map((theme) => (
-                  <option key={theme} value={theme}>
-                    {theme}
-                  </option>
-                ))}
-              </select>
+              <ThemeFilterKey
+                bookThemes={data.book.bookThemes}
+                themeVocabulary={data.book.themeVocabulary}
+                selection={themeSelection}
+                onSelectionChange={setThemeSelection}
+              />
             )
           ) : (
             <span className={styles.emptyState}>
@@ -558,7 +562,7 @@ export function ScanPage({
               showMineLayer={showMineLayer}
               bookChapters={data.book.chapters}
               showBookLayer={showBookLayer && data.book.hasDigest}
-              litTheme={filterTheme}
+              litThemes={litThemes}
               onOpenChapter={handleOpenChapter}
               warpGeometry={warpGeometry}
               warpWrapperRef={warpWrapperRef}

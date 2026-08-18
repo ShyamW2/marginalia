@@ -6152,3 +6152,34 @@ judged actually good" (the Verify item) is untouched; the ramp has never been se
 so confusability with the kind hues is reasoned-about, not observed; and the ledger's
 token-cost recording, while wired through the same `withUsageLedger` path every other
 operation uses, has no real number attached to it yet.
+
+## M24.5 §4 — the Scan's colour key needed its own phosphor ramp — 2026-08-18
+
+Found while wiring the legend into `ScanPage.tsx`, not anticipated when `--theme-ramp-*`
+was designed in §1-3: `ScanPage.module.css`'s `.page` class overrides `--color-bg` to
+`#05070a` and friends, a near-black scope independent of the paper/ink app theme (its own
+comment: "dark-native... overrides the same global custom properties, scoped to this
+page"). The paper-toned `--theme-ramp-*` hex values are the wrong tool there for the same
+reason the four kind hues already get `scanPalette.ts`'s separately-saturated
+`phosphorHue()` instead of `--kind-*` directly.
+
+Rather than reuse the same 8 hues at higher saturation, solved the max-min separation
+problem fresh against the *phosphor* kind hues (351°/150°/42°/200°, measured from the
+existing `PHOSPHOR_RGB` values — not the same as the muted kind hues' 0°/100°/39°/211°).
+Landed on ~25° minimum separation across all 12. `colorIndex` now has two renderings of one
+identity: `--theme-ramp-{i}` for paper-register surfaces (the digest page's legend),
+`THEME_PHOSPHOR_RGB[i]` for the Scan — same pattern kind colours already established, just
+not one this session initially planned to need until the wiring surfaced it.
+
+### The filter's shape: one selection, one expansion function
+
+`ScanPage.tsx` used to hold a single `filterTheme: string | null`, matched by exact
+equality in two places (the Mine layer's `litIds`, the Book layer's `litTheme` prop into
+`HeatStrip`). Distillation adds a second *kind* of selection (a whole book-level theme)
+that must expand to a set rather than match one string, and the two selections are mutually
+exclusive from the reader's point of view — you're filtering by one thing at a time, book-
+level or specific. Modeled as a tagged union (`ThemeSelection`) rather than two separate
+nullable fields, specifically to make "both set at once" unrepresentable instead of a state
+to remember to guard against. `activeThemeNames()` is the one function that turns a
+selection into the array both `litIds` and `HeatStrip`'s (renamed) `litThemes` prop filter
+against — neither call site has to know which kind of selection produced the array.
