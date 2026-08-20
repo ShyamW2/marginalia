@@ -1,0 +1,26 @@
+.wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* Shell only — position/radius/border/shadow. Row spacing and section
+ * labels are the caller's own content, since digest and listening want
+ * slightly different internal rhythm (READER_REDESIGN.md's inline values). */
+.panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  min-width: 220px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-panel);
+  transform-origin: top left;
+}
+
+.panel:focus {
+  outline: none;
+}

@@ -25,13 +25,21 @@ interface NavClusterProps {
   /** Which settings divider the settings icon opens to (M19.7 "settings
    * opens where you already are") — each room passes its own. */
   settingsTab: TabId;
-  /** The App-shell placement: fixed, top-right. The reader's
-   * fullscreen-embedded copy passes false and relies on its own parent's
-   * proximity-reveal positioning instead — real Fullscreen API hides
-   * everything outside the fullscreened element, so this component mounts a
-   * second time, un-floated, inside the reader's own chrome for that case
-   * (see ReaderView.tsx). */
+  /** The App-shell placement: fixed, top-right. The reader's embedded copy
+   * (M24.7 A, both fullscreen and now the normal one-line strip) passes
+   * false and relies on its own parent's positioning instead — the reader
+   * can be docked narrow beside another pane, and a viewport-fixed pill
+   * can't track a pane's edge (READER_REDESIGN.md's "the reader can be
+   * docked beside other panes"). See ReaderView.tsx. */
   floating?: boolean;
+  /** Whether this instance owns the shared `chromeSlot` seam (`DeskPage`'s
+   * Import button, the reader's Search/Scan/Publish). Defaults to
+   * `floating` — every existing call site keeps its exact current
+   * behavior — but the reader's embedded instance opts in explicitly,
+   * since only one `NavCluster` should register at a time and the
+   * App-shell's floating one is suppressed while the reader route is
+   * active (App.tsx). */
+  registersSlot?: boolean;
   className?: string;
 }
 
@@ -42,16 +50,13 @@ interface NavClusterProps {
  * handler and the keyboard path do the same navigation, from the same
  * component, so they can't drift apart.
  */
-export function NavCluster({ settingsTab, floating = true, className }: NavClusterProps) {
+export function NavCluster({ settingsTab, floating = true, registersSlot = floating, className }: NavClusterProps) {
   const { choice, setChoice } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const reducedMotion = useReducedMotion();
   const activeThemeIndex = THEME_OPTIONS.findIndex((option) => option.value === choice);
-  // Only the App-shell's one persistent cluster owns the chrome row's
-  // leading slot — the reader's un-floated fullscreen copy never has a room
-  // behind it to contribute actions, so it doesn't register one.
   const registerChromeSlot = useRegisterChromeSlot();
 
   function openSettings(originEl: Element) {
@@ -107,7 +112,7 @@ export function NavCluster({ settingsTab, floating = true, className }: NavClust
 
   return (
     <div className={[styles.cluster, floating ? styles.floating : "", className].filter(Boolean).join(" ")}>
-      {floating && <div className={styles.leadingSlot} ref={registerChromeSlot} />}
+      {registersSlot && <div className={styles.leadingSlot} ref={registerChromeSlot} />}
       <Link
         to="/"
         className={[buttonClassName({ variant: "ghost", size: "md", iconOnly: true }), styles.libraryLink].join(

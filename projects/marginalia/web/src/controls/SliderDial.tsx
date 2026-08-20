@@ -27,6 +27,10 @@ interface SliderDialProps {
    * chapter stops). */
   extraTicks?: readonly SliderDialTick[];
   hint?: string;
+  /** Which side of the trigger the dial grows from. Default "below". A
+   * trigger docked at the bottom of the viewport (the reader's footer %
+   * slider) needs "above" or the dial renders off-screen. */
+  placement?: "below" | "above";
 }
 
 /**
@@ -51,8 +55,11 @@ export function SliderDial({
   ticks = [],
   extraTicks = [],
   hint = "Release to set · Esc to cancel",
+  placement = "below",
 }: SliderDialProps) {
   const reducedMotion = useReducedMotion();
+  const enterY = reducedMotion ? 0 : placement === "above" ? 6 : -6;
+  const exitY = reducedMotion ? 0 : placement === "above" ? 4 : -4;
   const centerPosition = valueToPosition(value, scale);
   const windowRadius = TRACK_WIDTH / 2 / dragPxPerUnit;
   const lo = centerPosition - windowRadius;
@@ -68,7 +75,7 @@ export function SliderDial({
   }
 
   return (
-    <div className={styles.anchor}>
+    <div className={placement === "above" ? `${styles.anchor} ${styles.anchorAbove}` : styles.anchor}>
       <motion.div
         className={styles.dial}
         role="slider"
@@ -77,9 +84,9 @@ export function SliderDial({
         aria-valuemax={max}
         aria-valuenow={value}
         aria-valuetext={formatValue(value)}
-        initial={{ opacity: 0, y: reducedMotion ? 0 : -6 }}
+        initial={{ opacity: 0, y: enterY }}
         animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: reducedMotion ? 0 : -4 }}
+        exit={{ opacity: 0, y: exitY }}
         transition={{ duration: reducedMotion ? 0.001 : 0.12, ease: "easeOut" }}
       >
         <div className={styles.track} aria-hidden="true">

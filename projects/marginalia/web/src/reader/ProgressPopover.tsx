@@ -20,9 +20,9 @@ export function ProgressPopover({ percent, page, totalPages, chapterLabel }: Pro
     <motion.div
       className={styles.panel}
       role="status"
-      initial={{ opacity: 0, y: reducedMotion ? 0 : -6 }}
+      initial={{ opacity: 0, y: reducedMotion ? 0 : 6 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: reducedMotion ? 0 : -4 }}
+      exit={{ opacity: 0, y: reducedMotion ? 0 : 4 }}
       transition={{ duration: reducedMotion ? 0.001 : 0.14, ease: "easeOut" }}
     >
       <div className={styles.row}>

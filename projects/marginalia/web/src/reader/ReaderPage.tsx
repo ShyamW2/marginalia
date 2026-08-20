@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { motion, useReducedMotion } from "motion/react";
+import { useReducedMotion } from "motion/react";
 import type {
   ReaderPaneWidth,
   Resource,
@@ -9,8 +9,6 @@ import type {
   SpreadMode,
 } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
-import { BookCover } from "../library/BookCover.js";
-import { coverLayoutId } from "../library/coverLayoutId.js";
 import { formatPublishSummary, runPublish } from "../library/publish.js";
 import {
   captureOverlayOrigin,
@@ -279,24 +277,10 @@ export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }:
           // has actually landed on this pane — see `HANDOFF_MS`.
           style={{ "--room-reveal": `${HANDOFF_MS}ms` } as CSSProperties}
         >
-          <div className={styles.titleBar}>
-            {/* Doorway transition (DESIGN.md): shares a layoutId with the
-                library card's cover — the same element the user just
-                clicked, landing here (M7's proof of the shared-element
-                motion system). */}
-            <motion.div
-              className={styles.coverThumb}
-              layoutId={reducedMotion ? undefined : coverLayoutId(resource.id)}
-            >
-              <BookCover resourceId={resource.id} title={resource.title} />
-            </motion.div>
-            <span className={styles.title}>{resource.title}</span>
-            {resource.author && (
-              <span className={styles.author}>{resource.author}</span>
-            )}
-          </div>
           <ReaderView
             resourceId={resource.id}
+            resourceTitle={resource.title}
+            resourceAuthor={resource.author ?? null}
             initialHighlightId={initialLocationState?.jumpToHighlightId}
             initialQuestion={initialLocationState?.jumpToQuestion}
             spreadMode={spreadMode}

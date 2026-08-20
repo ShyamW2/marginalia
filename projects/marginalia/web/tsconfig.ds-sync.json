@@ -1,0 +1,28 @@
+{
+  // Sync-only tsconfig, read by /design-sync's esbuild bundle step (cfg.tsconfig).
+  // NOT part of the app build — `tsc -b` never sees this file.
+  //
+  // It exists for exactly one reason: `@react-three/fiber` imports `scheduler`
+  // directly (dist/events-*.esm.js), and the converter's react shim intercepts
+  // every `scheduler` import with a stub that throws [SCHEDULER_MISSING] — a
+  // guard aimed at design systems that leaked react-dom into their dist. Here
+  // the import is legitimate (r3f's reconciler), so the throw took down the
+  // whole bundle and left window.Marginalia empty.
+  //
+  // The converter's tsconfig-paths plugin runs BEFORE the react shim, so a
+  // paths entry resolves `scheduler` to the real package first and the stub
+  // never fires. Version 0.21.0 is what r3f itself declares (^0.21.0) and what
+  // pnpm resolves for it at runtime, so the bundle matches the real app.
+  //
+  // ⚠️ This is a lockfile-derived path. If the scheduler version changes or the
+  // package manager's layout changes, the build fails loudly with
+  // [SCHEDULER_MISSING] again — re-point this entry. See .design-sync/NOTES.md.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "scheduler": [
+        "../node_modules/.pnpm/scheduler@0.21.0/node_modules/scheduler/index.js"
+      ]
+    }
+  }
+}

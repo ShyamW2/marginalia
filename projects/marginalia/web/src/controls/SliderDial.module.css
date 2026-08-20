@@ -16,6 +16,13 @@
   z-index: 20;
 }
 
+/* A trigger docked at the bottom of the viewport (the reader's footer %
+   slider) grows the dial upward instead, or it renders off-screen. */
+.anchorAbove {
+  top: auto;
+  bottom: calc(100% + 0.4rem);
+}
+
 .dial {
   display: flex;
   flex-direction: column;

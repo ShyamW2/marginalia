@@ -55,6 +55,9 @@ export interface SliderProps {
   dialTicks?: readonly SliderDialTick[];
   /** Drag dial hint line. Default "Release to set · Esc to cancel". */
   dialHint?: string;
+  /** Which side of the trigger the drag dial grows from. Default "below" —
+   * see `SliderDial`'s own doc. */
+  dialPlacement?: "below" | "above";
   /** "readout": the formatted value flanked by dim chevrons, no track, fill
    * or thumb — the default, and the only resting form (DESIGN.md "the
    * control system", amended 2026-08-04). "trigger": a plain button showing
@@ -117,6 +120,7 @@ export function Slider({
   ariaLabel,
   dialTicks,
   dialHint,
+  dialPlacement = "below",
   variant = "readout",
   clickToType = true,
   onPlainClick,
@@ -272,6 +276,7 @@ export function Slider({
       ticks={detents}
       extraTicks={dialTicks}
       hint={dialHint}
+      placement={dialPlacement}
     />
   );
 

@@ -143,6 +143,14 @@ export function App() {
   // header nearly touched the cluster once the Desk's actions widened it).
   const overlayOpen = settingsOpen || scanId !== null || digestId !== null;
 
+  // M24.7 A: the reader owns its own embedded, un-floated `NavCluster` (one
+  // line of chrome above the page, pane-relative rather than viewport-fixed
+  // — see NavCluster.tsx's own comment) — this floating instance would
+  // otherwise duplicate it. Walks back through any open overlay the same
+  // way `settingsTabForRoom` does, so a Settings/Scan/Digest stacked over
+  // the reader still hides this one rather than showing both.
+  const isReaderRoom = matchPath("/read/:id", roomLocation(location).pathname) !== null;
+
   function closeSettings() {
     if (background) navigate(-1);
     else navigate("/");
@@ -166,7 +174,9 @@ export function App() {
             {/* M22.6 F: outside <main> and above every overlay — the server being gone
                 outranks whatever room or instrument is currently on screen. */}
             <ServerStatusBanner />
-            <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
+            {!isReaderRoom && (
+              <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
+            )}
             <main className={styles.main}>
               <Suspense fallback={<div className={styles.routeFallback} />}>
                 <Routes location={roomLocation(location)}>

@@ -559,6 +559,278 @@ not a companion improvement — do these in order or the second one cannot land.
       fixtures whether the distilled themes are actually *good* — if they are not, that is a
       prompt problem to solve here, not something to ship and route around.
 
+### M24.7 — Reader chrome v2: one line, nested clusters, an immersive page
+
+The operator's design pass, run with Claude Design and written up in
+**`docs/marginalia/READER_REDESIGN.md` — read it first; it is binding for this milestone**
+and carries the numbers (spacing, radii, tokens) this section deliberately doesn't repeat.
+Its own rule holds: **read the `.dc.html` design files, don't measure the screenshots.**
+Those templates (`templates/reader-chrome-v2/ReaderChromeV2.dc.html`, frames `ReaderShellV2`,
+`ReaderStripStackedV2`, `AnnotationEditorV2`, `SearchPebbleV2`, `FullscreenReaderV2`) live in
+the synced design project, **not in this repo** — pull them before building; the screenshots
+in the operator's message are illustrations of them, not the spec.
+
+Numbered `.7` rather than inserted as a new M25, per OPUS.md's renumbering rule: M25–M28 are
+referenced ~30 times across CLAUDE.md, decisions.md, SPEC.md, PAGE_CURL.md and TASKS_DONE.md,
+and this is the second renumbering that would have landed in a week. **It is still the next
+milestone** — web search (M25) and Codex CLI (M26) wait behind it.
+
+The driving problem, in the operator's words: controls get *dropped* to avoid colliding with
+the floating nav, so digest state and progress vanish exactly when they're wanted. The fix is
+to stop hiding and start **nesting**.
+
+#### What is actually true today
+
+Read before building; three of these contradict the brief's assumptions and one contradicts
+the operator's message.
+
+1. **The reader's chrome is in four places, not two.** `ReaderPage.tsx`'s `.titleBar`
+   (cover + title + author), `ReaderView.tsx`'s `.topRow` (annotations button · progress
+   Slider · ChapterNav · digest-chapter button · query ProviderPickerPopover · the whole
+   audio transport row), `ReaderActionsCluster` (Digest · digest provider · Scan · Publish)
+   floating beside the card, and `App.tsx`'s own floating `NavCluster`. One 48px line means
+   **merging all four**, not restyling one.
+2. **`actionsBesideCard` is the mechanism this milestone replaces.** M22.5 measures whether
+   there is room beside the card and drops the cluster below the footer when there isn't
+   (`ReaderView.tsx:490-495`, and the `topRowReserve` / `compact` props that follow from it).
+   Nesting supersedes it. ⚠️ **Do not ship both** — a measurement that moves controls *and*
+   clusters that nest them is two answers to one question.
+3. **`f` is focus mode; fullscreen is `shift+F`.** The operator's "pressing F just hides
+   annotations" is exactly right about `f` — but M14 fullscreen already exists on `shift+F`,
+   already hides the strips and rail, and already proximity-reveals them
+   (`useFullscreenChrome.ts`, `FULLSCREEN_REVEAL_BAND_PX`). §G is a **rework of M14**, not a
+   new mode. The design's "F to leave" hint therefore either needs relabelling to `⇧F` or a
+   deliberate rebind — M19.7's "keycaps that cannot lie" forbids shipping the hint as drawn.
+4. **There is not one container query in the codebase.** `grep -r container-type web/src`
+   returns nothing; every responsive decision today is a viewport media query or a JS
+   measurement. §C is the first, so it also sets the convention.
+5. **`SearchResultsCard` is already the movable annotation-shell window** the brief proposes
+   as new work — drag by header via `dragControls`, resize, `clampPanelOffset` shared with
+   `ThreadPanel` (`search/SearchResultsCard.tsx`). Extend it; do not create
+   `SearchResultsWindow` beside it.
+6. **The web-search control is inert on purpose** (`ContextLadderToggle.tsx`, "coming in a
+   later milestone"). §F restyles it as a globe; **it stays inert until M25.** Making it live
+   here would take the second cloud dependency without its seam — settled decision 10.
+7. **M24.1 §C is still open** (hits re-located by content, so repeated words collapse onto one
+   mark). It is not a prerequisite — it is in the locating layer, this milestone is in the
+   chrome layer — but the search pebble cannot be *judged by eye* until it lands.
+
+#### A — The top strip becomes one 48px line
+
+- [x] **One row, three zones: reader functions left, the book's identity centre, chrome
+      right.** Left: annotation-count chip · `‹ chapter ›` · digest cluster · listening
+      cluster. Centre: cover thumb + title + author, moved down out of `ReaderPage`'s
+      `.titleBar` (which stops existing as a separate row). Right: the nav pebble — library,
+      search, **scan**, settings, theme trio.
+      ⚠️ The cover thumb carries the doorway transition's `layoutId`
+      (`coverLayoutId(resource.id)`, ReaderPage.tsx:288). **Moving it must not break the
+      shared-element flight from the library card** — M7's proof; verify by opening a book,
+      not by reading the diff.
+      ⚠️ `NavCluster` owns a `leadingSlot` that rooms portal into (`chromeSlot.tsx`; DeskPage
+      uses it). The reader's chrome-right zone should use that seam rather than growing a
+      second one.
+      _Acceptance: at a normal window the reader shows exactly one line of chrome above the
+      page and one below; nothing from today's four places is missing; the reading card is
+      taller than before by roughly the height of the row that went away._
+- [x] **Publish, the tasks tray and the unanchored badge keep a home.** The design's zones
+      don't name them: `Publish` is in today's actions cluster, `TasksTray` is inside
+      `NavCluster`, and the annotations button carries an `unanchoredIds` badge.
+      ⚠️ Ground rule from the brief — **nothing disappears to make room**; place each one and
+      say where in NOTES.md. Publish belongs with the digest cluster or the nav pebble, not
+      in the reading line's left zone.
+      _Acceptance: publishing a book, watching a job, and spotting an unrelocatable highlight
+      are all reachable from the new strip without opening Settings._
+- [x] **Focus mode's own state stops being a sentence in the strip.** Today `f` replaces the
+      annotations chip with "Notes hidden — press F to show" (ReaderView.tsx:2704) — a
+      width-changing string in a row that must not change width.
+      _Acceptance: `f` toggles notes with no reflow of the strip; the state is legible without
+      reading a sentence; the keycap hint still tells the truth._
+
+#### B — The foot mirrors it
+
+- [x] **`‹` · `Page n of m` | `nn%` · `›`, with an instruments pebble at the right** (heat
+      strip, search, fullscreen), at the same 40px height as the strip's second row.
+      Progress moves **out of the top strip** — the `Slider variant="trigger"` +
+      `ProgressPopover` pair currently sits between the annotations chip and ChapterNav.
+      ⚠️ **Keep the real dial.** Dragging the `%` must still raise `SliderDial` with its
+      chapter ticks (`chapterDialTicks`, `extraTicks`) and its "release to jump" commit path
+      — that is M12's instrument, not a decoration to reimplement.
+      _Acceptance: dragging the percentage scrubs and shows the chapter tick exactly as
+      today; clicking it still opens `ProgressPopover`; `PageNumberDisplay`'s book/chapter
+      modes both still render in the centre slot._
+
+#### C — Responsive on the pane, not the window
+
+- [ ] **A container query on the reading pane drives the two-row fallback.** `> 600px`:
+      one line (§A). `<= 600px`: row 1 = identity + nav pebble (theme trio collapses to a
+      single cycling icon); row 2 = the reader's own functions, the chapter label taking the
+      slack between its arrows so it never elides to "S…". Foot keeps its three parts,
+      dropping to `1 / 11` + `%`.
+      ⚠️ **Breakpoint on the pane, never the viewport** — the reader can be docked narrow on
+      a wide screen (brief's ground rule, and `useReaderPaneWidth` already makes pane width
+      independent of window width).
+      ⚠️ `container-type: inline-size` establishes size **and** layout containment. Put it on
+      a wrapper that owns none of the fold/stage geometry — `.stage`, `readerRowRef`,
+      `pageClipRef` and `pageSnapshot`'s measured rects are load-bearing for the page curl
+      (PAGE_CURL.md §5). Containment on the wrong node renders a plausible but wrong bitmap.
+      ⚠️ The collapsed theme control must stay reachable for keyboard and screen readers:
+      three focusable buttons become one **cycling** button that announces the theme it will
+      move to, not an icon with no name.
+      _Acceptance: docking the reader narrow on a wide screen produces the two-row layout;
+      resizing the window without changing the pane does not; at 600px exactly one layout is
+      live (no flicker at the boundary); the chapter label stays readable at every width._
+
+#### D — Expanding clusters
+
+- [ ] **One shared `ExpandingCluster` wrapper**, built on `FlyPanel` so the panel grows from
+      its own control (decisions.md 2026-07-30, "popups slide from where they were called").
+      Pointer: open on hover after **120ms**, close **140ms** after pointer-out — the delay
+      is what stops flicker when crossing between two adjacent icons. Touch: long-press
+      ~**380ms**. Click pins; Esc or outside-click closes.
+      ⚠️ **A pinned panel is a dialog**: `useDialogA11y` (focus trap, Esc, focus returned to
+      the control). Hover-only functions are not reachable by keyboard or touch at all.
+      ⚠️ **This replaces `ReaderActionsCluster`'s hover-revealed labels** (`ActionAnchor`),
+      it does not stack on them. NavCluster.tsx already records the operator's ruling that a
+      third disclosure mechanic beside the proximity-revealed labels was "one too many" —
+      adding clusters means retiring the labels they absorb.
+      _Acceptance: crossing from the digest icon to the listening icon and back never
+      flickers a panel; every function inside a cluster is reachable by Tab and by long-press;
+      Esc closes and focus lands back on the icon that opened it._
+- [ ] **The digest cluster**: *Digest this chapter* · *Open digest · S12* · the digest model
+      (today's `ProviderPickerPopover role="digest"`, moved inside).
+      ⚠️ **Job state becomes a ring around the icon, never a width change.** Today the strip
+      renders the string "Digesting…" / a result label in place of a button
+      (`digestChapterJobId`, ReaderView.tsx:2781-2795) — that is the exact behaviour the
+      operator is asking to remove.
+      _Acceptance: starting a chapter digest changes no element's width; progress is visible
+      at a glance without opening the cluster; the finished state is reachable from the same
+      icon._
+- [ ] **The listening cluster**: transport (⏮ ▶ ⏭), read-from-here, speed, cast target — and
+      the icon at rest shows play/pause so the common action stays one click away.
+      ⚠️ It must absorb **all** of today's transport row, including the two conditional
+      controls: the M22.6 "back to the voice" locate button (shown only while the view has
+      wandered from the sounding section) and the audio error status. A conditional control
+      that silently disappears into a cluster is a regression, not a simplification.
+      _Acceptance: start playback, scroll away, and return to the voice without opening
+      Settings; pause is one click from rest; cast still opens `CastingModal` with its
+      fly-from origin; an engine error is still visible without opening the cluster._
+
+#### E — Search means find, Scan gets its own glyph
+
+- [ ] **Split the magnifier.** The magnifier becomes **Search** (find in book, `Cmd/Ctrl+F`);
+      the Scan gets a new glyph — bars inside a rounded frame, echoing the heat strip it
+      opens. Both live in the nav pebble. `SHORTCUT_KEYS.scan` (`q`) is unchanged; its
+      `KeyCapAnchor` follows the icon.
+      _Acceptance: the magnifier opens find-in-book from every reader state; the Scan is
+      still one glyph and one keystroke away; no two controls in the reader share a glyph._
+- [ ] **`FindBar` becomes a pebble floating over the page** — magnifier · query · count ·
+      `‹ ›` · whole-word · **List** · open-in-Scan · close — instead of a full-width band
+      inside `.topRow`.
+      ⚠️ It currently inherits fullscreen's proximity reveal *for free* by being mounted
+      inside the `.topRow` wrapper (its own docstring says so). Floating it over the page
+      **loses that**; give it an explicit fullscreen behaviour or Cmd+F silently does nothing
+      visible in §G's immersive mode.
+      ⚠️ Floating over the page means floating over `.stage` — the page fold's grab surface
+      (M22.5's rule). It must not steal the peel gesture; the fold's own hit test is the
+      thing to check, not the z-index.
+      _Acceptance: Cmd+F over a spread never shifts the text; the pebble is dismissible with
+      Esc with focus returned to the page; a page-corner drag still peels while the pebble is
+      open._
+- [ ] **The results window earns its hierarchy.** Extend `SearchResultsCard`: title bar
+      (`"query"` · `23 in 4 chapters` · order control · close), sticky chapter headers with
+      per-chapter counts, one row per hit — snippet in the serif reading face, single line,
+      ellipsised, with page and `%` in a quiet tabular right column — and a footer
+      (`↑↓ move · ⏎ jump · ⇧⏎ open in Scan` · `Show all 23`). Only the selected row is
+      coloured: 2px accent left edge plus
+      `color-mix(in srgb, var(--color-accent) 12%, transparent)`.
+      Dropped deliberately: per-row chapter name, per-row highlight boxes, the second
+      metadata line.
+      ⚠️ **Still one result set, two views** (decisions.md 2026-08-14). The window holds no
+      hits, no query and no cursor of its own; the order control changes the *shared*
+      ordering that `‹ ›` steps.
+      _Acceptance: the window and the pebble can never disagree about the count or the
+      current hit; keyboard alone can move, jump and open-in-Scan; position is remembered
+      across opens and clamps back into bounds after a resize._
+
+#### F — The annotation editor takes the query model
+
+- [ ] **`ProviderPickerPopover role="query"` moves out of the reader strip into
+      `ThreadPanel`'s composer**, immediately left of **Ask** — the model belongs where the
+      question is asked. Action row order is always ladder · web · model · **Ask**.
+      _Acceptance: choosing a model in the editor is what the next question uses; the reader
+      strip no longer carries a model control; the Settings path to the same choice still
+      agrees with it._
+- [ ] **The resolved narrow variants** (~300px, the realistic docked width), from the brief's
+      table — build these, don't re-open them: context ladder → a single dropdown; web search
+      → a globe icon toggle; model → dropdown with short names; **Ask keeps its word**. Below
+      ~280px the model select wraps above the row rather than compressing Ask.
+      ⚠️ **The globe stays inert until M25** (see grounding note 6) — restyled, still
+      disabled, still titled as coming later.
+      _Acceptance: at 300px all four controls fit on one row with "Ask" legible; at 280px the
+      wrap happens and Ask is still a word; the ladder dropdown selects the same three depths
+      the segmented control did._
+
+#### G — The immersive page (a rework of M14 fullscreen)
+
+- [ ] **No card, no strips, no rail.** The page becomes the whole surface with a soft vignette
+      holding the eye on the column. Position survives as a 2px hairline along the bottom
+      edge; the highlight rail dims to faint dots at the right edge.
+      _Acceptance: in immersive mode nothing but the text, the vignette, the hairline and the
+      dots is painted; the reading column's measure is unchanged from normal mode at the same
+      pane width._
+- [ ] **One pebble wakes on pointer movement** — page, `%`, digest, listening, exit — and
+      sleeps again after ~2s. This **replaces M14's four reveal flags** (`revealTop`,
+      `revealBottom`, `revealRail`, `revealActions`) with one.
+      ⚠️ **Two pointer paths drive the reveal, not one.** `useFullscreenChrome`'s
+      window-level listener only fires over the parent document; the iframe-forwarded
+      `mousemove` inside `ReaderView`'s book-loading effect is what fires while the cursor is
+      over the page itself. M14 lost a session to exactly this (NOTES.md "M14") — update both
+      or the pebble never wakes where the reader's cursor actually is.
+      ⚠️ An unrevealed panel is `pointer-events: none`, so it cannot be the thing that reveals
+      itself.
+      _Acceptance: moving the pointer anywhere over the text wakes the pebble; it sleeps
+      after ~2s of stillness; hovering the pebble itself keeps it awake; the keyboard path
+      (Tab) reveals it without a pointer at all._
+- [ ] **Decide the two open questions and record them** (READER_REDESIGN.md §6): does
+      selecting text in immersive mode open the editor inline over the column or a
+      fullscreen-native side sheet, and does scrolling re-sleep the pebble or only pointer
+      idle. One line each in decisions.md when chosen — this is the operator's call to make
+      while driving it, not a coin flip in code.
+- [ ] **The binding tells the truth.** Either relabel the exit hint to `⇧F` or rebind
+      immersive mode to `f` and give focus mode a different key — and update
+      `shortcuts/keys.ts` so the keycaps follow (grounding note 3).
+      _Acceptance: the hint on screen matches the key that actually leaves; focus mode and
+      immersive mode remain two distinct axes (notes hidden vs chrome hidden)._
+
+#### Ground rules for the whole milestone
+
+- **No new colour values.** Everything resolves to existing tokens; `color-mix()` against
+  them for washes and softened borders (ds-bundle README: "if a name isn't here, it doesn't
+  exist").
+- **No new register.** The reader's chrome is `register-paper register-quiet`; pebbles are
+  built in it. `register-glass` stays the Scan's alone (settled decision 12).
+- **Nothing disappears to make room.** If it doesn't fit, it nests in a cluster or moves to
+  the second row.
+- **Motion** uses `--ease-standard` / `--duration-standard`; controls use
+  `--control-hover-transform` / `--control-pressed-transform`.
+- Extend the existing components — `FindBar`, `NavCluster`, `ChapterNav`, `SliderDial`,
+  `ProgressPopover`, `FlyPanel`, `HeatStrip`, `ProviderPicker(Popover)`, `AskPill`,
+  `IconButton`, `SearchResultsCard` — rather than writing parallel ones. Genuinely new:
+  `ExpandingCluster`, the Scan and globe icons, the immersive overlay.
+- `ds-bundle` is a sync of these components to the design project (`_ds_sync.json` holds a
+  render hash per component). Components this milestone reshapes will need re-syncing, or the
+  design project's copy silently describes the old reader.
+
+#### Verify
+
+- [ ] **Driven live, on a real book, in both themes**: one line of chrome at a wide pane, two
+      rows at a narrow *pane* on the same wide window, both clusters opened by hover, click,
+      keyboard and long-press, Cmd+F over a spread, the results window moved and reopened,
+      a question asked with the model chosen in the editor, and immersive mode entered and
+      left by the key the hint names.
+- [ ] **The page is measurably taller** than before at the same window size, and the page fold
+      still peels from every corner with the new chrome mounted.
+
 ### M25 — Web search
 
 Scoped out of M17 deliberately (decisions.md 2026-07-28 later): it needs its own seam,

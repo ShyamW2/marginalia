@@ -8,7 +8,13 @@ interface IconProps {
   size?: number;
 }
 
-export function BrainIcon({ size = 18 }: IconProps) {
+/** M24.7 A: the digest cluster's job state is a ring around this icon
+ * rather than a width-changing button label — same 0–1 `progress` fraction
+ * and arc technique as `TrayIcon` below, just sized to sit around the
+ * brain's own silhouette instead of inside a circle glyph. */
+export function BrainIcon({ size = 18, progress }: IconProps & { progress?: number | null }) {
+  const radius = 11;
+  const circumference = 2 * Math.PI * radius;
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
@@ -18,6 +24,20 @@ export function BrainIcon({ size = 18 }: IconProps) {
         strokeLinecap="round"
         strokeLinejoin="round"
       />
+      {progress != null && (
+        <circle
+          cx="12"
+          cy="12"
+          r={radius}
+          stroke="currentColor"
+          strokeWidth="1.3"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - Math.min(1, Math.max(0, progress)))}
+          transform="rotate(-90 12 12)"
+          opacity="0.85"
+        />
+      )}
     </svg>
   );
 }
@@ -168,6 +188,36 @@ export function PublishIcon({ size = 18 }: IconProps) {
         strokeWidth="1.6"
         strokeLinecap="round"
         strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** M24.7 A: the nav pebble's Scan entry needs its own glyph, distinct from
+ * the plain magnifier now that "search" and "scan" are separate icons in
+ * the same pebble — bars inside a rounded frame, echoing the heat strip
+ * Scan actually opens (READER_REDESIGN.md §5). Borrowed one step ahead of
+ * §E's full magnifier split, which owns the rest of that work. */
+export function ScanIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M7.5 15V9M12 16.5V7.5M16.5 13.5v-3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** M24.7 B: the foot's instruments pebble needs a fullscreen glyph —
+ * `toggleFullscreen` (shift+F) has existed since M14 but was never rendered
+ * as a button anywhere until now. Four corner brackets opening outward. */
+export function FullscreenIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 9V4h5M20 15v5h-5M20 9V4h-5M4 15v5h5"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
       />
     </svg>
   );

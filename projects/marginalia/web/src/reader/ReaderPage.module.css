@@ -3,7 +3,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: calc(100vh - 61px);
+  min-height: 100vh;
   gap: 0.75rem;
   color: var(--color-text-muted);
   font-family: var(--font-serif);
@@ -14,35 +14,9 @@
   flex-direction: column;
 }
 
-.titleBar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.6rem;
-  padding: 0.6rem 1rem 0;
-  font-family: var(--font-serif);
-}
-
-.coverThumb {
-  width: 1.35rem;
-  flex-shrink: 0;
-}
-
-.coverThumb img,
-.coverThumb > div {
-  display: block;
-  border-radius: 3px;
-}
-
-.title {
-  font-size: 1rem;
-  color: var(--color-text);
-}
-
-.author {
-  font-size: 0.85rem;
-  color: var(--color-text-muted);
-}
+/* .titleBar/.coverThumb/.title/.author moved into ReaderView.module.css
+   (M24.7 A) — the cover+title+author identity is now the strip's centre
+   zone, not a separate row above it. */
 
 /* The room itself — title bar and reader — as one thing the opening can hide
    and hand back. A plain column, so wrapping these two changes nothing about

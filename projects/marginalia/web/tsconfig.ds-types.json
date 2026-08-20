@@ -1,0 +1,21 @@
+{
+  // Sync-only: emits the .d.ts tree /design-sync needs to extract real prop
+  // interfaces. NOT part of the app build (`tsc -b` uses tsconfig.json, which
+  // stays noEmit). Output (types/, index.d.ts) is gitignored.
+  //
+  // Without this the converter has no types root, every emitted <Name>.d.ts
+  // degrades to `[key: string]: unknown`, and the design agent gets no API
+  // contract at all. Regenerate with:
+  //   pnpm --filter @marginalia/web exec tsc -p tsconfig.ds-types.json
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": false,
+    "sourceMap": false,
+    "emitDeclarationOnly": true,
+    "rootDir": ".",
+    "declarationDir": "types"
+  },
+  "include": ["src", "_ds-entry.ts"]
+}

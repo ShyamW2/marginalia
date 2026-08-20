@@ -3,6 +3,43 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-19 — Reader chrome v2 enters the roadmap as M24.7, not M25
+
+The operator ran a design pass with Claude Design and brought back a written brief
+(`docs/marginalia/READER_REDESIGN.md`) plus five `.dc.html` frames: the reader's chrome
+collapses to one 48px line, digest and listening become expanding clusters, search and
+Scan stop sharing a magnifier, the query model moves into the annotation editor, and
+fullscreen becomes a genuinely immersive page. Scheduled next, ahead of web search.
+
+1. **Numbered M24.7, though the operator proposed M25.** OPUS.md's renumbering rule: M25–M28
+   are referenced ~30 times across CLAUDE.md, decisions.md, SPEC.md, PAGE_CURL.md and
+   TASKS_DONE.md, and a cascade here would be the second renumbering in seven days (the
+   first was ruling 11, 2026-08-12). A decimal insert buys the same working order — M24.7 is
+   next, web search and Codex CLI wait behind it — at no cross-reference cost. The operator
+   chose this over the cascade when asked.
+2. **It is a rework of M14 fullscreen, not a new mode.** The brief describes "pressing F"
+   as merely hiding annotations. That is `f` (focus mode); `shift+F` has been a real
+   fullscreen with proximity-revealed chrome since M14. So the immersive page replaces
+   `useFullscreenChrome`'s four reveal flags with one waking pebble, and the exit hint drawn
+   as "F to leave" has to be relabelled or the key rebound — M19.7's "keycaps that cannot
+   lie" does not bend for a mockup.
+3. **Nesting supersedes M22.5's measurement, and only one of them ships.** `actionsBesideCard`
+   measures whether the actions cluster fits beside the card and drops it below the footer
+   when it doesn't. That is the "controls get dropped" symptom the brief is answering.
+   Expanding clusters are the replacement, which also retires `ReaderActionsCluster`'s
+   hover-revealed labels — NavCluster.tsx already records the ruling that a third disclosure
+   mechanic was one too many, and that ruling now cuts against the labels rather than
+   against the clusters.
+4. **The globe stays inert.** The annotation editor's web-search control is restyled here and
+   wired in M25. Making it live in a chrome milestone would take the second cloud dependency
+   without its seam (settled decision 10).
+5. **Container queries enter the codebase here.** There are none today; every responsive
+   decision is a viewport media query or a JS measurement. The brief's "key off the pane,
+   never the viewport" makes this the first, with one caveat carried into the task:
+   `container-type` establishes layout containment, so it must not land on any node whose
+   measured rect the page fold depends on (PAGE_CURL.md §5).
+
+
 ## 2026-08-18 — Search matches whole words, and a hit is identified by its position (M24.1 C/D)
 
 Three decisions taken while implementing M24.1 §C and §D. The tasks delegated the first

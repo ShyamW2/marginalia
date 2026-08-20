@@ -14,6 +14,10 @@ distilled insights compile into an Obsidian vault.
 - `docs/marginalia/PRODUCT.md` — product requirements and vision
 - `docs/marginalia/DESIGN.md` — aesthetic & interaction blueprint (two rooms + four
   instruments; the control system) — binding for M7+
+- `docs/marginalia/READER_REDESIGN.md` — reader chrome v2: the one-line strip, expanding
+  clusters, search-vs-Scan, the annotation editor's model select, the immersive page —
+  **binding for M24.7**; the `.dc.html` design frames it cites live in the synced design
+  project, not in this repo
 - `docs/marginalia/AUDIO.md` — audio/TTS subsystem spec (engine seam, casting, cache) — **binding for M21+**
 - `docs/marginalia/PAGE_CURL.md` — the page curl (M20): the shipped model, its invariants,
   the geometry of what it *cannot* do in 2D, and how the page snapshot is built (§5 — four

@@ -1,0 +1,88 @@
+{
+  "projectId": "8bdddf0c-8472-4258-bd1f-1904a32610ad",
+  "shape": "package",
+  "pkg": "@marginalia/web",
+  "globalName": "Marginalia",
+  "readmeHeader": ".design-sync/conventions.md",
+  "srcDir": "src",
+  "tsconfig": "tsconfig.ds-sync.json",
+  "guidelinesGlob": [
+    "../../../docs/marginalia/DESIGN.md"
+  ],
+  "provider": {
+    "component": "DesignSystemPreview"
+  },
+  "overrides": {
+    "FlyPanel": {
+      "cardMode": "column"
+    },
+    "Toast": {
+      "cardMode": "single",
+      "primaryStory": "Success"
+    },
+    "JobToastStack": {
+      "cardMode": "single",
+      "primaryStory": "Stacked"
+    },
+    "SettingsModal": {
+      "cardMode": "single",
+      "primaryStory": "Open"
+    },
+    "FindBar": {
+      "cardMode": "column"
+    }
+  },
+  "dtsPropsFor": {
+    "ServerStatusBanner": "",
+    "TasksTray": "",
+    "JobToastStack": "",
+    "UsageDivider": ""
+  },
+  "componentSrcMap": {
+    "Button": "src/controls/Button.tsx",
+    "IconButton": "src/controls/IconButton.tsx",
+    "Slider": "src/controls/Slider.tsx",
+    "SliderDial": "src/controls/SliderDial.tsx",
+    "ColorField": "src/controls/ColorField.tsx",
+    "FlyPanel": "src/controls/FlyPanel.tsx",
+    "Toast": "src/app/Toast.tsx",
+    "NavCluster": "src/app/NavCluster.tsx",
+    "ServerStatusBanner": "src/app/ServerStatusBanner.tsx",
+    "KeyCapAnchor": "src/shortcuts/KeyCap.tsx",
+    "ImportanceStars": "src/highlights/ImportanceStars.tsx",
+    "TagEditor": "src/highlights/TagEditor.tsx",
+    "BookCover": "src/library/BookCover.tsx",
+    "LibraryGrid": "src/library/LibraryGrid.tsx",
+    "JobToastStack": "src/jobs/JobToastStack.tsx",
+    "TasksTray": "src/jobs/TasksTray.tsx",
+    "ProviderPicker": "src/settings/ProviderPicker.tsx",
+    "UsageDivider": "src/settings/UsageDivider.tsx",
+    "SettingsModal": "src/settings/SettingsModal.tsx",
+    "SettingsPage": "src/settings/SettingsPage.tsx",
+    "AskPill": "src/reader/AskPill.tsx",
+    "ChapterNav": "src/reader/ChapterNav.tsx",
+    "FindBar": "src/reader/FindBar.tsx",
+    "PageNumberDisplay": "src/reader/PageNumberDisplay.tsx",
+    "DwellRing": "src/reader/DwellRing.tsx",
+    "MarginRail": "src/reader/MarginRail.tsx",
+    "ProgressPopover": "src/reader/ProgressPopover.tsx",
+    "ReaderPage": "src/reader/ReaderPage.tsx",
+    "HeatStrip": "src/scan/HeatStrip.tsx",
+    "ChapterDial": "src/scan/ChapterDial.tsx",
+    "CrtBezel": "src/scan/CrtBezel.tsx",
+    "ContextLadderToggle": "src/threads/ContextLadderToggle.tsx",
+    "DesignSystemPreview": null,
+    "BrainIcon": null,
+    "MagnifierIcon": null,
+    "PlayIcon": null,
+    "LibraryIcon": null,
+    "GearIcon": null,
+    "TrayIcon": null,
+    "PublishIcon": null,
+    "SunIcon": null,
+    "MoonIcon": null,
+    "CircleHalfIcon": null,
+    "ChevronIcon": null,
+    "AudioTransportIcon": null
+  }
+}

@@ -14,7 +14,7 @@ import type { Book, Contents, Location, Rendition } from "epubjs";
 // M24.1 B: side-effect only — patches marks-pane's shared Highlight
 // prototype before any mark is drawn. See marksPanePatch.ts.
 import "./marksPanePatch.js";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
   findAnchorInText,
@@ -40,7 +40,7 @@ import { useJobs } from "../jobs/JobsContext.js";
 import { startJobRequest } from "../jobs/jobsApi.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
 import { onProviderRolesSaved } from "../settings/providerBus.js";
-import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
+import { ProviderPicker } from "../settings/ProviderPicker.js";
 import { useOpenSettings } from "../settings/useOpenSettings.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
@@ -50,6 +50,11 @@ import { AudioTransportIcon } from "./AudioTransportIcon.js";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
 import { Slider } from "../controls/Slider.js";
+import { ExpandingCluster } from "../controls/ExpandingCluster.js";
+import { BrainIcon, FullscreenIcon, MagnifierIcon, PublishIcon, ScanIcon, TrayIcon } from "../controls/icons.js";
+import { BookCover } from "../library/BookCover.js";
+import { coverLayoutId } from "../library/coverLayoutId.js";
+import { ChromeSlotPortal } from "../app/chromeSlot.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
 import { audioTintStyle, hoverFillOpacity, markStyleForKind, searchMarkStyle } from "./highlightKinds.js";
@@ -150,12 +155,6 @@ const DWELL_DURATION_MS = 2000;
 const REFUSAL_FLASH_MS = 260;
 
 const SCRUB_KEYBOARD_STEP_PERCENT = 1;
-
-// M22.5: the actions cluster's own rendered width (icon-only row: four
-// ~32px targets + gaps) plus a margin — below this much room to the right
-// of the reading column, it drops below the footer instead of floating
-// beside the card.
-const READER_ACTIONS_MIN_ROOM_PX = 170;
 
 /** Pixels of ruler movement per whole percentage point — passed once into
  * `Slider` and read from there by both its own drag math and its dial's
@@ -379,6 +378,12 @@ interface PendingSelection {
 
 interface ReaderViewProps {
   resourceId: string;
+  /** M24.7 A: the strip's centre zone (cover + title + author), moved down
+   * from `ReaderPage`'s own `.titleBar` row — `resource` itself stays owned
+   * by `ReaderPage` (it also needs it for `BookOpening`), just these two
+   * fields are threaded down alongside the id. */
+  resourceTitle: string;
+  resourceAuthor: string | null;
   /** Arriving via the scan's airlock transition (DESIGN.md): land on this
    * highlight's position and open its thread, instead of the saved reading
    * position. */
@@ -450,6 +455,8 @@ interface ReaderViewProps {
 
 export function ReaderView({
   resourceId,
+  resourceTitle,
+  resourceAuthor,
   initialHighlightId,
   initialQuestion,
   spreadMode,
@@ -470,6 +477,7 @@ export function ReaderView({
   onFindHandoffToScan,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
+  const reducedMotion = useReducedMotion();
   const containerRef = useRef<HTMLDivElement>(null);
   // M19.6 "the skipped last page of a chapter": the element epub.js measures
   // as `container` (containerRef itself) must be an *integer* pixel width —
@@ -485,35 +493,12 @@ export function ReaderView({
   // resolves to a `MutableRefObject`: the ref below is written by hand in a
   // callback ref, not just handed to JSX, to merge in `externalStageRef`.
   const stageRef = useRef<HTMLDivElement | null>(null);
-  // M22.5 "the reader's action cluster never overlaps the card": measures
-  // whether there's room beside the reading column (stage + rail) to float
-  // the actions cluster there, or whether it must drop below the footer
-  // instead. Measured from the row itself, not read from
-  // `--reader-max-width`, because what matters is the rendered width after
-  // the viewport has already clamped it, not the cap alone.
+  // M24.7 A: the resize-observer "is there room beside the card" measurement
+  // that used to live here (`actionsBesideCard`) is retired — nesting via
+  // `ExpandingCluster` replaces it rather than stacking alongside it
+  // (TASKS.md M24.7 "do not ship both"). `readerRowRef` stays; the page
+  // fold's own geometry still measures from it.
   const readerRowRef = useRef<HTMLDivElement>(null);
-  const [actionsBesideCard, setActionsBesideCard] = useState(true);
-  useEffect(() => {
-    const el = readerRowRef.current;
-    if (!el) return;
-    function updatePlacement() {
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const roomRight = window.innerWidth - rect.right;
-      setActionsBesideCard((prev) => {
-        const next = roomRight >= READER_ACTIONS_MIN_ROOM_PX;
-        return prev === next ? prev : next;
-      });
-    }
-    updatePlacement();
-    const observer = new ResizeObserver(updatePlacement);
-    observer.observe(el);
-    window.addEventListener("resize", updatePlacement);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updatePlacement);
-    };
-  }, []);
   // M20 (2026-08-02): the paper card — .pageClip's own box, which is what
   // the fold canvas is positioned inside and therefore the only rect its
   // geometry may be measured from. containerRef is the text column, one
@@ -652,6 +637,14 @@ export function ReaderView({
   const [digestChapterJobId, setDigestChapterJobId] = useState<string | null>(null);
   const [digestChapterResult, setDigestChapterResult] = useState<string | null>(null);
   const { registerStarted, jobs } = useJobs();
+  // M24.7 A: the digest cluster's job state is a ring around the brain icon
+  // now, not the inline button-label swap this used to drive — same
+  // current/total -> 0..1 fraction TasksTray's own aggregate ring uses.
+  const digestChapterJob = digestChapterJobId ? jobs.find((j) => j.id === digestChapterJobId) : undefined;
+  const digestChapterProgress =
+    digestChapterJob && digestChapterJob.progress.total > 0
+      ? digestChapterJob.progress.current / digestChapterJob.progress.total
+      : null;
 
   // M22 "Casting UI": local dialog state, not routed (see CastingModal.tsx's
   // own comment on why) — the origin is captured straight from the trigger
@@ -2664,6 +2657,16 @@ export function ReaderView({
     ? highlights.find((h) => h.id === expandedThread.highlightId)
     : undefined;
 
+  // M24.7 A: the listening cluster's icon (trigger and panel both) reads the
+  // same play/pause state the old inline transport row did — computed once
+  // here so the two renders of it can't drift.
+  const audioActive = player.status === "playing" || player.status === "loading";
+  const audioPlayPauseLabel = audioActive
+    ? "Pause listening"
+    : player.status === "paused"
+      ? "Resume listening"
+      : "Listen";
+
   return (
     <div
       ref={wrapperRef}
@@ -2695,192 +2698,186 @@ export function ReaderView({
             ? `${styles.topRow} ${styles.fullscreenFloating} ${styles.topRowFloating} ${
                 revealTop ? styles.revealed : ""
               }`
-            : `${styles.topRow} ${actionsBesideCard ? "" : styles.topRowReserve}`
+            : styles.topRow
         }
         onPointerEnter={fullscreenMode ? () => setRevealTop(true) : undefined}
         onPointerLeave={fullscreenMode ? () => setRevealTop(false) : undefined}
       >
+        {/* M24.7 A: one line, three zones — reader functions left, the
+            book's identity centre, chrome right. Replaces the four places
+            this chrome used to live in (ReaderPage's .titleBar,
+            ReaderActionsCluster beside/below the card, and the
+            audio/digest/provider controls that used to crowd this row). */}
         <div className={styles.topRowLeft}>
-          {focusMode ? (
-            <span className={styles.focusIndicator}>Notes hidden — press F to show</span>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              className={styles.annotationsButton}
-              onClick={() => setShowAnnotations((prev) => !prev)}
-            >
-              Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
-              {unanchoredIds.size > 0 && (
-                <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
-                  {unanchoredIds.size}
-                </span>
-              )}
-            </Button>
-          )}
-        </div>
-        <div className={styles.progressWrap}>
-          <Slider
-            variant="trigger"
-            className={styles.progress}
-            value={progressPercent ?? 0}
-            min={0}
-            max={100}
-            dragPxPerUnit={PROGRESS_DRAG_PX_PER_PERCENT}
-            keyboardStep={SCRUB_KEYBOARD_STEP_PERCENT}
-            commitOnArrow={false}
-            clickToType={false}
-            disabled={progressPercent === null}
-            ariaLabel="Reading progress"
-            formatValue={(v) => {
-              const chapter = chapterAtPercent(chapterStopsList, v);
-              return `${Math.round(v)}%${chapter ? ` · ${chapter.label}` : ""}`;
-            }}
-            dialTicks={chapterDialTicks}
-            dialHint="Release to jump · Esc to cancel"
-            aria-haspopup="true"
-            aria-expanded={progressPopoverOpen}
-            onPreviewChange={setScrubPreviewPercent}
-            onPlainClick={() => setProgressPopoverOpen((prev) => !prev)}
-            onCommit={commitScrub}
+          <Button
+            variant="ghost"
+            size="sm"
+            className={styles.annotationsButton}
+            pressed={focusMode}
+            onClick={() => setShowAnnotations((prev) => !prev)}
+            aria-label={focusMode ? "Notes hidden — press F to show" : undefined}
+            title={focusMode ? "Notes hidden — press F to show" : undefined}
           >
-            {progressPercent !== null ? `${progressPercent}%` : ""}
-          </Slider>
-          <AnimatePresence>
-            {scrubPreviewPercent === null && progressPopoverOpen && (
-              <ProgressPopover
-                key="progress-popover"
-                percent={progressPercent}
-                page={displayedPage?.page ?? null}
-                totalPages={displayedPage?.total ?? null}
-                chapterLabel={activeChapter?.label ?? null}
-              />
+            Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
+            {unanchoredIds.size > 0 && (
+              <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
+                {unanchoredIds.size}
+              </span>
             )}
-          </AnimatePresence>
-        </div>
-        <div className={styles.topRowRight}>
-          {!focusMode && (
-            <>
-              <ChapterNav
-                toc={toc}
-                chapterStops={chapterStopsList}
-                currentChapter={activeChapter}
-                chapterNumbers={chapterNumbers}
-                onSelect={handleTocSelect}
-                onPrev={() => jumpToChapter("prev")}
-                onNext={() => jumpToChapter("next")}
-                hasPrev={hasPrevChapter}
-                hasNext={hasNextChapter}
-                compact={!actionsBesideCard}
-              />
-              {/* M22.5: steps aside once there's no room beside the card —
-                  the same signal `.topRowReserve` reacts to. The whole-book
-                  Digest action is always reachable from the actions
-                  cluster below; this is a convenience shortcut, not the
-                  only path to it. */}
-              {currentSpineIndex !== null && actionsBesideCard && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={styles.digestChapterButton}
-                  disabled={digestChapterJobId !== null}
-                  onClick={handleDigestChapter}
-                  title="Digest just this chapter (M17 spotlight shortcut)"
-                >
-                  {digestChapterJobId ? "Digesting…" : digestChapterResult ?? "Digest chapter"}
-                </Button>
-              )}
-              <ProviderPickerPopover
-                role="query"
-                label="Query provider"
-                onNavigateToSettings={openSettingsToLLM}
-              />
-            </>
-          )}
-          {/* M21 transport controls: not gated by focusMode — a reader who
-              hid annotations to listen still needs to pause. */}
-          <div className={styles.audioTransport}>
-            <IconButton
-              icon={<AudioTransportIcon kind="cast" />}
-              label="Cast — voices for this book"
-              pressed={castOpen}
-              onClick={(event) => {
-                setCastOrigin(captureOverlayOrigin(event.currentTarget));
-                setCastOpen(true);
-              }}
-            />
-            <IconButton
-              icon={<AudioTransportIcon kind="skip-prev" />}
-              label="Previous sentence"
-              disabled={player.status === "idle"}
-              onClick={() => player.skipSentence(-1)}
-            />
-            <IconButton
-              icon={
-                <AudioTransportIcon
-                  kind={player.status === "playing" || player.status === "loading" ? "pause" : "play"}
-                />
-              }
-              label={
-                player.status === "playing" || player.status === "loading"
-                  ? "Pause listening"
-                  : player.status === "paused"
-                    ? "Resume listening"
-                    : "Listen"
-              }
-              pressed={player.status === "playing" || player.status === "loading"}
-              onClick={handleTransportPlayClick}
-            />
-            <IconButton
-              icon={<AudioTransportIcon kind="skip-next" />}
-              label="Next sentence"
-              disabled={player.status === "idle"}
-              onClick={() => player.skipSentence(1)}
-            />
-            {/* M22.6 C: only ever shown while the view has actually
-                wandered from the sounding section — pressing it is the
-                other half of what put it there. */}
-            {player.status !== "idle" && detached && (
-              <IconButton
-                icon={<AudioTransportIcon kind="locate" />}
-                label="Back to the voice"
-                onClick={handleReturnToVoice}
-              />
-            )}
-            {player.status !== "idle" && (
+          </Button>
+          <ChapterNav
+            toc={toc}
+            chapterStops={chapterStopsList}
+            currentChapter={activeChapter}
+            chapterNumbers={chapterNumbers}
+            onSelect={handleTocSelect}
+            onPrev={() => jumpToChapter("prev")}
+            onNext={() => jumpToChapter("next")}
+            hasPrev={hasPrevChapter}
+            hasNext={hasNextChapter}
+          />
+          {/* Digest cluster: the whole-chapter digest action, the jump to an
+              existing digest, and the digest provider — job state is a ring
+              around the icon (BrainIcon's own `progress`), never a
+              width-changing label swap. */}
+          <ExpandingCluster
+            icon={<BrainIcon progress={digestChapterProgress} />}
+            label="Digest"
+            triggerRef={digestButtonRef}
+          >
+            <div className={styles.clusterPanel}>
               <Button
                 variant="ghost"
                 size="sm"
-                className={styles.speedButton}
-                onClick={handleCycleSpeed}
-                title="Playback speed"
+                disabled={currentSpineIndex === null || digestChapterJobId !== null}
+                onClick={handleDigestChapter}
               >
-                {player.speed}×
+                {digestChapterJobId ? "Digesting…" : digestChapterResult ?? "Digest this chapter"}
               </Button>
-            )}
-            {player.status !== "idle" && (
-              <IconButton
-                icon={<AudioTransportIcon kind="stop" />}
-                label="Stop listening"
-                onClick={handleStopListening}
-              />
-            )}
-            {player.status === "error" && (
-              <span className={styles.audioError} role="status">
-                {player.errorCode === "model_unavailable" || player.errorCode === "model_download_failed"
-                  ? "Audio engine unavailable"
-                  : "Couldn't play audio"}
-              </span>
-            )}
-          </div>
-          {/* M19.7 "the nav bar becomes a floating cluster": outside
-              fullscreen, App.tsx's own top-right instance already covers the
-              reader. In real Fullscreen API fullscreen, anything outside
-              `wrapperRef`'s subtree is not rendered at all, so that instance
-              becomes invisible — this un-floated copy lives inside the
-              reader's own chrome instead, joining the same proximity-reveal
-              (topRow/revealTop) as everything else in this row. */}
-          {fullscreenMode && <NavCluster settingsTab="reading" floating={false} />}
+              <Button variant="ghost" size="sm" onClick={onOpenDigest}>
+                Open digest
+              </Button>
+              <div className={styles.clusterDivider} />
+              <ProviderPicker role="digest" variant="compact" onNavigateToSettings={openSettingsToLLM} />
+            </div>
+          </ExpandingCluster>
+          {/* Listening cluster: play/pause at rest (the common action stays
+              one click away), absorbing all of the old .audioTransport row
+              — including the two conditional controls (M22.6 "back to the
+              voice", the audio error status) so neither silently drops. */}
+          <ExpandingCluster
+            icon={<AudioTransportIcon kind={audioActive ? "pause" : "play"} />}
+            label={audioPlayPauseLabel}
+            pressed={audioActive}
+          >
+            <div className={styles.clusterPanel}>
+              <div className={styles.transportRow}>
+                <IconButton
+                  icon={<AudioTransportIcon kind="skip-prev" />}
+                  label="Previous sentence"
+                  disabled={player.status === "idle"}
+                  onClick={() => player.skipSentence(-1)}
+                />
+                <IconButton
+                  icon={<AudioTransportIcon kind={audioActive ? "pause" : "play"} />}
+                  label={audioPlayPauseLabel}
+                  pressed={audioActive}
+                  onClick={handleTransportPlayClick}
+                />
+                <IconButton
+                  icon={<AudioTransportIcon kind="skip-next" />}
+                  label="Next sentence"
+                  disabled={player.status === "idle"}
+                  onClick={() => player.skipSentence(1)}
+                />
+                <IconButton
+                  icon={<AudioTransportIcon kind="cast" />}
+                  label="Cast — voices for this book"
+                  pressed={castOpen}
+                  onClick={(event) => {
+                    setCastOrigin(captureOverlayOrigin(event.currentTarget));
+                    setCastOpen(true);
+                  }}
+                />
+                {player.status !== "idle" && (
+                  <IconButton icon={<AudioTransportIcon kind="stop" />} label="Stop listening" onClick={handleStopListening} />
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<AudioTransportIcon kind="play-from" size={14} />}
+                disabled={currentSpineIndex === null}
+                onClick={() => {
+                  if (currentSpineIndex !== null) player.startListening(currentSpineIndex);
+                }}
+              >
+                Read from here
+              </Button>
+              {/* M22.6 C: only ever shown while the view has actually
+                  wandered from the sounding section — pressing it is the
+                  other half of what put it there. */}
+              {player.status !== "idle" && detached && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={<AudioTransportIcon kind="locate" size={14} />}
+                  onClick={handleReturnToVoice}
+                >
+                  Back to the voice
+                </Button>
+              )}
+              {player.status !== "idle" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={styles.speedButton}
+                  onClick={handleCycleSpeed}
+                  title="Playback speed"
+                >
+                  {player.speed}× speed
+                </Button>
+              )}
+              {player.status === "error" && (
+                <span className={styles.audioError} role="status">
+                  {player.errorCode === "model_unavailable" || player.errorCode === "model_download_failed"
+                    ? "Audio engine unavailable"
+                    : "Couldn't play audio"}
+                </span>
+              )}
+            </div>
+          </ExpandingCluster>
+        </div>
+        <div className={styles.topRowCenter}>
+          {/* Doorway transition (DESIGN.md): shares a layoutId with the
+              library card's cover — the same element the user just clicked,
+              landing here (M7's proof of the shared-element motion system).
+              Moved down from ReaderPage's own .titleBar row (M24.7 A). */}
+          <motion.div className={styles.coverThumb} layoutId={reducedMotion ? undefined : coverLayoutId(resourceId)}>
+            <BookCover resourceId={resourceId} title={resourceTitle} />
+          </motion.div>
+          <span className={styles.title}>{resourceTitle}</span>
+          {resourceAuthor && <span className={styles.author}>{resourceAuthor}</span>}
+        </div>
+        <div className={styles.topRowRight}>
+          {/* M24.7 A: the reader's own embedded, un-floated NavCluster — the
+              app-shell's floating instance is suppressed for the reader
+              route (App.tsx), since the pill must track the pane's edge,
+              not the viewport's, once the reader can be docked narrow
+              beside another pane. Registers the chrome-row's leading slot
+              so the reader's own Search/Scan/Publish can portal into it,
+              exactly like DeskPage's Import button does. */}
+          <NavCluster settingsTab="reading" floating={false} registersSlot />
+          <ChromeSlotPortal>
+            <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
+            <IconButton ref={scanButtonRef} icon={<ScanIcon />} label="Scan" onClick={onOpenScan} />
+            <IconButton
+              icon={<PublishIcon />}
+              label={publishing ? "Publishing…" : "Publish"}
+              disabled={publishing}
+              onClick={onPublish}
+            />
+          </ChromeSlotPortal>
         </div>
         {findOpen && (
           <div className={styles.findBarRow}>
@@ -3111,25 +3108,6 @@ export function ReaderView({
             />
           </div>
         )}
-        {/* M22.5 "the reader's action cluster never overlaps the card":
-            floats in the room beside the reading column when there's
-            enough of it — never inside .stage's own rect, since that's the
-            page fold's grab surface. Absent in fullscreen (joins the
-            proximity-revealed set below instead, since there's no longer
-            room outside the page to float in). */}
-        {!fullscreenMode && actionsBesideCard && (
-          <div className={styles.actionsBeside}>
-            <ReaderActionsCluster
-              onOpenDigest={onOpenDigest}
-              onOpenScan={onOpenScan}
-              onNavigateToSettings={openSettingsToLLM}
-              onPublish={onPublish}
-              publishing={publishing}
-              scanButtonRef={scanButtonRef}
-              digestButtonRef={digestButtonRef}
-            />
-          </div>
-        )}
       </div>
 
       <div
@@ -3143,6 +3121,11 @@ export function ReaderView({
         onPointerEnter={fullscreenMode ? () => setRevealBottom(true) : undefined}
         onPointerLeave={fullscreenMode ? () => setRevealBottom(false) : undefined}
       >
+        {/* M24.7 B: the foot mirrors the strip — ‹ · page/percent · ›, with
+            an instruments pebble at the right. The percent Slider + its
+            SliderDial popover move here unchanged from the old .topRow —
+            same dialTicks/"release to jump" commit path (M12's instrument,
+            not reimplemented). */}
         <div className={styles.footerNav}>
           <IconButton
             icon={<ChevronIcon direction="left" />}
@@ -3150,13 +3133,58 @@ export function ReaderView({
             disabled={atStart}
             onClick={() => turnPage("prev")}
           />
-          <PageNumberDisplay
-            mode={pageNumberMode}
-            bookPage={bookPage?.page ?? null}
-            bookTotal={bookPage?.total ?? null}
-            chapterPage={displayedPage?.page ?? null}
-            chapterTotal={displayedPage?.total ?? null}
-          />
+          <div className={styles.footerCenter}>
+            <PageNumberDisplay
+              mode={pageNumberMode}
+              bookPage={bookPage?.page ?? null}
+              bookTotal={bookPage?.total ?? null}
+              chapterPage={displayedPage?.page ?? null}
+              chapterTotal={displayedPage?.total ?? null}
+            />
+            <span className={styles.footerDivider} aria-hidden="true">
+              |
+            </span>
+            <div className={styles.progressWrap}>
+              <Slider
+                variant="trigger"
+                className={styles.progress}
+                value={progressPercent ?? 0}
+                min={0}
+                max={100}
+                dragPxPerUnit={PROGRESS_DRAG_PX_PER_PERCENT}
+                keyboardStep={SCRUB_KEYBOARD_STEP_PERCENT}
+                commitOnArrow={false}
+                clickToType={false}
+                disabled={progressPercent === null}
+                ariaLabel="Reading progress"
+                formatValue={(v) => {
+                  const chapter = chapterAtPercent(chapterStopsList, v);
+                  return `${Math.round(v)}%${chapter ? ` · ${chapter.label}` : ""}`;
+                }}
+                dialTicks={chapterDialTicks}
+                dialHint="Release to jump · Esc to cancel"
+                dialPlacement="above"
+                aria-haspopup="true"
+                aria-expanded={progressPopoverOpen}
+                onPreviewChange={setScrubPreviewPercent}
+                onPlainClick={() => setProgressPopoverOpen((prev) => !prev)}
+                onCommit={commitScrub}
+              >
+                {progressPercent !== null ? `${progressPercent}%` : ""}
+              </Slider>
+              <AnimatePresence>
+                {scrubPreviewPercent === null && progressPopoverOpen && (
+                  <ProgressPopover
+                    key="progress-popover"
+                    percent={progressPercent}
+                    page={displayedPage?.page ?? null}
+                    totalPages={displayedPage?.total ?? null}
+                    chapterLabel={activeChapter?.label ?? null}
+                  />
+                )}
+              </AnimatePresence>
+            </div>
+          </div>
           <IconButton
             icon={<ChevronIcon direction="right" />}
             label="Next page"
@@ -3164,19 +3192,16 @@ export function ReaderView({
             onClick={() => turnPage("next")}
           />
         </div>
-        {/* The "no room beside the card" fallback — same row as the page
-            turn controls, right-aligned past them, still outside .stage. */}
-        {!fullscreenMode && !actionsBesideCard && (
-          <ReaderActionsCluster
-            onOpenDigest={onOpenDigest}
-            onOpenScan={onOpenScan}
-            onNavigateToSettings={openSettingsToLLM}
-            onPublish={onPublish}
-            publishing={publishing}
-            scanButtonRef={scanButtonRef}
-            digestButtonRef={digestButtonRef}
+        <div className={styles.instrumentsPebble}>
+          <IconButton icon={<TrayIcon />} label="Heat strip" onClick={onOpenScan} />
+          <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
+          <IconButton
+            icon={<FullscreenIcon />}
+            label={fullscreenMode ? "Exit fullscreen" : "Fullscreen"}
+            pressed={fullscreenMode}
+            onClick={toggleFullscreen}
           />
-        )}
+        </div>
       </div>
       {fullscreenMode && (
         <div
