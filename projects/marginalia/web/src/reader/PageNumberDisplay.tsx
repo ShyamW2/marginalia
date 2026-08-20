@@ -1,5 +1,5 @@
 import type { PageNumberMode } from "@marginalia/shared";
-import { formatPageNumber } from "./pageNumber.js";
+import { formatPageNumber, formatPageNumberCompact } from "./pageNumber.js";
 import styles from "./PageNumberDisplay.module.css";
 
 interface PageNumberDisplayProps {
@@ -16,6 +16,11 @@ interface PageNumberDisplayProps {
  * an empty state, just nothing — when the mode is "off" or its data isn't
  * ready yet (locations still generating/loading), so a book that hasn't
  * cached/generated locations reads exactly as it does today.
+ *
+ * M24.7 §C: both the full ("Page 1 of 800") and compact ("1 / 800") forms
+ * are always in the DOM; the foot's own `reader-strip` container query
+ * (ReaderView.module.css) toggles which one is visible via plain
+ * `display`, so the narrow-pane swap needs no JS breakpoint.
  */
 export function PageNumberDisplay({
   mode,
@@ -24,11 +29,13 @@ export function PageNumberDisplay({
   chapterPage,
   chapterTotal,
 }: PageNumberDisplayProps) {
-  const text = formatPageNumber(mode, bookPage, bookTotal, chapterPage, chapterTotal);
-  if (!text) return null;
+  const full = formatPageNumber(mode, bookPage, bookTotal, chapterPage, chapterTotal);
+  const compact = formatPageNumberCompact(mode, bookPage, bookTotal, chapterPage, chapterTotal);
+  if (!full || !compact) return null;
   return (
     <span className={styles.pageNumber} aria-live="off">
-      {text}
+      <span className={styles.full}>{full}</span>
+      <span className={styles.compact}>{compact}</span>
     </span>
   );
 }

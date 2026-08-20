@@ -661,7 +661,7 @@ the operator's message.
 
 #### C — Responsive on the pane, not the window
 
-- [ ] **A container query on the reading pane drives the two-row fallback.** `> 600px`:
+- [x] **A container query on the reading pane drives the two-row fallback.** `> 600px`:
       one line (§A). `<= 600px`: row 1 = identity + nav pebble (theme trio collapses to a
       single cycling icon); row 2 = the reader's own functions, the chapter label taking the
       slack between its arrows so it never elides to "S…". Foot keeps its three parts,
@@ -682,7 +682,7 @@ the operator's message.
 
 #### D — Expanding clusters
 
-- [ ] **One shared `ExpandingCluster` wrapper**, built on `FlyPanel` so the panel grows from
+- [x] **One shared `ExpandingCluster` wrapper**, built on `FlyPanel` so the panel grows from
       its own control (decisions.md 2026-07-30, "popups slide from where they were called").
       Pointer: open on hover after **120ms**, close **140ms** after pointer-out — the delay
       is what stops flicker when crossing between two adjacent icons. Touch: long-press
@@ -696,7 +696,7 @@ the operator's message.
       _Acceptance: crossing from the digest icon to the listening icon and back never
       flickers a panel; every function inside a cluster is reachable by Tab and by long-press;
       Esc closes and focus lands back on the icon that opened it._
-- [ ] **The digest cluster**: *Digest this chapter* · *Open digest · S12* · the digest model
+- [x] **The digest cluster**: *Digest this chapter* · *Open digest · S12* · the digest model
       (today's `ProviderPickerPopover role="digest"`, moved inside).
       ⚠️ **Job state becomes a ring around the icon, never a width change.** Today the strip
       renders the string "Digesting…" / a result label in place of a button
@@ -705,7 +705,7 @@ the operator's message.
       _Acceptance: starting a chapter digest changes no element's width; progress is visible
       at a glance without opening the cluster; the finished state is reachable from the same
       icon._
-- [ ] **The listening cluster**: transport (⏮ ▶ ⏭), read-from-here, speed, cast target — and
+- [x] **The listening cluster**: transport (⏮ ▶ ⏭), read-from-here, speed, cast target — and
       the icon at rest shows play/pause so the common action stays one click away.
       ⚠️ It must absorb **all** of today's transport row, including the two conditional
       controls: the M22.6 "back to the voice" locate button (shown only while the view has

@@ -57,6 +57,8 @@ export function NavCluster({ settingsTab, floating = true, registersSlot = float
   const settingsButtonRef = useRef<HTMLButtonElement>(null);
   const reducedMotion = useReducedMotion();
   const activeThemeIndex = THEME_OPTIONS.findIndex((option) => option.value === choice);
+  const currentThemeOption = THEME_OPTIONS[activeThemeIndex] ?? THEME_OPTIONS[0];
+  const nextThemeOption = THEME_OPTIONS[(activeThemeIndex + 1 + THEME_OPTIONS.length) % THEME_OPTIONS.length];
   const registerChromeSlot = useRegisterChromeSlot();
 
   function openSettings(originEl: Element) {
@@ -138,7 +140,13 @@ export function NavCluster({ settingsTab, floating = true, registersSlot = float
           button (a third disclosure mechanic alongside the chrome row's new
           proximity-revealed labels was one too many). Still `role="group"`
           over three real, individually-focusable buttons — the thumb is
-          `aria-hidden` decoration. */}
+          `aria-hidden` decoration.
+          M24.7 §C: at the reader's narrow (`<= 600px`) pane, the nav pebble
+          shares row 1 with the book's identity and has to give up room —
+          this trio collapses to the single `.themeCycle` button below via a
+          `reader-strip` container query (NavCluster.module.css), never a JS
+          breakpoint. Both stay mounted; only `display` toggles, so nothing
+          here needs to know which form is showing. */}
       <div className={styles.themeGroup} role="group" aria-label="Theme">
         <div className={styles.themePill}>
           {activeThemeIndex >= 0 && (
@@ -164,6 +172,12 @@ export function NavCluster({ settingsTab, floating = true, registersSlot = float
           ))}
         </div>
       </div>
+      <IconButton
+        className={styles.themeCycle}
+        icon={currentThemeOption.icon}
+        label={`${currentThemeOption.label} — press for ${nextThemeOption.label}`}
+        onClick={() => setChoice(nextThemeOption.value)}
+      />
     </div>
   );
 }

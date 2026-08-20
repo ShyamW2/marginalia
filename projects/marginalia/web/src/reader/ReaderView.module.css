@@ -32,20 +32,58 @@
 /* M24.7 A: one 48px line, three grid zones — left (reader functions),
    centre (the book's identity), right (chrome/nav pebble). Replaces the old
    M14 three-column grid whose centre column held the % readout — that
-   moved to the foot (§B) along with the rest of .progressWrap. */
+   moved to the foot (§B) along with the rest of .progressWrap.
+
+   M24.7 §C: this is now the *container* (sized + floating + query context),
+   not the grid itself — a size container can't be queried by rules applied
+   to itself (MDN "CSS containment/Container queries": the search for a
+   matching ancestor container starts at the styled element's parent), so
+   the actual grid moved to the `.stripGrid` child below, which the
+   `@container reader-strip` block further down restyles. Plain flex column
+   here: `.stripGrid` then, when open, `.findBarRow` beneath it. */
 .topRow {
   width: 100%;
   max-width: var(--reader-max-width, 800px);
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+  container-name: reader-strip;
+}
+
+/* M24.7 §C: the actual three-zone grid, pulled out of `.topRow` so it can be
+ * the thing a `@container reader-strip` query restyles (see `.topRow`'s own
+ * comment for why it can't restyle itself). `grid-template-areas` rather
+ * than reordering the three DOM children — the narrow layout below just
+ * reflows the same three named areas into two rows. */
+.stripGrid {
   display: grid;
   /* `minmax(0, 1fr)`, not a bare `1fr`: a grid track's implicit
    * `min-width: auto` otherwise sizes it to its content's minimum
    * intrinsic width even past its "fair" fr share. */
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-areas: "left center right";
   align-items: center;
   min-height: 1.5rem;
 }
 
+/* M24.7 §C: `<= 600px` — row 1 becomes identity + nav pebble, row 2 is the
+ * reader's own functions alone, full width (READER_REDESIGN.md §3). */
+@container reader-strip (max-width: 600px) {
+  .stripGrid {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "center right"
+      "left left";
+    row-gap: 0.35rem;
+  }
+
+  .topRowLeft {
+    justify-self: stretch;
+  }
+}
+
 .topRowLeft {
+  grid-area: left;
   justify-self: start;
   min-width: 0;
   display: flex;
@@ -57,6 +95,7 @@
    down from ReaderPage's own .titleBar row (which stopped existing as a
    separate row). Carries the doorway transition's layoutId (M7). */
 .topRowCenter {
+  grid-area: center;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -92,17 +131,16 @@
   text-overflow: ellipsis;
 }
 
-/* M24 A: the find bar wraps onto its own line under the existing three
- * columns rather than fighting them for space — `.topRow` only declares
- * column tracks, so a fourth grid child not confined to one of them simply
- * flows onto an implicit new row. Spans the full width so the input has
- * real room. */
+/* M24 A: the find bar sits on its own line below the strip's grid — a plain
+ * flex sibling of `.stripGrid` now (§C's split gave `.topRow` a flex column
+ * of its own), rather than a grid child spanning every column. Full width so
+ * the input has real room either way. */
 .findBarRow {
-  grid-column: 1 / -1;
   margin-top: 0.35rem;
 }
 
 .topRowRight {
+  grid-area: right;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -420,12 +458,20 @@
   background: var(--color-bg-raised);
 }
 
+/* M24.7 §C: its own `reader-strip` container context (same name as
+ * `.topRow`'s, a separate instance — they're siblings, not nested, so each
+ * subtree needs its own establishing element). Numerically the two always
+ * agree: both are capped by the same `--reader-max-width` and centred in
+ * the same `.wrapper`, so one pane-width breakpoint fires consistently in
+ * both. `PageNumberDisplay` is the descendant that actually queries it. */
 .footer {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   width: 100%;
   max-width: var(--reader-max-width, 800px);
+  container-type: inline-size;
+  container-name: reader-strip;
 }
 
 /* M24.7 B: the page-turn controls plus the centre page/percent group —

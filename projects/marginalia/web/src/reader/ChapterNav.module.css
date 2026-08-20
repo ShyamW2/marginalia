@@ -21,6 +21,23 @@
   transition: color var(--duration-standard) var(--ease-standard);
 }
 
+/* M24.7 §C: at the strip's narrow (`<= 600px`) two-row layout, `.topRowLeft`
+ * gets its own full-width row (ReaderView.module.css) — the label takes
+ * that slack instead of holding its wide-layout 220px cap, so it reads a
+ * full title rather than eliding to "S…" (READER_REDESIGN.md §3). */
+@container reader-strip (max-width: 600px) {
+  .wrap {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .label {
+    flex: 1;
+    min-width: 0;
+    max-width: none;
+  }
+}
+
 /* M22.5 (decisions.md 2026-08-04 "nothing else may occupy the top-right
  * corner"): the label's flex-shrink floor turned out to be the wrong lever
  * — a nested flex child's `min-width` doesn't feed into an ancestor's own

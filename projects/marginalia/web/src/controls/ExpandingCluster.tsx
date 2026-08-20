@@ -1,4 +1,12 @@
-import { useRef, useState, type ReactNode, type RefObject } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { AnimatePresence } from "motion/react";
 import { IconButton } from "./IconButton.js";
 import { FlyPanel } from "./FlyPanel.js";
@@ -7,10 +15,18 @@ import { useOutsideClick } from "./useOutsideClick.js";
 import { captureOverlayOrigin, type OverlayOrigin } from "./overlayOrigin.js";
 import styles from "./ExpandingCluster.module.css";
 
+/** READER_REDESIGN.md §1's shared expand timing. */
+const HOVER_OPEN_DELAY_MS = 120;
+const HOVER_CLOSE_DELAY_MS = 140;
+const LONG_PRESS_DELAY_MS = 380;
+
 interface ExpandingClusterPanelProps {
   origin: OverlayOrigin | null;
   label: string;
   panelWidth?: number;
+  /** True once the panel is *pinned* (click or long-press) rather than a
+   * bare hover peek — see `useDialogA11y`'s `active` doc. */
+  interactive: boolean;
   onClose: () => void;
   children: ReactNode;
 }
@@ -18,17 +34,17 @@ interface ExpandingClusterPanelProps {
 /** Split out so `useDialogA11y` only ever runs while the panel actually
  * exists — it's mounted exclusively inside `{open && <...>}`, the same
  * shape `CastingModal`/`SettingsModal` already use for the same hook. */
-function ExpandingClusterPanel({ origin, label, panelWidth, onClose, children }: ExpandingClusterPanelProps) {
+function ExpandingClusterPanel({ origin, label, panelWidth, interactive, onClose, children }: ExpandingClusterPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
-  useDialogA11y(panelRef, onClose);
+  useDialogA11y(panelRef, onClose, { active: interactive });
 
   return (
     <FlyPanel
       ref={panelRef}
       origin={origin}
-      role="dialog"
-      aria-label={label}
-      tabIndex={-1}
+      role={interactive ? "dialog" : undefined}
+      aria-label={interactive ? label : undefined}
+      tabIndex={interactive ? -1 : undefined}
       className={styles.panel}
       style={panelWidth ? { width: panelWidth } : undefined}
       initial={{ opacity: 0 }}
@@ -60,10 +76,24 @@ export interface ExpandingClusterProps {
 /**
  * M24.7 §A/§D: the shared "grouped functions live behind one icon, not a
  * row of buttons" wrapper — digest and listening are the first two
- * consumers. Scope for this pass is deliberately the minimal one: click
- * opens/pins, Esc or an outside click closes, focus traps while open. The
- * fuller hover-open (120ms)/hover-close (140ms)/long-press (380ms) timing
- * from READER_REDESIGN.md §1 is left for a later §D pass — not built here.
+ * consumers. Two independent ways to be open, both driving one `open` flag
+ * (`pinned || hovering`), so the panel never remounts (and never re-flies)
+ * moving from one to the other:
+ *
+ * - **Hovering** — a mouse/pen lingering over the trigger *or the panel
+ *   itself* (both live inside `wrapRef`, so crossing between them fires no
+ *   enter/leave) opens after `HOVER_OPEN_DELAY_MS`, closes
+ *   `HOVER_CLOSE_DELAY_MS` after the pointer actually leaves — the grace
+ *   period READER_REDESIGN.md §1 asks for so travelling to an adjacent
+ *   cluster's icon doesn't flicker the one you're leaving. It is a peek:
+ *   `useDialogA11y` stays inert (`interactive={false}` below), because
+ *   stealing keyboard focus or trapping Tab off a bare hover would yank the
+ *   user out of whatever they were actually doing.
+ * - **Pinned** — a click, or a touch long-press (`LONG_PRESS_DELAY_MS`),
+ *   makes it a real dialog: focus moves in, Tab loops, Esc and an outside
+ *   click close it. This is also every keyboard/touch user's *only* path
+ *   in, which is the point — the brief warns hover-only functions aren't
+ *   reachable without it (READER_REDESIGN.md §1).
  */
 export function ExpandingCluster({
   icon,
@@ -74,30 +104,115 @@ export function ExpandingCluster({
   className,
   children,
 }: ExpandingClusterProps) {
-  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [hovering, setHovering] = useState(false);
   const [origin, setOrigin] = useState<OverlayOrigin | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const internalTriggerRef = useRef<HTMLButtonElement>(null);
   const resolvedTriggerRef = triggerRef ?? internalTriggerRef;
 
-  function close() {
-    setOpen(false);
+  const openTimerRef = useRef<number | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressFiredRef = useRef(false);
+
+  const open = pinned || hovering;
+
+  function clearTimer(ref: MutableRefObject<number | null>) {
+    if (ref.current !== null) {
+      window.clearTimeout(ref.current);
+      ref.current = null;
+    }
   }
 
-  function toggle() {
-    setOpen((prev) => {
-      const next = !prev;
-      if (next && resolvedTriggerRef.current) {
-        setOrigin(captureOverlayOrigin(resolvedTriggerRef.current));
-      }
-      return next;
-    });
+  function captureOrigin() {
+    if (resolvedTriggerRef.current) {
+      setOrigin(captureOverlayOrigin(resolvedTriggerRef.current));
+    }
   }
 
-  useOutsideClick(wrapRef, close, open);
+  function closeAll() {
+    clearTimer(openTimerRef);
+    clearTimer(closeTimerRef);
+    clearTimer(longPressTimerRef);
+    setPinned(false);
+    setHovering(false);
+  }
+
+  function pin() {
+    clearTimer(openTimerRef);
+    clearTimer(closeTimerRef);
+    captureOrigin();
+    setHovering(false);
+    setPinned(true);
+  }
+
+  function handleTriggerClick() {
+    if (longPressFiredRef.current) {
+      // The synthetic click Safari/Android fire after a touchend that
+      // already long-pressed — the pin already happened, this would toggle
+      // it straight back off.
+      longPressFiredRef.current = false;
+      return;
+    }
+    if (pinned) {
+      closeAll();
+    } else {
+      pin();
+    }
+  }
+
+  function handleWrapPointerEnter(event: ReactPointerEvent) {
+    if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+    clearTimer(closeTimerRef);
+    if (pinned || hovering) return;
+    clearTimer(openTimerRef);
+    openTimerRef.current = window.setTimeout(() => {
+      captureOrigin();
+      setHovering(true);
+    }, HOVER_OPEN_DELAY_MS);
+  }
+
+  function handleWrapPointerLeave(event: ReactPointerEvent) {
+    if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+    clearTimer(openTimerRef);
+    if (!hovering) return;
+    clearTimer(closeTimerRef);
+    closeTimerRef.current = window.setTimeout(() => setHovering(false), HOVER_CLOSE_DELAY_MS);
+  }
+
+  function handleTriggerPointerDown(event: ReactPointerEvent) {
+    if (event.pointerType !== "touch") return;
+    clearTimer(longPressTimerRef);
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressFiredRef.current = true;
+      pin();
+    }, LONG_PRESS_DELAY_MS);
+  }
+
+  function handleTriggerPointerUp(event: ReactPointerEvent) {
+    if (event.pointerType !== "touch") return;
+    clearTimer(longPressTimerRef);
+  }
+
+  useOutsideClick(wrapRef, closeAll, open);
+
+  useEffect(() => {
+    return () => {
+      clearTimer(openTimerRef);
+      clearTimer(closeTimerRef);
+      clearTimer(longPressTimerRef);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
-    <div className={[styles.wrap, className].filter(Boolean).join(" ")} ref={wrapRef}>
+    <div
+      className={[styles.wrap, className].filter(Boolean).join(" ")}
+      ref={wrapRef}
+      onPointerEnter={handleWrapPointerEnter}
+      onPointerLeave={handleWrapPointerLeave}
+    >
       <IconButton
         ref={resolvedTriggerRef}
         icon={icon}
@@ -105,11 +220,21 @@ export function ExpandingCluster({
         pressed={pressed || open}
         aria-haspopup="true"
         aria-expanded={open}
-        onClick={toggle}
+        onClick={handleTriggerClick}
+        onPointerDown={handleTriggerPointerDown}
+        onPointerUp={handleTriggerPointerUp}
+        onPointerCancel={handleTriggerPointerUp}
       />
       <AnimatePresence>
         {open && (
-          <ExpandingClusterPanel key="panel" origin={origin} label={label} panelWidth={panelWidth} onClose={close}>
+          <ExpandingClusterPanel
+            key="panel"
+            origin={origin}
+            label={label}
+            panelWidth={panelWidth}
+            interactive={pinned}
+            onClose={closeAll}
+          >
             {children}
           </ExpandingClusterPanel>
         )}

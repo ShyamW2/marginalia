@@ -6,3 +6,21 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* M24.7 §C: both forms are in the DOM; the foot's `reader-strip` container
+ * (ReaderView.module.css `.footer`) picks between them by width, not a JS
+ * breakpoint. Wide is the default (no `@container` block needed to show
+ * `.full` — it's the base rule); narrow flips them below. */
+.compact {
+  display: none;
+}
+
+@container reader-strip (max-width: 600px) {
+  .full {
+    display: none;
+  }
+
+  .compact {
+    display: inline;
+  }
+}

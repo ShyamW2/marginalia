@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatPageNumber } from "./pageNumber.js";
+import { formatPageNumber, formatPageNumberCompact } from "./pageNumber.js";
 
 describe("formatPageNumber", () => {
   it("is null when off, regardless of what data is available", () => {
@@ -21,5 +21,28 @@ describe("formatPageNumber", () => {
 
   it("chapter mode is null before epub.js has reported a displayed page", () => {
     expect(formatPageNumber("chapter", 5, 900, null, null)).toBeNull();
+  });
+});
+
+describe("formatPageNumberCompact", () => {
+  it("is null when off, regardless of what data is available", () => {
+    expect(formatPageNumberCompact("off", 10, 200, 3, 20)).toBeNull();
+  });
+
+  it("book mode is 'page / total', the same numbers as the full form", () => {
+    expect(formatPageNumberCompact("book", 1, 800, null, null)).toBe("1 / 800");
+    expect(formatPageNumberCompact("book", 400, 800, null, null)).toBe("400 / 800");
+  });
+
+  it("book mode is null while the section-weight/page data hasn't loaded yet", () => {
+    expect(formatPageNumberCompact("book", null, null, 3, 20)).toBeNull();
+  });
+
+  it("chapter mode is 'page / total', the same numbers as the full form", () => {
+    expect(formatPageNumberCompact("chapter", null, null, 3, 20)).toBe("3 / 20");
+  });
+
+  it("chapter mode is null before epub.js has reported a displayed page", () => {
+    expect(formatPageNumberCompact("chapter", 5, 900, null, null)).toBeNull();
   });
 });

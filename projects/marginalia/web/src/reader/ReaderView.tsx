@@ -2707,7 +2707,11 @@ export function ReaderView({
             book's identity centre, chrome right. Replaces the four places
             this chrome used to live in (ReaderPage's .titleBar,
             ReaderActionsCluster beside/below the card, and the
-            audio/digest/provider controls that used to crowd this row). */}
+            audio/digest/provider controls that used to crowd this row).
+            M24.7 §C: the grid itself, split out of `.topRow` so the
+            `reader-strip` container query (established on `.topRow`) can
+            restyle it — see ReaderView.module.css `.topRow`'s comment. */}
+        <div className={styles.stripGrid}>
         <div className={styles.topRowLeft}>
           <Button
             variant="ghost"
@@ -2878,6 +2882,7 @@ export function ReaderView({
               onClick={onPublish}
             />
           </ChromeSlotPortal>
+        </div>
         </div>
         {findOpen && (
           <div className={styles.findBarRow}>

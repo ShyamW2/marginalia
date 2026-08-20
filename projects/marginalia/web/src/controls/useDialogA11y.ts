@@ -13,11 +13,20 @@ const FOCUSABLE_SELECTOR =
  * registry, and Tab loops inside the panel instead of leaking into the room
  * behind it. Callers own the backdrop/FlyPanel/content — this hook only
  * owns focus and Escape.
+ *
+ * `active` (default true) lets a caller mount the panel without any of this
+ * running — `ExpandingCluster`'s hover-revealed peek (READER_REDESIGN.md
+ * §1/M24.7 §D) is visible the moment the pointer lingers, and grabbing
+ * keyboard focus or trapping Tab off a bare mouse hover would steal focus
+ * from wherever the user actually was. The click/long-press *pin* is what
+ * turns it into a real dialog, flipping `active` on.
  */
-export function useDialogA11y(panelRef: RefObject<HTMLElement>, onClose: () => void): void {
+export function useDialogA11y(panelRef: RefObject<HTMLElement>, onClose: () => void, options?: { active?: boolean }): void {
+  const active = options?.active ?? true;
   const triggerRef = useRef<Element | null>(null);
 
   useEffect(() => {
+    if (!active) return undefined;
     triggerRef.current = document.activeElement;
     panelRef.current?.focus();
 
@@ -27,11 +36,12 @@ export function useDialogA11y(panelRef: RefObject<HTMLElement>, onClose: () => v
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [active]);
 
-  useShortcuts([{ key: SHORTCUT_KEYS.escape, handler: onClose, allowWhileTyping: true }]);
+  useShortcuts(active ? [{ key: SHORTCUT_KEYS.escape, handler: onClose, allowWhileTyping: true }] : []);
 
   useEffect(() => {
+    if (!active) return undefined;
     function handleKeydown(event: KeyboardEvent) {
       if (event.key !== "Tab") return;
 
@@ -42,15 +52,15 @@ export function useDialogA11y(panelRef: RefObject<HTMLElement>, onClose: () => v
 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
+      const activeElement = document.activeElement;
 
-      if (event.shiftKey && active === first) {
+      if (event.shiftKey && activeElement === first) {
         event.preventDefault();
         last.focus();
-      } else if (!event.shiftKey && active === last) {
+      } else if (!event.shiftKey && activeElement === last) {
         event.preventDefault();
         first.focus();
-      } else if (!panel.contains(active)) {
+      } else if (!panel.contains(activeElement)) {
         event.preventDefault();
         first.focus();
       }
@@ -58,5 +68,5 @@ export function useDialogA11y(panelRef: RefObject<HTMLElement>, onClose: () => v
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [active]);
 }
