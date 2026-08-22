@@ -5,7 +5,7 @@ import type { Resource } from "@marginalia/shared";
 import { LLMError, type LLMProvider } from "../llm/provider.js";
 import { sectionLabel } from "../llm/context.js";
 import type { ResourceTextSection } from "../library/store.js";
-import { splitIntoChunks } from "./build.js";
+import { splitIntoChunks, withNetworkRetry } from "./build.js";
 import {
   getBrief,
   getThematicRun,
@@ -241,14 +241,18 @@ export async function runThematicDigest(
 
     const chapterLabel = sectionLabel(section.spineIndex, resource.metadata.chapterTitles);
     try {
-      const part = await digestChapterThematic(
-        provider,
-        contextTokens,
-        brief.text,
-        resource.title,
-        resource.author,
-        chapterLabel,
-        section.text,
+      const part = await withNetworkRetry(
+        () =>
+          digestChapterThematic(
+            provider,
+            contextTokens,
+            brief.text,
+            resource.title,
+            resource.author,
+            chapterLabel,
+            section.text,
+            signal,
+          ),
         signal,
       );
       if (part === null) {

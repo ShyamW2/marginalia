@@ -1,7 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createDb } from "../db.js";
 import { LLMError, type LLMExtractRequest, type LLMProvider } from "../llm/provider.js";
-import { estimateDigestRun, maybeRefreshBookDigestSnapshot, runDigest, splitIntoChunks } from "./build.js";
+import {
+  estimateDigestRun,
+  maybeRefreshBookDigestSnapshot,
+  refreshBookDigestSnapshotInBackground,
+  runDigest,
+  splitIntoChunks,
+  withNetworkRetry,
+} from "./build.js";
 import { getBookDigestSnapshot, getChapterDigest, getDigestRun, listChapterDigests } from "./store.js";
 import type { Resource } from "@marginalia/shared";
 import type { ResourceTextSection } from "../library/store.js";
@@ -66,6 +73,64 @@ describe("estimateDigestRun", () => {
     const preflight = estimateDigestRun(sections, 0, 1, 40);
     expect(preflight.chapterCount).toBe(2);
     expect(preflight.estimatedCalls).toBeGreaterThan(2); // more than 1 call/chapter
+  });
+});
+
+// M29 (decisions.md 2026-08-22): a plain network failure (a local endpoint like Ollama
+// dropping a connection mid-reload) used to have no retry at all, unlike rate_limit's
+// pause/resume — one blip permanently failed the whole run.
+describe("withNetworkRetry", () => {
+  it("retries a network-class LLMError with backoff, then succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const fn = vi.fn(async () => {
+        attempts++;
+        if (attempts < 3) throw new LLMError("network", "fetch failed");
+        return "ok";
+      });
+      const promise = withNetworkRetry(fn);
+      await vi.runAllTimersAsync();
+      await expect(promise).resolves.toBe("ok");
+      expect(attempts).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up after the retry budget and throws the last network error", async () => {
+    vi.useFakeTimers();
+    try {
+      const fn = vi.fn(async () => {
+        throw new LLMError("network", "fetch failed");
+      });
+      const promise = withNetworkRetry(fn);
+      const assertion = expect(promise).rejects.toThrow("fetch failed");
+      await vi.runAllTimersAsync();
+      await assertion;
+      // 1 initial attempt + 3 retries.
+      expect(fn).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not retry a non-network LLMError (e.g. rate_limit stays the caller's job)", async () => {
+    const fn = vi.fn(async () => {
+      throw new LLMError("rate_limit", "slow down");
+    });
+    await expect(withNetworkRetry(fn)).rejects.toThrow("slow down");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry once the signal is already aborted — a real cancellation, not a network fault", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fn = vi.fn(async () => {
+      throw new LLMError("network", "fetch failed");
+    });
+    await expect(withNetworkRetry(fn, controller.signal)).rejects.toThrow("fetch failed");
+    expect(fn).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -243,6 +308,82 @@ describe("runDigest", () => {
     expect(calls).toBeGreaterThan(callsBeforeResume);
     expect(listChapterDigests(db, resource.id)).toHaveLength(3);
     db.close();
+  });
+
+  it("self-heals a transient network error mid-run without pausing or failing", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+
+    let chapterAttempts = 0;
+    const provider = makeProvider((req) => {
+      if (req.input.includes("Chapter one")) {
+        chapterAttempts++;
+        if (chapterAttempts < 3) throw new LLMError("network", "fetch failed");
+        return { summary: "Ch1", themes: [], characters: [] };
+      }
+      return { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] };
+    });
+
+    vi.useFakeTimers();
+    try {
+      const runPromise = runDigest(db, provider, resource, sections, 0, 0);
+      await vi.runAllTimersAsync();
+      const run = await runPromise;
+      expect(run.status).toBe("completed");
+      expect(chapterAttempts).toBe(3);
+      expect(getChapterDigest(db, resource.id, 0)).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+      db.close();
+    }
+  });
+
+  it("a persistent network error still fails the run (not paused) once retries are exhausted, keeping resumability", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text." },
+      { spineIndex: 1, href: "b", text: "Chapter two text." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider((req) => {
+      if (req.input.includes("Chapter two")) {
+        throw new LLMError("network", "fetch failed");
+      }
+      return { summary: "Ch1", themes: [], characters: [] };
+    });
+
+    vi.useFakeTimers();
+    try {
+      // runDigest rejects (not resolves) on a non-rate_limit error, same as
+      // before M29 — persistRun("failed", ...) happens first, then it
+      // rethrows to the caller (the job registry marks the job failed from
+      // that rejection). Attach the assertion before flushing timers so the
+      // retry backoff's rejection is never briefly unhandled.
+      const runPromise = runDigest(db, provider, resource, sections, 0, 1);
+      const assertion = expect(runPromise).rejects.toThrow("fetch failed");
+      await vi.runAllTimersAsync();
+      await assertion;
+
+      // Distinct from rate_limit's pause/resume: an outage that outlasts the
+      // short in-process retry budget is a real failure, not left in a
+      // phantom "paused" state that needs someone watching the Scan to clear.
+      const stored = getDigestRun(db, resource.id);
+      expect(stored?.status).toBe("failed");
+      expect(stored?.lastError).toBe("fetch failed");
+      // Chapter 0 (already committed before the failing chapter) is kept —
+      // same resumability guarantee as the rate-limit path.
+      expect(getChapterDigest(db, resource.id, 0)).toBeDefined();
+      expect(getChapterDigest(db, resource.id, 1)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+      db.close();
+    }
   });
 
   it("marks an over-budget chapter failed after one automatic re-split, and continues the run", async () => {
@@ -436,6 +577,101 @@ describe("maybeRefreshBookDigestSnapshot", () => {
     // page turn that didn't advance into new digest coverage) is a no-op.
     await maybeRefreshBookDigestSnapshot(db, provider, resource, 0);
     expect(calls).toBe(1);
+    db.close();
+  });
+});
+
+// M29 (decisions.md 2026-08-22): this is what `GET /:id/digest` actually calls now — the
+// route used to `await maybeRefreshBookDigestSnapshot` inline with no try/catch, so a slow
+// or failing local-model call blocked (or 500'd) the whole digest-open request despite
+// being documented as "best-effort, silent". These tests hold the wrapper to that promise.
+describe("refreshBookDigestSnapshotInBackground", () => {
+  function makeProvider(scriptedExtract: (req: LLMExtractRequest<unknown>) => unknown): LLMProvider {
+    return {
+      id: "openai-compatible",
+      capabilities: () => ({ contextTokens: 100_000, supportsCaching: false }),
+      async *stream() {
+        yield { text: "" };
+      },
+      async extract<T>(req: LLMExtractRequest<T>): Promise<T> {
+        return scriptedExtract(req) as T;
+      },
+    };
+  }
+
+  async function seedOneDigestedChapter(db: ReturnType<typeof createDb>, resource: Resource): Promise<void> {
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+    await runDigest(
+      db,
+      makeProvider((req) =>
+        req.input.includes("Chapter one")
+          ? { summary: "Ch1", themes: [], characters: [] }
+          : { synopsis: "s", cast: [], narratorGender: "unknown", themes: [] },
+      ),
+      resource,
+      sections,
+      0,
+      0,
+    );
+  }
+
+  it("returns synchronously and swallows a failing refresh instead of throwing or rejecting the caller", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    await seedOneDigestedChapter(db, resource);
+
+    let resolveExtract: (() => void) | undefined;
+    const stall = new Promise<void>((resolve) => {
+      resolveExtract = resolve;
+    });
+    const provider = makeProvider(async () => {
+      await stall;
+      throw new LLMError("network", "fetch failed");
+    });
+
+    // A blocking implementation would hang on the still-pending `stall`
+    // promise here; reaching the assertion at all proves it didn't.
+    expect(() => refreshBookDigestSnapshotInBackground(db, provider, resource, 0)).not.toThrow();
+
+    resolveExtract?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The failed refresh never got to write a snapshot — but nothing above
+    // threw or produced an unhandled rejection either.
+    expect(getBookDigestSnapshot(db, resource.id)).toBeUndefined();
+    db.close();
+  });
+
+  it("dedups concurrent calls for the same resource into a single underlying refresh", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    await seedOneDigestedChapter(db, resource);
+
+    let calls = 0;
+    let resolveExtract: (() => void) | undefined;
+    const stall = new Promise<void>((resolve) => {
+      resolveExtract = resolve;
+    });
+    const provider = makeProvider(async () => {
+      calls++;
+      await stall;
+      return { synopsis: "safe synopsis", cast: [], narratorGender: "unknown", themes: [] };
+    });
+
+    // Simulates two "open digest" requests landing before the first
+    // background refresh has finished — must not fire two concurrent LLM
+    // calls for the same book.
+    refreshBookDigestSnapshotInBackground(db, provider, resource, 0);
+    refreshBookDigestSnapshotInBackground(db, provider, resource, 0);
+    resolveExtract?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(calls).toBe(1);
+    expect(getBookDigestSnapshot(db, resource.id)?.synopsis).toBe("safe synopsis");
     db.close();
   });
 });

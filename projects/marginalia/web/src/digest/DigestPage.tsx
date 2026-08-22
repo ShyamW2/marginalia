@@ -26,20 +26,30 @@ function revealParams(revealed: Set<number>): URLSearchParams {
   return params;
 }
 
+/**
+ * M29 (decisions.md 2026-08-22): distinguishes "the resource genuinely
+ * doesn't exist" (404 — a stable, permanent state) from "the request failed"
+ * (network error, timeout, 500 — worth a retry) so the caller can show a
+ * retry affordance instead of leaving the page on an indefinite spinner with
+ * no feedback either way.
+ */
+type DigestFetchResult = { ok: true; data: DigestStatus } | { ok: false; notFound: boolean };
+
 async function fetchDigestStatus(
   resourceId: string,
   revealed: Set<number>,
   revealBook: boolean,
-): Promise<DigestStatus | null> {
+): Promise<DigestFetchResult> {
   try {
     const params = revealParams(revealed);
     if (revealBook) params.set("revealBook", "1");
     const qs = params.toString();
     const res = await fetch(`/api/resources/${resourceId}/digest${qs ? `?${qs}` : ""}`);
-    if (!res.ok) return null;
-    return (await res.json()) as DigestStatus;
+    if (res.status === 404) return { ok: false, notFound: true };
+    if (!res.ok) return { ok: false, notFound: false };
+    return { ok: true, data: (await res.json()) as DigestStatus };
   } catch {
-    return null;
+    return { ok: false, notFound: false };
   }
 }
 
@@ -120,6 +130,10 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const [status, setStatus] = useState<DigestStatus | null>(null);
   const [thematic, setThematic] = useState<ThematicStatus | null>(null);
   const [notFound, setNotFound] = useState(false);
+  // M29: set only on a genuine request failure (not a 404) when there's no
+  // status to fall back on yet — distinct from `notFound`, which is
+  // permanent, so this one offers a retry instead.
+  const [loadError, setLoadError] = useState(false);
   const [revealed, setRevealed] = useState<Set<number>>(new Set());
   const [revealBook, setRevealBook] = useState(false);
   const [briefDraft, setBriefDraft] = useState("");
@@ -144,8 +158,14 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   function load() {
     if (!id) return;
     fetchDigestStatus(id, revealed, revealBook).then((result) => {
-      if (result === null) setNotFound(true);
-      else setStatus(result);
+      if (result.ok) {
+        setStatus(result.data);
+        setLoadError(false);
+      } else if (result.notFound) {
+        setNotFound(true);
+      } else {
+        setLoadError(true);
+      }
     });
     fetchThematicStatus(id, revealed).then((result) => {
       if (result) {
@@ -166,6 +186,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     setStatus(null);
     setThematic(null);
     setNotFound(false);
+    setLoadError(false);
     setRevealed(new Set());
     setRevealBook(false);
     setAudioSections(null);
@@ -350,7 +371,15 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
       </div>
 
       {notFound && <p>Couldn't load the digest for this book.</p>}
-      {!notFound && status === null && <div className={styles.loading}>Loading digest…</div>}
+      {!notFound && loadError && status === null && (
+        <div className={styles.loading}>
+          Couldn't load the digest right now.{" "}
+          <Button variant="outline" size="sm" onClick={load}>
+            Retry
+          </Button>
+        </div>
+      )}
+      {!notFound && !loadError && status === null && <div className={styles.loading}>Loading digest…</div>}
 
       {status !== null && (
         <>

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { parseOpenAICompatSSE, sseLines, type OpenAIUsage } from "./openaiCompat.js";
+// extract() requires zod/v4 schema instances — see llm/provider.ts's comment.
+import { z } from "zod/v4";
+import { OpenAICompatProvider, parseOpenAICompatSSE, sseLines, type OpenAIUsage } from "./openaiCompat.js";
 
 async function* fromChunks(chunks: string[]): AsyncGenerator<string> {
   for (const chunk of chunks) yield chunk;
@@ -117,5 +119,81 @@ describe("parseOpenAICompatSSE", () => {
     const modelSink: { current: string | null } = { current: null };
     await collect(parseOpenAICompatSSE(fromChunks(chunks), undefined, modelSink));
     expect(modelSink.current).toBeNull();
+  });
+});
+
+// M29 (decisions.md 2026-08-22): extract()/stream() used to pass `req.signal` straight
+// through to fetch() with no deadline of its own — a stalled connection (a local endpoint
+// like Ollama mid-model-load) hung indefinitely instead of failing. Confirms the fix is
+// actually wired: fetch gets a *combined* signal that still honours the caller's own
+// cancellation, not a plain pass-through and not a signal that only the timeout controls.
+describe("OpenAICompatProvider request timeout wiring", () => {
+  it("extract() passes fetch a combined signal, distinct from the caller's own, that still aborts when the caller cancels", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      throw new Error("network boom");
+    }) as typeof fetch;
+
+    try {
+      const provider = new OpenAICompatProvider({
+        baseUrl: "http://localhost:11434/v1",
+        model: "test-model",
+        apiKey: "",
+        contextTokens: 32_768,
+      });
+      const controller = new AbortController();
+      await expect(
+        provider.extract({
+          instructions: "x",
+          input: "y",
+          schema: z.object({ ok: z.boolean() }),
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow();
+
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+      expect(capturedSignal).not.toBe(controller.signal);
+      expect(capturedSignal?.aborted).toBe(false);
+      controller.abort();
+      expect(capturedSignal?.aborted).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("stream() passes fetch a combined signal the same way", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      capturedSignal = init?.signal ?? undefined;
+      throw new Error("network boom");
+    }) as typeof fetch;
+
+    try {
+      const provider = new OpenAICompatProvider({
+        baseUrl: "http://localhost:11434/v1",
+        model: "test-model",
+        apiKey: "",
+        contextTokens: 32_768,
+      });
+      const controller = new AbortController();
+      const iterator = provider.stream({
+        instructions: "x",
+        bookContext: "y",
+        messages: [],
+        signal: controller.signal,
+      })[Symbol.asyncIterator]();
+      await expect(iterator.next()).rejects.toThrow();
+
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+      expect(capturedSignal).not.toBe(controller.signal);
+      expect(capturedSignal?.aborted).toBe(false);
+      controller.abort();
+      expect(capturedSignal?.aborted).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

@@ -16,7 +16,7 @@ import { getReadingPosition, getResourceById, getResourceTextSections } from "..
 import { getProvider, LLMError } from "../llm/provider.js";
 import { sectionLabel, sectionRangeUiLabel } from "../llm/context.js";
 import { getRawSettings } from "../settings/store.js";
-import { estimateDigestRun, maybeRefreshBookDigestSnapshot, runDigest } from "../digest/build.js";
+import { estimateDigestRun, refreshBookDigestSnapshotInBackground, runDigest } from "../digest/build.js";
 import { runThematicDigest } from "../digest/thematicBuild.js";
 import { runThemeTagging } from "../digest/themeTagging.js";
 import { runThemeDistillation } from "../digest/themeDistillation.js";
@@ -158,7 +158,7 @@ function buildDigestStatus(
   };
 }
 
-digestRouter.get("/:id/digest", async (req, res) => {
+digestRouter.get("/:id/digest", (req, res) => {
   const db = getDb();
   const resource = getResourceById(db, req.params.id);
   if (!resource) {
@@ -166,11 +166,13 @@ digestRouter.get("/:id/digest", async (req, res) => {
     return;
   }
   const bookmarkSpineIndex = getReadingPosition(db, resource.id)?.spineIndex ?? -1;
-  // Best-effort, silent — see maybeRefreshBookDigestSnapshot's own comment
-  // for why this only actually calls the LLM when the safe synopsis is
-  // genuinely stale, not on every request.
+  // M29 (decisions.md 2026-08-22): fire-and-forget, not awaited — see
+  // refreshBookDigestSnapshotInBackground's own comment for why this used to
+  // block (and sometimes fail) the whole digest-open response. The response
+  // below always carries whatever snapshot already exists; a fresher one
+  // lands on a later open/poll once the background refresh completes.
   const provider = getProvider(db, "digest", "digest", resource.id);
-  await maybeRefreshBookDigestSnapshot(db, provider, resource, bookmarkSpineIndex);
+  refreshBookDigestSnapshotInBackground(db, provider, resource, bookmarkSpineIndex);
 
   const revealed = parseRevealedIndices(req.query.reveal);
   const revealBook = req.query.revealBook === "1" || req.query.revealBook === "true";

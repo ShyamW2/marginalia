@@ -3,6 +3,47 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-22 — Digest reliability diagnosis: the local Ollama call, not the SSH tunnel (M29)
+
+The operator reported "Open digest" often hanging or failing, and background digest jobs
+failing "at the fetch stage" — suspected the SSH-tunnelled remote setup at first. Traced it
+instead to the `digest` role's provider profile: `openai-compatible` against local Ollama
+(`localhost:11434`, `qwen3.5-hermes:latest`). The tunnel only carries browser↔server HTTP;
+the LLM call happens server-side against `localhost` on whichever machine runs the server,
+which is why the same slowness reproduces running natively on the Mac. Two real
+`digest_runs` rows carry `last_error: 'fetch failed'` — Node `fetch`'s literal message on a
+connection-level failure.
+
+Two compounding design gaps, not just flaky Ollama: (1) `GET /:id/digest`
+(`routes/digest.ts`) awaits `maybeRefreshBookDigestSnapshot` inline with no try/catch, so a
+slow/failing local-model call blocks or 500s the digest-open response despite the function's
+own comment calling it "best-effort, silent"; (2) `runDigest`/`runThematicDigest`
+(`digest/build.ts`, `digest/thematicBuild.ts`) only auto-resume on `LLMError.code ===
+"rate_limit"` — a plain `"network"` error (exactly this failure mode) kills the whole job
+with no retry, and `jobs/registry.ts` has no retry logic of its own to fall back on. Neither
+LLM fetch path (`llm/openaiCompat.ts`) has a request timeout, so a stalled connection hangs
+rather than failing fast.
+
+Scoped as M29 (TASKS.md): make the snapshot refresh non-blocking, add fetch timeouts, retry
+`network`-class errors with backoff (not just `rate_limit`), and surface client-side load
+errors instead of an infinite "Loading digest…" spinner. Ollama-side tuning (`keep_alive`)
+recorded as an operator follow-up, not code — the retry/timeout work should make the app
+resilient regardless.
+
+## 2026-08-22 — The immersive page's binding: rebind to `f`, not relabel the hint (M24.7 §G)
+
+The `f1ab0bd` implementation took the "relabel the exit hint to `⇧F`" branch of TASKS.md's
+either/or (binding stayed `shift+F`, the pebble's `KeyCapAnchor` was given `modifier="⇧"`).
+Driving it live immediately after, the operator expected plain `f` to be fullscreen — matching
+the original design mockup's own "F to leave" hint (READER_REDESIGN.md's `FullscreenReaderV2`
+frame) and the icon-button behaviour. **Reversed to the other branch**: fullscreen is now plain
+`f`; focus mode (the annotations/notes toggle, `handleFocusModeShortcut`) moves to `n` for
+Notes. Updated together, since `useShortcuts`, the iframe-forwarded keydown handler
+(`useFullscreenChrome`'s docstring already flagged this as the one place both listeners must
+agree), the `KeyCapAnchor` on the pebble's exit control, and the annotations button's "press
+_ to show" hint all encode the old binding independently — `shortcuts/keys.ts` is the single
+source now.
+
 ## 2026-08-21 — The immersive page's two open questions (M24.7 §G)
 
 READER_REDESIGN.md §6 left two behaviours for the operator to decide while driving the

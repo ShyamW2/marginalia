@@ -1027,6 +1027,64 @@ annotations in other books too, to draw parallels."*
 - The gate before anything is built: **what does a cross-book hit open**, and what makes a
   parallel worth surfacing rather than a coincidence of vocabulary?
 
+### M29 — Digest reliability: stop blocking on a live LLM call, add timeouts and retries
+
+Diagnosed 2026-08-22 (operator: "Open digest" often takes forever or fails; background
+digest jobs fail at the fetch stage). The `digest` role's provider profile is
+`openai-compatible` against a local Ollama endpoint (`localhost:11434`,
+`qwen3.5-hermes:latest`) — **not the SSH tunnel**, which only carries browser↔server HTTP
+traffic and never sees the LLM call; the same slowness shows up running the app natively
+on the Mac because the bottleneck is server-side, against `localhost`, on both machines.
+Root causes, all confirmed by reading the code and by two real `digest_runs` rows with
+`last_error: 'fetch failed'`:
+
+- [x] **Stop `GET /:id/digest` blocking on a live LLM call.**
+      `maybeRefreshBookDigestSnapshot` (`server/src/digest/build.ts`) is `await`ed inline
+      in the route handler (`server/src/routes/digest.ts`) with no try/catch, despite its
+      own doc comment calling it "best-effort, silent" — a slow or failing Ollama call
+      currently stalls or 500s the whole digest-open request. Make the refresh
+      non-blocking: respond with whatever snapshot already exists, and refresh in the
+      background so a page open never waits on an LLM round-trip.
+      _Acceptance: opening the digest for a book whose snapshot is stale returns
+      immediately with the last-known-good snapshot; the refreshed snapshot appears on a
+      subsequent open/poll; killing Ollama mid-refresh does not affect the digest-open
+      response._
+- [x] **Timeout every LLM fetch.** `OpenAICompatProvider.stream()` and `.extract()`
+      (`server/src/llm/openaiCompat.ts`) issue raw `fetch()` calls with no deadline — a
+      stalled connection hangs indefinitely. Bound both with a per-request timeout,
+      surfaced as a designed `LLMError`, not a hang.
+      _Acceptance: pointing the digest role at an endpoint that accepts the connection but
+      never responds fails within the configured timeout, not never._
+- [x] **Retry transient network failures in digest/thematic runs.** `runDigest` /
+      `runThematicDigest` (`server/src/digest/build.ts`,
+      `server/src/digest/thematicBuild.ts`) only pause-and-auto-resume on
+      `LLMError.code === "rate_limit"`; every other error, including `"network"` (the
+      literal `"fetch failed"` seen in `digest_runs.last_error`), marks the whole job
+      failed with no retry — confirmed `server/src/jobs/registry.ts` has no retry logic of
+      its own either. Generalize the existing pause/resume path to also catch `network`
+      errors, with a shorter backoff than the rate-limit one.
+      _Acceptance: a digest run that hits one transient connection failure mid-book
+      recovers on its own (a brief pause in the tasks tray, not a failed job) instead of
+      requiring a manual restart._
+- [x] **Surface digest-load errors on the client instead of an infinite spinner.**
+      `fetchDigestStatus` (`web/src/digest/DigestPage.tsx`) swallows every error and
+      returns `null`, so a failed request leaves the page on "Loading digest…" forever
+      with no feedback. Distinguish "still loading" from "errored" and show a retry
+      affordance.
+      _Acceptance: killing the server (or Ollama) mid-load shows a visible error state
+      with a retry button, not a stuck spinner._
+
+Out of scope here: local-model operational tuning (e.g. Ollama's `keep_alive`, keeping the
+model warm) — recorded as an operator follow-up, not code; the retry/timeout work above
+should make the app resilient to that regardless of how it's tuned.
+
+#### Verify
+
+- [ ] Drive both scenarios live against the real local Ollama profile: open a digest whose
+      snapshot is stale (confirm it's no longer the slowest interaction on the site), and
+      run a multi-chapter background digest, confirming a network hiccup no longer kills
+      the job outright.
+
 ## Parked (post-v1.5) — recorded so they aren't relitigated
 
 - LLM note supplementation: a pass that reviews highlight notes/tags, responds

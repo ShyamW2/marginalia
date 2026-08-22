@@ -26,6 +26,21 @@ function toReportedUsage(usage: OpenAIUsage | undefined): ReportedUsage | null {
 // budget (vault distillation / the M17 digest).
 const EXTRACT_MAX_TOKENS = 8192;
 
+// M29 (decisions.md 2026-08-22): neither fetch() below had any deadline — a
+// stalled connection (a local endpoint like Ollama mid-model-load, or a
+// dropped connection that never actually closes) hung the request
+// indefinitely instead of failing. 5 minutes is generous enough for a slow
+// local model on a full chapter, while still turning "hangs forever" into a
+// bounded, recoverable LLMError("network", ...).
+const REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Combines the caller's own abort signal (job cancellation) with a fixed
+ * request timeout, so either one aborts the fetch. */
+function withRequestTimeout(signal?: AbortSignal): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+}
+
 /** Splits an async stream of text chunks into lines (SSE is line-delimited). */
 export async function* sseLines(
   chunks: AsyncIterable<string>,
@@ -165,7 +180,7 @@ export class OpenAICompatProvider implements LLMProvider {
       response = await fetch(this.url(), {
         method: "POST",
         headers: this.headers(),
-        signal: req.signal,
+        signal: withRequestTimeout(req.signal),
         body: JSON.stringify({
           model: this.config.model,
           stream: true,
@@ -215,7 +230,7 @@ export class OpenAICompatProvider implements LLMProvider {
       response = await fetch(this.url(), {
         method: "POST",
         headers: this.headers(),
-        signal: req.signal,
+        signal: withRequestTimeout(req.signal),
         body: JSON.stringify({
           model: this.config.model,
           response_format: { type: "json_object" },

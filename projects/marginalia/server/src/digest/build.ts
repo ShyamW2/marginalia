@@ -27,6 +27,34 @@ const CHARS_PER_TOKEN = 3.5;
 const MAP_BUDGET_FRACTION = 0.25;
 const RATE_LIMIT_BACKOFF_MS = 5 * 60 * 1000;
 const RATE_LIMIT_JITTER_MS = 30_000;
+// M29 (decisions.md 2026-08-22): a plain "network" LLMError — a stalled/reset connection
+// to a local endpoint (e.g. Ollama evicting and reloading a model between calls) — used to
+// have no retry at all, unlike rate_limit's pause/resume. Short, in-process, exponential
+// backoff: transient enough to self-heal within a few tens of seconds without needing a
+// client to be watching (the rate-limit pause/resume is driven by the Scan staying open;
+// this one isn't, on purpose, since digesting "in the background while reading" means
+// nobody is watching the Scan).
+const NETWORK_RETRY_ATTEMPTS = 3;
+const NETWORK_RETRY_BASE_MS = 10_000;
+
+/**
+ * Retries `fn` on a network-class LLMError with short exponential backoff
+ * (10s/20s/40s), giving a transient connection blip a chance to self-heal
+ * without the caller needing to watch for it. Any other error — including a
+ * genuine cancellation (`signal.aborted`) — passes straight through
+ * unretried, same as before this existed.
+ */
+export async function withNetworkRetry<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const retryable = err instanceof LLMError && err.code === "network" && !signal?.aborted;
+      if (!retryable || attempt >= NETWORK_RETRY_ATTEMPTS) throw err;
+      await new Promise((resolve) => setTimeout(resolve, NETWORK_RETRY_BASE_MS * 2 ** attempt));
+    }
+  }
+}
 
 const ChapterPartSchema = z.object({
   summary: z.string(),
@@ -401,13 +429,17 @@ export async function runDigest(
     // there stale for the whole call (decisions.md 2026-08-12 ruling 2).
     onProgress?.(current, total, chapterUiLabel);
     try {
-      const part = await digestChapter(
-        provider,
-        contextTokens,
-        resource.title,
-        resource.author,
-        chapterLabel,
-        section.text,
+      const part = await withNetworkRetry(
+        () =>
+          digestChapter(
+            provider,
+            contextTokens,
+            resource.title,
+            resource.author,
+            chapterLabel,
+            section.text,
+            signal,
+          ),
         signal,
       );
       if (part === null) {
@@ -446,12 +478,8 @@ export async function runDigest(
     // 2026-08-12 ruling 2).
     onProgress?.(current, total, "Composing the book digest");
     try {
-      const reduced = await reduceBookDigest(
-        provider,
-        contextTokens,
-        resource.title,
-        resource.author,
-        allChapters,
+      const reduced = await withNetworkRetry(
+        () => reduceBookDigest(provider, contextTokens, resource.title, resource.author, allChapters, signal),
         signal,
       );
       putBookDigest(db, {
@@ -520,4 +548,37 @@ export async function maybeRefreshBookDigestSnapshot(
     narratorGender: reduced.narratorGender,
     themes: reduced.themes,
   });
+}
+
+// M29 (decisions.md 2026-08-22): resourceIds with a refresh currently in
+// flight — guards refreshBookDigestSnapshotInBackground against stacking up
+// duplicate concurrent LLM calls when "open digest" fires the same refresh
+// on every request before the first one has landed.
+const snapshotRefreshInFlight = new Set<string>();
+
+/**
+ * Fire-and-forget wrapper around `maybeRefreshBookDigestSnapshot` — this is
+ * what the actual "open digest" route calls, per M29: the GET route used to
+ * `await` the refresh inline with no try/catch, so a slow or failing local
+ * model blocked (or 500'd) the entire page load despite the refresh being
+ * documented as "best-effort, silent". Genuinely making it silent means
+ * genuinely not blocking on it: the caller gets whatever snapshot already
+ * exists immediately, and this updates it in the background for the next
+ * open/poll. Errors are swallowed here (logged only) — a failed refresh is
+ * never worse than the stale snapshot the reader was already seeing.
+ */
+export function refreshBookDigestSnapshotInBackground(
+  db: Database.Database,
+  provider: LLMProvider | null,
+  resource: Resource,
+  bookmarkSpineIndex: number,
+): void {
+  if (!provider || snapshotRefreshInFlight.has(resource.id)) return;
+  snapshotRefreshInFlight.add(resource.id);
+  maybeRefreshBookDigestSnapshot(db, provider, resource, bookmarkSpineIndex)
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("[digest] background snapshot refresh failed:", err instanceof Error ? err.message : err);
+    })
+    .finally(() => snapshotRefreshInFlight.delete(resource.id));
 }

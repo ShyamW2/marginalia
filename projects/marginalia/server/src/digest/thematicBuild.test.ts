@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createDb } from "../db.js";
 import { LLMError, type LLMExtractRequest, type LLMProvider } from "../llm/provider.js";
 import { runDigest } from "./build.js";
@@ -189,6 +189,38 @@ describe("runThematicDigest", () => {
     const stored = getThematicRun(db, resource.id);
     expect(stored?.status).toBe("paused_rate_limit");
     db.close();
+  });
+
+  // M29 (decisions.md 2026-08-22, mirrors build.test.ts's runDigest coverage): a plain
+  // network error now gets the same short in-process retry as the plot layer, via the
+  // shared `withNetworkRetry` (build.ts) — a transient local-endpoint blip self-heals
+  // instead of pausing the run the way only rate_limit used to.
+  it("self-heals a transient network error mid-run without pausing", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+
+    let attempts = 0;
+    const provider = makeProvider(() => {
+      attempts++;
+      if (attempts < 3) throw new LLMError("network", "fetch failed");
+      return { analysis: "Ch1 analysis", themes: [], questions: [] };
+    });
+
+    vi.useFakeTimers();
+    try {
+      const runPromise = runThematicDigest(db, provider, resource, sections, 0, 0);
+      await vi.runAllTimersAsync();
+      const run = await runPromise;
+      expect(run.status).toBe("completed");
+      expect(attempts).toBe(3);
+      expect(getThematicDigest(db, resource.id, 0)).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+      db.close();
+    }
   });
 
   it("cancelling stops the run before the next chapter is attempted, keeping committed chapters", async () => {
