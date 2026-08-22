@@ -39,8 +39,7 @@
    to itself (MDN "CSS containment/Container queries": the search for a
    matching ancestor container starts at the styled element's parent), so
    the actual grid moved to the `.stripGrid` child below, which the
-   `@container reader-strip` block further down restyles. Plain flex column
-   here: `.stripGrid` then, when open, `.findBarRow` beneath it. */
+   `@container reader-strip` block further down restyles. */
 .topRow {
   width: 100%;
   max-width: var(--reader-max-width, 800px);
@@ -129,14 +128,6 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* M24 A: the find bar sits on its own line below the strip's grid — a plain
- * flex sibling of `.stripGrid` now (§C's split gave `.topRow` a flex column
- * of its own), rather than a grid child spanning every column. Full width so
- * the input has real room either way. */
-.findBarRow {
-  margin-top: 0.35rem;
 }
 
 .topRowRight {
@@ -510,12 +501,13 @@
   flex-shrink: 0;
 }
 
-/* M14 fullscreen reading mode (decisions.md 2026-07-27): shift+F hides the
-   app's chrome and lets the page grow into the freed space; the top row,
-   footer, and margin rail become these floating, proximity-revealed panels
-   instead. Orthogonal to focus mode (`f`), which hides *your annotations* —
-   the two compose freely. A real requestFullscreen() covers the app shell's
-   own header for free; wrapperFullscreen is the in-page fallback for when
+/* M24.7 §G rework of M14 fullscreen (decisions.md 2026-08-19/2026-08-21):
+   shift+F hides the app's chrome and lets the page grow into the freed
+   space — "no card, no strips, no rail," replaced by a vignette, a 2px
+   position hairline, faint highlight dots, and one waking pebble (below).
+   Orthogonal to focus mode (`f`), which hides *your annotations* — the two
+   compose freely. A real requestFullscreen() covers the app shell's own
+   header for free; wrapperFullscreen is the in-page fallback for when
    that's refused. */
 .wrapperFullscreen {
   position: fixed;
@@ -525,6 +517,9 @@
   background: var(--color-bg);
 }
 
+/* The base every fullscreen-only floating panel composes: a raised surface
+ * that's invisible and inert until woken. Today the pebble is its only
+ * consumer (M14 had four: top row, footer, rail, actions cluster). */
 .fullscreenFloating {
   position: fixed;
   z-index: 25;
@@ -536,51 +531,77 @@
   transition: opacity var(--duration-standard) var(--ease-standard);
 }
 
-/* Revealed by JS proximity/hover (.revealed) or, for keyboard users, by
-   focus landing on a control inside — CSS alone handles the latter. */
+/* Revealed by JS (pointer movement waking the pebble — `.revealed`) or, for
+   keyboard users, by focus landing on a control inside — CSS alone handles
+   the latter, so Tabbing into the pebble reveals it with no pointer at all. */
 .fullscreenFloating.revealed,
 .fullscreenFloating:focus-within {
   opacity: 1;
   pointer-events: auto;
 }
 
-.topRowFloating {
-  top: 0.75rem;
-  left: 1rem;
-  right: 1rem;
-  max-width: none;
-  border-radius: 10px;
-  padding: 0.4rem 0.75rem;
-}
-
-.footerFloating {
+/* The one pebble: page, %, digest, listening, exit — bottom-centre, the
+ * same pill shape/position the old .footerFloating used, since it replaces
+ * the foot as much as the strip. */
+.immersivePebble {
   bottom: 0.75rem;
   left: 50%;
-  right: auto;
   transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
   width: auto;
   max-width: none;
   border-radius: 999px;
   padding: 0.3rem 0.6rem;
 }
 
-/* The margin rail reveals from the top-right corner region specifically,
-   not the whole right edge — the M11 turn-zone vignette already owns that
-   (decisions.md 2026-07-27). */
-.marginRailFloating {
-  top: 0.75rem;
-  right: 0.75rem;
-  border-radius: 10px;
-  padding: 0.4rem 0.15rem 0.6rem;
+/* "Position survives as a 2px hairline along the bottom edge" — always
+ * visible (not gated on `.revealed`), a track in the border colour with an
+ * accent fill sized to reading progress. Sits below the pebble in the
+ * stacking order (lower z-index) since the pebble floats over it once
+ * awake. */
+.immersiveHairline {
+  position: fixed;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-border);
 }
 
-/* M22.5: the actions cluster's fullscreen mount — the bottom-right mirror
- * of .marginRailFloating's top-right corner, joining the same
- * proximity-revealed set once the page grows into the room this cluster
- * otherwise floats in. */
-.actionsFullscreenFloating {
-  bottom: 0.75rem;
-  right: 0.75rem;
-  border-radius: 999px;
-  padding: 0.3rem;
+.immersiveHairlineFill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width var(--duration-standard) var(--ease-standard);
+}
+
+/* "A soft vignette holding the eye on the column" — a wash toward the edges
+ * of the reading row, built from the same accent the M11 turn-zone vignette
+ * already uses (no new colour values). Sits over .stage (its parent,
+ * .readerRow, is the positioning context) but under the pebble/hairline. */
+.immersiveVignette {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 55%,
+    color-mix(in srgb, var(--color-accent) 20%, transparent) 100%
+  );
+}
+
+/* The highlight rail dims to faint dots rather than becoming a fifth
+ * floating panel — always visible, unlike the pebble, just quieter. Real
+ * dots, real clicks; only the affordance is turned down. */
+.marginRailFaint {
+  opacity: 0.35;
+  transition: opacity var(--duration-standard) var(--ease-standard);
+}
+
+.marginRailFaint:hover,
+.marginRailFaint:focus-within {
+  opacity: 1;
 }

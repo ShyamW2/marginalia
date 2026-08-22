@@ -1,47 +1,41 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type Dispatch,
-  type RefObject,
-  type SetStateAction,
-} from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 
-// M14 fullscreen: how close (in px) the pointer must be to the top/bottom
-// edge to reveal the floating top row / footer, and how much of the width
-// (from the right) counts as the "top-right corner region" the margin rail
-// reveals from — deliberately not the whole right edge, so it never fights
-// the M11 turn-zone vignette's own right-edge hover.
-export const FULLSCREEN_REVEAL_BAND_PX = 72;
-export const FULLSCREEN_RAIL_CORNER_FRACTION = 0.25;
+// M24.7 §G: how long the pebble stays awake after the last pointer movement
+// (or after the pointer leaves the pebble itself) before it sleeps again.
+export const IMMERSIVE_SLEEP_MS = 2000;
 
 /**
- * M14 fullscreen reading mode (decisions.md 2026-07-27): a *different* axis
- * from focus mode — focus mode hides your annotations, fullscreen hides the
- * app's chrome (top row, footer, rail), which become proximity-revealed
- * floating panels. Extracted verbatim from ReaderView.tsx (M19.8 refactor).
+ * M24.7 §G rework of M14 fullscreen (decisions.md 2026-08-19): a *different*
+ * axis from focus mode — focus mode hides your annotations, fullscreen hides
+ * the app's chrome, which becomes one waking pebble (page, %, digest,
+ * listening, exit) instead of M14's four independently proximity-revealed
+ * panels (top row, footer, rail, actions cluster). Extracted verbatim from
+ * ReaderView.tsx (M19.8 refactor), then reworked in place for §G.
  *
- * The reveal setters are returned, not just the values: the reader's own
+ * Wake is movement-triggered, not proximity-based: any pointer movement over
+ * the fullscreen surface wakes the pebble and (re)arms a sleep timer: the
+ * pebble sleeps `IMMERSIVE_SLEEP_MS` after the *last* movement, unless the
+ * pointer is directly over the pebble (`onPebblePointerEnter`), in which case
+ * it stays awake until the pointer actually leaves it. Scrolling alone does
+ * not sleep or wake it — decisions.md 2026-08-21, "pointer idle only" — so
+ * there is deliberately no scroll listener here.
+ *
+ * `wakePebble` is returned, not just the state: the reader's own
  * iframe-forwarded mousemove handler (still in ReaderView's book-loading
- * effect — see NOTES.md on why that effect isn't split this pass) computes
- * the same near-edge thresholds from iframe-relative coordinates and needs
- * to drive the same three flags when the cursor is *inside* the rendered
- * page rather than over the parent document.
+ * effect — see NOTES.md "M14" for why that effect isn't split) needs to
+ * drive the same wake when the cursor is *inside* the rendered page rather
+ * than over the parent document — the exact "two pointer paths" M14 lost a
+ * session to getting wrong the first time.
  */
 export function useFullscreenChrome(): {
   wrapperRef: RefObject<HTMLDivElement>;
   fullscreenMode: boolean;
   fullscreenModeRef: RefObject<boolean>;
   toggleFullscreen: () => void;
-  revealTop: boolean;
-  revealBottom: boolean;
-  revealRail: boolean;
-  revealActions: boolean;
-  setRevealTop: Dispatch<SetStateAction<boolean>>;
-  setRevealBottom: Dispatch<SetStateAction<boolean>>;
-  setRevealRail: Dispatch<SetStateAction<boolean>>;
-  setRevealActions: Dispatch<SetStateAction<boolean>>;
+  pebbleAwake: boolean;
+  wakePebble: () => void;
+  onPebblePointerEnter: () => void;
+  onPebblePointerLeave: () => void;
 } {
   // `wrapperRef` is "the app root" the browser Fullscreen API is requested
   // on; degrades silently to an in-page-only fullscreen layout (ReaderView's
@@ -52,56 +46,64 @@ export function useFullscreenChrome(): {
   useEffect(() => {
     fullscreenModeRef.current = fullscreenMode;
   }, [fullscreenMode]);
-  // Which floating chrome panel is currently revealed — set true by the
-  // iframe-forwarded mousemove when the pointer nears its edge/corner, and
-  // independently by the panel's own onPointerEnter/Leave once it's visible
-  // enough to hover directly (see ReaderView's JSX). CSS :focus-within
-  // handles the keyboard-reveal case without any JS at all.
-  const [revealTop, setRevealTop] = useState(false);
-  const [revealBottom, setRevealBottom] = useState(false);
-  const [revealRail, setRevealRail] = useState(false);
-  // M22.5: the reader's floating actions cluster (Digest/Scan/Publish),
-  // revealed from the bottom-right corner — the mirror of the rail's
-  // top-right corner reveal below.
-  const [revealActions, setRevealActions] = useState(false);
+
+  const [pebbleAwake, setPebbleAwake] = useState(false);
+  const sleepTimerRef = useRef<number | null>(null);
+  // True while the pointer is directly over the pebble — the sleep timer is
+  // suppressed for as long as this holds, so hovering it keeps it awake
+  // indefinitely rather than sleeping out from under a reader mid-interaction.
+  const pointerOverPebbleRef = useRef(false);
+
+  const clearSleepTimer = useCallback(() => {
+    if (sleepTimerRef.current !== null) {
+      window.clearTimeout(sleepTimerRef.current);
+      sleepTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleSleep = useCallback(() => {
+    clearSleepTimer();
+    sleepTimerRef.current = window.setTimeout(() => {
+      if (!pointerOverPebbleRef.current) setPebbleAwake(false);
+    }, IMMERSIVE_SLEEP_MS);
+  }, [clearSleepTimer]);
+
+  const wakePebble = useCallback(() => {
+    setPebbleAwake(true);
+    scheduleSleep();
+  }, [scheduleSleep]);
+
+  const onPebblePointerEnter = useCallback(() => {
+    pointerOverPebbleRef.current = true;
+    clearSleepTimer();
+    setPebbleAwake(true);
+  }, [clearSleepTimer]);
+
+  const onPebblePointerLeave = useCallback(() => {
+    pointerOverPebbleRef.current = false;
+    scheduleSleep();
+  }, [scheduleSleep]);
 
   useEffect(() => {
     if (fullscreenMode) return;
-    setRevealTop(false);
-    setRevealBottom(false);
-    setRevealRail(false);
-    setRevealActions(false);
-  }, [fullscreenMode]);
+    setPebbleAwake(false);
+    pointerOverPebbleRef.current = false;
+    clearSleepTimer();
+  }, [fullscreenMode, clearSleepTimer]);
 
-  // M14 fullscreen reveal, continued: the iframe-forwarded mousemove only
-  // fires while the cursor is actually over the rendered page — it never
-  // fires for the parent-document dead zone above/below/beside the iframe
-  // (where the floating chrome itself lives before it's revealed, since
-  // `pointer-events: none` on an unrevealed panel means it can't be the
-  // thing that reveals itself). Found live: without this, hovering the
-  // literal top edge of the screen from a "cold" state did nothing, and a
-  // reveal triggered from inside the iframe never cleared once the cursor
-  // left the iframe entirely (no further events to update it) — see
-  // NOTES.md "M14". A plain window-level listener, active only in
-  // fullscreen, covers exactly that gap with the same viewport-relative
-  // thresholds as the iframe-forwarded path.
+  // The dead-zone half of the "two pointer paths" fix: a plain window-level
+  // listener, active only in fullscreen, covers the parent-document space
+  // the iframe-forwarded path structurally cannot reach (NOTES.md "M14").
   useEffect(() => {
     if (!fullscreenMode) return;
-    function handleWindowMouseMove(event: MouseEvent) {
-      const nearTop = event.clientY < FULLSCREEN_REVEAL_BAND_PX;
-      const nearBottom = event.clientY > window.innerHeight - FULLSCREEN_REVEAL_BAND_PX;
-      const nearRailCorner =
-        nearTop && event.clientX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
-      const nearActionsCorner =
-        nearBottom && event.clientX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
-      setRevealTop((prev) => (prev === nearTop ? prev : nearTop));
-      setRevealBottom((prev) => (prev === nearBottom ? prev : nearBottom));
-      setRevealRail((prev) => (prev === nearRailCorner ? prev : nearRailCorner));
-      setRevealActions((prev) => (prev === nearActionsCorner ? prev : nearActionsCorner));
+    function handleWindowMouseMove() {
+      wakePebble();
     }
     window.addEventListener("mousemove", handleWindowMouseMove);
     return () => window.removeEventListener("mousemove", handleWindowMouseMove);
-  }, [fullscreenMode]);
+  }, [fullscreenMode, wakePebble]);
+
+  useEffect(() => clearSleepTimer, [clearSleepTimer]);
 
   const toggleFullscreen = useCallback(() => {
     setFullscreenMode((prev) => {
@@ -135,13 +137,9 @@ export function useFullscreenChrome(): {
     fullscreenMode,
     fullscreenModeRef,
     toggleFullscreen,
-    revealTop,
-    revealBottom,
-    revealRail,
-    revealActions,
-    setRevealTop,
-    setRevealBottom,
-    setRevealRail,
-    setRevealActions,
+    pebbleAwake,
+    wakePebble,
+    onPebblePointerEnter,
+    onPebblePointerLeave,
   };
 }

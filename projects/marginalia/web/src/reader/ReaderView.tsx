@@ -44,6 +44,7 @@ import { ProviderPicker } from "../settings/ProviderPicker.js";
 import { useOpenSettings } from "../settings/useOpenSettings.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
+import { KeyCapAnchor } from "../shortcuts/KeyCap.js";
 import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { AudioTransportIcon } from "./AudioTransportIcon.js";
@@ -81,7 +82,6 @@ import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, current
 import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
 import { PageNumberDisplay } from "./PageNumberDisplay.js";
-import { ReaderActionsCluster } from "./ReaderActionsCluster.js";
 import { NavCluster } from "../app/NavCluster.js";
 import {
   buildBookPageMap,
@@ -105,11 +105,7 @@ import {
   turnZoneForVisibleX,
 } from "./readerGeometry.js";
 import { usePageTurnAnimation } from "./usePageTurnAnimation.js";
-import {
-  FULLSCREEN_RAIL_CORNER_FRACTION,
-  FULLSCREEN_REVEAL_BAND_PX,
-  useFullscreenChrome,
-} from "./useFullscreenChrome.js";
+import { useFullscreenChrome } from "./useFullscreenChrome.js";
 import { useReaderPaneWidth } from "./useReaderPaneWidth.js";
 import styles from "./ReaderView.module.css";
 
@@ -412,11 +408,12 @@ interface ReaderViewProps {
    * listening from wherever the book opens, once it's actually open. */
   initialAutoplay?: boolean;
   /** M22.5 "the reader's action cluster never overlaps the card": Digest,
-   * Scan and Publish moved out of `ReaderPage`'s title bar into
-   * `ReaderActionsCluster`, rendered from in here (so it can be positioned
-   * against `.stage`/fullscreen state this component already owns) — but
-   * the click handlers stay owned by `ReaderPage`, alongside the publish
-   * toast and the scan shortcut's own focus target. */
+   * Scan and Publish moved out of `ReaderPage`'s title bar into controls
+   * this component owns and positions itself (M24.7 §A/§D's digest cluster,
+   * the strip's Scan/Publish icons; M24.7 §G drops Scan/Publish from the
+   * immersive pebble entirely — see grounding note in TASKS.md) — but the
+   * click handlers stay owned by `ReaderPage`, alongside the publish toast
+   * and the scan shortcut's own focus target. */
   onOpenDigest: (event: ReactMouseEvent<HTMLElement>) => void;
   onOpenScan: (event: ReactMouseEvent<HTMLElement>) => void;
   onPublish: () => void;
@@ -846,6 +843,15 @@ export function ReaderView({
   // it lives and dies with the bar — closing the bar takes the card with it
   // rather than leaving a list of hits for a search that is no longer on.
   const [findCardOpen, setFindCardOpen] = useState(false);
+  // M24.7 §E: the results window's order control. `findHits` stays index-
+  // stable regardless (decisions.md 2026-08-14 "occurrence order is what
+  // identifies a hit" — every other consumer of a hit's index, goToFindHit
+  // included, depends on that never moving), so "reverse the order" is a
+  // traversal-direction flag rather than a re-sort: the window renders its
+  // rows back-to-front and `‹ ›`/Enter swap which physical direction is
+  // "next" (see handleFindStep below) — one flag, so the pebble and the
+  // window can never disagree about which hit is current.
+  const [findOrderReversed, setFindOrderReversed] = useState(false);
 
   const closeFindBar = useCallback(() => {
     setFindOpen(false);
@@ -922,11 +928,18 @@ export function ReaderView({
   }
 
   function handleFindStep(direction: "next" | "prev") {
-    goToFindHitIndex(stepFindCursor(findCursorIndex, findHits.length, direction));
+    // Reversed order flips which physical direction "next"/"prev" walk in —
+    // see findOrderReversed's own comment above.
+    const effectiveDirection = findOrderReversed
+      ? direction === "next"
+        ? "prev"
+        : "next"
+      : direction;
+    goToFindHitIndex(stepFindCursor(findCursorIndex, findHits.length, effectiveDirection));
   }
 
-  function handleSeeInScan() {
-    onFindHandoffToScan?.(findQuery.trim(), findCursorIndex, findMatchMode);
+  function handleSeeInScan(index: number = findCursorIndex) {
+    onFindHandoffToScan?.(findQuery.trim(), index, findMatchMode);
   }
 
   const {
@@ -934,14 +947,10 @@ export function ReaderView({
     fullscreenMode,
     fullscreenModeRef,
     toggleFullscreen,
-    revealTop,
-    revealBottom,
-    revealRail,
-    revealActions,
-    setRevealTop,
-    setRevealBottom,
-    setRevealRail,
-    setRevealActions,
+    pebbleAwake,
+    wakePebble,
+    onPebblePointerEnter,
+    onPebblePointerLeave,
   } = useFullscreenChrome();
   const { effectivePaneWidth, paneWidthDragging, handlePaneResizePointerDown } =
     useReaderPaneWidth(readerPaneWidth, setReaderPaneWidth, spreadMode, fullscreenMode);
@@ -2069,28 +2078,14 @@ export function ReaderView({
         cancelDwell();
       }
 
-      // M14 fullscreen: the same forwarded mousemove reveals the floating
-      // top row / footer / margin rail on proximity — the reveal bands are
-      // top/bottom only (never the left/right turn-zone strips above). Must
-      // use true *viewport* coordinates, not container-relative ones: the
-      // container element is taller than the iframe's own rendered content
-      // (extra vertical space for pagination), so a container-relative
-      // "near bottom" threshold is never reachable from inside the iframe —
-      // found live, see NOTES.md "M14". The window-level listener below
-      // covers the dead zone where the cursor is over the parent document
-      // (above/below/beside the iframe) instead of inside it.
-      if (fullscreenModeRef.current) {
-        const nearTop = viewportY < FULLSCREEN_REVEAL_BAND_PX;
-        const nearBottom = viewportY > window.innerHeight - FULLSCREEN_REVEAL_BAND_PX;
-        const nearRailCorner =
-          nearTop && viewportX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
-        const nearActionsCorner =
-          nearBottom && viewportX > window.innerWidth * (1 - FULLSCREEN_RAIL_CORNER_FRACTION);
-        setRevealTop((prev) => (prev === nearTop ? prev : nearTop));
-        setRevealBottom((prev) => (prev === nearBottom ? prev : nearBottom));
-        setRevealRail((prev) => (prev === nearRailCorner ? prev : nearRailCorner));
-        setRevealActions((prev) => (prev === nearActionsCorner ? prev : nearActionsCorner));
-      }
+      // M24.7 §G: the same forwarded mousemove wakes the immersive pebble.
+      // The M14 retrospective (NOTES.md "M14") is why this still needs its
+      // own branch rather than relying on the window-level listener alone:
+      // that listener only ever fires for the parent-document dead zone
+      // (above/below/beside the iframe) — it never sees pointer movement
+      // that stays inside the sandboxed epub.js iframe, which is most of a
+      // fullscreen reader's pointer activity.
+      if (fullscreenModeRef.current) wakePebble();
     }
     rendition.on("mousemove", handleContentMouseMove);
 
@@ -2667,6 +2662,179 @@ export function ReaderView({
       ? "Resume listening"
       : "Listen";
 
+  // M24.7 §D/§G: the digest and listening clusters are identical whether
+  // they're sitting in the normal strip or the immersive pebble — built once
+  // here so the two mount points can't drift, rather than kept as two
+  // hand-copied JSX blocks. Exactly one of the two mount points renders at a
+  // time (fullscreenMode is exclusive), so this never double-mounts either
+  // cluster; `digestButtonRef` simply reattaches to whichever one is live.
+  // M24.7 §B/§G: the page/percent readout — shared verbatim between the
+  // normal foot and the immersive pebble (same dial, same "release to jump"
+  // commit path, M12's instrument either way).
+  const progressGroup = (
+    <div className={styles.footerCenter}>
+      <PageNumberDisplay
+        mode={pageNumberMode}
+        bookPage={bookPage?.page ?? null}
+        bookTotal={bookPage?.total ?? null}
+        chapterPage={displayedPage?.page ?? null}
+        chapterTotal={displayedPage?.total ?? null}
+      />
+      <span className={styles.footerDivider} aria-hidden="true">
+        |
+      </span>
+      <div className={styles.progressWrap}>
+        <Slider
+          variant="trigger"
+          className={styles.progress}
+          value={progressPercent ?? 0}
+          min={0}
+          max={100}
+          dragPxPerUnit={PROGRESS_DRAG_PX_PER_PERCENT}
+          keyboardStep={SCRUB_KEYBOARD_STEP_PERCENT}
+          commitOnArrow={false}
+          clickToType={false}
+          disabled={progressPercent === null}
+          ariaLabel="Reading progress"
+          formatValue={(v) => {
+            const chapter = chapterAtPercent(chapterStopsList, v);
+            return `${Math.round(v)}%${chapter ? ` · ${chapter.label}` : ""}`;
+          }}
+          dialTicks={chapterDialTicks}
+          dialHint="Release to jump · Esc to cancel"
+          dialPlacement="above"
+          aria-haspopup="true"
+          aria-expanded={progressPopoverOpen}
+          onPreviewChange={setScrubPreviewPercent}
+          onPlainClick={() => setProgressPopoverOpen((prev) => !prev)}
+          onCommit={commitScrub}
+        >
+          {progressPercent !== null ? `${progressPercent}%` : ""}
+        </Slider>
+        <AnimatePresence>
+          {scrubPreviewPercent === null && progressPopoverOpen && (
+            <ProgressPopover
+              key="progress-popover"
+              percent={progressPercent}
+              page={displayedPage?.page ?? null}
+              totalPages={displayedPage?.total ?? null}
+              chapterLabel={activeChapter?.label ?? null}
+            />
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+
+  const digestCluster = (
+    <ExpandingCluster
+      icon={<BrainIcon progress={digestChapterProgress} />}
+      label="Digest"
+      triggerRef={digestButtonRef}
+    >
+      <div className={styles.clusterPanel}>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={currentSpineIndex === null || digestChapterJobId !== null}
+          onClick={handleDigestChapter}
+        >
+          {digestChapterJobId ? "Digesting…" : digestChapterResult ?? "Digest this chapter"}
+        </Button>
+        <Button variant="ghost" size="sm" onClick={onOpenDigest}>
+          Open digest
+        </Button>
+        <div className={styles.clusterDivider} />
+        <ProviderPicker role="digest" variant="compact" onNavigateToSettings={openSettingsToLLM} />
+      </div>
+    </ExpandingCluster>
+  );
+
+  const listeningCluster = (
+    <ExpandingCluster
+      icon={<AudioTransportIcon kind={audioActive ? "pause" : "play"} />}
+      label={audioPlayPauseLabel}
+      pressed={audioActive}
+    >
+      <div className={styles.clusterPanel}>
+        <div className={styles.transportRow}>
+          <IconButton
+            icon={<AudioTransportIcon kind="skip-prev" />}
+            label="Previous sentence"
+            disabled={player.status === "idle"}
+            onClick={() => player.skipSentence(-1)}
+          />
+          <IconButton
+            icon={<AudioTransportIcon kind={audioActive ? "pause" : "play"} />}
+            label={audioPlayPauseLabel}
+            pressed={audioActive}
+            onClick={handleTransportPlayClick}
+          />
+          <IconButton
+            icon={<AudioTransportIcon kind="skip-next" />}
+            label="Next sentence"
+            disabled={player.status === "idle"}
+            onClick={() => player.skipSentence(1)}
+          />
+          <IconButton
+            icon={<AudioTransportIcon kind="cast" />}
+            label="Cast — voices for this book"
+            pressed={castOpen}
+            onClick={(event) => {
+              setCastOrigin(captureOverlayOrigin(event.currentTarget));
+              setCastOpen(true);
+            }}
+          />
+          {player.status !== "idle" && (
+            <IconButton icon={<AudioTransportIcon kind="stop" />} label="Stop listening" onClick={handleStopListening} />
+          )}
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<AudioTransportIcon kind="play-from" size={14} />}
+          disabled={currentSpineIndex === null}
+          onClick={() => {
+            if (currentSpineIndex !== null) player.startListening(currentSpineIndex);
+          }}
+        >
+          Read from here
+        </Button>
+        {/* M22.6 C: only ever shown while the view has actually wandered
+            from the sounding section — pressing it is the other half of
+            what put it there. */}
+        {player.status !== "idle" && detached && (
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<AudioTransportIcon kind="locate" size={14} />}
+            onClick={handleReturnToVoice}
+          >
+            Back to the voice
+          </Button>
+        )}
+        {player.status !== "idle" && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className={styles.speedButton}
+            onClick={handleCycleSpeed}
+            title="Playback speed"
+          >
+            {player.speed}× speed
+          </Button>
+        )}
+        {player.status === "error" && (
+          <span className={styles.audioError} role="status">
+            {player.errorCode === "model_unavailable" || player.errorCode === "model_download_failed"
+              ? "Audio engine unavailable"
+              : "Couldn't play audio"}
+          </span>
+        )}
+      </div>
+    </ExpandingCluster>
+  );
+
   return (
     <div
       ref={wrapperRef}
@@ -2692,218 +2860,86 @@ export function ReaderView({
         } as CSSProperties
       }
     >
-      <div
-        className={
-          fullscreenMode
-            ? `${styles.topRow} ${styles.fullscreenFloating} ${styles.topRowFloating} ${
-                revealTop ? styles.revealed : ""
-              }`
-            : styles.topRow
-        }
-        onPointerEnter={fullscreenMode ? () => setRevealTop(true) : undefined}
-        onPointerLeave={fullscreenMode ? () => setRevealTop(false) : undefined}
-      >
-        {/* M24.7 A: one line, three zones — reader functions left, the
-            book's identity centre, chrome right. Replaces the four places
-            this chrome used to live in (ReaderPage's .titleBar,
-            ReaderActionsCluster beside/below the card, and the
-            audio/digest/provider controls that used to crowd this row).
-            M24.7 §C: the grid itself, split out of `.topRow` so the
-            `reader-strip` container query (established on `.topRow`) can
-            restyle it — see ReaderView.module.css `.topRow`'s comment. */}
-        <div className={styles.stripGrid}>
-        <div className={styles.topRowLeft}>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={styles.annotationsButton}
-            pressed={focusMode}
-            onClick={() => setShowAnnotations((prev) => !prev)}
-            aria-label={focusMode ? "Notes hidden — press F to show" : undefined}
-            title={focusMode ? "Notes hidden — press F to show" : undefined}
-          >
-            Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
-            {unanchoredIds.size > 0 && (
-              <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
-                {unanchoredIds.size}
-              </span>
-            )}
-          </Button>
-          <ChapterNav
-            toc={toc}
-            chapterStops={chapterStopsList}
-            currentChapter={activeChapter}
-            chapterNumbers={chapterNumbers}
-            onSelect={handleTocSelect}
-            onPrev={() => jumpToChapter("prev")}
-            onNext={() => jumpToChapter("next")}
-            hasPrev={hasPrevChapter}
-            hasNext={hasNextChapter}
-          />
-          {/* Digest cluster: the whole-chapter digest action, the jump to an
-              existing digest, and the digest provider — job state is a ring
-              around the icon (BrainIcon's own `progress`), never a
-              width-changing label swap. */}
-          <ExpandingCluster
-            icon={<BrainIcon progress={digestChapterProgress} />}
-            label="Digest"
-            triggerRef={digestButtonRef}
-          >
-            <div className={styles.clusterPanel}>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={currentSpineIndex === null || digestChapterJobId !== null}
-                onClick={handleDigestChapter}
-              >
-                {digestChapterJobId ? "Digesting…" : digestChapterResult ?? "Digest this chapter"}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={onOpenDigest}>
-                Open digest
-              </Button>
-              <div className={styles.clusterDivider} />
-              <ProviderPicker role="digest" variant="compact" onNavigateToSettings={openSettingsToLLM} />
-            </div>
-          </ExpandingCluster>
-          {/* Listening cluster: play/pause at rest (the common action stays
-              one click away), absorbing all of the old .audioTransport row
-              — including the two conditional controls (M22.6 "back to the
-              voice", the audio error status) so neither silently drops. */}
-          <ExpandingCluster
-            icon={<AudioTransportIcon kind={audioActive ? "pause" : "play"} />}
-            label={audioPlayPauseLabel}
-            pressed={audioActive}
-          >
-            <div className={styles.clusterPanel}>
-              <div className={styles.transportRow}>
-                <IconButton
-                  icon={<AudioTransportIcon kind="skip-prev" />}
-                  label="Previous sentence"
-                  disabled={player.status === "idle"}
-                  onClick={() => player.skipSentence(-1)}
-                />
-                <IconButton
-                  icon={<AudioTransportIcon kind={audioActive ? "pause" : "play"} />}
-                  label={audioPlayPauseLabel}
-                  pressed={audioActive}
-                  onClick={handleTransportPlayClick}
-                />
-                <IconButton
-                  icon={<AudioTransportIcon kind="skip-next" />}
-                  label="Next sentence"
-                  disabled={player.status === "idle"}
-                  onClick={() => player.skipSentence(1)}
-                />
-                <IconButton
-                  icon={<AudioTransportIcon kind="cast" />}
-                  label="Cast — voices for this book"
-                  pressed={castOpen}
-                  onClick={(event) => {
-                    setCastOrigin(captureOverlayOrigin(event.currentTarget));
-                    setCastOpen(true);
-                  }}
-                />
-                {player.status !== "idle" && (
-                  <IconButton icon={<AudioTransportIcon kind="stop" />} label="Stop listening" onClick={handleStopListening} />
-                )}
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<AudioTransportIcon kind="play-from" size={14} />}
-                disabled={currentSpineIndex === null}
-                onClick={() => {
-                  if (currentSpineIndex !== null) player.startListening(currentSpineIndex);
-                }}
-              >
-                Read from here
-              </Button>
-              {/* M22.6 C: only ever shown while the view has actually
-                  wandered from the sounding section — pressing it is the
-                  other half of what put it there. */}
-              {player.status !== "idle" && detached && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<AudioTransportIcon kind="locate" size={14} />}
-                  onClick={handleReturnToVoice}
-                >
-                  Back to the voice
-                </Button>
-              )}
-              {player.status !== "idle" && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className={styles.speedButton}
-                  onClick={handleCycleSpeed}
-                  title="Playback speed"
-                >
-                  {player.speed}× speed
-                </Button>
-              )}
-              {player.status === "error" && (
-                <span className={styles.audioError} role="status">
-                  {player.errorCode === "model_unavailable" || player.errorCode === "model_download_failed"
-                    ? "Audio engine unavailable"
-                    : "Couldn't play audio"}
+      {/* M24.7 §G: "no card, no strips, no rail" — the whole strip stops
+          existing in immersive mode rather than becoming a fifth floating
+          panel; the pebble further down replaces the functions it carries
+          that immersive mode still offers (digest, listening). */}
+      {!fullscreenMode && (
+        <div className={styles.topRow}>
+          {/* M24.7 A: one line, three zones — reader functions left, the
+              book's identity centre, chrome right. Replaces the four places
+              this chrome used to live in (ReaderPage's .titleBar,
+              ReaderActionsCluster beside/below the card, and the
+              audio/digest/provider controls that used to crowd this row).
+              M24.7 §C: the grid itself, split out of `.topRow` so the
+              `reader-strip` container query (established on `.topRow`) can
+              restyle it — see ReaderView.module.css `.topRow`'s comment. */}
+          <div className={styles.stripGrid}>
+          <div className={styles.topRowLeft}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={styles.annotationsButton}
+              pressed={focusMode}
+              onClick={() => setShowAnnotations((prev) => !prev)}
+              aria-label={focusMode ? "Notes hidden — press F to show" : undefined}
+              title={focusMode ? "Notes hidden — press F to show" : undefined}
+            >
+              Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
+              {unanchoredIds.size > 0 && (
+                <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
+                  {unanchoredIds.size}
                 </span>
               )}
-            </div>
-          </ExpandingCluster>
-        </div>
-        <div className={styles.topRowCenter}>
-          {/* Doorway transition (DESIGN.md): shares a layoutId with the
-              library card's cover — the same element the user just clicked,
-              landing here (M7's proof of the shared-element motion system).
-              Moved down from ReaderPage's own .titleBar row (M24.7 A). */}
-          <motion.div className={styles.coverThumb} layoutId={reducedMotion ? undefined : coverLayoutId(resourceId)}>
-            <BookCover resourceId={resourceId} title={resourceTitle} />
-          </motion.div>
-          <span className={styles.title}>{resourceTitle}</span>
-          {resourceAuthor && <span className={styles.author}>{resourceAuthor}</span>}
-        </div>
-        <div className={styles.topRowRight}>
-          {/* M24.7 A: the reader's own embedded, un-floated NavCluster — the
-              app-shell's floating instance is suppressed for the reader
-              route (App.tsx), since the pill must track the pane's edge,
-              not the viewport's, once the reader can be docked narrow
-              beside another pane. Registers the chrome-row's leading slot
-              so the reader's own Search/Scan/Publish can portal into it,
-              exactly like DeskPage's Import button does. */}
-          <NavCluster settingsTab="reading" floating={false} registersSlot />
-          <ChromeSlotPortal>
-            <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
-            <IconButton ref={scanButtonRef} icon={<ScanIcon />} label="Scan" onClick={onOpenScan} />
-            <IconButton
-              icon={<PublishIcon />}
-              label={publishing ? "Publishing…" : "Publish"}
-              disabled={publishing}
-              onClick={onPublish}
+            </Button>
+            <ChapterNav
+              toc={toc}
+              chapterStops={chapterStopsList}
+              currentChapter={activeChapter}
+              chapterNumbers={chapterNumbers}
+              onSelect={handleTocSelect}
+              onPrev={() => jumpToChapter("prev")}
+              onNext={() => jumpToChapter("next")}
+              hasPrev={hasPrevChapter}
+              hasNext={hasNextChapter}
             />
-          </ChromeSlotPortal>
-        </div>
-        </div>
-        {findOpen && (
-          <div className={styles.findBarRow}>
-            <FindBar
-              query={findQuery}
-              onQueryChange={setFindQuery}
-              hits={findHits}
-              currentIndex={findCursorIndex}
-              loading={findLoading}
-              onStep={handleFindStep}
-              onClose={closeFindBar}
-              onSeeInScan={handleSeeInScan}
-              resultsOpen={findCardOpen}
-              onToggleResults={() => setFindCardOpen((open) => !open)}
-              matchMode={findMatchMode}
-              onMatchModeChange={setFindMatchMode}
-              focusToken={findFocusToken}
-            />
+            {digestCluster}
+            {listeningCluster}
           </div>
-        )}
-      </div>
+          <div className={styles.topRowCenter}>
+            {/* Doorway transition (DESIGN.md): shares a layoutId with the
+                library card's cover — the same element the user just clicked,
+                landing here (M7's proof of the shared-element motion system).
+                Moved down from ReaderPage's own .titleBar row (M24.7 A). */}
+            <motion.div className={styles.coverThumb} layoutId={reducedMotion ? undefined : coverLayoutId(resourceId)}>
+              <BookCover resourceId={resourceId} title={resourceTitle} />
+            </motion.div>
+            <span className={styles.title}>{resourceTitle}</span>
+            {resourceAuthor && <span className={styles.author}>{resourceAuthor}</span>}
+          </div>
+          <div className={styles.topRowRight}>
+            {/* M24.7 A: the reader's own embedded, un-floated NavCluster — the
+                app-shell's floating instance is suppressed for the reader
+                route (App.tsx), since the pill must track the pane's edge,
+                not the viewport's, once the reader can be docked narrow
+                beside another pane. Registers the chrome-row's leading slot
+                so the reader's own Search/Scan/Publish can portal into it,
+                exactly like DeskPage's Import button does. */}
+            <NavCluster settingsTab="reading" floating={false} registersSlot />
+            <ChromeSlotPortal>
+              <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
+              <IconButton ref={scanButtonRef} icon={<ScanIcon />} label="Scan" onClick={onOpenScan} />
+              <IconButton
+                icon={<PublishIcon />}
+                label={publishing ? "Publishing…" : "Publish"}
+                disabled={publishing}
+                onClick={onPublish}
+              />
+            </ChromeSlotPortal>
+          </div>
+          </div>
+        </div>
+      )}
 
       <div className={styles.readerRow} ref={readerRowRef}>
         <div
@@ -3010,6 +3046,26 @@ export function ReaderView({
             )}
           </div>
           <AnimatePresence>
+            {findOpen && (
+              <FindBar
+                key="find-bar"
+                query={findQuery}
+                onQueryChange={setFindQuery}
+                hits={findHits}
+                currentIndex={findCursorIndex}
+                loading={findLoading}
+                onStep={handleFindStep}
+                onClose={closeFindBar}
+                onSeeInScan={() => handleSeeInScan()}
+                resultsOpen={findCardOpen}
+                onToggleResults={() => setFindCardOpen((open) => !open)}
+                matchMode={findMatchMode}
+                onMatchModeChange={setFindMatchMode}
+                focusToken={findFocusToken}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
             {pendingSelection && (
               <AskPill
                 key="ask-pill"
@@ -3063,6 +3119,9 @@ export function ReaderView({
                 onSelect={goToFindHitIndex}
                 onClose={() => setFindCardOpen(false)}
                 appBoundsRef={appBoundsRef}
+                reversed={findOrderReversed}
+                onToggleReversed={() => setFindOrderReversed((r) => !r)}
+                onOpenInScan={handleSeeInScan}
               />
             )}
           </AnimatePresence>
@@ -3092,17 +3151,7 @@ export function ReaderView({
           />
         </div>
         {!focusMode && (
-          <div
-            className={
-              fullscreenMode
-                ? `${styles.fullscreenFloating} ${styles.marginRailFloating} ${
-                    revealRail ? styles.revealed : ""
-                  }`
-                : undefined
-            }
-            onPointerEnter={fullscreenMode ? () => setRevealRail(true) : undefined}
-            onPointerLeave={fullscreenMode ? () => setRevealRail(false) : undefined}
-          >
+          <div className={fullscreenMode ? styles.marginRailFaint : undefined}>
             <MarginRail
               highlights={highlights}
               currentSpineIndex={currentSpineIndex}
@@ -3113,118 +3162,77 @@ export function ReaderView({
             />
           </div>
         )}
+        {/* M24.7 §G: the vignette that "holds the eye on the column" —
+            aria-hidden, pointer-events: none, purely a framing wash. Lives
+            over the stage rather than the whole viewport so it frames the
+            page, not the pebble or the hairline below. */}
+        {fullscreenMode && <div aria-hidden="true" className={styles.immersiveVignette} />}
       </div>
 
-      <div
-        className={
-          fullscreenMode
-            ? `${styles.footer} ${styles.fullscreenFloating} ${styles.footerFloating} ${
-                revealBottom ? styles.revealed : ""
-              }`
-            : styles.footer
-        }
-        onPointerEnter={fullscreenMode ? () => setRevealBottom(true) : undefined}
-        onPointerLeave={fullscreenMode ? () => setRevealBottom(false) : undefined}
-      >
-        {/* M24.7 B: the foot mirrors the strip — ‹ · page/percent · ›, with
-            an instruments pebble at the right. The percent Slider + its
-            SliderDial popover move here unchanged from the old .topRow —
-            same dialTicks/"release to jump" commit path (M12's instrument,
-            not reimplemented). */}
-        <div className={styles.footerNav}>
-          <IconButton
-            icon={<ChevronIcon direction="left" />}
-            label="Previous page"
-            disabled={atStart}
-            onClick={() => turnPage("prev")}
-          />
-          <div className={styles.footerCenter}>
-            <PageNumberDisplay
-              mode={pageNumberMode}
-              bookPage={bookPage?.page ?? null}
-              bookTotal={bookPage?.total ?? null}
-              chapterPage={displayedPage?.page ?? null}
-              chapterTotal={displayedPage?.total ?? null}
+      {fullscreenMode ? (
+        <>
+          {/* M24.7 §G: "position survives as a 2px hairline along the bottom
+              edge" — always visible, unlike the pebble, since it's the one
+              piece of the old footer that's meant to survive being minimal
+              rather than being woken. */}
+          <div className={styles.immersiveHairline} aria-hidden="true">
+            <div
+              className={styles.immersiveHairlineFill}
+              style={{ width: `${progressPercent ?? 0}%` }}
             />
-            <span className={styles.footerDivider} aria-hidden="true">
-              |
-            </span>
-            <div className={styles.progressWrap}>
-              <Slider
-                variant="trigger"
-                className={styles.progress}
-                value={progressPercent ?? 0}
-                min={0}
-                max={100}
-                dragPxPerUnit={PROGRESS_DRAG_PX_PER_PERCENT}
-                keyboardStep={SCRUB_KEYBOARD_STEP_PERCENT}
-                commitOnArrow={false}
-                clickToType={false}
-                disabled={progressPercent === null}
-                ariaLabel="Reading progress"
-                formatValue={(v) => {
-                  const chapter = chapterAtPercent(chapterStopsList, v);
-                  return `${Math.round(v)}%${chapter ? ` · ${chapter.label}` : ""}`;
-                }}
-                dialTicks={chapterDialTicks}
-                dialHint="Release to jump · Esc to cancel"
-                dialPlacement="above"
-                aria-haspopup="true"
-                aria-expanded={progressPopoverOpen}
-                onPreviewChange={setScrubPreviewPercent}
-                onPlainClick={() => setProgressPopoverOpen((prev) => !prev)}
-                onCommit={commitScrub}
-              >
-                {progressPercent !== null ? `${progressPercent}%` : ""}
-              </Slider>
-              <AnimatePresence>
-                {scrubPreviewPercent === null && progressPopoverOpen && (
-                  <ProgressPopover
-                    key="progress-popover"
-                    percent={progressPercent}
-                    page={displayedPage?.page ?? null}
-                    totalPages={displayedPage?.total ?? null}
-                    chapterLabel={activeChapter?.label ?? null}
-                  />
-                )}
-              </AnimatePresence>
-            </div>
           </div>
-          <IconButton
-            icon={<ChevronIcon direction="right" />}
-            label="Next page"
-            disabled={atEnd}
-            onClick={() => turnPage("next")}
-          />
-        </div>
-        <div className={styles.instrumentsPebble}>
-          <IconButton icon={<TrayIcon />} label="Heat strip" onClick={onOpenScan} />
-          <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
-          <IconButton
-            icon={<FullscreenIcon />}
-            label={fullscreenMode ? "Exit fullscreen" : "Fullscreen"}
-            pressed={fullscreenMode}
-            onClick={toggleFullscreen}
-          />
-        </div>
-      </div>
-      {fullscreenMode && (
-        <div
-          className={`${styles.fullscreenFloating} ${styles.actionsFullscreenFloating} ${
-            revealActions ? styles.revealed : ""
-          }`}
-          onPointerEnter={() => setRevealActions(true)}
-          onPointerLeave={() => setRevealActions(false)}
-        >
-          <ReaderActionsCluster
-            onOpenDigest={onOpenDigest}
-            onOpenScan={onOpenScan}
-            onNavigateToSettings={openSettingsToLLM}
-            onPublish={onPublish}
-            publishing={publishing}
-            scanButtonRef={scanButtonRef}
-            digestButtonRef={digestButtonRef}
-          />
+          <div
+            className={`${styles.fullscreenFloating} ${styles.immersivePebble} ${
+              pebbleAwake ? styles.revealed : ""
+            }`}
+            onPointerEnter={onPebblePointerEnter}
+            onPointerLeave={onPebblePointerLeave}
+          >
+            {progressGroup}
+            {digestCluster}
+            {listeningCluster}
+            <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.fullscreen} modifier="⇧">
+              <IconButton
+                icon={<FullscreenIcon />}
+                label="Exit fullscreen"
+                pressed
+                onClick={toggleFullscreen}
+              />
+            </KeyCapAnchor>
+          </div>
+        </>
+      ) : (
+        <div className={styles.footer}>
+          {/* M24.7 B: the foot mirrors the strip — ‹ · page/percent · ›, with
+              an instruments pebble at the right. The percent Slider + its
+              SliderDial popover move here unchanged from the old .topRow —
+              same dialTicks/"release to jump" commit path (M12's instrument,
+              not reimplemented). */}
+          <div className={styles.footerNav}>
+            <IconButton
+              icon={<ChevronIcon direction="left" />}
+              label="Previous page"
+              disabled={atStart}
+              onClick={() => turnPage("prev")}
+            />
+            {progressGroup}
+            <IconButton
+              icon={<ChevronIcon direction="right" />}
+              label="Next page"
+              disabled={atEnd}
+              onClick={() => turnPage("next")}
+            />
+          </div>
+          <div className={styles.instrumentsPebble}>
+            <IconButton icon={<TrayIcon />} label="Heat strip" onClick={onOpenScan} />
+            <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
+            <IconButton
+              icon={<FullscreenIcon />}
+              label="Fullscreen"
+              pressed={false}
+              onClick={toggleFullscreen}
+            />
+          </div>
         </div>
       )}
       <AnimatePresence>

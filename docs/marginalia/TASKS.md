@@ -772,13 +772,13 @@ the operator's message.
 
 #### G — The immersive page (a rework of M14 fullscreen)
 
-- [ ] **No card, no strips, no rail.** The page becomes the whole surface with a soft vignette
+- [x] **No card, no strips, no rail.** The page becomes the whole surface with a soft vignette
       holding the eye on the column. Position survives as a 2px hairline along the bottom
       edge; the highlight rail dims to faint dots at the right edge.
       _Acceptance: in immersive mode nothing but the text, the vignette, the hairline and the
       dots is painted; the reading column's measure is unchanged from normal mode at the same
       pane width._
-- [ ] **One pebble wakes on pointer movement** — page, `%`, digest, listening, exit — and
+- [x] **One pebble wakes on pointer movement** — page, `%`, digest, listening, exit — and
       sleeps again after ~2s. This **replaces M14's four reveal flags** (`revealTop`,
       `revealBottom`, `revealRail`, `revealActions`) with one.
       ⚠️ **Two pointer paths drive the reveal, not one.** `useFullscreenChrome`'s
@@ -791,12 +791,12 @@ the operator's message.
       _Acceptance: moving the pointer anywhere over the text wakes the pebble; it sleeps
       after ~2s of stillness; hovering the pebble itself keeps it awake; the keyboard path
       (Tab) reveals it without a pointer at all._
-- [ ] **Decide the two open questions and record them** (READER_REDESIGN.md §6): does
+- [x] **Decide the two open questions and record them** (READER_REDESIGN.md §6): does
       selecting text in immersive mode open the editor inline over the column or a
       fullscreen-native side sheet, and does scrolling re-sleep the pebble or only pointer
       idle. One line each in decisions.md when chosen — this is the operator's call to make
       while driving it, not a coin flip in code.
-- [ ] **The binding tells the truth.** Either relabel the exit hint to `⇧F` or rebind
+- [x] **The binding tells the truth.** Either relabel the exit hint to `⇧F` or rebind
       immersive mode to `f` and give focus mode a different key — and update
       `shortcuts/keys.ts` so the keycaps follow (grounding note 3).
       _Acceptance: the hint on screen matches the key that actually leaves; focus mode and

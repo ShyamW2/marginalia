@@ -3,6 +3,23 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-21 — The immersive page's two open questions (M24.7 §G)
+
+READER_REDESIGN.md §6 left two behaviours for the operator to decide while driving the
+build, rather than as a coin flip in code. Both resolved during implementation:
+
+1. **Text selection in immersive mode opens the annotation editor inline over the
+   column**, not a fullscreen-native side sheet. In practice this cost nothing extra:
+   `ThreadPanel` was already positioned this way (a floating panel near the selection,
+   `top`/`panelDx`/`panelDy`-driven, not a docked side panel) before §G existed, so the
+   decision is "keep doing what it already does" rather than new work — the side-sheet
+   alternative was the one that would have needed building.
+2. **Scrolling does not independently sleep the pebble — pointer idle only.** The pebble
+   wakes on pointer movement and sleeps `IMMERSIVE_SLEEP_MS` (2000ms) after the last one;
+   there is deliberately no scroll listener. Rationale: wake and sleep should be driven by
+   the same signal, and a pebble that flickers shut mid-scroll while the pointer is still
+   resting on it would be worse than one that stays lit through a scroll gesture.
+
 ## 2026-08-19 — Reader chrome v2 enters the roadmap as M24.7, not M25
 
 The operator ran a design pass with Claude Design and brought back a written brief

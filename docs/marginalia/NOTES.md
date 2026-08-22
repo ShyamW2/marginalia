@@ -6253,3 +6253,84 @@ styles, text content) via `page.evaluate`, which is how both bugs above were act
 kind of thing a screenshot would have shown at a glance and a DOM query has to reconstruct
 by hand. Worth naming as a gap: this pass leaned on structural assertions where a human (or
 a working screenshot tool) would have just looked.
+
+## M24.7 §G — the immersive page, a rework of M14 fullscreen — 2026-08-21
+
+Replaced `useFullscreenChrome`'s four reveal flags (`revealTop`/`revealBottom`/`revealRail`/
+`revealActions`, each proximity-band-driven) with one `pebbleAwake` boolean driven by an
+idle-sleep timer (`IMMERSIVE_SLEEP_MS = 2000`): any pointer movement wakes it and reschedules
+sleep; the pointer resting directly over the pebble (`onPebblePointerEnter`/`Leave`)
+suppresses the sleep timer entirely rather than just resetting it. Both of the "two pointer
+paths" M14 lost a session to (NOTES.md "M14") were updated together — `useFullscreenChrome`'s
+own window-level listener and `ReaderView`'s iframe-forwarded `handleContentMouseMove` block —
+both now just call the one `wakePebble()`.
+
+**"No card, no strips, no rail" turned into unmounting, not floating.** M14's four panels all
+stayed mounted and merely toggled opacity/pointer-events. §G's brief is stronger — nothing
+from the old chrome should paint at all — so `.topRow` and the old `.footer` are now
+conditionally rendered (`{!fullscreenMode && …}`), not conditionally floated. This meant
+extracting the digest cluster, listening cluster, and the page/percent readout
+(`progressGroup`) into local JSX consts computed once per render, since they needed to mount
+in two mutually-exclusive places (the normal strip/foot, or the new pebble) without becoming
+two hand-copied blocks that could drift. Exactly one mount point is ever live at a time
+(`fullscreenMode` is a single boolean), so `digestButtonRef` simply reattaches to whichever
+instance is currently rendered — no ref-sharing hazard.
+
+**The old `ReaderActionsCluster` fullscreen mount is gone, not merely replaced.** It carried
+Digest, Scan, and Publish; the pebble's spec list is exactly "page, %, digest, listening,
+exit" — Scan and Publish are deliberately unreachable while immersive (the reader exits
+fullscreen to reach them). `scanButtonRef` degrades the way it already did for any unmounted
+button (`ReaderPage`'s `q` handler no-ops on a null ref) — acceptable since Scan was never in
+the pebble's spec, not a new gap. `ReaderActionsCluster` the component still exists and is
+still used by `BookActionCard` (the Desk hover card) — only its one fullscreen call site in
+`ReaderView.tsx` was removed.
+
+**New, additive-only:** `KeyCapAnchor` gained an optional `modifier` prop (prefixes the
+rendered keycap, e.g. `⇧F`) so the pebble's exit control could advertise the binding
+truthfully — `SHORTCUT_KEYS.fullscreen` is `"f"`, registered `shift: true`, and no keycap hint
+for it existed anywhere in code before this (checked: the "F to leave" hint TASKS.md warns
+about is a detail of the `.dc.html` design mockup only, never synced to this repo — there was
+nothing stale to fix, just a truthful hint to add).
+
+**The two open questions** (READER_REDESIGN.md §6) were put to the operator rather than
+decided in code, per the task's own instruction not to coin-flip them — see decisions.md
+2026-08-21. Text selection inline-over-column turned out to already be free: `ThreadPanel`
+was already a floating, position-tracked panel (not a docked side panel) from before §G
+existed, so "inline" required no new component.
+
+### Verified live
+
+`pnpm dev` (server already clean — checked `ss -ltnp` first, nothing was listening), driven
+by an ad hoc Playwright install already present at `.ds-sync/node_modules` (chromium binary
+already cached), against the real "Kafka on the Shore" fixture, light and dark
+(`colorScheme: 'dark'`) both rendered and screenshotted. Confirmed via DOM query
+(`getComputedStyle` + `[class*='immersivePebble']`) and screenshots together, not one or the
+other:
+- Entering fullscreen removes `.topRow`/`.footer` from the DOM entirely (not just visually) —
+  confirmed by their absence in `document.querySelector`, not just opacity.
+- The pebble contains exactly four controls (`Reading progress`, `Digest`, `Listen`,
+  `Exit fullscreen`) plus the page/percent text; clicking Digest opens its `ExpandingCluster`
+  panel unchanged from §D.
+- The hairline fill's `width` tracks `progressPercent` (`28px` on a ~2%-through book at the
+  hairline's rendered track width — proportionally correct).
+- The margin rail's dots stay live buttons (real `title`/`aria-label`/`onClick`) at
+  `opacity: 0.35` rather than disappearing behind a reveal-gated wrapper.
+- Idle sleep: pebble opacity `1` immediately after a mouse move, `0` (and
+  `pointer-events: none`) ~2.6s after the last one.
+- Hovering the pebble itself: opacity stays `1` through the same 2.6s window that would
+  otherwise have put it to sleep.
+- Keyboard: repeated `Tab` reaches the pebble's own controls (after first passing through the
+  margin rail's own dot/delete buttons, which are legitimately still in tab order — not a
+  regression, they were always real buttons) and `:focus-within` reveals it — confirmed
+  `element.matches(':focus-within')` was `true` and, after letting the
+  `--duration-standard` opacity transition actually settle (the first check without a wait
+  read a mid-transition `0` and looked like a bug before a 300ms wait cleared it up),
+  computed opacity `1`.
+- `Escape` exits fullscreen (routes through the existing `handleEscapeShortcut`, untouched).
+- Exiting via the pebble's own button restores `.topRow`/`.footer` to the DOM.
+
+**Not yet verified**: the milestone's full `#### Verify` checklist (TASKS.md) covers all of
+§A–G together — clusters opened by long-press specifically, Cmd+F over a spread, the results
+window moved and reopened, a question asked with the model chosen in the editor, and the page
+fold peeling from every corner with the new chrome mounted. This session only drove §G; those
+boxes are left unchecked rather than checked on the strength of §D/E/F's own prior sessions.
