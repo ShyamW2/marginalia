@@ -6183,3 +6183,73 @@ nullable fields, specifically to make "both set at once" unrepresentable instead
 to remember to guard against. `activeThemeNames()` is the one function that turns a
 selection into the array both `litIds` and `HeatStrip`'s (renamed) `litThemes` prop filter
 against — neither call site has to know which kind of selection produced the array.
+
+## M24.7 §E/§F — search means find, and the model moves where the question is asked — 2026-08-20
+
+Built against READER_REDESIGN.md's text directly, not the `.dc.html` design frames TASKS.md
+says to pull first — the previous session's §A/§B/§C/§D commits already set that precedent
+(no design-project pull recorded in either commit or in this file) and reading the diffs
+confirmed the strip was built the same way, so this session matched it rather than blocking
+on a pull. Worth a look before §G: if the frames really do carry numbers the prose doesn't,
+pulling them once would settle it either way.
+
+### §E was mostly already done
+
+`MagnifierIcon`/`ScanIcon` were already split and correctly wired in the reader's nav pebble
+by §A's ChromeSlotPortal work — grounding note 6 in TASKS.md even flagged this ("Borrowed one
+step ahead of §E's full magnifier split"). The one real leftover: `ReaderActionsCluster.tsx`
+(the M14-fullscreen fallback cluster, still mounted for `fullscreenMode` pending §G's rework)
+still drew its Scan button with `MagnifierIcon` — the exact glyph collision §E's acceptance
+forbids. Fixed by importing `ScanIcon` there too.
+
+### Two bugs found live, both would have shipped invisible in a code-only review
+
+1. **Framer Motion silently drops a CSS `transform` on an element it's also animating.**
+   FindBar's new pebble centred itself with `left: 50%; transform: translateX(-50%)` on the
+   same `motion.div` that animates `y` on enter/exit — Motion writes the whole `transform`
+   property as an inline style for whatever it animates, which overwrites (not merges with)
+   a class-authored `transform` on the same element. Measured live: the pebble's *left edge*
+   landed at the stage's centre, not its own centre, off by exactly half its width. Fixed by
+   splitting the concerns onto two elements — a plain (non-animated) `.pebbleAnchor` that
+   centres via flexbox, and the `motion.div` inside it free to animate `y` without touching
+   `transform`'s other axis. Generalizes: any floating `motion.div` that both animates a
+   transform-based property *and* wants CSS-authored positioning via `transform` needs this
+   split, not just this pebble.
+
+2. **The composer's wide/narrow breakpoint was picked from READER_REDESIGN.md's "~300px"
+   figure, and the real content doesn't fit until ~450px.** The doc's own tilde says it's
+   illustrative ("the realistic docked width"), not a measured engineering constraint, and
+   it wasn't verified against the actual rendered control widths before being wired into a
+   `@container` query. Driven live with Playwright (dragging ThreadPanel's own resize handle
+   through the full width range, per M22.5's rule that breakpoints are the *pane's* width,
+   never the viewport's) found a ~150px dead zone — container width 300–450px — where the
+   wide markup (segmented ladder, labelled web pill, full-name model dropdown, Send) no
+   longer fit but the narrow swap hadn't triggered yet, wrapping two children onto a ragged
+   second line. Moved the switch to 480px (measured true fit ≈450px, plus margin) in both
+   `ContextLadderToggle.module.css` and `ProviderPicker.module.css` — they share the
+   `composer-controls` container name and have to move together or the settings-link-hide
+   and the ladder/globe swap create a second, smaller dead zone between themselves. The
+   `≤280px` "model wraps above the row" breakpoint (READER_REDESIGN.md §4) checked out fine
+   against the *narrow* markup's own width and needed no change — it was the wide→narrow
+   switch point specifically that was wrong, not the narrow layout's own numbers.
+
+Also found, **not fixed, out of scope**: dragging ThreadPanel's own resize handle at all
+(pre-existing, reproduces identically on `main` before this session's changes — confirmed by
+stashing and re-running the same Playwright script) fires a React warning, "Cannot update a
+component (`ReaderView`) while rendering a different component (`ThreadPanel`)", inside
+Framer Motion's `AnimatePresence`/`PopChildMeasure` machinery. Doesn't crash, doesn't lose
+the resize, but worth a session of its own rather than a drive-by fix bundled into this one.
+
+### Verification method, since no `.dc.html` and no design canvas were pulled
+
+Driven live against the two real fixture books already in this machine's library ("Kafka on
+the Shore", 25 highlights/2 threads) via a Playwright script against the dev server already
+running (not started fresh — inspected `ss -ltnp` first per the data-dir caution, found
+`concurrently`'s server+web already up, used it as-is). The `Read` tool was down for this
+entire session (`PreToolUse hook did not respond`) — screenshots were taken but never
+actually viewed; verification instead read the live DOM directly (bounding rects, computed
+styles, text content) via `page.evaluate`, which is how both bugs above were actually caught
+— the pebble's true center offset and the composer's line-wrap threshold are exactly the
+kind of thing a screenshot would have shown at a glance and a DOM query has to reconstruct
+by hand. Worth naming as a gap: this pass leaned on structural assertions where a human (or
+a working screenshot tool) would have just looked.

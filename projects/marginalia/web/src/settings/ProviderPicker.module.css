@@ -111,11 +111,13 @@
   font-size: 0.8rem;
 }
 
-/* Compact variant — the scan's slider and the reader menu's popover. */
+/* Compact variant — the scan's slider, the reader menu's popover, and
+   (M24.7 §F) the annotation editor's composer, immediately left of Ask. */
 .compact {
   display: flex;
   align-items: center;
   gap: 0.4rem;
+  min-width: 0;
   font-size: 0.8rem;
 }
 
@@ -125,6 +127,7 @@
 }
 
 .compactSelect {
+  min-width: 0;
   border: 1px solid var(--color-border);
   background: var(--color-bg-raised);
   color: var(--color-text);
@@ -137,6 +140,23 @@
 .compactLink {
   min-height: 0;
   padding: 0;
+  flex-shrink: 0;
+}
+
+/* M24.7 §F: the settings click-through drops at the same threshold
+   ContextLadderToggle's own narrow swap uses (480px, measured — see that
+   file's comment) — keeping every narrow-triggered rule on one shared
+   number is what keeps them from creating a second dead zone between
+   themselves. Named container established on ThreadPanel's
+   `.composerControls`. */
+@container composer-controls (max-width: 480px) {
+  .compactLink {
+    display: none;
+  }
+
+  .compactSelect {
+    max-width: 6.5rem;
+  }
 }
 
 .compactLink:hover {

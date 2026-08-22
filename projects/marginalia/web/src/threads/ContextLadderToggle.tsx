@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ContextLadderDepth } from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
+import { IconButton } from "../controls/IconButton.js";
+import { GlobeIcon } from "../controls/icons.js";
 import styles from "./ContextLadderToggle.module.css";
 
 const DEPTHS: { value: ContextLadderDepth; label: string; title: string }[] = [
@@ -60,6 +62,14 @@ export function ContextLadderToggle({ resourceId }: { resourceId: string }) {
 
   return (
     <div className={styles.row}>
+      {/* M24.7 §F: two renderings of the same three depths, one CSS
+          `@container composer-controls` swap between them (READER_REDESIGN.md's
+          resolved narrow table) — no JS width measurement, the established
+          convention since §C. Wide: the segmented group. Below the fit
+          threshold (measured, not the doc's own "~300px" — see
+          ContextLadderToggle.module.css): a native `<select>`, which is what
+          "buys the width that keeps Ask legible" actually means for a
+          control this narrow. */}
       <div className={styles.toggle} role="group" aria-label="Context depth">
         {DEPTHS.map((d) => (
           <Button
@@ -75,9 +85,24 @@ export function ContextLadderToggle({ resourceId }: { resourceId: string }) {
           </Button>
         ))}
       </div>
+      <select
+        aria-label="Context depth"
+        className={styles.ladderSelect}
+        value={depth}
+        onChange={(event) => handleSelect(event.target.value as ContextLadderDepth)}
+      >
+        {DEPTHS.map((d) => (
+          <option key={d.value} value={d.value} title={d.title}>
+            {d.label}
+          </option>
+        ))}
+      </select>
       {/* M23 "web search" — present but inert per decisions.md 2026-07-28
           (later): a second cloud dependency, off by default, never silently
-          on, and deliberately out of scope until M23 builds the seam. */}
+          on, and deliberately out of scope until M25 builds the seam
+          (renumbered from M23, settled decision 10). Restyled to a globe
+          icon below the fit threshold (grounding note 6: "restyled, still disabled,
+          still titled as coming later") — same dual-render, same reason. */}
       <Button
         variant="outline"
         size="sm"
@@ -87,6 +112,14 @@ export function ContextLadderToggle({ resourceId }: { resourceId: string }) {
       >
         Web search
       </Button>
+      <IconButton
+        icon={<GlobeIcon size={16} />}
+        label="Web search — coming in a later milestone"
+        variant="outline"
+        size="sm"
+        className={styles.webSearchIcon}
+        disabled
+      />
     </div>
   );
 }

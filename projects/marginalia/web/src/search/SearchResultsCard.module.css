@@ -48,6 +48,17 @@
   font-size: 0.75rem;
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orderButton {
+  flex-shrink: 0;
+  min-height: 0;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
 }
 
 .closeButton {
@@ -70,25 +81,71 @@
   min-height: 0;
 }
 
-/* "300+ hits scroll smoothly" (TASKS.md M24.1 D acceptance). A row is a
-   fixed two-line box, and `content-visibility` lets the browser skip layout
-   and paint for the rows that are off-screen — which keeps a result set of
-   thousands (a substring search for a common word produces exactly that)
-   scrolling at the same cost as a set of thirty, without a virtualization
-   layer that would break `scrollIntoView` for the stepped cursor. */
-.item {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 3.4rem;
+.group {
+  list-style: none;
 }
 
+/* M24.7 §E: sticky within `.list`'s own scroll — each header rides at the
+   top until the next one's group scrolls up under it, the ordinary sticky-
+   header-list stacking, no JS involved. Opaque background (not the row
+   wash) so it actually occludes the rows scrolling underneath it. */
+.chapterHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  background: var(--color-bg-raised);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.chapterHeaderName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapterHeaderCount {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.groupRows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* "300+ hits scroll smoothly" (TASKS.md M24.1 D acceptance). A row is a
+   fixed single-line box, and `content-visibility` lets the browser skip
+   layout and paint for the rows that are off-screen — which keeps a result
+   set of thousands (a substring search for a common word produces exactly
+   that) scrolling at the same cost as a set of thirty, without a
+   virtualization layer that would break `scrollIntoView` for the stepped
+   cursor. */
+.item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1.8rem;
+}
+
+/* M24.7 §E: one line — snippet and its page/% column side by side, not
+   stacked. Dropped deliberately: the per-row chapter name (now the sticky
+   header above it) and the second metadata line. */
 .entry {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
   width: 100%;
   text-align: left;
   border: none;
   border-radius: 6px;
   background: none;
-  padding: 0.35rem 0.5rem;
+  padding: 0.3rem 0.5rem;
   cursor: pointer;
   color: var(--color-text);
 }
@@ -102,18 +159,22 @@
   outline-offset: -2px;
 }
 
-/* The current hit — the one `‹ ›` is standing on — reads as selected here
-   the same way it reads as the strongest mark on the page. */
+/* The current hit — the one `‹ ›` is standing on — is the only coloured row
+   (READER_REDESIGN.md §5): a 2px accent edge plus the same wash the mark
+   itself uses, at a lighter mix so the row reads as "selected", not as a
+   second highlight. */
 .entryCurrent {
-  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
 }
 
 .entryCurrent:hover {
-  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 
 .snippet {
-  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: var(--font-serif);
   font-size: 0.82rem;
   line-height: 1.35;
@@ -129,24 +190,50 @@
   padding: 0 1px;
 }
 
+/* M24.7 §E: the quiet tabular right column — page and % only, the per-row
+   chapter name dropped now that the sticky header carries it. */
 .meta {
+  flex: 0 0 auto;
   display: flex;
   gap: 0.5rem;
-  margin-top: 0.15rem;
   font-size: 0.7rem;
   color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
-}
-
-.metaChapter {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .metaCell {
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+/* M24.7 §E: the footer — keyboard legend on the left, the whole-set Scan
+   handoff on the right (the same one the pebble's own "See in Scan" makes,
+   just reachable without leaving the window). */
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-top: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.footerHint {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.showAllButton {
+  flex-shrink: 0;
+  min-height: 0;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
 }
 
 /* Right, bottom and the corner between them: the card is left/top-anchored,

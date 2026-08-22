@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, type KeyboardEvent } from "react";
+import { motion, useReducedMotion } from "motion/react";
 import type { SearchHit, SearchMatchMode } from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
@@ -29,10 +30,16 @@ interface FindBarProps {
 }
 
 /**
- * Cmd+F's find field (TASKS.md M24 A). Chrome, not a room of its own —
- * ReaderView mounts it inside the same `.topRow` fullscreen-reveal wrapper
- * as everything else there, so it obeys `useFullscreenChrome`'s proximity
- * reveal for free rather than inventing its own show/hide.
+ * Cmd+F's find pebble (TASKS.md M24 A, floated in M24.7 §E). A direct child
+ * of `.stage` — like AskPill, ThreadPanel and SearchResultsCard — rather
+ * than chrome living inside `.topRow`, which is what "floating over the
+ * page" costs: it no longer inherits `useFullscreenChrome`'s proximity
+ * reveal for free (READER_REDESIGN.md's own warning that this needs an
+ * explicit fullscreen behaviour). The explicit behaviour is the simplest
+ * one — it ignores fullscreen's reveal/dim state entirely and stays fully
+ * visible for as long as `findOpen` is true, on the theory that a reader who
+ * deliberately pressed Cmd+F shouldn't have the tool they just asked for
+ * play hide-and-seek with the pointer.
  */
 export function FindBar({
   query,
@@ -52,6 +59,7 @@ export function FindBar({
   const inputRef = useRef<HTMLInputElement>(null);
   const statusId = useId();
   const wholeWordId = useId();
+  const reducedMotion = Boolean(useReducedMotion());
 
   // Opening (or re-opening) the bar always hands focus straight to the
   // field, selection included — the same "just start typing" a native find
@@ -89,65 +97,74 @@ export function FindBar({
             : `${currentIndex + 1} of ${hits.length}`;
 
   return (
-    <div className={styles.bar} role="search">
-      <input
-        ref={inputRef}
-        type="text"
-        className={styles.input}
-        placeholder="Find in book…"
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value)}
-        onKeyDown={handleKeyDown}
-        aria-label="Find in book"
-        aria-describedby={statusId}
-      />
-      <span id={statusId} className={styles.count} aria-live="polite" aria-atomic="true">
-        {statusLabel}
-      </span>
-      <IconButton
-        icon="‹"
-        label="Previous match"
-        size="sm"
-        disabled={hits.length === 0}
-        onClick={() => onStep("prev")}
-      />
-      <IconButton
-        icon="›"
-        label="Next match"
-        size="sm"
-        disabled={hits.length === 0}
-        onClick={() => onStep("next")}
-      />
-      {/* M24.1 C: "whichever is chosen, say it in the UI." */}
-      <label className={styles.wholeWord} htmlFor={wholeWordId}>
+    <div className={styles.pebbleAnchor}>
+      <motion.div
+        className={styles.pebble}
+        role="search"
+        initial={{ opacity: 0, y: reducedMotion ? 0 : -6 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: reducedMotion ? 0 : -6 }}
+        transition={{ duration: reducedMotion ? 0.001 : 0.14, ease: "easeOut" }}
+      >
         <input
-          id={wholeWordId}
-          type="checkbox"
-          checked={matchMode === "word"}
-          onChange={(event) => onMatchModeChange(event.target.checked ? "word" : "substring")}
+          ref={inputRef}
+          type="text"
+          className={styles.input}
+          placeholder="Find in book…"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={handleKeyDown}
+          aria-label="Find in book"
+          aria-describedby={statusId}
         />
-        Whole word
-      </label>
-      <Button
-        variant="ghost"
-        size="sm"
-        className={styles.scanButton}
-        aria-pressed={resultsOpen}
-        disabled={trimmed.length === 0}
-        onClick={onToggleResults}
-      >
-        {resultsOpen ? "Hide results" : "All results"}
-      </Button>
-      <Button
-        variant="ghost"
-        size="sm"
-        className={styles.scanButton}
-        disabled={trimmed.length === 0}
-        onClick={onSeeInScan}
-      >
-        See in Scan
-      </Button>
-      <IconButton icon="×" label="Close find" size="sm" onClick={onClose} />
+        <span id={statusId} className={styles.count} aria-live="polite" aria-atomic="true">
+          {statusLabel}
+        </span>
+        <IconButton
+          icon="‹"
+          label="Previous match"
+          size="sm"
+          disabled={hits.length === 0}
+          onClick={() => onStep("prev")}
+        />
+        <IconButton
+          icon="›"
+          label="Next match"
+          size="sm"
+          disabled={hits.length === 0}
+          onClick={() => onStep("next")}
+        />
+        {/* M24.1 C: "whichever is chosen, say it in the UI." */}
+        <label className={styles.wholeWord} htmlFor={wholeWordId}>
+          <input
+            id={wholeWordId}
+            type="checkbox"
+            checked={matchMode === "word"}
+            onChange={(event) => onMatchModeChange(event.target.checked ? "word" : "substring")}
+          />
+          Whole word
+        </label>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={styles.scanButton}
+          aria-pressed={resultsOpen}
+          disabled={trimmed.length === 0}
+          onClick={onToggleResults}
+        >
+          {resultsOpen ? "Hide list" : "List"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={styles.scanButton}
+          disabled={trimmed.length === 0}
+          onClick={onSeeInScan}
+        >
+          See in Scan
+        </Button>
+        <IconButton icon="×" label="Close find" size="sm" onClick={onClose} />
+      </motion.div>
     </div>
   );
 }

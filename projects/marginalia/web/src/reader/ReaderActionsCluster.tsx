@@ -1,5 +1,5 @@
 import type { MouseEvent, ReactNode, RefObject } from "react";
-import { BrainIcon, MagnifierIcon, PublishIcon } from "../controls/icons.js";
+import { BrainIcon, PublishIcon, ScanIcon } from "../controls/icons.js";
 import { IconButton } from "../controls/IconButton.js";
 import { ProviderPickerPopover } from "../settings/ProviderPickerPopover.js";
 import { KeyCapAnchor } from "../shortcuts/KeyCap.js";
@@ -59,7 +59,7 @@ export function ReaderActionsCluster({
       <ProviderPickerPopover role="digest" label="Digest provider" onNavigateToSettings={onNavigateToSettings} />
       <ActionAnchor label="Scan">
         <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.scan}>
-          <IconButton ref={scanButtonRef} icon={<MagnifierIcon size={16} />} label="Scan" onClick={onOpenScan} />
+          <IconButton ref={scanButtonRef} icon={<ScanIcon size={16} />} label="Scan" onClick={onOpenScan} />
         </KeyCapAnchor>
       </ActionAnchor>
       <ActionAnchor label={publishing ? "Publishing…" : "Publish"}>

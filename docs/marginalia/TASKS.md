@@ -717,13 +717,13 @@ the operator's message.
 
 #### E — Search means find, Scan gets its own glyph
 
-- [ ] **Split the magnifier.** The magnifier becomes **Search** (find in book, `Cmd/Ctrl+F`);
+- [x] **Split the magnifier.** The magnifier becomes **Search** (find in book, `Cmd/Ctrl+F`);
       the Scan gets a new glyph — bars inside a rounded frame, echoing the heat strip it
       opens. Both live in the nav pebble. `SHORTCUT_KEYS.scan` (`q`) is unchanged; its
       `KeyCapAnchor` follows the icon.
       _Acceptance: the magnifier opens find-in-book from every reader state; the Scan is
       still one glyph and one keystroke away; no two controls in the reader share a glyph._
-- [ ] **`FindBar` becomes a pebble floating over the page** — magnifier · query · count ·
+- [x] **`FindBar` becomes a pebble floating over the page** — magnifier · query · count ·
       `‹ ›` · whole-word · **List** · open-in-Scan · close — instead of a full-width band
       inside `.topRow`.
       ⚠️ It currently inherits fullscreen's proximity reveal *for free* by being mounted
@@ -736,7 +736,7 @@ the operator's message.
       _Acceptance: Cmd+F over a spread never shifts the text; the pebble is dismissible with
       Esc with focus returned to the page; a page-corner drag still peels while the pebble is
       open._
-- [ ] **The results window earns its hierarchy.** Extend `SearchResultsCard`: title bar
+- [x] **The results window earns its hierarchy.** Extend `SearchResultsCard`: title bar
       (`"query"` · `23 in 4 chapters` · order control · close), sticky chapter headers with
       per-chapter counts, one row per hit — snippet in the serif reading face, single line,
       ellipsised, with page and `%` in a quiet tabular right column — and a footer
@@ -754,13 +754,13 @@ the operator's message.
 
 #### F — The annotation editor takes the query model
 
-- [ ] **`ProviderPickerPopover role="query"` moves out of the reader strip into
+- [x] **`ProviderPickerPopover role="query"` moves out of the reader strip into
       `ThreadPanel`'s composer**, immediately left of **Ask** — the model belongs where the
       question is asked. Action row order is always ladder · web · model · **Ask**.
       _Acceptance: choosing a model in the editor is what the next question uses; the reader
       strip no longer carries a model control; the Settings path to the same choice still
       agrees with it._
-- [ ] **The resolved narrow variants** (~300px, the realistic docked width), from the brief's
+- [x] **The resolved narrow variants** (~300px, the realistic docked width), from the brief's
       table — build these, don't re-open them: context ladder → a single dropdown; web search
       → a globe icon toggle; model → dropdown with short names; **Ask keeps its word**. Below
       ~280px the model select wraps above the row rather than compressing Ask.

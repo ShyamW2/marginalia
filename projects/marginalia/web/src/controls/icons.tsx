@@ -207,6 +207,25 @@ export function ScanIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** M24.7 §F: the web-search control's narrow-width glyph — a globe, not a
+ * new metaphor invented for this milestone (READER_REDESIGN.md §4 names it
+ * directly). Circle plus one equator and two meridians reads as "globe" at
+ * icon size without needing a graticule. Restyled only; the control stays
+ * inert until M25 builds the seam (settled decision 10). */
+export function GlobeIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.6" />
+      <path
+        d="M3.5 12h17M12 3.5c2.6 2.3 4 5.3 4 8.5s-1.4 6.2-4 8.5c-2.6-2.3-4-5.3-4-8.5s1.4-6.2 4-8.5z"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** M24.7 B: the foot's instruments pebble needs a fullscreen glyph —
  * `toggleFullscreen` (shift+F) has existed since M14 but was never rendered
  * as a button anywhere until now. Four corner brackets opening outward. */

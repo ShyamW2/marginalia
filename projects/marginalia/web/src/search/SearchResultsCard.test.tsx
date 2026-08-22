@@ -20,6 +20,7 @@ function row(index: number, overrides: Partial<SearchResultRow> = {}): SearchRes
 
 function renderCard(props: Partial<Parameters<typeof SearchResultsCard>[0]> = {}) {
   const onSelect = vi.fn();
+  const onOpenInScan = vi.fn();
   const bounds = createRef<HTMLDivElement>() as { current: HTMLDivElement | null };
   bounds.current = document.createElement("div");
   render(
@@ -31,10 +32,13 @@ function renderCard(props: Partial<Parameters<typeof SearchResultsCard>[0]> = {}
       onSelect={onSelect}
       onClose={() => {}}
       appBoundsRef={bounds as React.RefObject<HTMLDivElement>}
+      reversed={false}
+      onToggleReversed={() => {}}
+      onOpenInScan={onOpenInScan}
       {...props}
     />,
   );
-  return { onSelect };
+  return { onSelect, onOpenInScan };
 }
 
 // The suite runs without `globals: true`, so testing-library's automatic
@@ -44,12 +48,14 @@ function renderCard(props: Partial<Parameters<typeof SearchResultsCard>[0]> = {}
 afterEach(cleanup);
 
 describe("SearchResultsCard", () => {
-  it("shows one row per hit, with chapter, page and percent", () => {
+  it("shows one row per hit, with page and percent, under one sticky chapter header", () => {
     renderCard();
     expect(screen.getAllByRole("button", { name: /roof/ })).toHaveLength(3);
     expect(screen.getByText("p. 101")).toBeTruthy();
     expect(screen.getByText("11%")).toBeTruthy();
-    expect(screen.getAllByText("Chapter Three")).toHaveLength(3);
+    // The chapter name moved to the sticky group header (M24.7 §E) — it no
+    // longer repeats on every row.
+    expect(screen.getAllByText("Chapter Three")).toHaveLength(1);
   });
 
   it("selects by the hit's index in the result set, not by row position", () => {
@@ -73,8 +79,22 @@ describe("SearchResultsCard", () => {
     expect(screen.getByText(/Nothing found for/)).toBeTruthy();
   });
 
-  it("counts the results it is showing", () => {
+  it("counts the results and the chapters they fall in", () => {
     renderCard();
-    expect(screen.getByText("3 results")).toBeTruthy();
+    expect(screen.getByText("3 in 1 chapter")).toBeTruthy();
+  });
+
+  it("keeps hits from two different chapters under two separate headers", () => {
+    renderCard({ rows: [row(0), row(1, { chapter: "Chapter Four" })], currentIndex: -1 });
+    expect(screen.getByText("Chapter Three")).toBeTruthy();
+    expect(screen.getByText("Chapter Four")).toBeTruthy();
+    expect(screen.getByText("2 in 2 chapters")).toBeTruthy();
+  });
+
+  it("shift+enter on a row hands that hit off to the Scan", () => {
+    const { onOpenInScan } = renderCard();
+    const current = screen.getAllByRole("button", { name: /roof/ })[2];
+    fireEvent.keyDown(current, { key: "Enter", shiftKey: true });
+    expect(onOpenInScan).toHaveBeenCalledWith(2);
   });
 });

@@ -1,18 +1,50 @@
-/* M24 A: lives inside ReaderView's `.topRow` (see ReaderView.module.css's
-   `.findBarRow`), so it inherits the fullscreen reveal/`:focus-within`
-   treatment every other piece of top-row chrome already has — nothing here
-   manages its own visibility. */
-.bar {
+/* M24.7 §E: floats over the page as its own pebble instead of living inside
+   `.topRow` — it no longer inherits the strip's fullscreen proximity reveal
+   for free (READER_REDESIGN.md's own warning), so ReaderView mounts it
+   always-visible whenever `findOpen`, as a direct child of `.stage`
+   alongside AskPill/ThreadPanel/SearchResultsCard (the established pattern
+   for chrome that roams the page rather than living in the strip). Top-
+   centred so it never contests SearchResultsCard's left anchor or
+   ThreadPanel's right one.
+
+   Centring is a plain flexbox wrapper, not `left: 50%` + `transform:
+   translateX(-50%)` on the pebble itself — the pebble is the `motion.div`
+   that animates `y` on enter/exit, and Framer Motion writes the whole
+   `transform` property as an inline style for whatever it animates, which
+   silently drops a CSS-authored `translateX` on the same element (found
+   live: the pebble rendered with its *left edge* at the stage's centre,
+   not its own centre — off by half its width). Splitting the concerns
+   across two elements means neither fights the other for `transform`. The
+   wrapper spans the full width so it can center; `pointer-events: none` on
+   it (turned back on on the pebble) keeps that empty span from shadowing
+   clicks on the page underneath it. */
+.pebbleAnchor {
+  position: absolute;
+  top: 0.75rem;
+  left: 0.75rem;
+  right: 0.75rem;
+  z-index: 11;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.pebble {
+  pointer-events: auto;
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  width: 100%;
-  min-width: 0;
+  max-width: 100%;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  box-shadow: var(--shadow-panel);
+  padding: 0.35rem 0.5rem 0.35rem 0.75rem;
 }
 
 .input {
   flex: 1 1 auto;
-  min-width: 0;
+  min-width: 6rem;
   background: var(--control-bg);
   color: var(--control-text);
   border: var(--control-border-width) solid var(--control-border-color);

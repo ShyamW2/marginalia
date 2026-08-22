@@ -331,11 +331,38 @@
   border-top: 1px solid var(--color-border);
 }
 
+/* M24.7 §F: a named size container — ContextLadderToggle and ProviderPicker
+   (in ProviderPicker.module.css) key their own narrow variants off this,
+   even though the rules live in their own files: `@container` looks up the
+   DOM tree for a matching container-name, not up the stylesheet (the same
+   convention ReaderView's `reader-strip` established in §C). `flex-wrap` is
+   what lets the model select drop to its own line below ~280px (see
+   `.modelPicker`) without any JS measurement. */
 .composerControls {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.4rem;
+  container-type: inline-size;
+  container-name: composer-controls;
+}
+
+/* Below ~280px the ladder/web/Ask row alone is the tight fit — the model
+   select wraps onto its own line above it rather than compressing Ask
+   (READER_REDESIGN.md §4: "Ask keeps its word"). `order: -1` moves it there
+   visually without reordering the DOM (ladder · web · model · Ask stays the
+   source/tab order). */
+.modelPicker {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+@container composer-controls (max-width: 280px) {
+  .modelPicker {
+    order: -1;
+    flex-basis: 100%;
+  }
 }
 
 .textarea {

@@ -18,6 +18,8 @@ import { TagEditor } from "../highlights/TagEditor.js";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
+import { ProviderPicker } from "../settings/ProviderPicker.js";
+import { useOpenSettings } from "../settings/useOpenSettings.js";
 import {
   fetchHighlightTags,
   updateHighlightImportance,
@@ -132,6 +134,11 @@ export function ThreadPanel({
   onPanelSizeChange,
 }: ThreadPanelProps) {
   const location = useLocation();
+  // M24.7 §F: the query model moves here from the reader strip — "the model
+  // belongs where the question is asked" — so this is the composer's own
+  // click-through, the same divider a reader's menu icon or a digest picker
+  // names for its own room.
+  const openSettingsToLLM = useOpenSettings("llm");
   const [tags, setTags] = useState<string[]>([]);
 
   // M14 "movable sticky notes" (decisions.md 2026-07-27): draggable by the
@@ -765,6 +772,12 @@ export function ThreadPanel({
           />
           <div className={styles.composerControls}>
             <ContextLadderToggle resourceId={resourceId} />
+            {/* M24.7 §F: the query model, moved here from the reader strip
+                — "the model belongs where the question is asked". Action
+                row order is always ladder · web · model · Ask. */}
+            <div className={styles.modelPicker}>
+              <ProviderPicker role="query" variant="compact" hideLabel onNavigateToSettings={openSettingsToLLM} />
+            </div>
             {isStreaming ? (
               <Button variant="danger" size="sm" className={styles.stopButton} onClick={handleStop}>
                 Stop

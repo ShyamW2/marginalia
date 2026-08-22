@@ -281,9 +281,14 @@ interface ProviderPickerProps {
    * click-through into settings, no inline editing. */
   variant: "full" | "compact";
   onNavigateToSettings?: (event: import("react").MouseEvent<HTMLButtonElement>) => void;
+  /** M24.7 §F: the composer's own mount (immediately left of Ask) drops the
+   * "Query"/"Digest" role label — the row already reads as a model picker
+   * from context, and the label is width the narrow composer row can't
+   * spare and still keep Ask legible. Compact-variant only. */
+  hideLabel?: boolean;
 }
 
-export function ProviderPicker({ role, variant, onNavigateToSettings }: ProviderPickerProps) {
+export function ProviderPicker({ role, variant, onNavigateToSettings, hideLabel }: ProviderPickerProps) {
   const { profiles, roles, loading, refresh } = useProviderRoles();
   const assignment = roles.find((r) => r.role === role) ?? null;
   const [editing, setEditing] = useState(false);
@@ -371,12 +376,15 @@ export function ProviderPicker({ role, variant, onNavigateToSettings }: Provider
   if (variant === "compact") {
     return (
       <div className={styles.compact}>
-        <label className={styles.compactLabel} htmlFor={`provider-compact-${role}`}>
-          {copy.label}
-        </label>
+        {!hideLabel && (
+          <label className={styles.compactLabel} htmlFor={`provider-compact-${role}`}>
+            {copy.label}
+          </label>
+        )}
         <select
           id={`provider-compact-${role}`}
           className={styles.compactSelect}
+          aria-label={hideLabel ? copy.label : undefined}
           value={assignment?.profileId ?? ""}
           onChange={(e) => void handleSelectChange(e.target.value)}
         >
