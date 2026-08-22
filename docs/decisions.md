@@ -3,6 +3,49 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-23 — The shipping rungs are named, not numbered; Private is next
+
+SHIPPING.md's ladder was numbered 0–4 with a `2.5` wedged in after the fact. Three problems
+had accumulated, and the rename fixes all three at once.
+
+**`2.5` was lying about the shape.** A decimal reads as "a half-step on the way to 3", and
+the document's own text says the opposite — the ladder *forks*, and the private deployment
+is not a smaller hosted website but a different thing with exactly one user. Renumbering
+0–5 would have kept the false linearity and silently changed what existing prose meant:
+text saying "rung 3" would have started denoting the private deployment.
+
+**"Rung" was already overloaded in this repo.** The page fold has a "low-fps rung"
+(PAGE_CURL.md, TASKS.md) and the context ladder has a "Digest rung" (settled decision 8).
+Three unrelated ladders sharing one noun and a small integer is a collision waiting to be
+misread by a session that greps for it.
+
+**Renumbering has a recorded cost here.** M20_STEP4_PROMPT.md still carries the scar of the
+2026-08-12 M25→M23 renumber. Names do not need remapping when something is inserted.
+
+- **The rungs are now `Local → Repo → {Desktop | Private} → Hosted → Stores`.** Desktop and
+  Private are **siblings hanging off Repo**, not sequential steps; neither blocks the other.
+- **Historical prose is left alone.** decisions.md and TASKS_DONE.md are dated records, and
+  rewriting them to say something they did not say is worse than a stale identifier. The
+  mapping (`0→Local … 2.5→Private …`) is recorded in SHIPPING.md's ladder section instead.
+- **SHIPPING.md's status line was stale** and is corrected in the same pass: it still read
+  "none of this is scheduled" four commits after Repo shipped (2026-08-06, this file).
+
+### Desktop does not reach an iPad — stated because it was about to be assumed
+
+The operator's goal is an iPad road test before paying Apple's $99, and asked whether doing
+Desktop first would serve it. It would not: iPadOS runs neither Electron nor a Node server,
+so Desktop is a Mac/Windows/Linux download that reaches no tablet at all. **Private is the
+only rung that puts the product on an iPad without a native client**, and it needs no Apple
+money. This is now stated in the ladder rather than being derivable from it.
+
+Measured while answering, because the estimates depend on it: the app has **zero
+width-based media queries** (all 7 `@media` rules are `prefers-reduced-motion` or
+`prefers-color-scheme`), but only **7 mouse-specific handler sites**, and the two big
+gestures already run on pointer events — the desk drag is Framer Motion's, not HTML5 DnD,
+and the page fold's grab is `onPointerDown`. Touch is therefore a small job. The genuine
+unknown is epub.js-in-an-iframe plus iOS's native selection callout, which is exactly what
+a road test exists to answer and cannot be settled by reading code.
+
 ## 2026-08-22 — Digest reliability diagnosis: the local Ollama call, not the SSH tunnel (M29)
 
 The operator reported "Open digest" often hanging or failing, and background digest jobs

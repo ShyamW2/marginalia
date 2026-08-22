@@ -6,37 +6,45 @@ Repo-level on purpose: the ladder is the same for every project here. Marginalia
 worked example because it is the only project that has gone far enough to have real
 gates.*
 
-**Status: none of this is scheduled.** This document settles the *shape* so that when a
-rung is chosen it is chosen deliberately, and so nobody starts rung 3 by accident while
-thinking they are finishing rung 1. CLAUDE.md settled decision 4 ("wrap in Tauri/Electron
-only after the product is proven") stands; this document is what "wrap" turns out to
-mean.
+**Status: Repo shipped 2026-08-06 (decisions.md); Private is next; nothing above it is
+scheduled.** This document settles the *shape* so that when a rung is chosen it is chosen
+deliberately, and so nobody starts Hosted by accident while thinking they are finishing
+Repo. CLAUDE.md settled decision 4 ("wrap in Tauri/Electron only after the product is
+proven") stands; this document is what "wrap" turns out to mean.
 
 ## The one-paragraph version
 
-The rungs are not a single ladder — they fork. **Rungs 0–2 keep the product you have.**
-Rung 3 (public hosted website) does not: it deletes the two things Marginalia is built
-on — the local Obsidian vault and the local machine's own model access — and replaces the
-copyright exposure of "my books on my disk" with "strangers' books on my server". The
-useful move that gets mistaken for rung 3 is **rung 2.5, the private deployment**: the
-same single-tenant app, reachable from your other devices over a private network. That
-is also the gate on iPad drawing (decisions.md 2026-07-27, "Future arcs"), so it buys two
-things at once.
+The rungs are **named, not numbered** — a number implies a single ordered climb and this
+ladder forks. **Local, Repo and Desktop keep the product you have.** Hosted does not: it
+deletes the two things Marginalia is built on — the local Obsidian vault and the local
+machine's own model access — and replaces the copyright exposure of "my books on my disk"
+with "strangers' books on my server". The useful move that gets mistaken for Hosted is
+**Private**: the same single-tenant app, reachable from your other devices over a private
+network. That is also the gate on iPad drawing (decisions.md 2026-07-27, "Future arcs"),
+so it buys two things at once.
+
+**Desktop and Private are siblings, not steps.** Both hang off Repo; neither blocks the
+other. Desktop is a Mac/Windows download and reaches no iPad — iPadOS runs neither
+Electron nor a Node server. Private is how an iPad gets the product at all before Stores.
 
 ## The ladder
 
-| Rung | What it is | Who runs the server | Real gate |
-|---|---|---|---|
-| 0 | localhost, dev mode | you, `pnpm dev` | — (here today) |
-| 1 | the GitHub repo | whoever clones it | license + reproducible install, not code |
-| 2 | a desktop app | the app, on their machine | data location, packaging the native module, updates |
-| 2.5 | a private deployment | you, on one box | authentication — there is none today |
-| 3 | a public hosted website | you, for strangers | multi-tenancy, the vault's disappearance, other people's books |
-| 4 | app stores / iPad / sync | ditto, plus a store | sandboxing vs. the vault; a sync design that does not exist |
+| Rung | What it is | Who runs it | Real gate | Status |
+|---|---|---|---|---|
+| **Local** | localhost, dev mode | you, `pnpm dev` | — | here today |
+| **Repo** | the GitHub repo | whoever clones it | license + reproducible install, not code | ✅ 2026-08-06 |
+| **Desktop** | an installable app | the app, on their machine | data location, packaging the native modules, updates | — |
+| **Private** | one box, your devices | you, on one box | authentication — there is none today | next |
+| **Hosted** | a public website | you, for strangers | multi-tenancy, the vault's disappearance, other people's books | not scheduled |
+| **Stores** | app stores / native iPad | ditto, plus a store | sandboxing vs. the vault; a sync design that does not exist | not scheduled |
+
+Older prose (decisions.md, TASKS_DONE.md) says "rung 1", "rung 2.5" and so on. Those are
+historical records and are left alone; the mapping is
+`0→Local, 1→Repo, 2→Desktop, 2.5→Private, 3→Hosted, 4→Stores`.
 
 ---
 
-## Rung 0 — localhost (where we are)
+## Local — localhost (where we are)
 
 Verified state as of 2026-07-30, because everything below depends on it being stated
 accurately:
@@ -68,7 +76,7 @@ data, local-only vault, machine-local providers.**
 
 ---
 
-## Rung 1 — the repo
+## Repo — the public GitHub repo ✅ shipped 2026-08-06
 
 Someone clones it and runs it themselves. This is the cheapest rung by a wide margin and
 the only one that costs nothing per month.
@@ -92,7 +100,7 @@ Logistics, in order:
    18 BSD-3-Clause, 17 Apache-2.0, 7 BSD-2-Clause, plus singletons. The only copyleft is
    **LGPL-3.0-or-later in `@img/sharp-libvips-*`** — transitive (under
    `@huggingface/transformers`), unmodified, and not redistributed by a source repo, so it
-   is inert at rung 1. ⚠️ **It stops being inert at rung 2**, where an Electron bundle
+   is inert at Repo. ⚠️ **It stops being inert at Desktop**, where an Electron bundle
    *does* redistribute the binary and LGPL's relinking obligation attaches. Re-run the
    audit there rather than trusting this line.
 3. ⚠️ **Fixtures: the check was run on 2026-08-06 and *failed*.** `metamorphosis.epub` was
@@ -186,12 +194,12 @@ correctly), `pnpm build`, 264 server + 179 web tests, then booted
 real person proves the README, and no README existed when this was run. Do not read the
 green result as the criterion being met.
 
-**What rung 1 does not give you:** users. A repo is distribution to people who already
-run dev tooling. If the goal is "my friend reads a book in this", skip to rung 2.
+**What the Repo rung does not give you:** users. A repo is distribution to people who already
+run dev tooling. If the goal is "my friend reads a book in this", skip to Desktop or Private.
 
 ---
 
-## Rung 2 — the desktop app
+## Desktop — an installable app
 
 CLAUDE.md decision 4's endpoint. The product does not change; the delivery does.
 
@@ -229,7 +237,7 @@ Logistics:
   is on your own disk and nobody else's; they are not defensible in software you hand to
   someone else. `safeStorage` (Electron) or `keytar` behind the existing settings seam,
   with a migration for existing rows.
-- **The two local providers survive rung 2 intact** — a desktop app *is* the user's
+- **The two local providers survive the Desktop rung intact** — a desktop app *is* the user's
   machine, so `claude-agent` and `codex-cli` work exactly as they do now, for users who
   happen to have those CLIs. They must degrade to a legible "not installed" state rather
   than an error, since most users will not.
@@ -248,10 +256,10 @@ else's OS.
 
 ---
 
-## Rung 2.5 — the private deployment (the one that is actually next)
+## Private — one box, your devices (the one that is actually next)
 
 The same single-tenant app, running on one box you control, reachable from your phone,
-your iPad, or your other laptop. **This is not a smaller rung 3 — it is a different
+your iPad, or your other laptop. **This is not a smaller Hosted rung — it is a different
 thing**, because there is still exactly one user: you.
 
 Why it is worth naming: it is the gate on iPad drawing (decisions.md 2026-07-27), on
@@ -282,7 +290,7 @@ verified by trying it, not by reading the config.
 
 ---
 
-## Rung 3 — the public hosted website
+## Hosted — the public hosted website
 
 This is where the product changes, and the honest framing is that **hosted Marginalia is
 a different product wearing the same UI.** Three things break, and none of them are
@@ -338,25 +346,25 @@ domain, TLS (free), an email sender for account flows, plus the model bill if it
 key. Realistically $20–100/mo before any users, more with them, plus the recurring
 attention that a public service demands whether or not anyone is using it.
 
-**The ruling: do not treat rung 3 as a deployment of this codebase.** If the hosted
+**The ruling: do not treat the Hosted rung as a deployment of this codebase.** If the hosted
 product is genuinely wanted, it should start as a *design session about a different
 product* — one whose vault story, identity model and content policy are decided before
-any code moves — and it should be triggered by evidence that people want it, which rungs
-1, 2 and 2.5 are how you gather. Building it speculatively converts a finished local
+any code moves — and it should be triggered by evidence that people want it, which the Repo,
+Desktop and Private rungs are how you gather. Building it speculatively converts a finished local
 product into an unfinished hosted one.
 
 ---
 
-## Rung 4 — further distribution
+## Stores — app stores and native clients
 
 Recorded so the shape is known, not because it is near.
 
 - **Mac App Store.** ⚠️ Direct conflict with the vault: a sandboxed app cannot write to
   an arbitrary path string typed into Settings. It needs the user to pick the folder
   through a system picker and a security-scoped bookmark to persist access. That is a
-  settings-UI and a permissions change, not a build flag. Direct distribution (rung 2,
+  settings-UI and a permissions change, not a build flag. Direct distribution (Desktop,
   signed + notarized) avoids this entirely and is the recommendation.
-- **iPad / iOS.** Not a packaging step. Either rung 2.5 plus a browser (works today once
+- **iPad / iOS.** Not a packaging step. Either the Private rung plus a browser (works today once
   auth exists, and is how iPad drawing becomes possible) or a genuine native client
   against the server API — a second front end, with the reader's entire interaction model
   rebuilt for touch. PRODUCT.md lists mobile and multi-device as explicitly out of scope;
@@ -364,7 +372,7 @@ Recorded so the shape is known, not because it is near.
 - **Sync across devices.** Nothing in the system is designed for it: the library is
   content-addressed and immutable (which helps), but annotations, reading state and
   settings all assume a single writer. Multi-writer sync is a conflict-resolution design
-  problem — the honest cheap version is "one server, many clients" (rung 2.5), not
+  problem — the honest cheap version is "one server, many clients" (the Private rung), not
   peer-to-peer replication.
 - **Browser extension / web clipper.** A genuinely small, high-value adjacent shape once
   the library accepts non-EPUB resources. Out of scope while EPUB-first (decision 3)
@@ -377,12 +385,12 @@ Recorded so the shape is known, not because it is near.
 These apply to any project in this repo, not just Marginalia:
 
 1. **Ship down the ladder in order, and name the rung out loud.** Work that only pays off
-   at rung 3 is not allowed to be smuggled into a rung-1 or rung-2 task. If a task's
-   justification is "we'll need it when we host", it is a rung-3 task and it is not
+   at Hosted is not allowed to be smuggled into a Repo or Desktop task. If a task's
+   justification is "we'll need it when we host", it is a Hosted-rung task and it is not
    scheduled.
 2. **A rung is not reached until someone who is not the operator has used it.** A
    packaged app nobody installed is not shipped; it is built.
-3. **Every rung above 2 requires a written answer to "who is the user, and what happens to
+3. **Every rung above Desktop requires a written answer to "who is the user, and what happens to
    their data when they stop being one".** No answer, no rung.
 4. **Exposing the server beyond loopback requires authentication in the same change.**
    Not a follow-up task. (Extends CLAUDE.md's M6 loopback decision rather than replacing
@@ -396,10 +404,9 @@ These apply to any project in this repo, not just Marginalia:
 ## What is deliberately left open
 
 - Which rung is actually wanted. This document ranks the *costs*; it does not choose.
-- Whether the repo goes public at all, and under which license (rung 1, step 1) — a
-  recommendation is on record (MIT, docs included), not a decision.
-- The name. "Marginalia" is a working name and rung 2 is the deadline for that.
-- Anything about pricing, revenue or a business — out of scope here on purpose. If rung 3
+- Whether Desktop is wanted at all, now that Private reaches an iPad without it.
+- The name. "Marginalia" is a working name and the Desktop rung is the deadline for that.
+- Anything about pricing, revenue or a business — out of scope here on purpose. If the Hosted rung
   is ever taken seriously, that is its first question, not its last.
 
 ## Where the facts live
