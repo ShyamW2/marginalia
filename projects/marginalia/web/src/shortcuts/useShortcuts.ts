@@ -13,8 +13,9 @@ export interface ShortcutBinding {
   /** KeyboardEvent.key, compared case-insensitively for letters. */
   key: string;
   /** undefined = don't care about shift state; true/false = require it —
-   * lets "f" and "shift+f" (focus mode vs. fullscreen) coexist as separate
-   * bindings in the same scope. */
+   * lets a bare key and its shifted form (arrows for page turns vs.
+   * shift+arrows for skip-sentence) coexist as separate bindings in the
+   * same scope. */
   shift?: boolean;
   /** M24: Cmd (Mac) or Ctrl (elsewhere) required — every other binding in
    * this registry explicitly rejects both (a plain letter shortcut must

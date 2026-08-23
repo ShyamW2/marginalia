@@ -227,7 +227,7 @@ export function GlobeIcon({ size = 18 }: IconProps) {
 }
 
 /** M24.7 B: the foot's instruments pebble needs a fullscreen glyph —
- * `toggleFullscreen` (shift+F) has existed since M14 but was never rendered
+ * `toggleFullscreen` (`f`) has existed since M14 but was never rendered
  * as a button anywhere until now. Four corner brackets opening outward. */
 export function FullscreenIcon({ size = 18 }: IconProps) {
   return (

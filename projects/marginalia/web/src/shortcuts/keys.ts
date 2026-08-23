@@ -10,7 +10,10 @@ export const SHORTCUT_KEYS = {
   nextPage: "ArrowRight",
   prevChapter: "[",
   nextChapter: "]",
-  focusMode: "f",
+  // M24.7 §G: fullscreen owns plain "f" (matching the immersive design's own
+  // "F to leave" hint); focus mode moved off it onto "n" for Notes so the
+  // two keys stop colliding — see decisions.md 2026-08-22.
+  focusMode: "n",
   fullscreen: "f",
   escape: "Escape",
   settings: "s",

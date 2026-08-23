@@ -501,11 +501,11 @@
   flex-shrink: 0;
 }
 
-/* M24.7 §G rework of M14 fullscreen (decisions.md 2026-08-19/2026-08-21):
-   shift+F hides the app's chrome and lets the page grow into the freed
-   space — "no card, no strips, no rail," replaced by a vignette, a 2px
+/* M24.7 §G rework of M14 fullscreen (decisions.md 2026-08-19/2026-08-21/
+   2026-08-22): `f` hides the app's chrome and lets the page grow into the
+   freed space — "no card, no strips, no rail," replaced by a vignette, a 2px
    position hairline, faint highlight dots, and one waking pebble (below).
-   Orthogonal to focus mode (`f`), which hides *your annotations* — the two
+   Orthogonal to focus mode (`n`), which hides *your annotations* — the two
    compose freely. A real requestFullscreen() covers the app shell's own
    header for free; wrapperFullscreen is the in-page fallback for when
    that's refused. */

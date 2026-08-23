@@ -1030,7 +1030,7 @@ export function ReaderView({
     { key: SHORTCUT_KEYS.nextChapter, handler: handleChapterNextShortcut },
     { key: SHORTCUT_KEYS.escape, handler: handleEscapeShortcut },
     { key: SHORTCUT_KEYS.focusMode, shift: false, handler: handleFocusModeShortcut },
-    { key: SHORTCUT_KEYS.fullscreen, shift: true, handler: toggleFullscreen },
+    { key: SHORTCUT_KEYS.fullscreen, shift: false, handler: toggleFullscreen },
     { key: SHORTCUT_KEYS.find, meta: true, handler: handleFindShortcut, allowWhileTyping: true },
   ]);
 
@@ -2196,10 +2196,17 @@ export function ReaderView({
         !event.ctrlKey &&
         !event.altKey
       ) {
-        // M14: fullscreen (shift+F) is a different axis from focus mode
-        // (f) — they hide different things and compose independently.
-        if (event.shiftKey) toggleFullscreen();
-        else handleFocusModeShortcut();
+        // M24.7 §G: fullscreen is plain "f" now (decisions.md 2026-08-22) —
+        // a different axis from focus mode ("n"), hiding different things
+        // and composing independently.
+        toggleFullscreen();
+      } else if (
+        event.key.toLowerCase() === "n" &&
+        !event.metaKey &&
+        !event.ctrlKey &&
+        !event.altKey
+      ) {
+        handleFocusModeShortcut();
       }
     }
     rendition.on("keydown", handleIframeKeydown);
@@ -2882,8 +2889,8 @@ export function ReaderView({
               className={styles.annotationsButton}
               pressed={focusMode}
               onClick={() => setShowAnnotations((prev) => !prev)}
-              aria-label={focusMode ? "Notes hidden — press F to show" : undefined}
-              title={focusMode ? "Notes hidden — press F to show" : undefined}
+              aria-label={focusMode ? "Notes hidden — press N to show" : undefined}
+              title={focusMode ? "Notes hidden — press N to show" : undefined}
             >
               Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
               {unanchoredIds.size > 0 && (
@@ -3191,7 +3198,7 @@ export function ReaderView({
             {progressGroup}
             {digestCluster}
             {listeningCluster}
-            <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.fullscreen} modifier="⇧">
+            <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.fullscreen}>
               <IconButton
                 icon={<FullscreenIcon />}
                 label="Exit fullscreen"
