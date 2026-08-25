@@ -493,6 +493,46 @@ export function spineEdgeForAnchor(anchor: FoldAnchor): "left" | "right" {
 }
 
 /**
+ * Synthetic pointer path for a programmatic turn of a **bound** sheet — the
+ * hinge's counterpart to `syntheticFoldPointer`, which a bound sheet cannot
+ * follow.
+ *
+ * `syntheticFoldPointer` sweeps diagonally through the opposite corner and
+ * 2.2x past it, because that is what the flat model needs to cover the leaf.
+ * A hinged sheet cannot go there: the anchor would have to leave the lens
+ * `constrainToSpineHinge` describes long before the end, and the drag stalls
+ * against the clamp with the leaf two-thirds uncovered. That overshoot is an
+ * artefact of the flat crease and retires with it.
+ *
+ * A hinge covers the leaf a different way — by turning through the binding
+ * rather than sliding past the far corner — so the path is simply **the anchor
+ * to its own mirror across the spine**, which is the fully-turned position and
+ * sits exactly on the lens's far tip. Every point of it is reachable, so
+ * nothing is clamped, and the leaf is covered but for the spine edge itself,
+ * which never lifts.
+ *
+ * ⚠️ **This is the plain path, not necessarily the handsome one.** A straight
+ * pull square across is the far field, so a turn animated along it is the
+ * cylinder from end to end and never shows the fan the cone exists for. A real
+ * thumb pulls up and across, which is what puts the apex a leaf-length off the
+ * end and fans the curl. Which path a click turn takes is the renderer's call
+ * and a look question; this is the one with the coverage proof attached.
+ */
+export function syntheticHingePointer(
+  anchor: FoldAnchor,
+  width: number,
+  height: number,
+  progress: number,
+): Point {
+  const from = anchorPoint(anchor, width, height);
+  const spineX = spineEdgeForAnchor(anchor) === "left" ? 0 : width;
+  // Same floor as the flat sweep: a zero-length C->P leaves the fold direction
+  // undefined, and a touch above zero keeps the first frame well-defined.
+  const t = Math.max(progress, 0.001);
+  return { x: from.x + 2 * (spineX - from.x) * t, y: from.y };
+}
+
+/**
  * A sheet bound at the spine and pulled by its outer corner, as a **cone**
  * with its apex on the spine line (decisions.md 2026-08-03 step 4).
  *
@@ -614,8 +654,126 @@ export function coneLiftAt(cone: ConeFold, p: Point): number {
 }
 
 /**
+ * How far down the spine the apex may run before it is simply **held** there,
+ * as a multiple of the leaf's diagonal.
+ *
+ * A drag square out from the edge has its apex at infinity: the rulings are
+ * parallel, the crease genuinely is parallel to the spine, and the surface is
+ * the cylinder the flat model already ships. That case cannot be *represented*
+ * with a finite apex — but it can be approximated far below anything visible,
+ * and the alternative (handing the drag back to `computeFold` for the far
+ * field, as this did when it was written) hands the spine back to a model that
+ * lets it move, which is precisely what the hinge exists to stop. So the apex
+ * is held at a distance rather than sent to another model, and
+ * `computeConeFold` answers every drag.
+ *
+ * The multiple is measured rather than picked, and it is pinned between two
+ * errors that pull opposite ways:
+ *
+ * - **Too near and the far field is not flat enough.** A cone at apex distance
+ *   `R` sits about `1.9 * diagonal / R` px from the flat model of the same
+ *   drag. Worse — because the apex runs off *either* end depending on which
+ *   side of the anchor the pointer passes, a drag crossing exactly square-on
+ *   swaps one held apex for the other, and the two differ by about
+ *   `1.0e6 / R` px. That swap is the binding one.
+ * - **Too far and the arithmetic goes.** Every leaf point is rebuilt as
+ *   `apex + r * direction` with `r ~ R`, so leaf coordinates come out of a
+ *   cancellation and quantise to `ulp(R)` — at `R = 1e12` that is already
+ *   1e-4 px of drift on the spine edge itself.
+ *
+ * A million diagonals lands both at ~1e-3 px and ~1e-7 px respectively, which
+ * is three decades of margin on each side. (Readings in NOTES.md.) A renderer
+ * that hands the apex to a **float32** shader gets none of this: quantisation
+ * there is tens of pixels. Deform in float64 and upload positions.
+ */
+const FAR_APEX_DIAGONALS = 1e6;
+
+/**
+ * Where the perpendicular bisector of `c -> p` crosses the spine line: the
+ * only apex on the spine for which the cone can put the anchor under the
+ * pointer at all (see `computeConeFold`).
+ *
+ * Returns `±Infinity` when the two run parallel — the apex at infinity, whose
+ * *sign* still says which way down the spine it went, which is why this
+ * returns an infinity rather than `null`.
+ */
+function bisectorApexY(c: Point, p: Point, spineX: number): number {
+  const dx = p.x - c.x;
+  const dy = p.y - c.y;
+  const midX = (c.x + p.x) / 2;
+  const midY = (c.y + p.y) / 2;
+  const num = (spineX - midX) * dx;
+  // A drag whose midpoint lands *on* the spine with no vertical component is
+  // the exact mirror position — every point of the spine is equidistant and
+  // the apex is undetermined. It is a rigid half-turn about the binding, i.e.
+  // the far field, so answer with the far field.
+  if (dy === 0) return num === 0 ? Infinity : midY - num * Infinity;
+  return midY - num / dy;
+}
+
+/**
+ * The pointer as a **bound** sheet can honour it — the hinge's counterpart to
+ * `constrainFoldPointer`, and the reason the spine edge can be promised at
+ * *every* drag depth rather than at the depths that happen to work.
+ *
+ * The apex has to lie on the spine line and **outside the leaf's own span of
+ * it**: an apex partway along the binding would put the two halves of the
+ * spine edge on opposite rays from it, and a sheet cannot fan around a point
+ * in the middle of its own binding without tearing. That constraint on the
+ * apex turns out to be *exactly* a constraint on the drag, and a physical one:
+ *
+ *     the anchor's distance to each of the two spine corners can only shrink
+ *
+ * — because `apexY = 0` is precisely the locus `|P - S0| = |C - S0|`, and
+ * `apexY = height` the same about `S1`. The two circles through the anchor
+ * bound the legal region and the **lens** they cut out is where both distances
+ * have shrunk; no pointer inside it produces an apex on the binding, for
+ * corner and edge anchors alike (argued, then checked exhaustively). For a
+ * corner pinch the first radius *is* the leaf's width and the second its
+ * diagonal, so the rule reads: **the grabbed corner can never get further from
+ * its own gutter corner than the page is wide, nor further from the other one
+ * than the page is diagonal** — which is only "the bottom edge is that much
+ * paper and no more". It is the clamp physical page-turn implementations have
+ * always carried, arrived at from the geometry rather than from a fudge.
+ *
+ * A pointer outside the lens is not refused but **followed as far as the paper
+ * goes**: the anchor travels along the drag's own direction and stops where
+ * that ray leaves the lens. Two circles through the anchor make a convex lens
+ * with the anchor on its boundary, so that exit point is unique, closed-form,
+ * and moves continuously with the pointer — which the nearest-point projection
+ * does *not*, because a lens is a thin sliver and the nearest point of it flips
+ * end for end as a drag sweeps past. Pulling *outward*, away from the spine,
+ * leaves the anchor exactly where it is: there is no more sheet to give.
+ */
+export function constrainToSpineHinge(
+  anchor: FoldAnchor,
+  pointer: Point,
+  width: number,
+  height: number,
+): Point {
+  const c = anchorPoint(anchor, width, height);
+  const spineX = spineEdgeForAnchor(anchor) === "left" ? 0 : width;
+  const dx = pointer.x - c.x;
+  const dy = pointer.y - c.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-18) return { x: c.x, y: c.y };
+
+  // The anchor lies *on* both circles by construction, which collapses each
+  // quadratic to a single root: |c + t*d - s|^2 <= |c - s|^2 reduces to
+  // t * (2 (c-s).d + t |d|^2) <= 0, so the ray leaves that circle at
+  // t = -2 (c-s).d / |d|^2 and nowhere else.
+  let t = 1;
+  for (const cornerY of [0, height]) {
+    const ex = c.x - spineX;
+    const ey = c.y - cornerY;
+    t = Math.min(t, Math.max(0, (-2 * (ex * dx + ey * dy)) / len2));
+  }
+  return { x: c.x + dx * t, y: c.y + dy * t };
+}
+
+/**
  * Solve the cone for a drag: apex, crease and arc such that **the grabbed
- * anchor lands exactly under the pointer**.
+ * anchor lands under the pointer, as far as a bound sheet can reach it**.
  *
  * ⚠️ **The apex is an output, not an input, and that is a real finding rather
  * than a shortcut.** TASKS.md describes the geometry as gaining "apex distance
@@ -628,11 +786,16 @@ export function coneLiftAt(cone: ConeFold, p: Point): number {
  * perpendicular bisector crosses the spine line — satisfies both. See NOTES.md
  * "M27 — the apex cannot be both given and consistent".
  *
- * Returns `null` when the drag does not determine a finite apex, which is not
- * an error: it is the **far field**, and it happens exactly when the bisector
- * runs parallel to the spine — a straight pull square out from the edge, whose
- * crease really is parallel to the spine and whose correct model really is the
- * flat-crease roll. The caller uses `computeFold` for that case.
+ * ⚠️ **And a pointer is not always reachable**, which is the second half of
+ * the same finding. The solved apex is only a legal one while it stays off the
+ * leaf's own span of the binding, and `constrainToSpineHinge` (above) is that
+ * constraint read as a limit on the drag. Inside it the anchor lands exactly
+ * under the pointer, as before; outside it the anchor lands on the pointer's
+ * *bearing* about the apex and no further, which is what a bound page does.
+ *
+ * This always answers a drag that has moved at all — there is no far-field
+ * hand-off to `computeFold` any more, because that hand-off returned the spine
+ * to a model that lets it move. See `FAR_APEX_DIAGONALS`.
  */
 export function computeConeFold(
   anchor: FoldAnchor,
@@ -642,28 +805,20 @@ export function computeConeFold(
   arcTarget: number = curlArcLength(width, height),
 ): ConeFold | null {
   const c = anchorPoint(anchor, width, height);
-  const dx = pointer.x - c.x;
-  const dy = pointer.y - c.y;
-  const travel = Math.hypot(dx, dy);
+  const reached = constrainToSpineHinge(anchor, pointer, width, height);
+  const travel = Math.hypot(reached.x - c.x, reached.y - c.y);
   if (travel < 0.01) return null;
 
   const spineX = spineEdgeForAnchor(anchor) === "left" ? 0 : width;
-  // The apex is where the perpendicular bisector of anchor->pointer meets the
-  // spine line. `dx` is that bisector's component across the spine; when it
-  // vanishes the bisector is parallel to the spine and the apex is at
-  // infinity — the far field, handed back to the flat-crease model.
-  if (Math.abs(dx) < 1e-6) return null;
-  const midX = (c.x + pointer.x) / 2;
-  const midY = (c.y + pointer.y) / 2;
-  // Bisector: (q - mid) . (pointer - c) = 0. Solve at q.x = spineX.
-  const apexY = midY - ((spineX - midX) * dx) / dy_or_epsilon(dy);
-  if (!Number.isFinite(apexY)) return null;
+  const far = FAR_APEX_DIAGONALS * Math.hypot(width, height);
+  let apexY = Math.min(height + far, Math.max(-far, bisectorApexY(c, reached, spineX)));
+  // The clamp above already put the apex off the binding's own span; this
+  // snaps it through the rounding at the two ends, so that a pointer sitting
+  // exactly on the boundary circle cannot land a hair inside and flip the fan
+  // end for end.
+  if (apexY > 0 && apexY < height) apexY = apexY * 2 >= height ? height : 0;
   const apex: Point = { x: spineX, y: apexY };
-
-  // Every point of the spine edge has to sit on one ray from the apex, or the
-  // binding is not fixed. That means the apex outside the leaf's own span.
-  if (apexY > -1e-6 && apexY < height + 1e-6) return null;
-  const spineDir: Point = { x: 0, y: apexY < 0 ? 1 : -1 };
+  const spineDir: Point = { x: 0, y: apexY <= 0 ? 1 : -1 };
 
   const toAnchor = { x: c.x - apex.x, y: c.y - apex.y };
   const anchorRadius = Math.hypot(toAnchor.x, toAnchor.y);
@@ -681,11 +836,16 @@ export function computeConeFold(
     anchorRadius,
   };
   const anchorAngle = coneAngle(probe, toAnchor);
-  const pointerAngle = coneAngle(probe, { x: pointer.x - apex.x, y: pointer.y - apex.y });
+  const pointerAngle = coneAngle(probe, { x: reached.x - apex.x, y: reached.y - apex.y });
   // The angular sweep the anchor has to make. Same role as `d` in the flat
   // model, one dimension down.
   const sweep = anchorAngle - pointerAngle;
-  if (!(sweep > 1e-9)) return null;
+  // Not an epsilon: a held-far apex makes an honest sweep as small as it likes
+  // (a 250px drag at a million diagonals sweeps 3e-7 rad), so "has this drag
+  // moved" is `travel` above and this only rejects a sheet asked to peel
+  // backwards — which `constrainToSpineHinge` has already turned into no drag
+  // at all.
+  if (!(sweep > 0)) return null;
 
   // The roll's angular extent, so that its *physical* arc at the anchor is the
   // same `arcTarget` the flat model uses there — and clamped by the sweep the
@@ -700,17 +860,15 @@ export function computeConeFold(
     apex,
     spineDir,
     winding,
-    creaseAngle: anchorAngle - creaseToAnchor,
+    // The crease cannot run past the binding: there is no more sheet to roll
+    // once it reaches it, and a crease at a negative angle would put the spine
+    // edge itself on the rolled side and lift it off the book. A drag that
+    // asks for one has simply finished the turn, and the fold saturates there
+    // rather than tearing.
+    creaseAngle: Math.max(0, anchorAngle - creaseToAnchor),
     arcAngle,
     anchorRadius,
   };
-}
-
-/** Guards the bisector solve against a perfectly axis-aligned drag, where
- * `dy` is zero and the intersection is a division by it. */
-function dy_or_epsilon(dy: number): number {
-  if (Math.abs(dy) < 1e-9) return dy < 0 ? -1e-9 : 1e-9;
-  return dy;
 }
 
 function offsetAlong(from: Point, dir: Point, distance: number): Point {

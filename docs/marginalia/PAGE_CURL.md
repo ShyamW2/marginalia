@@ -222,6 +222,15 @@ What it costs, concretely:
   corner still follows the pointer, but the spine edge is a constraint the current model
   does not have. Expect the crease to stop being a straight line perpendicular to
   corner→pointer.
+  **Built 2026-08-26 in the geometry** (`computeConeFold`, `constrainToSpineHinge`), and not
+  as a change to `computeFold` after all — the cone supersedes it rather than amending it,
+  and giving the flat model the same clamp would stall the shipped click turn (its sweep
+  runs 2.2x diagonally past the opposite corner, a path no bound sheet can take). Two things
+  this cost that the estimate above does not mention, both in decisions.md 2026-08-26: **the
+  binding clamps the drag as well as the sheet** — the anchor's distance to each gutter
+  corner can only shrink, so "the corner follows the pointer" becomes "as far as the paper
+  goes" — and **the crease cannot run past the binding**, so a deep drag saturates fully
+  turned instead of tearing the spine edge off the book.
 - The far leaf stops being "flat and undisturbed" (an explicit M20 acceptance criterion),
   because the sheet now lands on top of it, and it needs its own shadow. That criterion is
   **retired** in TASKS.md rather than quietly failed. The shadow is drawn by the renderer over

@@ -6617,3 +6617,95 @@ would show it does not exist yet. The pure model is the honest place to stop.
 
 Not touched, deliberately: `computeFold`, `drawPageFold` and the shipped ladder. The cone is
 additive and nothing calls it yet — "the renderer still swapped underneath it".
+
+## M27 — the hinge, and the four things it took to make the spine unmovable — 2026-08-26
+
+"The sheet hinges at the spine" turned out to be four findings rather than one wiring job,
+and three of them are measurements. Ruling in decisions.md 2026-08-26; this is the working
+that produced it, kept because every one of these was arrived at by probing the model
+rather than by reading it.
+
+**Starting state, measured before touching anything.** `computeConeFold` as it stood on
+2026-08-25 kept the spine fixed at the depths its tests covered, and gave up outside them.
+Dragging the bottom-right corner of a 600x800 leaf toward the top-left:
+
+| depth `t` toward the opposite corner | cone | flat model's spine movement |
+|---|---|---|
+| 0.15 / 0.35 / 0.60 | apex below the leaf, spine fixed | 0 / 0 / 0.3 px |
+| 0.85 / 1.0 / 1.4 / 1.8 | **null** — apex lands inside the leaf's span | 130 / 280 / 680 / 1080 px |
+| 2.2 (the sweep's own overshoot) | crease at −1.03 rad | 1480 px |
+
+So the whole middle of an ordinary diagonal turn fell through to `computeFold`, which moves
+the spine edge by up to a thousand pixels, and the one deep case the cone *did* answer moved
+it anyway because the crease had swept past the binding. Both holes are now closed; the same
+sweep now reports **4.5e-13 px** of spine movement and exactly zero lift, over 4764 drags
+across six anchors, two leaf sizes and both synthetic paths.
+
+**1. Where the apex is allowed to be is a statement about the drag.** `apexY = 0` is the
+locus `|P − S0| = |C − S0|`, `apexY = height` the same about the other gutter corner, so the
+legal region is the lens between two circles *through the anchor*. Mapped it on a 601x601
+grid before believing it: inside the lens, **0 of 26538** sample points produce an apex on
+the binding, for corner and edge anchors alike; inside the *home* circle alone, 16235 of
+42773 do — so the one-circle clamp that every page-flip tutorial carries is not enough here,
+and the second circle is what makes the statement exact.
+
+**2. The projection has to follow the drag, not the metric.** Two rules were built and
+measured before the third worked:
+
+| clamp rule | worst frame-to-frame motion on a diagonal sweep |
+|---|---|
+| clamp the apex to the nearer end of the span | **916 px** |
+| project the pointer onto the nearest point of the lens | **750 px** |
+| follow the drag's own direction to where it leaves the lens | 0.49 px, at a 0.49 px pointer step |
+
+Both failures are the same failure: a lens is a sliver with two tips, and "nearest" flips
+between them mid-sweep. Following the ray keeps the anchor's own direction and, because two
+circles through the anchor cut a *convex* lens with the anchor on its boundary, the exit
+point is unique and closed-form — each circle's quadratic collapses to a single root
+precisely because the anchor lies on it.
+
+**3. The far-field hand-off had to go, and what replaces it is a number with two walls.**
+Returning `null` for a square pull was correct about the geometry (the apex really is at
+infinity) and wrong about the consequence: the caller then uses `computeFold`, which is the
+model that moves the spine. Holding the apex at a finite distance `R` instead costs two
+errors that pull opposite ways, both measured on a 460x760 leaf:
+
+| `R`, in leaf diagonals | seam where the held apex swaps ends | leaf coordinates lost to cancellation |
+|---|---|---|
+| 1e3 | 1.16 px | ~1e-10 px |
+| 1e6 (shipped) | **1.2e-3 px** | **~1e-7 px** |
+| 1e12 | ~1e-9 px | 1e-4 px |
+
+Three decades of margin either side at 1e6. The residue against the flat model at a square
+pull is 2.9e-4 px, which is the `L²/2R` foreshortening of a radius measured from a held apex
+rather than from infinity — real geometry of the stand-in, not error. ⚠️ None of this
+survives **float32**: at `R = 8.9e8` a float32 apex quantises to tens of pixels. The
+renderer must deform in float64 and upload positions, not the apex.
+
+**4. `syntheticFoldPointer`'s 2.2x diagonal overshoot is a flat-model artefact and a bound
+sheet cannot follow it.** It exists because a flat crease only covers the leaf once it
+clears the diagonal. A hinge covers the leaf by turning *through* the binding instead, and
+the overshoot leaves the lens early — so the clamp holds the anchor a third of the way in
+and the turn never finishes:
+
+| path, at progress 1, corner grab, 460x760 leaf | leaf still lying flat |
+|---|---|
+| `syntheticFoldPointer` (2.2x diagonal) | **57 of 81 sample points** |
+| `syntheticHingePointer` (anchor → its mirror across the spine) | 9 of 81 — *exactly the spine column* |
+
+An **edge** grab is unaffected: that path is already square across and merely overshoots the
+mirror by 120px. Only corner grabs stall.
+
+**One thing left open on purpose.** The hinged path is square across, which is the far
+field, so a click turn animated along it is the cylinder from end to end and never shows the
+fan the cone exists for. A real thumb pulls up *and* across, which is what puts the apex a
+leaf-length off the end and fans the curl. That is a look question for whoever builds the
+renderer; the straight path is the one with a coverage proof attached, and it is the only
+claim made for it.
+
+**And one consequence worth expecting rather than debugging later.** At the end of a full
+hinged turn the anchor stops **169.6 px** short of the mirror position, because the roll is
+still eating `arc * (1 + rollEndO)` ≈ 151px of the sheet. The flat model pays for that by
+overshooting the pointer; a bound sheet cannot. The leaf is fully covered regardless, which
+is what the acceptance asks — it is the corner's resting place that is short, on the last
+frame of a turn that is about to be replaced by the real rendition anyway.
