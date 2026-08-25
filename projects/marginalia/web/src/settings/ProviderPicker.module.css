@@ -70,17 +70,15 @@
   flex: 1;
 }
 
-.toggleRow,
-.presetRow {
+.toggleRow {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
 }
 
-/* Skin comes from the shared Button kit now (M19.7) — both toggles are
-   pill-shaped rather than Button's default radius. */
-.toggleButton,
-.presetButton {
+/* Skin comes from the shared Button kit now (M19.7) — pill-shaped rather
+   than Button's default radius. */
+.toggleButton {
   border-radius: 999px;
 }
 

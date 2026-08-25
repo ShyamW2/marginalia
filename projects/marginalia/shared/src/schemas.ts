@@ -587,6 +587,50 @@ export const SetMaxResponseTokensBodySchema = z.object({
 export type SetMaxResponseTokensBody = z.infer<typeof SetMaxResponseTokensBodySchema>;
 
 // ---------------------------------------------------------------------------
+// Provider sign-in (M26 lead-in, 2026-08-25 decisions.md): an in-app "Sign
+// in" flow that spawns the same CLI login command an operator would run in a
+// terminal (`codex login --device-auth`, `claude auth login`) rather than
+// reimplementing OAuth — credentials still land wherever that CLI already
+// keeps them (`~/.codex/`, `~/.claude/`), outside the repo. Separate from
+// ProviderProfile: signing in is a machine-level action, not tied to one
+// named profile/model.
+// ---------------------------------------------------------------------------
+
+export const ProviderAuthProviderSchema = z.enum(["codex", "claude"]);
+export type ProviderAuthProvider = z.infer<typeof ProviderAuthProviderSchema>;
+
+export const ProviderAuthStatusSchema = z.object({
+  provider: ProviderAuthProviderSchema,
+  loggedIn: z.boolean(),
+  /** A human-readable detail line when known (e.g. an account email) — never
+   * required for `loggedIn` to be trustworthy. */
+  detail: z.string().nullable(),
+});
+export type ProviderAuthStatus = z.infer<typeof ProviderAuthStatusSchema>;
+
+export const ProviderAuthFlowStatusSchema = z.enum([
+  "starting",
+  "waiting",
+  "success",
+  "error",
+  "cancelled",
+]);
+export type ProviderAuthFlowStatus = z.infer<typeof ProviderAuthFlowStatusSchema>;
+
+export const ProviderAuthFlowStateSchema = z.object({
+  flowId: z.string(),
+  status: ProviderAuthFlowStatusSchema,
+  /** Parsed best-effort from the CLI's own stdout — null until (if ever)
+   * the flow's shape yields one. `lines` is the raw, ANSI-stripped output as
+   * a fallback the UI can always fall back to showing verbatim. */
+  verificationUrl: z.string().nullable(),
+  code: z.string().nullable(),
+  lines: z.array(z.string()),
+  message: z.string().nullable(),
+});
+export type ProviderAuthFlowState = z.infer<typeof ProviderAuthFlowStateSchema>;
+
+// ---------------------------------------------------------------------------
 // Usage ledger summary (M19 Usage divider — reads M17's ledger, decisions.md
 // 2026-07-28 later / 2026-07-29 later)
 // ---------------------------------------------------------------------------

@@ -572,23 +572,26 @@ directly against fabricated `ReportedUsage`.
 
 ## Blockers
 
-- **M19.7 — "Codex CLI as a fourth provider" needs `codex login` first,
-  which is the operator's call, not this session's.** `codex-cli 0.114.0`
-  is installed (`/snap/bin/codex`), but there is no `~/.codex/` directory at
-  all on this machine, confirming the task's own warning: the CLI has never
-  been run here. TASKS.md is explicit that confirming this is step one,
-  "or this task will be 'started' twice" — and the task's *next* step after
-  auth is to run one real call and read the actual JSONL event shape before
-  writing any provider code against it (the zod v3/v4 `extract` incident,
-  M4, is the standing reason not to guess a remembered API shape here).
-  Skipped rather than half-built: a provider written against a guessed
-  event shape, with no way to run it, would very likely need rewriting once
-  someone actually reads the real output — the exact mistake this task's
-  own warning exists to prevent. Every other M19.7 task was independent of
-  this one and is done; picking this back up costs nothing once
-  `codex login` has been run — start with one `codex exec --json` call
-  against a scratch prompt and write the real event shape here before
-  touching `server/src/llm/codexCli.ts`.
+- **M26 — "Codex CLI as a fourth provider" still needs a working `codex
+  login`, but the operator now has an in-app way to do it — 2026-08-25.**
+  `~/.codex/auth.json` had gone stale (401s from `api.openai.com`,
+  `codex login status` → "Not logged in") — see decisions.md 2026-08-25 for
+  the full diagnosis. Rather than send the operator back to a terminal,
+  built `server/src/llm/authFlows.ts` + `web/src/settings/ProviderAuth.tsx`:
+  a "Sign in" button in Settings → LLM → Accounts that spawns
+  `codex login --device-auth`, parses the verification URL + code out of its
+  stdout, and shows them live while polling for completion. Verified live
+  end to end (real device code obtained and rendered in the browser UI,
+  clean cancel with no dangling process) — the mechanism is proven; what's
+  still open is the operator actually completing a sign-in through it.
+  Once they have: `codex login status` should stop saying "Not logged in",
+  and M26's own next step is unchanged from before — run one real
+  `codex exec --json --sandbox read-only --ephemeral --skip-git-repo-check
+  -C <scratch dir> "..."` call, read the real success-path JSONL event
+  shape (the failure shape — `thread.started`/`turn.started`/`error`/
+  `turn.failed` — is already known from the earlier attempt, but that's not
+  what `extract()`/`stream()` need to be built against), write it here, and
+  only then touch `server/src/llm/codexCli.ts`.
 - ~~**M17.5 — no `claude` CLI in this environment.**~~ **Resolved, was a
   wrong test.** This session initially reported `which claude` → not found
   and concluded the subscription path couldn't be verified live. The
@@ -6334,3 +6337,79 @@ other:
 window moved and reopened, a question asked with the model chosen in the editor, and the page
 fold peeling from every corner with the new chrome mounted. This session only drove §G; those
 boxes are left unchecked rather than checked on the strength of §D/E/F's own prior sessions.
+
+## M26 lead-in — an in-app "Sign in" for Codex/Claude, so the blocker doesn't need a terminal — 2026-08-25
+
+Picked up M26 ("Codex CLI as a fourth provider"). Its own gate — confirm `codex login`
+first, "or this task will be 'started' twice" — was still unmet, in a new shape from the
+2026-07-30 attempt: `~/.codex/auth.json` now existed but had gone stale (a live
+`codex exec --json` call returned five `401 Unauthorized` reconnects then `turn.failed`;
+`codex login status` said "Not logged in"). Logged the diagnosis in Blockers and stopped
+short of writing `server/src/llm/codexCli.ts` — TASKS.md's own warning is not to guess a
+success-path JSONL shape, and everything seen so far was the *failure* shape.
+
+Asked the operator how to proceed; they asked for something more durable than "go run a
+CLI command and come back" — an in-app sign-in, "runs the same cli stuff ideally," with
+anything stored kept as securely out of the repo as a `.env`. Full reasoning in
+decisions.md 2026-08-25. Built and verified live:
+
+- **`server/src/llm/authFlows.ts`** — spawns the real login command
+  (`codex login --device-auth`, `claude auth login`), strips ANSI, parses a verification
+  URL and code where the output has one (kept the raw lines as an always-available
+  fallback for whichever shape doesn't), and polls the child's exit for success/error.
+  Also a read-only `checkAuthStatus` (`codex login status` / `claude auth status`, the
+  latter genuinely `--json`-shaped and safe to have actually run — see below) and a
+  `logout`. One flow per provider at a time; a 17-minute timeout past Codex's own
+  15-minute code expiry; finished flows self-sweep after 5 minutes.
+- **`server/src/routes/providerAuth.ts`** + shared schemas (`ProviderAuthStatus`,
+  `ProviderAuthFlowState`) — status/login/poll/cancel/logout, mounted at
+  `/api/provider-auth`.
+- **`web/src/settings/ProviderAuth.tsx`** — an "Accounts" card above the two role
+  pickers in Settings → LLM (signing in is machine-level, not tied to one profile):
+  status line per provider, Sign in/Sign out, and — while a flow is live — the URL as a
+  real link, the code in a monospace chip, and a Cancel button, polling every 1.5s.
+
+**Verified live, not just built.** `curl`'d the raw API first (`POST .../codex/login` →
+real device code `B6DD-30SQ4` and the real `https://auth.openai.com/codex/device` URL,
+parsed correctly; `DELETE .../login/:id` killed the child cleanly — `ps aux` showed
+nothing left running). Then drove the actual dev server in a real browser (Playwright,
+same ad hoc Chromium install prior sessions used) against `/settings`: the Accounts card
+renders both providers' real status (Codex "Not signed in", Claude "Connected —
+wijayw@gmail.com (pro)" — this machine's own live Claude Code login, read via
+`claude auth status`, confirmed safe to call because it's read-only), clicking "Sign in"
+on Codex produced a fresh real device code rendered in the panel exactly as the raw
+`curl` test predicted, and Cancel returned to "Not signed in" with the child reaped.
+
+**Deliberately not run: `claude auth login`.** This machine's Claude Code login is live
+and this very session depends on *some* `claude` CLI credential store — running an
+unverified login flow against it for a code path Claude doesn't currently need (it
+already works here) wasn't a risk worth taking just to test symmetry. The server-side
+plumbing is identical for both providers; only Claude's real stdout shape is unverified.
+
+**Still open, and still the actual next step for M26**: the operator signing in through
+this UI, then — per the standing rule — one real `codex exec --json` call against a
+signed-in account, its success-path event shape written here, and only then
+`server/src/llm/codexCli.ts`. Nothing about this session's work substitutes for that.
+
+**Follow-up, same session: asked where the sign-in data (and thread answers generally)
+are stored, and how that's kept secure given this repo is on GitHub.** Answered from
+what's actually verified — thread content lives in the gitignored
+`data/marginalia.sqlite`, confirmed via `git log --all` that path has never once been
+committed; the sign-in tokens from today's feature never touch this repo's code at all,
+landing in `~/.codex/auth.json` / `~/.claude/.credentials.json` entirely outside it. Two
+gaps surfaced, kept distinct: `docs/SHIPPING.md`'s pre-existing, already-documented "no
+auth on the API at all" (a whole-app property, not something this session's work changed
+either way — see that doc's "Private" rung for the accepted fix), and one real gap this
+feature itself introduced — `authFlows.ts`'s captured `lines` are served over that same
+unauthenticated API, and Claude's stdout shape (unlike Codex's) was never verified clean.
+Operator asked for the fix: added `redactSecrets()` (decisions.md 2026-08-25 has the
+full reasoning) — a labelled-secret line is replaced whole, an unlabelled long opaque
+blob is partially masked, both applied inside `linesFrom()` so nothing downstream ever
+sees the unredacted form. Re-verified live against the real device-code flow afterward
+(fresh `codex login` call via `curl`) that the fix doesn't collateral-damage the one
+legitimate secret-shaped output the feature needs to show — URL and code both came
+through unredacted, `ps aux` clean after cancel. 12/12 `authFlows.test.ts` tests pass,
+`pnpm build` clean, server package 321/321. (One web-package test,
+`App.test.tsx`'s "renders the library route by default", failed only in the full
+parallel `pnpm -r test` run and passed clean in isolation both before and after this
+change — a pre-existing flake, unrelated to this file.)

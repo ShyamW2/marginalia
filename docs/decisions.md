@@ -3,6 +3,61 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-25 — M26 lead-in: an in-app "Sign in" for Codex/Claude
+
+Operator call, raised when M26 ("Codex CLI as a fourth provider") turned out to be
+blocked on `codex login` a second time — the credentials NOTES.md's 2026-07-30 blocker
+recorded as "never set up" had since been attempted and gone stale (401s, `codex login
+status` → "Not logged in"). Rather than the operator dropping to a terminal again, they
+asked for a friendlier, in-app sign-in that "runs the same CLI stuff ideally," with
+anything it stores kept as securely out of the repo as a `.env`.
+
+Shape decided: **shell out to the real login command, don't reimplement OAuth.**
+`server/src/llm/authFlows.ts` spawns `codex login --device-auth` / `claude auth login`
+exactly as an operator would type them, streams the stdout back (ANSI-stripped, parsed
+for a verification URL and a short code where the shape provides one, raw lines kept as
+a fallback), and polls the child process for its exit. Nothing new to gitignore: the
+credentials still land wherever each CLI already keeps them (`~/.codex/`, `~/.claude/`),
+never in this repo — the whole point of shelling out to the real thing rather than
+building a parallel token store.
+
+`--device-auth` (not the plain browser flow) is the deliberate choice for Codex: it
+prints a URL + code to visit in *any* browser and blocks polling with no local callback
+server, which is what makes it work when the server's machine and the browser's machine
+differ — true today of this project's own two-machine Mac/Linux setup. Verified live
+2026-08-25: real device code obtained, parsed correctly into the UI, cancelled cleanly
+(child process reaped, no dangling `codex login`).
+
+**Claude's `claude auth login` was deliberately never smoke-tested.** This machine's
+Claude Code login was live and working (this is a Claude Code session); running an
+untested login flow against it risked clobbering real, working credentials for the sake
+of verifying a code path this milestone doesn't strictly need yet (Claude already works
+here). The server-side plumbing is symmetric and ready — same spawn, same generic
+regex-based parsing, same raw-lines fallback — but its real output shape is unverified
+until someone runs it somewhere it's safe to.
+
+Deliberately kept separate from `ProviderProfile`: signing in is a machine-level action
+(one Codex account, one Claude account per machine), not a named, reusable per-role
+config the way a profile is — so no `provider_profiles` schema/migration change, no new
+`codex-cli` entry in `LLMProviderIdSchema` yet. That still waits on M26's own next step:
+run one real `codex exec --json` call against a signed-in account and read the actual
+success-path JSONL event shape before writing `server/src/llm/codexCli.ts` — this
+sign-in flow only clears the blocker that step was stuck behind.
+
+**Same day, follow-up: redaction on the captured stdout.** Asked where sign-in data
+lands and how it's kept secure for other users cloning the repo. Answer surfaced one
+real gap from this feature specifically (distinct from `docs/SHIPPING.md`'s pre-existing,
+already-documented "no auth on the API at all" gap, which this doesn't touch): `flow.lines`
+— the raw stdout `authFlows.ts` keeps for the UI's fallback rendering — is served verbatim
+over that same unauthenticated local API. Codex's shape is verified clean (banner, URL,
+code, a phishing warning, nothing else); Claude's was deliberately never smoke-tested, so
+nothing actually guaranteed it never would be. Added `redactSecrets()`: a labelled-secret
+line (`access_token: …`, `Bearer …`, etc.) is replaced whole; any other 24+ character
+opaque blob is partially masked. Both the device code (10 chars) and the verification URL
+(broken into short pieces by `.`/`/`) sit well clear of that shape and were confirmed live
+to still come through — the fix doesn't cost the feature its one legitimate secret-shaped
+line.
+
 ## 2026-08-23 — The shipping rungs are named, not numbered; Private is next
 
 SHIPPING.md's ladder was numbered 0–4 with a `2.5` wedged in after the fact. Three problems

@@ -1,3 +1,4 @@
+import { ProviderAuth } from "../ProviderAuth.js";
 import { ProviderPicker } from "../ProviderPicker.js";
 import styles from "../SettingsPage.module.css";
 
@@ -19,6 +20,7 @@ export function LLMTab() {
         to be Claude. The name shown next to an answer comes from the endpoint you
         configured here, never from what the model itself says it is.
       </p>
+      <ProviderAuth />
       <ProviderPicker role="query" variant="full" />
       <ProviderPicker role="digest" variant="full" />
     </>

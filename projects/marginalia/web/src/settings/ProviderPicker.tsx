@@ -3,7 +3,6 @@ import {
   MAX_RESPONSE_TOKENS_MAX,
   MAX_RESPONSE_TOKENS_MIN,
   type CreateProviderProfileBody,
-  type LLMProviderId,
   type ProviderProfile,
   type ProviderRole,
   type UpdateProviderProfileBody,
@@ -56,12 +55,6 @@ const ROLE_COPY: Record<ProviderRole, { label: string; hint: string }> = {
   },
 };
 
-const BASE_URL_PRESETS = [
-  { label: "OpenRouter", value: "https://openrouter.ai/api/v1" },
-  { label: "Ollama (local)", value: "http://localhost:11434/v1" },
-  { label: "LM Studio (local)", value: "http://localhost:1234/v1" },
-];
-
 const NEW_PROFILE_VALUE = "__new__";
 
 type Draft = CreateProviderProfileBody & Partial<UpdateProviderProfileBody>;
@@ -84,6 +77,133 @@ function draftFromProfile(profile: ProviderProfile): Draft {
   return { ...profile };
 }
 
+// 2026-08-25: "how the provider list is organized" was flattened from one
+// row of three raw provider ids (which of the app's four seams, LLMProvider
+// implementations) into how a reader actually thinks about the choice —
+// how it's billed — with the concrete provider one step in. Two of the
+// three billing categories fan out to the *same* `openai-compatible` seam
+// under the hood (a base-URL preset, nothing more); "Local" isn't a fourth
+// seam, just that seam pointed at localhost. `codex-cli` doesn't exist yet
+// (M26, blocked on capturing a real event shape — see NOTES.md) — its two
+// tiles are shown so the taxonomy reads as the target shape, not a partial
+// one, but disabled rather than half-wired: selecting one can't write a
+// `provider` value `getProvider()` (llm/provider.ts) has no case for.
+const OPENAI_HOSTED_URL = "https://api.openai.com/v1";
+const GEMINI_HOSTED_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
+const OPENROUTER_URL = "https://openrouter.ai/api/v1";
+const OLLAMA_URL = "http://localhost:11434/v1";
+const LMSTUDIO_URL = "http://localhost:1234/v1";
+const HOSTED_PRESET_URLS = new Set([OPENAI_HOSTED_URL, GEMINI_HOSTED_URL, OPENROUTER_URL]);
+const LOCAL_PRESET_URLS = new Set([OLLAMA_URL, LMSTUDIO_URL]);
+
+// A per-endpoint hint for the Model field below — cosmetic, falls back to
+// today's generic placeholder for "Other"/a profile from before this
+// existed, never validated against.
+const MODEL_PLACEHOLDER: Record<string, string> = {
+  [OPENAI_HOSTED_URL]: "gpt-5.1",
+  [GEMINI_HOSTED_URL]: "gemini-2.5-pro",
+  [OPENROUTER_URL]: "anthropic/claude-opus-4-8",
+  [OLLAMA_URL]: "llama3.3",
+  [LMSTUDIO_URL]: "llama-3.3-70b",
+};
+
+type BillingCategory = "subscription" | "hosted" | "local";
+
+const CATEGORY_ORDER: BillingCategory[] = ["subscription", "hosted", "local"];
+
+const CATEGORY_COPY: Record<BillingCategory, { label: string; hint: string }> = {
+  subscription: {
+    label: "Prepaid subscription",
+    hint: "Billed against a plan you already pay for — no per-token cost.",
+  },
+  hosted: {
+    label: "Pay-per-use API",
+    hint: "A hosted endpoint, billed per token against your own API key.",
+  },
+  local: {
+    label: "Local",
+    hint: "Runs on this machine or your LAN — no cloud, no account.",
+  },
+};
+
+interface ProviderOption {
+  key: string;
+  label: string;
+  disabled?: boolean;
+  /** Applied as `{...draft, ...patch}` in one write — never as two separate
+   * `set()` calls, which would each read the same stale `draft` closure and
+   * silently drop whichever field the other one touched. */
+  patch: Partial<Draft>;
+  active: (draft: Draft) => boolean;
+}
+
+function openaiCompatOption(key: string, label: string, url: string): ProviderOption {
+  return {
+    key,
+    label,
+    patch: { provider: "openai-compatible", openaiBaseUrl: url },
+    active: (draft) => draft.provider === "openai-compatible" && (draft.openaiBaseUrl ?? "") === url,
+  };
+}
+
+const CODEX_COMING_SOON: Omit<ProviderOption, "key" | "label"> = {
+  disabled: true,
+  patch: {},
+  active: () => false,
+};
+
+const PROVIDER_OPTIONS: Record<BillingCategory, ProviderOption[]> = {
+  subscription: [
+    {
+      key: "claude-agent",
+      label: "Anthropic — Claude",
+      patch: { provider: "claude-agent" },
+      active: (draft) => draft.provider === "claude-agent",
+    },
+    { key: "codex-subscription", label: "OpenAI — Codex", ...CODEX_COMING_SOON },
+  ],
+  hosted: [
+    {
+      key: "anthropic",
+      label: "Anthropic",
+      patch: { provider: "anthropic" },
+      active: (draft) => draft.provider === "anthropic",
+    },
+    openaiCompatOption("openai-hosted", "OpenAI", OPENAI_HOSTED_URL),
+    openaiCompatOption("gemini", "Google Gemini", GEMINI_HOSTED_URL),
+    openaiCompatOption("openrouter", "OpenRouter", OPENROUTER_URL),
+    { key: "codex-hosted", label: "Codex", ...CODEX_COMING_SOON },
+    {
+      key: "other-hosted",
+      label: "Other",
+      patch: { provider: "openai-compatible", openaiBaseUrl: "" },
+      active: (draft) =>
+        draft.provider === "openai-compatible" &&
+        !HOSTED_PRESET_URLS.has(draft.openaiBaseUrl ?? "") &&
+        !LOCAL_PRESET_URLS.has(draft.openaiBaseUrl ?? ""),
+    },
+  ],
+  local: [
+    openaiCompatOption("ollama", "Ollama", OLLAMA_URL),
+    openaiCompatOption("lmstudio", "LM Studio", LMSTUDIO_URL),
+    {
+      key: "other-local",
+      label: "Other local server",
+      patch: { provider: "openai-compatible", openaiBaseUrl: "" },
+      active: (draft) =>
+        draft.provider === "openai-compatible" &&
+        !LOCAL_PRESET_URLS.has(draft.openaiBaseUrl ?? "") &&
+        !HOSTED_PRESET_URLS.has(draft.openaiBaseUrl ?? ""),
+    },
+  ],
+};
+
+function categoryFromDraft(draft: Draft): BillingCategory {
+  if (draft.provider === "claude-agent") return "subscription";
+  if (draft.provider === "anthropic") return "hosted";
+  return LOCAL_PRESET_URLS.has(draft.openaiBaseUrl ?? "") ? "local" : "hosted";
+}
+
 interface ProviderFieldsProps {
   draft: Draft;
   onChange: (draft: Draft) => void;
@@ -94,8 +214,28 @@ interface ProviderFieldsProps {
  * used, now shared by every profile editor (create or edit) instead of
  * living once per role. */
 function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
+  // Local, not lifted: ProviderFields remounts fresh per edit session (the
+  // parent's `editing` toggle unmounts it between "Edit" clicks — see
+  // ProviderPicker below), so a lazy initializer derived once from the
+  // draft that's already there is correct and never goes stale.
+  const [category, setCategory] = useState<BillingCategory>(() => categoryFromDraft(draft));
+
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     onChange({ ...draft, [key]: value });
+  }
+
+  function selectCategory(next: BillingCategory) {
+    setCategory(next);
+    // Land on a real, working selection immediately rather than a category
+    // shown with no provider tile active yet — the first non-disabled
+    // option is as good a default as any.
+    const first = PROVIDER_OPTIONS[next].find((option) => !option.disabled);
+    if (first) onChange({ ...draft, ...first.patch });
+  }
+
+  function selectProvider(option: ProviderOption) {
+    if (option.disabled) return;
+    onChange({ ...draft, ...option.patch });
   }
 
   return (
@@ -113,24 +253,39 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
         />
       </div>
       <div className={styles.field}>
-        <label className={styles.label}>Provider</label>
-        <div className={styles.toggleRow} role="group" aria-label="Provider">
-          {(
-            [
-              { value: "claude-agent", label: "Claude (subscription)" },
-              { value: "anthropic", label: "Anthropic API key" },
-              { value: "openai-compatible", label: "OpenAI-compatible" },
-            ] satisfies { value: LLMProviderId; label: string }[]
-          ).map((option) => (
+        <label className={styles.label}>Billing</label>
+        <div className={styles.toggleRow} role="group" aria-label="Billing">
+          {CATEGORY_ORDER.map((cat) => (
             <Button
-              key={option.value}
+              key={cat}
               variant="outline"
               size="sm"
               className={styles.toggleButton}
-              pressed={draft.provider === option.value}
-              onClick={() => set("provider", option.value)}
+              pressed={category === cat}
+              onClick={() => selectCategory(cat)}
+            >
+              {CATEGORY_COPY[cat].label}
+            </Button>
+          ))}
+        </div>
+        <p className={styles.hint}>{CATEGORY_COPY[category].hint}</p>
+      </div>
+      <div className={styles.field}>
+        <label className={styles.label}>Provider</label>
+        <div className={styles.toggleRow} role="group" aria-label="Provider">
+          {PROVIDER_OPTIONS[category].map((option) => (
+            <Button
+              key={option.key}
+              variant="outline"
+              size="sm"
+              className={styles.toggleButton}
+              pressed={option.active(draft)}
+              disabled={option.disabled}
+              title={option.disabled ? "Coming soon — needs M26's Codex CLI provider" : undefined}
+              onClick={() => selectProvider(option)}
             >
               {option.label}
+              {option.disabled ? " (coming soon)" : ""}
             </Button>
           ))}
         </div>
@@ -192,22 +347,6 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
       {draft.provider === "openai-compatible" && (
         <>
           <div className={styles.field}>
-            <label className={styles.label}>Base URL preset</label>
-            <div className={styles.presetRow}>
-              {BASE_URL_PRESETS.map((preset) => (
-                <Button
-                  key={preset.label}
-                  variant="outline"
-                  size="sm"
-                  className={styles.presetButton}
-                  onClick={() => set("openaiBaseUrl", preset.value)}
-                >
-                  {preset.label}
-                </Button>
-              ))}
-            </div>
-          </div>
-          <div className={styles.field}>
             <label className={styles.label} htmlFor={`${idPrefix}-openai-base-url`}>
               Base URL
             </label>
@@ -216,9 +355,13 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
               className={styles.input}
               type="text"
               value={draft.openaiBaseUrl ?? ""}
-              placeholder="https://openrouter.ai/api/v1"
+              placeholder="https://api.your-provider.com/v1"
               onChange={(e) => set("openaiBaseUrl", e.target.value)}
             />
+            <p className={styles.hint}>
+              Set by the provider tile above — edit directly for anything without one (GLM,
+              Kimi, a self-hosted proxy, ...).
+            </p>
           </div>
           <div className={styles.field}>
             <label className={styles.label} htmlFor={`${idPrefix}-openai-model`}>
@@ -229,7 +372,7 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
               className={styles.input}
               type="text"
               value={draft.openaiModel ?? ""}
-              placeholder="e.g. anthropic/claude-opus-4-8, llama3, ..."
+              placeholder={MODEL_PLACEHOLDER[draft.openaiBaseUrl ?? ""] ?? "e.g. anthropic/claude-opus-4-8, llama3, ..."}
               onChange={(e) => set("openaiModel", e.target.value)}
             />
           </div>
