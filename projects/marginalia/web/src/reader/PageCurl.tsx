@@ -6,6 +6,7 @@ import {
   leafSourceRect,
   samplePaperColor,
   type FoldAnchor,
+  type LeafFace,
   type Point,
 } from "./pageFold.js";
 import styles from "./PageCurl.module.css";
@@ -33,6 +34,20 @@ interface PageCurlProps {
    * programmatic (click/keyboard) turn updates the same ref from a Motion
    * `animate()` callback instead. */
   getPointer: () => Point;
+  /**
+   * The **back** of the turning sheet: the post-advance card's bitmap and
+   * which half of it the back page occupies (M27, decisions.md 2026-08-03
+   * "sign-off"). `null` until that capture lands, and the fold paints the
+   * pre-M27 mirror until it does — a designed transitional state, not a
+   * fallback for failure, though it is also what a failed capture leaves.
+   *
+   * A function read once per frame rather than a prop for the same reason
+   * `getPointer` is one, and for a second, sharper reason: this arrives
+   * *mid-fold*. Every dep of the draw effect is fixed for the lifetime of a
+   * turn, so passing the bitmap as a prop would remount the canvas and
+   * restart the gesture at the exact moment the reader is peeling it.
+   */
+  getBack?: () => { image: HTMLCanvasElement; leafX: number } | null;
   /**
    * Reported once, on unmount, with the **median cost of one `drawPageFold`
    * call** over this mount — how `usePageTurnAnimation` decides to trip the
@@ -73,6 +88,7 @@ export function PageCurl({
   leafX,
   stageWidth,
   getPointer,
+  getBack,
   onDrawCost,
 }: PageCurlProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -80,6 +96,8 @@ export function PageCurl({
   // React re-render — the canvas is the only thing that moves.
   const getPointerRef = useRef(getPointer);
   getPointerRef.current = getPointer;
+  const getBackRef = useRef(getBack);
+  getBackRef.current = getBack;
   const onDrawCostRef = useRef(onDrawCost);
   onDrawCostRef.current = onDrawCost;
 
@@ -113,7 +131,19 @@ export function PageCurl({
     const arc = curlArcLength(leafWidth, leafHeight);
     // The bitmap is of the whole card; in spread mode only half of it is the
     // leaf that turns.
-    const source = leafSourceRect(image.width, image.height, leafX, leafWidth, stageWidth);
+    const front: LeafFace = {
+      image,
+      source: leafSourceRect(image.width, image.height, leafX, leafWidth, stageWidth),
+      flipX: false,
+    };
+
+    // Built once, the first frame the back's bitmap is there, and reused
+    // after — `leafSourceRect` is arithmetic but the face is not worth
+    // rebuilding 60x a second. Keyed on the bitmap's identity because that
+    // is the only thing about it that can change within a turn: it arrives
+    // once and is then fixed.
+    let backFace: LeafFace | null = null;
+    let backImage: HTMLCanvasElement | null = null;
 
     function tick() {
       if (cancelled || !ctx || !layerCtx || !canvas) return;
@@ -122,10 +152,36 @@ export function PageCurl({
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       layerCtx.clearRect(0, 0, layer.width, layer.height);
       const pointer = getPointerRef.current();
+      const supplied = getBackRef.current?.() ?? null;
+      if (supplied && supplied.image !== backImage) {
+        backImage = supplied.image;
+        backFace = {
+          image: supplied.image,
+          source: leafSourceRect(
+            supplied.image.width,
+            supplied.image.height,
+            supplied.leafX,
+            leafWidth,
+            stageWidth,
+          ),
+          flipX: true,
+        };
+      }
       const fold = computeFold(anchor, pointer, leafWidth, leafHeight, arc);
       if (fold) {
         const startedAt = performance.now();
-        drawPageFold(ctx, layerCtx, image, source, fold, leafWidth, leafHeight, dpr, paper);
+        // `back` is null until the second capture lands; `drawPageFold`
+        // paints the pre-M27 mirror for exactly as long as it is.
+        drawPageFold(
+          ctx,
+          layerCtx,
+          { front, back: backFace },
+          fold,
+          leafWidth,
+          leafHeight,
+          dpr,
+          paper,
+        );
         drawCosts.push(performance.now() - startedAt);
       }
       raf = requestAnimationFrame(tick);

@@ -27,7 +27,8 @@ closed-form, no mesh, no WebGL.
 | File | Role |
 |---|---|
 | `web/src/reader/pageFold.ts` | All the geometry and all the painting. Pure except `drawPageFold`/`samplePaperColor`. |
-| `web/src/reader/pageFold.test.ts` | 23 tests. The load-bearing ones are named in §3. |
+| `web/src/reader/pageFold.test.ts` | The geometry. The load-bearing ones are named in §3. |
+| `web/src/reader/foldFaces.test.ts` | M27's two faces: which bitmap each region samples, the spine-side registration, and that the paper wash reaches only a stand-in back. Drives `drawPageFold` through a transform-recording fake, jsdom having no 2D context. |
 | `web/src/reader/PageCurl.tsx` | Owns the two canvases and the rAF loop; mounts only while a fold is live. |
 | `web/src/reader/PageSlide.tsx` | The *other* renderer (M20 step 3): the departing card as one decoded `<img>`, held still while `.marginWrapper` translates over it. No canvas, no rAF loop — deliberately, see §3. |
 | `web/src/reader/usePageTurnAnimation.ts` | Snapshot capture, drag gesture, commit/spring-back, low-fps downgrade. |
@@ -91,7 +92,8 @@ is the degenerate case of the new one**, which is why the amendment cost no arch
 | `HIDDEN_PX_PER_BAND` | 40 | Device px per band on the overdrawn near half. |
 | `LIGHT_O` / `LIGHT_Z` | 0.28 / 0.96 | Light direction in the fold's (offset, height) plane. |
 | `AMBIENT` | 0.66 | Floor on the diffuse term. Deliberately high — lit paper, not a matte sphere. |
-| `SHOW_THROUGH` | 0.20 | How much of the print ghosts through the back of the sheet. |
+| `SHOW_THROUGH` | 0.20 | How much of the print ghosts through the back of the sheet — **only when the back is the front standing in for it** (M27). |
+| `BACK_LIFT` | 0.34 | How far a **real** back goes toward the sheet's lit paper colour (M27). Not a ghosting term: it is the material, and it is what keeps the dark themes' tail reading as paper rather than as a hole. |
 | `backOfSheet` lift | `0.05 + 0.38 × (1 − lum)` | How far the back lifts toward white. Scales with theme darkness. |
 | `sheenScale` | `0.1 + 0.75 × (1 − lum)` | Highlight on the roll's edge. Carries the whole depth cue in dark themes. |
 | `TAIL_SHADOW_*` | 0.34 / 15px | Flap's shadow on the page it floats over. |
@@ -229,7 +231,7 @@ What it costs, concretely:
 
 This is the item most likely to be worth doing and most likely to be under-estimated.
 
-### (e) "The back of the sheet should be the leaf's real other side" — new 2026-08-03
+### (e) "The back of the sheet should be the leaf's real other side" — **built 2026-08-25**
 
 Raised at the operator's sign-off, and **physically exact**: a leaf is one sheet with two
 sides, so in a spread showing 10|11 the right leaf's back is **12** and the left leaf's back
@@ -246,9 +248,31 @@ epub.js instance.
 **It does not touch the geometry.** The tail keeps `alpha = -1`, because a real book's back
 page *is* mirror-reversed when you fold the sheet toward you; only the sampled bitmap changes.
 So this is a capture-and-sampling job, it is independent of (c) and (d), and it can be done
-without ever revisiting the fold's shape. Ruling and the two open ⚠️s (capture timing, and
-re-tuning `SHOW_THROUGH`/`backOfSheet`/`sheenScale` against real content) are in decisions.md
-2026-08-03 "sign-off"; the work is TASKS.md M27 (M25 before the 2026-08-12 renumbering).
+without ever revisiting the fold's shape. Ruling in decisions.md 2026-08-03 "sign-off".
+
+**Built 2026-08-25**, and both of that entry's ⚠️s were answered by measuring rather than by
+choosing — the readings are in NOTES.md "M27 — when the back of the sheet is first visible"
+and "M27 — the back, re-judged in the harness". In short:
+
+- A leaf now has **two faces** (`SheetFaces`). Everything front-facing draws from `front`;
+  the two back-facing regions — the roll's far half and the tail — draw from `back`.
+- The back is the **post-advance card**, flipped about the leaf's vertical centre line
+  (`LeafFace.flipX`). That flip is a *registration* fact and not the fold's mirroring: the
+  two faces of one sheet do not share a coordinate frame, because turning a leaf over swaps
+  which side of the spread its spine is on. `readerGeometry.ts`'s `farLeafRect` is where the
+  half is chosen.
+- **The second capture is raced, not awaited.** The tail — the only back-facing region that
+  can carry readable text — does not exist until `0.582 x arc` of pointer travel, which is
+  ~67ms into a click turn and ~98 CSS px into a drag, against a ~22ms capture. `back` is
+  `null` until it lands and the fold paints the old mirror meanwhile.
+- **`SHOW_THROUGH`'s wash turned out to belong to the fake back**, not to backs in general,
+  and dropping it for a real one cost the dark themes their depth cue — hence `BACK_LIFT`.
+  See the NOTES entry; this is the part a later session would otherwise undo by "simplifying"
+  the two fills into one.
+
+Still open, and the operator's to call at the M27 Verify: whether the real back reads better
+than the mirror did, and what to do about **single-page mode's doubling** — one turn advances
+one page, so there the leaf's back and the page revealed under it are the same page.
 
 ---
 
@@ -534,6 +558,7 @@ open http://localhost:5173/harness/pageFold.html
 open 'http://localhost:5173/harness/pageFold.html?theme=all'
 open 'http://localhost:5173/harness/pageFold.html?only=drag-50&w=620&h=860'
 open 'http://localhost:5173/harness/pageFold.html?arc=1.6'   # exaggerate the roll
+open 'http://localhost:5173/harness/pageFold.html?back=mirror'  # M27: the pre-M27 back, to compare
 
 # Tests and typecheck.
 cd projects/marginalia/web && npx vitest run src/reader/pageFold.test.ts

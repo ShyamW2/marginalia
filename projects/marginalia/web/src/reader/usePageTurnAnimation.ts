@@ -25,7 +25,7 @@ import {
   type FoldAnchor,
   type Point,
 } from "./pageFold.js";
-import { nearLeafRect } from "./readerGeometry.js";
+import { farLeafRect, nearLeafRect } from "./readerGeometry.js";
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
@@ -174,6 +174,9 @@ export function usePageTurnAnimation({
   /** A drag is in flight — keep the grab surface mounted (see below). */
   gestureActive: boolean;
   getFoldPointer: () => Point;
+  /** The back of the turning sheet, or null while its capture is in flight
+   * (M27). Sampled per frame by `PageCurl`; see `backCardRef`. */
+  getFoldBack: () => { image: HTMLCanvasElement; leafX: number } | null;
   handleDrawCost: (medianDrawMs: number, samples: number) => void;
   turnPage: (direction: "prev" | "next") => Promise<void>;
   /** M21 (AUDIO.md: "the slide, not M10's curl" for auto-turn-while-listening
@@ -215,6 +218,17 @@ export function usePageTurnAnimation({
   // once against this scalar and read by whichever renderer is mounted.
   const turnProgress = useMotionValue(0);
   const pointerRef = useRef<Point>({ x: 0, y: 0 });
+  /**
+   * The back of the turning sheet — the post-advance card and which half of
+   * it the back page is (M27). Sampled per frame by `PageCurl` for the same
+   * reason `pointerRef` is: it lands *during* a fold, and a prop would
+   * remount the canvas mid-gesture.
+   *
+   * Cleared by `beginBackCapture` at the top of every turn, so a capture
+   * that lands after its own fold has ended can never print the wrong page
+   * on the next one.
+   */
+  const backCardRef = useRef<{ image: HTMLCanvasElement; leafX: number } | null>(null);
   const [curl, setCurl] = useState<PageCurlState | null>(null);
   const [slide, setSlide] = useState<PageSlideState | null>(null);
   // True from pointer-down to the gesture's one exit. The caller keeps the
@@ -224,6 +238,7 @@ export function usePageTurnAnimation({
   const [gestureActive, setGestureActive] = useState(false);
 
   const getFoldPointer = useCallback(() => pointerRef.current, []);
+  const getFoldBack = useCallback(() => backCardRef.current, []);
 
   /**
    * The one capture, shared by both renderers: `pageSnapshot`'s bitmap of the
@@ -268,6 +283,52 @@ export function usePageTurnAnimation({
     if (!image) return null;
     return { image, cardRect: parts.cardRect, contentWidth: parts.contentWidth };
   }, [captureCardParts]);
+
+  /**
+   * Every turn takes a fresh token, and taking one clears the back of the
+   * sheet. A second capture that resolves after its own fold has ended is
+   * then dropped instead of printing the previous turn's page onto whatever
+   * fold is live now — the one way this could show visibly wrong content.
+   */
+  const backTurnRef = useRef(0);
+  const beginTurn = useCallback(() => {
+    backCardRef.current = null;
+    return ++backTurnRef.current;
+  }, []);
+
+  /**
+   * The **second** capture: the post-advance card, which is the back of the
+   * sheet currently lifting (M27, decisions.md 2026-08-03 "sign-off"). Only
+   * meaningful once the rendition has stepped, because that is what puts the
+   * back page on screen — there is no hidden rendition and no second epub.js
+   * instance.
+   *
+   * **Deliberately not awaited, and that call was measured rather than
+   * guessed** (NOTES.md "M27 — when the back is first visible"). The capture
+   * costs ~22ms; the first back-facing *tail* pixel — the flat surface where
+   * readable back-page text can land — does not exist until the fold pointer
+   * has travelled `0.582 x arc` from the anchor, which is frame 4 (~67ms)
+   * into a 420ms click/keyboard sweep and ~98 CSS px of travel in a drag. So
+   * the capture wins the race with room to spare, and blocking the grab on
+   * it would cost every reader 22ms of latency to avoid a state they cannot
+   * see. Until it lands the fold paints the pre-M27 mirror.
+   */
+  const captureBackOfSheet = useCallback(
+    (token: number, direction: "prev" | "next", cardRect: DOMRect, contentWidth: number) => {
+      void captureCard().then((back) => {
+        if (!back || backTurnRef.current !== token) return;
+        const far = farLeafRect(
+          cardRect.width,
+          cardRect.height,
+          contentWidth,
+          spreadMode,
+          direction,
+        );
+        backCardRef.current = { image: back.image, leafX: far.x };
+      });
+    },
+    [captureCard, spreadMode],
+  );
 
   /**
    * The slide's departing card: the same capture, decoded but *not*
@@ -459,6 +520,7 @@ export function usePageTurnAnimation({
       const rendition = renditionRef.current;
       if (!rendition) return;
 
+      const token = beginTurn();
       const card = await captureCard();
       if (!card) {
         await turnPageSlide(direction);
@@ -499,6 +561,11 @@ export function usePageTurnAnimation({
         // the snapshot is still covering the stage at full opacity.
         await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
+        // The stage is now showing the destination spread, so the back of
+        // the sheet is capturable. Fired here, unawaited, so it races the
+        // sweep rather than delaying it.
+        captureBackOfSheet(token, direction, cardRect, card.contentWidth);
+
         await withDeadline(
           animate(turnProgress, 1, {
             duration: 0.42,
@@ -513,7 +580,7 @@ export function usePageTurnAnimation({
         setCurl(null);
       }
     },
-    [turnProgress, turnPageSlide, spreadMode, captureCard],
+    [turnProgress, turnPageSlide, spreadMode, captureCard, beginTurn, captureBackOfSheet],
   );
 
   /**
@@ -630,6 +697,7 @@ export function usePageTurnAnimation({
 
       turnLockRef.current = true;
       setGestureActive(true);
+      const token = beginTurn();
       const cardRect = card.getBoundingClientRect();
       const contentWidth = container.getBoundingClientRect().width;
       const leaf = nearLeafRect(
@@ -720,6 +788,10 @@ export function usePageTurnAnimation({
         if (direction === "prev") await activeRendition.prev();
         else await activeRendition.next();
         advanced = true;
+        // The stage now shows the destination spread; the sheet the reader
+        // is holding has its real other side on it. The slide has no back
+        // face to print, so it does not pay for this.
+        if (!useSlide) captureBackOfSheet(token, direction, cardRect, contentWidth);
       });
 
       const onMove = (moveEvent: PointerEvent) => {
@@ -906,6 +978,8 @@ export function usePageTurnAnimation({
       captureCardImage,
       resolveRenderer,
       applyStageOffset,
+      beginTurn,
+      captureBackOfSheet,
       containerRef,
       cardRef,
       renditionRef,
@@ -919,6 +993,7 @@ export function usePageTurnAnimation({
     slide,
     gestureActive,
     getFoldPointer,
+    getFoldBack,
     handleDrawCost,
     turnPage,
     turnPageSlide,

@@ -568,6 +568,7 @@ export function ReaderView({
     slide,
     gestureActive,
     getFoldPointer,
+    getFoldBack,
     handleDrawCost,
     turnPage,
     turnPageSlideGuarded,
@@ -2988,6 +2989,7 @@ export function ReaderView({
                 leafWidth={curl.leafWidth}
                 leafHeight={curl.leafHeight}
                 getPointer={getFoldPointer}
+                getBack={getFoldBack}
                 onDrawCost={handleDrawCost}
               />
             )}

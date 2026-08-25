@@ -6413,3 +6413,99 @@ through unredacted, `ps aux` clean after cancel. 12/12 `authFlows.test.ts` tests
 `App.test.tsx`'s "renders the library route by default", failed only in the full
 parallel `pnpm -r test` run and passed clean in isolation both before and after this
 change — a pre-existing flake, unrelated to this file.)
+
+## M27 — when the back of the sheet is first visible, measured before it was designed — 2026-08-25
+
+The 2026-08-03 sign-off left one ⚠️ on the back-of-sheet work: the second capture costs
+~22ms, it must land before the first back-facing pixel is drawn, it cannot block the grab,
+and **"do not decide this from the armchair; instrument which frame first shows a
+back-facing pixel and measure whether 22ms beats it."** So, instrumented first.
+
+The back of the sheet is two regions, and they do not appear at the same time.
+
+- **The lip** — the roll's far half — is back-facing from the very first frame, because the
+  roll has some arc as soon as the pointer moves at all. It is also tiny and heavily
+  compressed: at 98px of travel on a 649x771 leaf it is 4,696px², under 1% of the leaf, and
+  it carries a shading gradient rather than legible text.
+- **The tail** — the flat surface that is the only place readable back-page text can land —
+  does not exist *at all* until the anchor-to-pointer distance passes **`0.582 x arc`**.
+  That is not a fudge factor: below the arc clamp `creaseToCorner` and `arc` are equal, so
+  the tail is exactly degenerate, and the two separate at precisely `d = arc x (1 -
+  ROLL_END.o) / (1 - ROLL_END.o)`… i.e. where the clamp releases.
+
+Measured against the real geometry:
+
+| leaf | arcTarget | first tail pixel at |
+|---|---|---|
+| spread 649x771 | 168.7px | **d = 98.2px** of pointer travel |
+| single 900x771 | 200.5px | **d = 116.7px** |
+
+And on a click/keyboard turn, where the pointer path is synthetic (420ms, ease
+`[0.4, 0, 0.2, 1]`, `SWEEP_OVERSHOOT` 2.2) the tail first appears at **frame 4, ~67ms into
+the sweep** — the same answer for both leaf sizes, because the sweep is scaled to the leaf.
+
+**So 22ms wins the race with ~3x of headroom, and blocking the grab would be paying every
+reader 22ms of latency to avoid a state they cannot see.** The capture is fired unawaited
+the moment the rendition step resolves — which in `turnPageCurl` is *before* the sweep
+starts, and in the drag is while the reader is still travelling the first 98px. Until it
+lands the fold paints the pre-M27 mirror, as a designed transitional state.
+
+The one honest caveat: the *lip* is back-facing from frame 0, so for the first ~50ms of a
+drag a sliver averaging under 1% of the leaf carries a ghost of the wrong page. That is
+below the threshold of anything anyone can see on a moving roll, but it is not literally
+zero and is recorded rather than rounded away.
+
+## M27 — the back, re-judged in the harness: the paper wash belonged to the fake — 2026-08-25
+
+The second ⚠️ was that `SHOW_THROUGH` (0.20), `backOfSheet`'s lift and `sheenScale` were all
+tuned against a mirror and would need re-judging against real content. They did, and the
+finding was sharper than "re-tune a number".
+
+**`SHOW_THROUGH`'s wash is not a property of the back of a sheet — it is part of *faking*
+one.** It exists to turn the front's mirrored print into something that reads as the other
+side: knock the text down to a ghost, take the surface to the page's background colour. A
+real back capture already *is* the other side. It carries its own paper and its own print,
+and washing it ghosts the very text the second capture was taken to fetch. First cut did
+exactly that and the harness showed it immediately: the right page, at 20%, which is the
+old look with better provenance and none of the benefit.
+
+So the wash now applies only when the back is the front standing in for it
+(`SheetFaces.back === null`).
+
+**But dropping it to zero broke the dark theme, which is what the ⚠️ was really about.**
+`backOfSheet`'s lift scales with `1 - lum`, so in `ink` it was carrying most of the "this is
+a lifted object" cue. With no fill at all the tail became a near-black triangle with the
+page's own light text on it — it reads as a *hole in the page*, not as paper. The lift was
+never only about hiding text; it was also the material.
+
+Hence a second constant, `BACK_LIFT`, for how far a **real** back goes toward the sheet's
+lit paper colour. Swept in the harness at 0.00 / 0.20 / 0.34 / 0.50 against real back-page
+prose, `ink` being the deciding theme:
+
+- **0.00** — tail vanishes into the page. No lifted-sheet reading at all.
+- **0.20** — separates, but weakly; still reads closer to a shadow than to paper.
+- **0.34** — reads as a lifted sheet, lip sheen visible, back text clearly its own text. **Chosen.**
+- **0.50** — lighter and arguably the most "paper"-like, but the back's text is losing
+  contrast against its own surface: we are back to throwing away what we went to get.
+
+Verified at 0.34 in all three reading themes. `sheenScale` and `backOfSheet`'s own lift were
+left alone — with `BACK_LIFT` doing the material job they still read correctly, and changing
+three coupled constants at once to fix one symptom is how the old tuning got hard to reason
+about.
+
+**Two things the operator still owns**, both named in the 2026-08-03 Verify and neither
+decidable here:
+
+1. Whether the real back reads *better* than the mirror. It is unambiguously more
+   information on that surface. In `paper` and `sepia` it reads as texture rather than as
+   competing text and looks right to me; `ink` is the one where "noise" is most arguable.
+2. **Single-page mode doubles.** One turn advances one page, so the leaf's back and the page
+   revealed beneath it are the *same* page — you see page 65 mirrored on the sheet and
+   upright underneath. That falls straight out of the ruling as stated ("the whole card in
+   single-page mode") and is not a bug in the implementation, but it is a consequence worth
+   seeing before it is signed off. The harness shows it honestly rather than papering over
+   it; spread mode has no such doubling.
+
+The harness grew `&back=real|mirror` for exactly this comparison, and its "next page" text
+was lengthened to a full page — it had been three paragraphs, so the back was mostly blank
+paper and the show-through question could not actually be seen.

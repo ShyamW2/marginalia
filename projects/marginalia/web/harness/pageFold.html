@@ -27,7 +27,16 @@
   <p>Query params: <code>?theme=paper|sepia|ink|all</code> ·
   <code>&amp;arc=1</code> (multiplier on <code>curlArcLength</code>) ·
   <code>&amp;w=340&amp;h=480</code> · <code>&amp;dpr=2</code> ·
-  <code>&amp;only=drag-50</code> (one state, drawn large)</p>
+  <code>&amp;only=drag-50</code> (one state, drawn large) ·
+  <code>&amp;back=real|mirror</code> (M27: the leaf's real other side, or the pre-M27
+  mirror of its front — the comparison <code>SHOW_THROUGH</code>, <code>backOfSheet</code>'s
+  lift and <code>sheenScale</code> have to be re-judged against)</p>
+  <p><strong>Note on single-page mode</strong>, which is what this harness draws: one turn
+  advances one page, so the leaf's back and the page revealed beneath it are the
+  <em>same</em> page. That doubling is a real consequence of the 2026-08-03 ruling
+  ("the whole card in single-page mode") and is shown here honestly rather than papered
+  over. In spread mode the back is the far half of the destination spread and no such
+  doubling arises.</p>
 </header>
 <div id="grid"></div>
 
@@ -50,6 +59,9 @@ const W = Number(q.get("w") ?? (ONLY ? 520 : 340));
 const H = Number(q.get("h") ?? (ONLY ? 720 : 480));
 const DPR = Number(q.get("dpr") ?? 2);
 const ARC = Number(q.get("arc") ?? 1);
+// M27: which face the back of the sheet is printed from. "mirror" reproduces the
+// pre-M27 fold exactly and is here to be compared against, not as a fallback.
+const BACK_MODE = q.get("back") ?? "real";
 
 // Reader themes, taken from web/src/theme.css so the harness lies about nothing.
 const THEMES = {
@@ -63,7 +75,7 @@ const themes = themeArg === "all" ? Object.keys(THEMES) : [themeArg];
 const BODY =
   "from the same campus we stuck together, sharing the load during the morning deliveries and generally looking out for each other. We laughed constantly at the porters' foul-mouthed exchanges. We made a game of things. We had good banter. The mornings flew by whenever our hours coincided, and after a while I began to really fancy her. ¶ But one day something changed. Soph had been moping around through our entire Thursday shift. Every crate of fish we hauled off the trucks suddenly seemed to take her twice the effort. She even complained about the smell, and all of us had deadened to that long ago. It was obvious something was on her mind, so that morning I followed her through the back door of the warehouse, where she always snuck out for a cigarette. ¶ 'Got a spare?' ¶ 'You don't smoke,' she said. ¶ I watched two streams of the stuff billow from her nostrils. 'I'm willing to give it a go.' ¶ 'Bad idea.' ¶ 'I hear you lose weight.'";
 const NEXT =
-  "Westermann tried to keep her own body language calm and unflustered, but she'd already wasted an hour she did not have. The bar's aircon was blowing warm and the man opposite her had not once looked up from the datareader he'd brought along. ¶ She sat opposite him. Standard check of her own: no one in the bar watching her now, their attention had moved to other things. From the breast pocket of her cammie tunic, she drew a wafer and laid it on the greasy table, data chip facing up. ¶ Beside it, she piled her winnings. The cash, he scooped away. The wafer, he didn't touch.";
+  "Westermann tried to keep her own body language calm and unflustered, but she'd already wasted an hour she did not have. The bar's aircon was blowing warm and the man opposite her had not once looked up from the datareader he'd brought along. \u00b6 She sat opposite him. Standard check of her own: no one in the bar watching her now, their attention had moved to other things. From the breast pocket of her cammie tunic, she drew a wafer and laid it on the greasy table, data chip facing up. \u00b6 Beside it, she piled her winnings. The cash, he scooped away. The wafer, he didn't touch. \u00b6 'That is not what we agreed,' he said, still reading. 'You were to bring the whole set, and you have brought me a third of it.' \u00b6 'I brought what there was.' \u00b6 'Then there is a difficulty, because what there was is not what I paid for.' He set the datareader face down at last, and the noise of the bar seemed to arrive all at once, as though someone had opened a door. 'You understand the position this puts me in.' \u00b6 She did. She had understood it on the walk over, and had come anyway, which was either courage or the other thing. Outside, the rain had started up again against the awnings, and somewhere down the strip a transport was winding itself up to leave.";
 
 /** A stand-in for a captured page: justified serif body, running head, folio. Close
  * enough to a real epub.js snapshot for judging how the sheet deforms and shades. */
@@ -138,9 +150,25 @@ const grid = document.getElementById("grid");
 for (const themeName of themes) {
   const theme = THEMES[themeName];
   const front = makePage(BODY, theme, "64");
-  const behind = makePage(NEXT, theme, "65").toDataURL();
+  const behindPage = makePage(NEXT, theme, "65");
+  const behind = behindPage.toDataURL();
   const paper = samplePaperColor(front);
   const source = leafSourceRect(front.width, front.height, 0, W, W);
+  // The two printed sides of the turning sheet. The back is deliberately the
+  // *same* page as the one revealed underneath — see the note in the header:
+  // in single-page mode that is what the ruling means, and the harness's job
+  // is to show it rather than to flatter it.
+  const frontFace = { image: front, source, flipX: false };
+  // null is the pre-M27 rendering: no back captured, so the fold mirrors and
+  // washes the front. See `SheetFaces`.
+  const backFace =
+    BACK_MODE === "mirror"
+      ? null
+      : {
+          image: behindPage,
+          source: leafSourceRect(behindPage.width, behindPage.height, 0, W, W),
+          flipX: true,
+        };
 
   for (const [name, [corner, pointer]] of Object.entries(STATES)) {
     if (ONLY && name !== ONLY) continue;
@@ -174,8 +202,7 @@ for (const themeName of themes) {
       drawPageFold(
         canvas.getContext("2d"),
         layer.getContext("2d"),
-        front,
-        source,
+        { front: frontFace, back: backFace },
         fold,
         W,
         H,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeReaderGap,
+  farLeafRect,
   nearLeafRect,
   READER_MARGIN_PX,
   READER_TARGET_COLUMN_WIDTH,
@@ -138,5 +139,57 @@ describe("nearLeafRect", () => {
     // The left text column ends half a gutter short of the split.
     const columnWidth = (contentWidth - SPREAD_GUTTER) / 2;
     expect(next.x - (MARGIN + columnWidth)).toBeCloseTo(SPREAD_GUTTER / 2, 6);
+  });
+});
+
+describe("farLeafRect", () => {
+  // M27: the back of the turning leaf. In a spread the sheet that turns is
+  // one leaf and its other side is the *other* half of the post-advance card
+  // — the drag having already advanced the rendition at grab time, so that
+  // page is on screen rather than hidden.
+  const contentWidth = 2000;
+  const card = (content: number) => content + 2 * READER_MARGIN_PX.normal;
+
+  it("is the other half of the card from the leaf that turned", () => {
+    const width = card(contentWidth);
+    const nearNext = nearLeafRect(width, 900, contentWidth, "auto", "next");
+    const farNext = farLeafRect(width, 900, contentWidth, "auto", "next");
+    // Turning the right leaf: its back is the left half, which after the
+    // advance is the destination spread's own left page.
+    expect(nearNext.x).toBeCloseTo(width / 2, 6);
+    expect(farNext.x).toBe(0);
+    expect(farNext.width).toBeCloseTo(nearNext.width, 6);
+
+    const nearPrev = nearLeafRect(width, 900, contentWidth, "auto", "prev");
+    const farPrev = farLeafRect(width, 900, contentWidth, "auto", "prev");
+    expect(nearPrev.x).toBe(0);
+    expect(farPrev.x).toBeCloseTo(width / 2, 6);
+  });
+
+  it("never overlaps the leaf that turned, in either direction", () => {
+    // An overlap would print part of the page being peeled onto its own
+    // back, which is the exact bug M27 exists to remove.
+    const width = card(contentWidth);
+    for (const direction of ["next", "prev"] as const) {
+      const near = nearLeafRect(width, 900, contentWidth, "auto", direction);
+      const far = farLeafRect(width, 900, contentWidth, "auto", direction);
+      const gap = Math.max(near.x, far.x) - Math.min(near.x + near.width, far.x + far.width);
+      expect(gap).toBeGreaterThanOrEqual(-1e-6);
+    }
+  });
+
+  it("is the whole card in single-page mode, where the back page is the card", () => {
+    // Single-page: the post-advance card *is* the back of the sheet, so the
+    // fold samples all of it rather than a half.
+    expect(farLeafRect(1200, 900, 1120, "single", "next")).toEqual({
+      x: 0,
+      width: 1200,
+      height: 900,
+    });
+    expect(farLeafRect(1200, 900, 1120, "single", "prev")).toEqual({
+      x: 0,
+      width: 1200,
+      height: 900,
+    });
   });
 });

@@ -105,3 +105,36 @@ export function nearLeafRect(
   }
   return { x: 0, width: cardWidth, height: cardHeight };
 }
+
+/**
+ * Where the turning leaf's **back page** sits on the *post-advance* card
+ * (M27, decisions.md 2026-08-03 "sign-off").
+ *
+ * A leaf is one sheet with two sides, so the back of the right leaf of a
+ * 10|11 spread is page 12 — and since the drag advances the rendition at
+ * grab time (2026-08-02), page 12 is already on screen as the left leaf of
+ * the 12|13 spread by the time the sheet lifts. So the back is the *other*
+ * half of the card from the one that turned: the left half for a `next`
+ * turn, the right half for a `prev`, and the whole card in single-page mode,
+ * where the post-advance card *is* the back page.
+ *
+ * That is exactly `nearLeafRect` with the direction reversed, and it is
+ * written as a call to it rather than as its own arithmetic so the two can
+ * never drift apart — the split, the spread threshold and the "card, not
+ * text column" ruling all have to stay one decision.
+ */
+export function farLeafRect(
+  cardWidth: number,
+  cardHeight: number,
+  contentWidth: number,
+  spreadMode: SpreadMode,
+  direction: "prev" | "next",
+): LeafRect {
+  return nearLeafRect(
+    cardWidth,
+    cardHeight,
+    contentWidth,
+    spreadMode,
+    direction === "next" ? "prev" : "next",
+  );
+}

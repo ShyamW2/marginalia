@@ -577,6 +577,55 @@ export function leafSourceRect(
   };
 }
 
+/**
+ * One printed side of the turning sheet: a bitmap, the slice of it that is
+ * this leaf, and whether that slice has to be flipped to sit in leaf-local
+ * coordinates.
+ *
+ * **`flipX` is what makes the back the leaf's real other side** (M27,
+ * decisions.md 2026-08-03 "sign-off"). A leaf is one sheet printed on both
+ * faces, and the two faces do not share a coordinate frame: the spine edge
+ * that is leaf-local `x = 0` on the front is `x = width` on the back, because
+ * turning the leaf over swaps which side of the spread it is on. So the back
+ * page's own bitmap — the post-advance card's *other* half — is registered
+ * onto the sheet mirrored about the leaf's vertical centre line.
+ *
+ * That is a *registration* flip, and it is not the same thing as the tail's
+ * `alpha = -1`. The tail mirrors about the **crease**, in the peel direction,
+ * because that is what folding a sheet toward you does to it; that stays
+ * exactly as it was and is why this milestone touches no geometry. This flip
+ * is about the spine and would be there even for a sheet lying flat.
+ */
+export interface LeafFace {
+  image: CanvasImageSource;
+  source: LeafSource;
+  /** Set on a back face, clear on a front one. See above — this is the
+   * spine-side registration, never the fold's own mirroring. */
+  flipX: boolean;
+}
+
+/**
+ * The two sides of the turning sheet.
+ *
+ * `back` is **null until the post-advance capture lands**, and that is a
+ * designed state rather than a failure: the capture is raced against the
+ * fold instead of blocking the grab (see `usePageTurnAnimation`). With no
+ * back, the fold falls back to the pre-M27 rendering — the front's own
+ * bitmap, mirrored by the tail's `alpha = -1` and washed down to a
+ * `SHOW_THROUGH` ghost.
+ *
+ * **That wash is part of faking a back, and a real one must not get it.** It
+ * exists to turn the front's mirrored print into something that reads as the
+ * *other* side of the sheet: knock the text down to a ghost, take the surface
+ * to the page's own background colour. A real back capture already is the
+ * other side of the sheet — it carries its own paper and its own print — so
+ * washing it would ghost the very text this milestone went and fetched.
+ */
+export interface SheetFaces {
+  front: LeafFace;
+  back: LeafFace | null;
+}
+
 /** Light direction in the fold's own (offset, height) plane: mostly from the
  * reader, tipped a little toward the corner side so the roll's root sits in
  * shadow and its far side comes back into the light. */
@@ -589,9 +638,26 @@ const LIGHT_Z = 0.96;
  * bug rather than as depth. */
 const AMBIENT = 0.66;
 
-/** How much of the printed page shows through the back of the sheet. Real
- * book paper is opaque enough that you read the ghost, not the text. */
+/** How much of the printed page shows through the back of the sheet, when
+ * the back is the front standing in for it. Real book paper is opaque enough
+ * that you read the ghost, not the text. */
 const SHOW_THROUGH = 0.2;
+
+/**
+ * How far a **real** back is taken toward the sheet's lit paper colour
+ * (M27). Not the same quantity as `SHOW_THROUGH` despite sharing the fill:
+ * that one hides text that should not be legible, this one is the lift that
+ * makes the surface read as the underside of a sheet held up to the light.
+ *
+ * It cannot be zero, and the reason is the dark themes. `backOfSheet`'s lift
+ * scales with `1 - lum`, so in `ink` it is doing most of the work of saying
+ * "this is a lifted object" — drop the fill entirely and the tail becomes a
+ * near-black triangle with the page's own light text on it, which reads as a
+ * hole in the page rather than as paper. Judged in the harness against real
+ * back-page content in all three reading themes; see NOTES.md "M27 — the
+ * back, re-judged".
+ */
+const BACK_LIFT = 0.34;
 
 /**
  * Cast shadow strength and softness (CSS px at dpr 1). Two shadows, thrown
@@ -672,25 +738,36 @@ function shadeColor(factor: number): string {
     : `rgba(255, 255, 255, ${(factor - 1).toFixed(4)})`;
 }
 
-/** Paints the turning leaf's slice of the snapshot over the leaf's own
- * rect. Every band of the fold is this same blit under a different
- * transform and clip — the transform is what deforms the sheet, never the
- * blit. */
+/** Paints one face's slice of the snapshot over the leaf's own rect. Every
+ * band of the fold is this same blit under a different transform and clip —
+ * the transform is what deforms the sheet, never the blit.
+ *
+ * A back face additionally flips about the leaf's vertical centre line; see
+ * `LeafFace.flipX` for why that is a property of the sheet rather than of
+ * the fold. The flip is inside the `flipX` branch rather than unconditional
+ * because this is the hot call — ~25 of them a frame — and the front face
+ * must not pay a save/restore for something only the back needs. */
 function drawLeaf(
   ctx: CanvasRenderingContext2D,
-  image: CanvasImageSource,
-  source: LeafSource,
+  face: LeafFace,
   width: number,
   height: number,
 ): void {
+  const { image, source } = face;
+  if (face.flipX) {
+    ctx.save();
+    ctx.translate(width, 0);
+    ctx.scale(-1, 1);
+  }
   if (source.whole) {
     // Measurably cheaper: the source-rect overload gives up the fast blit
-    // path, and this is the hot call — ~25 of them a frame. Single-page mode
-    // is the whole bitmap and has no reason to pay for it.
+    // path, and this is the hot call. Single-page mode is the whole bitmap
+    // and has no reason to pay for it.
     ctx.drawImage(image, 0, 0, width, height);
-    return;
+  } else {
+    ctx.drawImage(image, source.x, source.y, source.width, source.height, 0, 0, width, height);
   }
-  ctx.drawImage(image, source.x, source.y, source.width, source.height, 0, 0, width, height);
+  if (face.flipX) ctx.restore();
 }
 
 /** Axis-aligned bounds of one or more polygons, clamped to the leaf and
@@ -833,10 +910,16 @@ function castShadow(
  * Paints one frame of the fold. `ctx` is the visible canvas and `layerCtx` a
  * scratch canvas of the same size; both are assumed to be `width` x `height`
  * CSS px at `dpr` device pixels per CSS px, with the transform reset and the
- * pixels cleared. `image` is the departing leaf's snapshot bitmap and
- * `paper` its background colour (`samplePaperColor`) — the material the back
- * of the sheet is made of, so the fold works in any reading theme without
- * knowing which one is on.
+ * pixels cleared. `paper` is the departing leaf's background colour
+ * (`samplePaperColor`) — the material the back of the sheet is made of, so
+ * the fold works in any reading theme without knowing which one is on.
+ *
+ * `faces` carries the sheet's two printed sides (M27). Everything
+ * front-facing — the flat rest of the leaf and the near half of the roll —
+ * is drawn from `faces.front`; the two back-facing regions, the roll's far
+ * half and the tail, are drawn from `faces.back`. Handing the same face in
+ * twice with `flipX: false` reproduces the pre-M27 mirror exactly, which is
+ * what the fold paints while the back's own capture is still in flight.
  *
  * The scratch layer exists because the back of the sheet is a *material*:
  * its paper wash and its lighting have to apply to the back-facing pixels
@@ -847,14 +930,18 @@ function castShadow(
 export function drawPageFold(
   ctx: CanvasRenderingContext2D,
   layerCtx: CanvasRenderingContext2D,
-  image: CanvasImageSource,
-  source: LeafSource,
+  faces: SheetFaces,
   fold: FoldGeometry,
   width: number,
   height: number,
   dpr: number,
   paper: Rgb,
 ): void {
+  const { front } = faces;
+  // With no back yet, both sides are the front — which, washed below, is
+  // exactly what the fold painted before M27.
+  const backFace = faces.back ?? front;
+  const washBack = faces.back === null;
   const back = backOfSheet(paper);
   const backCss = `rgb(${back[0]}, ${back[1]}, ${back[2]})`;
   const sheen = sheenScale(paper);
@@ -868,7 +955,7 @@ export function drawPageFold(
     ctx.save();
     tracePolygon(ctx, fold.restPolygon);
     ctx.clip();
-    drawLeaf(ctx, image, source, width, height);
+    drawLeaf(ctx, front, width, height);
     ctx.restore();
   }
 
@@ -909,8 +996,7 @@ export function drawPageFold(
     ctx.clip();
     paintRollBand(
       ctx,
-      image,
-      source,
+      front,
       fold,
       0,
       ROLL_PEAK_INDEX,
@@ -950,8 +1036,7 @@ export function drawPageFold(
     layerCtx.clip();
     paintRollBand(
       layerCtx,
-      image,
-      source,
+      backFace,
       fold,
       ROLL_PEAK_INDEX,
       ROLL_SAMPLES,
@@ -966,15 +1051,19 @@ export function drawPageFold(
     tracePolygon(layerCtx, fold.tailPolygon);
     layerCtx.clip();
     enterBandFrame(layerCtx, fold, -1, fold.arc * (1 + ROLL_END.o));
-    drawLeaf(layerCtx, image, source, width, height);
+    drawLeaf(layerCtx, backFace, width, height);
     layerCtx.restore();
   }
 
-  // Paper wash: knock the mirrored text down to a ghost and take the back of
-  // the sheet to the page's own background colour, whatever the theme.
+  // Paper wash: take the back of the sheet toward the page's own lit
+  // background colour, whatever the theme. Nearly all the way for a stand-in
+  // back, where it also knocks the mirrored text down to a ghost; only
+  // `BACK_LIFT` of the way for a real one, where the text is supposed to be
+  // there and the fill is purely the lift. See `SheetFaces`.
   const backBounds = unionBounds([lipBand, fold.tailPolygon], width, height);
   layerCtx.globalCompositeOperation = "source-atop";
-  layerCtx.globalAlpha = 1 - SHOW_THROUGH;
+  const wash = washBack ? 1 - SHOW_THROUGH : BACK_LIFT;
+  layerCtx.globalAlpha = wash;
   layerCtx.fillStyle = backCss;
   layerCtx.fillRect(backBounds.x, backBounds.y, backBounds.width, backBounds.height);
   layerCtx.globalAlpha = 1;
@@ -1054,8 +1143,7 @@ function profileAt(index: number): RollSample {
  */
 function paintRollBand(
   ctx: CanvasRenderingContext2D,
-  image: CanvasImageSource,
-  source: LeafSource,
+  face: LeafFace,
   fold: FoldGeometry,
   from: number,
   to: number,
@@ -1087,7 +1175,7 @@ function paintRollBand(
     }
     ctx.clip();
     enterBandFrame(ctx, fold, alpha, beta);
-    drawLeaf(ctx, image, source, width, height);
+    drawLeaf(ctx, face, width, height);
     ctx.restore();
   }
 }
