@@ -218,6 +218,13 @@ describe("computeFold", () => {
     // The point of the edge anchor: lifting the middle of an edge lifts the
     // whole edge, so the crease is vertical (parallel to the spine) whatever
     // the cursor's own height is doing.
+    //
+    // ⚠️ **This is a property of the flat-crease model, not of a bound sheet**
+    // (M27). Under the cone the crease converges on the apex and is parallel to
+    // the spine only in the far-field limit — `pageCone.test.ts` carries that
+    // version. Both are true of their own model and both are kept: `computeFold`
+    // is still the shipped renderer's geometry. When the WebGL path retires
+    // `drawPageFold`, this test retires with it rather than being "fixed".
     for (const raw of [
       { x: 300, y: 0 },
       { x: 120, y: 719 },

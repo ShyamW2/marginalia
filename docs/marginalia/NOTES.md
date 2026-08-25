@@ -6570,3 +6570,50 @@ frame that really happened, which makes the dev line comparable to a profiler's.
 **Not verified here:** the acceptance criterion asks for the dev trace on a real held drag
 and a real keyboard turn of the same fold. That needs the app driven by hand on the
 operator's machine — see the blocker note below on the two M27 measurements.
+
+## M27 — the apex cannot be both given and consistent — 2026-08-25
+
+Building "the geometry grows an apex" turned up a contradiction in the task as written, and
+it is a real one rather than a wording quibble, so it is recorded here rather than quietly
+resolved.
+
+TASKS.md describes the geometry as gaining "a cone — **apex distance along the spine**",
+which reads as a free input. The same task's acceptance asks that **"the grabbed anchor still
+lands exactly under the pointer"**. Those two cannot both hold:
+
+- A cone's rulings are its generators and paper is inextensible, so a point **keeps its
+  distance from the apex**. That is not an implementation choice; it is what makes the
+  surface developable, and it is the same property that makes the lift fall to zero at the
+  binding.
+- So with the apex fixed, the grabbed anchor is confined to **one circle about it**. An
+  arbitrary pointer is not on that circle, and no choice of crease angle or arc puts it there.
+
+Given both, the apex has to be the derived quantity. **It is the point on the spine line
+equidistant from anchor and pointer** — where their perpendicular bisector crosses the spine
+— which is the unique apex for which the drag is even expressible. `computeConeFold` solves
+it that way and the anchor lands exactly under the pointer at every depth and from every
+anchor (tested).
+
+Two things fall out that are worth knowing before the renderer is built:
+
+- **The far field is not a special case that had to be written; it is where the solve stops
+  having an answer.** When the drag is square out from the edge, the bisector runs parallel
+  to the spine and there is no intersection — the apex is at infinity. That is exactly the
+  drag whose crease genuinely *is* parallel to the spine, i.e. the shipped flat-crease roll.
+  So `computeConeFold` returns `null` there and the caller keeps using `computeFold`. The two
+  models meet precisely where they should, and the convergence test drives the gap between
+  them to the floating-point noise floor.
+- **The apex moves during a drag**, since it depends on where the pointer is. It is not a
+  fixed hinge the sheet swings on for the whole gesture. That is physically reasonable — the
+  reader is choosing how the sheet is being pulled, not just how far — but it is a thing the
+  renderer will have to be comfortable with, and it means "apex distance" is a *reading* of a
+  drag rather than a tunable.
+
+⚠️ **For the design session, not for the implementation to decide:** whether the apex should
+instead be *clamped* — held to a minimum distance, or eased between frames — so a fast
+diagonal flick cannot swing it wildly and snap the fan around. Nothing here does that,
+because a stabiliser chosen without seeing the thing move is a guess, and the renderer that
+would show it does not exist yet. The pure model is the honest place to stop.
+
+Not touched, deliberately: `computeFold`, `drawPageFold` and the shipped ladder. The cone is
+additive and nothing calls it yet — "the renderer still swapped underneath it".

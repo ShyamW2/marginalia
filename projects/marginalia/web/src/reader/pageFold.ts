@@ -475,6 +475,244 @@ export function computeFold(
   };
 }
 
+// ---------------------------------------------------------------------------
+// The cone — M27, "over the spine"
+// ---------------------------------------------------------------------------
+
+/**
+ * Which leaf edge is the **spine**: the edge opposite the grab.
+ *
+ * The gutter in spread mode, the card's other edge in single-page — one rule
+ * for both, which is what lets the two modes keep one model (PAGE_CURL.md
+ * §2d, answering its own older "single-page has no spine" bullet: a single
+ * page is still bound, it merely has no facing leaf to land on).
+ */
+export function spineEdgeForAnchor(anchor: FoldAnchor): "left" | "right" {
+  if (isEdgeAnchor(anchor)) return anchor.edge === "left" ? "right" : "left";
+  return anchor === "topLeft" || anchor === "bottomLeft" ? "right" : "left";
+}
+
+/**
+ * A sheet bound at the spine and pulled by its outer corner, as a **cone**
+ * with its apex on the spine line (decisions.md 2026-08-03 step 4).
+ *
+ * Paper is inextensible, so a deformed sheet is developable — a cylinder, a
+ * cone, or a tangent developable. The spine edge cannot lift, so the lift has
+ * to fall to zero along the binding, which parallel rulings cannot do; the
+ * rulings must fan from a point on the spine. That is a cone, and `pageFold`'s
+ * flat-crease model has no way to express one: it depends on `w`, the distance
+ * from a straight crease, and *only* on `w`, which is exactly what makes every
+ * band of constant `w` a straight line parallel to the crease.
+ *
+ * **The cone is the same roll, wrapped.** Work in polar coordinates about the
+ * apex. Rulings are the rays; they are inextensible, so a point keeps its
+ * radius `r` and only its *angle* changes. At radius `r` the roll's arc length
+ * is `r * arcAngle` and the distance past the crease is `r * (φ - creaseAngle)`
+ * — both scale with `r`, so the profile fraction, and therefore the angular
+ * map, is **the same on every ruling**. That is precisely what a cone is, and
+ * it is why this reuses `ROLL_PROFILE` untouched rather than needing a second
+ * profile. The lift, by contrast, scales with `r`: zero at the apex, growing
+ * outward, which is the physical requirement the whole ruling rests on.
+ *
+ * **The roll is the far-field limit.** Push the apex away along the spine and
+ * the rays become parallel, the angles become proportional to distance from
+ * the spine, and this collapses to the flat-crease roll — which at zero arc is
+ * the 2026-07-20 bisector. Each model has been a degenerate case of its
+ * successor and this one continues that.
+ */
+export interface ConeFold {
+  /** On the spine line, and outside the leaf's own span of it — so that every
+   * point of the spine edge lies on one ray from here and is therefore
+   * undeformed. */
+  apex: Point;
+  /** Unit vector from the apex along the spine, into the leaf. Angles are
+   * measured from this, so the spine edge is exactly angle 0. */
+  spineDir: Point;
+  /** +1 or -1: which way angles increase to reach the leaf. Lets everything
+   * below be written for positive angles regardless of which edge is the
+   * spine. */
+  winding: number;
+  /** The crease ray's angle from `spineDir`. The sheet is flat below this. */
+  creaseAngle: number;
+  /** The roll's angular extent past the crease. The *physical* arc at radius
+   * `r` is `r * arcAngle`, so the curl is naturally tight near the spine and
+   * broad at the outer edge — the thing a bound page does and a cylinder
+   * cannot. */
+  arcAngle: number;
+  /** Distance from the apex to the grabbed anchor. The anchor rides this
+   * circle: a bound sheet's corner cannot change its distance from the apex,
+   * which is why the apex is solved from the drag rather than given. */
+  anchorRadius: number;
+}
+
+/** Angle of `v` measured from `spineDir`, in the winding direction. Always in
+ * `[0, 2π)`, and inside the leaf it is well under π. */
+function coneAngle(cone: ConeFold, v: Point): number {
+  const along = v.x * cone.spineDir.x + v.y * cone.spineDir.y;
+  const across = (v.x * cone.spineDir.y - v.y * cone.spineDir.x) * -cone.winding;
+  return Math.atan2(across, along);
+}
+
+/**
+ * The cone's angular map: where a ruling at angle `creaseAngle + psi` ends up,
+ * expressed as an offset from the crease. The exact analogue of the flat
+ * model's `w -> o`, one dimension down.
+ *
+ * Identical on every ruling, which is what makes the surface a cone.
+ */
+function coneAngularOffset(cone: ConeFold, psi: number): number {
+  const { arcAngle } = cone;
+  if (psi <= 0 || arcAngle <= 0) return psi; // flat: undisturbed
+  if (psi >= arcAngle) return arcAngle * ROLL_END.o - (psi - arcAngle); // the tail
+  return arcAngle * rollOffsetAt(psi / arcAngle);
+}
+
+/**
+ * Where a leaf point ends up on the cone, projected orthographically — the
+ * cone's `deformPoint`.
+ *
+ * Radius is preserved (rulings are inextensible) and only the angle moves, so
+ * this is a pure angular remap about the apex. Points on the spine have angle
+ * 0, hence `psi = -creaseAngle < 0`, hence the flat branch and no movement at
+ * all: **the spine edge is fixed by construction rather than by a clamp.**
+ */
+export function deformPointOnCone(cone: ConeFold, p: Point): Point {
+  const v = { x: p.x - cone.apex.x, y: p.y - cone.apex.y };
+  const r = Math.hypot(v.x, v.y);
+  if (r < 1e-9) return { x: p.x, y: p.y };
+  const phi = coneAngle(cone, v);
+  const turned = cone.creaseAngle + coneAngularOffset(cone, phi - cone.creaseAngle);
+  const cos = Math.cos(turned);
+  const sin = Math.sin(turned) * cone.winding;
+  // Rebuild the point on its (rotated) ruling, same radius.
+  return {
+    x: cone.apex.x + r * (cone.spineDir.x * cos - cone.spineDir.y * sin),
+    y: cone.apex.y + r * (cone.spineDir.y * cos + cone.spineDir.x * sin),
+  };
+}
+
+/**
+ * How far off the page a leaf point is lifted, in leaf px.
+ *
+ * **Scales with distance from the apex**, which is the whole physical point:
+ * zero along the spine, most at the outer corner. The flat model's `tailHeight`
+ * is this quantity made constant, which is exactly what would tear a bound
+ * sheet off its binding.
+ */
+export function coneLiftAt(cone: ConeFold, p: Point): number {
+  const v = { x: p.x - cone.apex.x, y: p.y - cone.apex.y };
+  const r = Math.hypot(v.x, v.y);
+  if (r < 1e-9 || cone.arcAngle <= 0) return 0;
+  const psi = coneAngle(cone, v) - cone.creaseAngle;
+  if (psi <= 0) return 0;
+  const arcLength = r * cone.arcAngle;
+  if (psi >= cone.arcAngle) return arcLength * ROLL_END.z;
+  const at = Math.max(0, Math.min(1, psi / cone.arcAngle)) * ROLL_SAMPLES;
+  const i = Math.min(ROLL_SAMPLES - 1, Math.floor(at));
+  const t = at - i;
+  return arcLength * (ROLL_PROFILE[i]!.z + (ROLL_PROFILE[i + 1]!.z - ROLL_PROFILE[i]!.z) * t);
+}
+
+/**
+ * Solve the cone for a drag: apex, crease and arc such that **the grabbed
+ * anchor lands exactly under the pointer**.
+ *
+ * ⚠️ **The apex is an output, not an input, and that is a real finding rather
+ * than a shortcut.** TASKS.md describes the geometry as gaining "apex distance
+ * along the spine", which reads as a free parameter. It cannot be one at the
+ * same time as the anchor landing under the pointer: rulings are inextensible,
+ * so the anchor keeps its distance from the apex and can only travel along
+ * that circle. Fixing the apex therefore confines the anchor to one arc, and
+ * an arbitrary pointer is not on it. Solving the apex instead — it is the
+ * point on the spine equidistant from anchor and pointer, i.e. where their
+ * perpendicular bisector crosses the spine line — satisfies both. See NOTES.md
+ * "M27 — the apex cannot be both given and consistent".
+ *
+ * Returns `null` when the drag does not determine a finite apex, which is not
+ * an error: it is the **far field**, and it happens exactly when the bisector
+ * runs parallel to the spine — a straight pull square out from the edge, whose
+ * crease really is parallel to the spine and whose correct model really is the
+ * flat-crease roll. The caller uses `computeFold` for that case.
+ */
+export function computeConeFold(
+  anchor: FoldAnchor,
+  pointer: Point,
+  width: number,
+  height: number,
+  arcTarget: number = curlArcLength(width, height),
+): ConeFold | null {
+  const c = anchorPoint(anchor, width, height);
+  const dx = pointer.x - c.x;
+  const dy = pointer.y - c.y;
+  const travel = Math.hypot(dx, dy);
+  if (travel < 0.01) return null;
+
+  const spineX = spineEdgeForAnchor(anchor) === "left" ? 0 : width;
+  // The apex is where the perpendicular bisector of anchor->pointer meets the
+  // spine line. `dx` is that bisector's component across the spine; when it
+  // vanishes the bisector is parallel to the spine and the apex is at
+  // infinity — the far field, handed back to the flat-crease model.
+  if (Math.abs(dx) < 1e-6) return null;
+  const midX = (c.x + pointer.x) / 2;
+  const midY = (c.y + pointer.y) / 2;
+  // Bisector: (q - mid) . (pointer - c) = 0. Solve at q.x = spineX.
+  const apexY = midY - ((spineX - midX) * dx) / dy_or_epsilon(dy);
+  if (!Number.isFinite(apexY)) return null;
+  const apex: Point = { x: spineX, y: apexY };
+
+  // Every point of the spine edge has to sit on one ray from the apex, or the
+  // binding is not fixed. That means the apex outside the leaf's own span.
+  if (apexY > -1e-6 && apexY < height + 1e-6) return null;
+  const spineDir: Point = { x: 0, y: apexY < 0 ? 1 : -1 };
+
+  const toAnchor = { x: c.x - apex.x, y: c.y - apex.y };
+  const anchorRadius = Math.hypot(toAnchor.x, toAnchor.y);
+  if (anchorRadius < 1e-6) return null;
+  // Winding: whichever sense puts the leaf at positive angles.
+  const cross = toAnchor.x * spineDir.y - toAnchor.y * spineDir.x;
+  const winding = cross >= 0 ? -1 : 1;
+
+  const probe: ConeFold = {
+    apex,
+    spineDir,
+    winding,
+    creaseAngle: 0,
+    arcAngle: 0,
+    anchorRadius,
+  };
+  const anchorAngle = coneAngle(probe, toAnchor);
+  const pointerAngle = coneAngle(probe, { x: pointer.x - apex.x, y: pointer.y - apex.y });
+  // The angular sweep the anchor has to make. Same role as `d` in the flat
+  // model, one dimension down.
+  const sweep = anchorAngle - pointerAngle;
+  if (!(sweep > 1e-9)) return null;
+
+  // The roll's angular extent, so that its *physical* arc at the anchor is the
+  // same `arcTarget` the flat model uses there — and clamped by the sweep the
+  // same way, so a shallow drag rolls less rather than overshooting.
+  const arcAngle = Math.min(arcTarget / anchorRadius, sweep / (1 - ROLL_END.o));
+  // ...and the crease, from the same algebra as `creaseToCorner`: the anchor
+  // sits at `arcAngle * ROLL_END.o - (psi - arcAngle)` once it is out on the
+  // tail, and must land at `anchorAngle - sweep`.
+  const creaseToAnchor = (sweep + arcAngle * (1 + ROLL_END.o)) / 2;
+
+  return {
+    apex,
+    spineDir,
+    winding,
+    creaseAngle: anchorAngle - creaseToAnchor,
+    arcAngle,
+    anchorRadius,
+  };
+}
+
+/** Guards the bisector solve against a perfectly axis-aligned drag, where
+ * `dy` is zero and the intersection is a division by it. */
+function dy_or_epsilon(dy: number): number {
+  if (Math.abs(dy) < 1e-9) return dy < 0 ? -1e-9 : 1e-9;
+  return dy;
+}
+
 function offsetAlong(from: Point, dir: Point, distance: number): Point {
   return { x: from.x + dir.x * distance, y: from.y + dir.y * distance };
 }
@@ -500,10 +738,7 @@ export function deformPoint(fold: FoldGeometry, p: Point): Point {
     o = fold.tailOffset - (w - arc); // the tail, mirrored back across the crease
   } else {
     // On the roll: interpolate the normalized profile at this arc fraction.
-    const at = (w / arc) * ROLL_SAMPLES;
-    const i = Math.min(ROLL_SAMPLES - 1, Math.floor(at));
-    const t = at - i;
-    o = arc * (ROLL_PROFILE[i]!.o + (ROLL_PROFILE[i + 1]!.o - ROLL_PROFILE[i]!.o) * t);
+    o = arc * rollOffsetAt(w / arc);
   }
   const shift = w - o;
   return { x: p.x + peelDir.x * shift, y: p.y + peelDir.y * shift };
@@ -1110,6 +1345,22 @@ export function drawPageFold(
     );
   }
   ctx.restore();
+}
+
+/**
+ * The roll's projected offset at a fraction of its arc, per unit arc length.
+ * Multiply by the roll's own arc to get leaf px.
+ *
+ * Shared by the flat-crease model and the cone (M27), and that sharing is the
+ * point rather than a convenience: the cone is the same roll wrapped about an
+ * apex, so if the two ever read different profiles the "the roll is the cone's
+ * far-field limit" property quietly stops being true.
+ */
+function rollOffsetAt(fraction: number): number {
+  const at = Math.max(0, Math.min(1, fraction)) * ROLL_SAMPLES;
+  const i = Math.min(ROLL_SAMPLES - 1, Math.floor(at));
+  const t = at - i;
+  return ROLL_PROFILE[i]!.o + (ROLL_PROFILE[i + 1]!.o - ROLL_PROFILE[i]!.o) * t;
 }
 
 /** The roll profile at a fractional index — the bands are spaced by how
