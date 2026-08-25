@@ -6091,6 +6091,36 @@ ink.
 
 ## Blockers
 
+- **M27 — the two measurements still owed cannot be taken on this machine, and
+  taking them wrong is worse than not taking them — 2026-08-25.** Both remaining
+  items in M27's "two measurements still owed" need the app driven *by hand on
+  the operator's Mac*, and neither is a matter of effort here.
+
+  **The canvas-2D-on-a-real-compositor number.** The step 4 gate closed the
+  performance column for WebGL and explicitly could *not* close it for canvas 2D
+  because headless Chromium composites in software — which is exactly the only
+  browser available in this session. Driving a synthetic drag through CDP in
+  headless Chrome would produce a number, and it would be the same
+  software-rasterizer number the gate already rejected. TASKS.md is specific
+  about the method for good reason: **drag** six pages, not arrow keys, because
+  the guard under-reports a keyboard turn by 7x, single-page and spread, then
+  paste the `[marginalia] fold draw cost:` lines in here. Note those lines now
+  read `p90` rather than `median` — the M27 guard change above — so a trace
+  taken before today is not comparable to one taken after.
+
+  This also blocks M27's own p90 acceptance criterion, which asks for the dev
+  trace on a held drag and a keyboard turn of the same fold to land within ~2x.
+  The statistic is unit-tested against the step 4 traces (`drawCost.test.ts`)
+  and passes; what is unverified is the *live* pair on real hardware.
+
+  **The original stuck-curl trigger.** Wants one captured trace of a gesture
+  getting stuck. The operator reports it "doesn't really get stuck" since the
+  structural fixes, and it was not reproduced in ~4 held drags and ~30 keyboard
+  turns on 2026-08-03. This is a loose end that needs a real reader hitting a
+  rare timing on a real machine; it cannot be manufactured to order here, and
+  synthesising a stuck gesture would prove nothing about the trigger.
+
+
 - **TASKS.md M24 §A/Verify cites a NOTES.md "M24 A/C" section (Playwright method,
   screenshots, the Gregor/298-hits run) that does not exist in this file.** Found while
   splitting the M24/M24.1 backlog into commits, 2026-08-18. The checkmarks and verification
@@ -6509,3 +6539,34 @@ decidable here:
 The harness grew `&back=real|mirror` for exactly this comparison, and its "next page" text
 was lengthened to a full page — it had been three paragraphs, so the back was mostly blank
 paper and the show-through question could not actually be seen.
+
+## M27 — the low-fps guard finally takes the p90 it was ruled to take — 2026-08-25
+
+A small change with a large amount of history behind it, and worth a note mainly because
+**PAGE_CURL.md §7 has read "the guard now takes the p90 of drawn frames" since 2026-08-03
+while the shipped guard was still taking the median.** The step 4 entry ruled it; nothing
+implemented it; the doc described the intent in the present tense. If you are reading §7 and
+wondering why the numbers do not match the code, that gap is why — it is closed now.
+
+The statistic has now been wrong twice, and both times the measuring was fine and the choice
+of statistic was not:
+
+1. The **mean frame interval** over the canvas's whole mount, which was reading vsync
+   (16.6ms healthy, 33ms threshold) and latched a downgrade on almost every first turn.
+2. The **median draw cost**, which measures the fold but reads its dead tail —
+   `SWEEP_OVERSHOOT` is 2.2, so about half a programmatic turn's frames happen after the
+   sheet has left the leaf and cost ~0.
+
+So `drawCostP90` got its own module rather than living inline in `PageCurl`'s cleanup, and
+its tests are written against the actual traces the step 4 entry recorded — the 25-frame
+keyboard turn whose median is 0.9ms and whose peak is 27.8ms, and the 104-frame held drag at
+7.4ms median. Those tests assert the thing the milestone is actually for: **the same fold,
+turned by key and by hand, now reads within ~2x instead of 7x apart**, while a single
+GC-hit frame still cannot move the number.
+
+Nearest-rank rather than interpolated, deliberately: the figure traced in dev is then a
+frame that really happened, which makes the dev line comparable to a profiler's.
+
+**Not verified here:** the acceptance criterion asks for the dev trace on a real held drag
+and a real keyboard turn of the same fold. That needs the app driven by hand on the
+operator's machine — see the blocker note below on the two M27 measurements.

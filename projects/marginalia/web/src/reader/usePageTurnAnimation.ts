@@ -55,7 +55,9 @@ const SETTLE_ANIM_MS = 1200;
  * arrives — so a gesture cannot rely on being told when it ends. */
 const CAPTURE_POLL_MS = 700;
 /** The M10 low-fps downgrade, in `drawPageFold` milliseconds. 33ms is one
- * whole frame at 30fps spent drawing the fold and nothing else. */
+ * whole frame at 30fps spent drawing the fold and nothing else — applied to
+ * the p90 of drawn frames (M27), so it means "one frame in ten costs that",
+ * not "the typical frame does". */
 const MAX_DRAW_MS = 33;
 /** …and never on fewer than this many drawn frames. A click turn draws ~25;
  * a two-frame flick must not be able to latch a downgrade for the session. */
@@ -177,7 +179,7 @@ export function usePageTurnAnimation({
   /** The back of the turning sheet, or null while its capture is in flight
    * (M27). Sampled per frame by `PageCurl`; see `backCardRef`. */
   getFoldBack: () => { image: HTMLCanvasElement; leafX: number } | null;
-  handleDrawCost: (medianDrawMs: number, samples: number) => void;
+  handleDrawCost: (p90DrawMs: number, samples: number) => void;
   turnPage: (direction: "prev" | "next") => Promise<void>;
   /** M21 (AUDIO.md: "the slide, not M10's curl" for auto-turn-while-listening
    * — a turn every ~30s must never cost a snapshot capture that could stall
@@ -393,28 +395,32 @@ export function usePageTurnAnimation({
     return "curl";
   }, [stageReducedMotion, pageTransition]);
 
-  const handleDrawCost = useCallback((medianDrawMs: number, samples: number) => {
-    // One `drawPageFold` eating a whole 30fps frame, at the *median* over a
-    // turn — this machine cannot keep the fold at a real frame rate, so stop
-    // paying for it and use the slide. The unit is the one PAGE_CURL.md §7
-    // quotes (tuned rolled sheet: 15ms median in a software rasterizer).
+  const handleDrawCost = useCallback((p90DrawMs: number, samples: number) => {
+    // One frame in ten eating a whole 30fps frame drawing the fold and
+    // nothing else — this machine cannot keep the fold at a real frame rate,
+    // so stop paying for it and use the slide.
     //
-    // Rewritten 2026-08-03 from an operator bug — "Curl curls the first page,
-    // then slides forever". The old test was the mean *frame interval* over
-    // the canvas's whole mount, which is not the fold's cost: the canvas
-    // mounts before `turnPageCurl` awaits its rendition step, so a single
-    // slow section layout (with the fold drawing nothing throughout) pushed
-    // the mean past the line and latched a downgrade that never clears. This
-    // is a one-way switch and it decides whether the reader ever sees the
-    // effect they chose, so it has to measure the fold and nothing else.
+    // The threshold has not moved; what it is applied to has, twice.
+    // Originally the mean *frame interval* over the canvas's whole mount,
+    // which was reading vsync and latched a downgrade on almost every
+    // reader's first turn (operator bug, 2026-08-03: "Curl curls the first
+    // page, then slides forever"). Then the median draw cost, which measures
+    // the fold but reads its dead tail: `SWEEP_OVERSHOOT` puts about half a
+    // programmatic turn's frames after the sheet has left the leaf, so the
+    // median reported 0.9ms on a turn whose worst frame was 27.8ms and the
+    // guard could not notice a stutter the operator could see (M27).
+    //
+    // p90 keeps what the median was chosen for — a one-way switch must not be
+    // decided by the one frame a GC landed on — while reading the frames the
+    // reader is actually looking at. See `drawCostP90`.
     if (samples < MIN_DRAW_SAMPLES) return;
     if (import.meta.env.DEV) {
       console.debug(
-        `[marginalia] fold draw cost: median ${medianDrawMs.toFixed(1)}ms over ${samples} frames` +
-          `${medianDrawMs > MAX_DRAW_MS ? " — downgrading to the slide from here on" : ""}`,
+        `[marginalia] fold draw cost: p90 ${p90DrawMs.toFixed(1)}ms over ${samples} frames` +
+          `${p90DrawMs > MAX_DRAW_MS ? " — downgrading to the slide from here on" : ""}`,
       );
     }
-    if (medianDrawMs > MAX_DRAW_MS) lowFpsRef.current = true;
+    if (p90DrawMs > MAX_DRAW_MS) lowFpsRef.current = true;
   }, []);
 
   // M7's dip-and-recover slide — kept as the fallback under reduced motion,

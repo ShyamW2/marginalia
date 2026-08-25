@@ -9,6 +9,7 @@ import {
   type LeafFace,
   type Point,
 } from "./pageFold.js";
+import { drawCostP90 } from "./drawCost.js";
 import styles from "./PageCurl.module.css";
 
 interface PageCurlProps {
@@ -49,21 +50,18 @@ interface PageCurlProps {
    */
   getBack?: () => { image: HTMLCanvasElement; leafX: number } | null;
   /**
-   * Reported once, on unmount, with the **median cost of one `drawPageFold`
+   * Reported once, on unmount, with the **p90 cost of one `drawPageFold`
    * call** over this mount — how `usePageTurnAnimation` decides to trip the
    * M10 low-fps downgrade.
    *
-   * Was the mean *frame interval* over the whole mount until 2026-08-03, and
-   * that measured the wrong thing twice over (operator bug: "Curl curls the
-   * first page, then slides forever"). The canvas mounts *before*
-   * `turnPageCurl` awaits its rendition step, so the window included however
-   * long epub.js took to lay out a new section — with the fold drawing
-   * nothing for all of it — and a mean let that one stall decide a latch
-   * that never clears. Median draw cost is the number PAGE_CURL.md §7 is
-   * written in, and it is a property of the fold rather than of whatever
-   * else the main thread was doing.
+   * The statistic has been wrong twice and both times it was the choice of
+   * statistic, not the measuring. It was the mean *frame interval* over the
+   * whole mount until 2026-08-03, which was reading vsync; then the median
+   * draw cost, which reads the fold's own dead tail — `SWEEP_OVERSHOOT` puts
+   * about half a programmatic turn's frames after the sheet has left the
+   * leaf. See `drawCostP90` for the traces and M27 for the change.
    */
-  onDrawCost?: (medianDrawMs: number, samples: number) => void;
+  onDrawCost?: (p90DrawMs: number, samples: number) => void;
 }
 
 /**
@@ -192,11 +190,10 @@ export function PageCurl({
       cancelled = true;
       cancelAnimationFrame(raf);
       if (drawCosts.length === 0) return;
-      const sorted = [...drawCosts].sort((a, b) => a - b);
-      // Median, not mean: a downgrade that never clears must not be decided
-      // by one frame that the garbage collector or a section relayout landed
-      // on. See the `onDrawCost` doc above.
-      onDrawCostRef.current?.(sorted[sorted.length >> 1]!, sorted.length);
+      // p90, not the median: the median is dominated by the frames after the
+      // sheet has left the leaf, which cost nothing and are not the fold. See
+      // `drawCostP90`.
+      onDrawCostRef.current?.(drawCostP90(drawCosts), drawCosts.length);
     };
     // Every dep here is fixed for the lifetime of one turn —
     // usePageTurnAnimation always mounts a fresh PageCurl (`curl` goes

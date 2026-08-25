@@ -32,6 +32,7 @@ closed-form, no mesh, no WebGL.
 | `web/src/reader/PageCurl.tsx` | Owns the two canvases and the rAF loop; mounts only while a fold is live. |
 | `web/src/reader/PageSlide.tsx` | The *other* renderer (M20 step 3): the departing card as one decoded `<img>`, held still while `.marginWrapper` translates over it. No canvas, no rAF loop — deliberately, see §3. |
 | `web/src/reader/usePageTurnAnimation.ts` | Snapshot capture, drag gesture, commit/spring-back, low-fps downgrade. |
+| `web/src/reader/drawCost.ts` | The one statistic the low-fps downgrade decides on — the p90 of drawn-frame costs. Its own module because *which statistic* has been the bug twice; `drawCost.test.ts` pins it against the traces in §7. |
 | `web/src/reader/readerGeometry.ts` | `nearLeafRect` — which half of the **card** is turning. |
 | `web/src/reader/pageSnapshot.ts` | Builds the page bitmap by serializing the section document. Rewritten 2026-08-02 — **read §5 before touching it**; four of its lines exist because of a silent failure. |
 | `web/src/reader/pageSnapshot.test.ts` | 12 tests, on the parts that failed silently. |
@@ -514,7 +515,9 @@ real keyboard turn (spread leaf 649×771, dpr 2), eleven of twenty-five drawn fr
 nothing, the median is 0.9ms — exactly what the guard reported — and the frame the reader is
 looking at costs **27.8ms**. The same fold under a *held drag* reports 7.4ms median over 104
 frames. **The guard now takes the p90 of drawn frames**, keeping the ≥12-sample floor and the
-33ms threshold, so it means "one frame in ten eats a whole 30fps frame". Read that number
+33ms threshold, so it means "one frame in ten eats a whole 30fps frame". (Ruled 2026-08-03,
+*implemented* in M27 — `drawCost.ts`; between those dates this paragraph described the
+intent rather than the code, and the shipped guard was still taking the median.) Read that number
 before believing anything else about fold performance — and note that the earlier claim of
 "~40x under the threshold" was the tail talking; the real headroom at the peak is nearer 1.2x.
 
