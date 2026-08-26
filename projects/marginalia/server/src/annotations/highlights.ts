@@ -105,6 +105,7 @@ export function listHighlightsForResource(
 interface HighlightWithThreadRow extends HighlightRow {
   thread_id: string | null;
   answer_count: number;
+  message_count: number;
 }
 
 /** SPEC: GET /api/resources/:id/highlights — highlights + their thread summaries. */
@@ -116,7 +117,9 @@ export function listHighlightsWithThreadsForResource(
     .prepare(
       `SELECT h.*, t.id AS thread_id,
          (SELECT COUNT(*) FROM messages m
-            WHERE m.thread_id = t.id AND m.role = 'assistant') AS answer_count
+            WHERE m.thread_id = t.id AND m.role = 'assistant') AS answer_count,
+         (SELECT COUNT(*) FROM messages m
+            WHERE m.thread_id = t.id) AS message_count
        FROM highlights h
        LEFT JOIN threads t ON t.highlight_id = h.id
        WHERE h.resource_id = ?
@@ -127,7 +130,7 @@ export function listHighlightsWithThreadsForResource(
   return rows.map((row) => ({
     ...rowToHighlight(row),
     thread: row.thread_id
-      ? { id: row.thread_id, hasAnswer: row.answer_count > 0 }
+      ? { id: row.thread_id, hasAnswer: row.answer_count > 0, messageCount: row.message_count }
       : null,
   }));
 }
@@ -221,9 +224,29 @@ export function getHighlightById(
  * for that thread (M6) — `publishes.thread_id` has a foreign key on
  * `threads(id)`, so deleting the thread without it fails the whole
  * transaction once a thread has been published to the vault at least once.
+ *
+ * M30 E, found live driving the new delete-confirmation flow on a real
+ * answered thread: with `foreign_keys = ON` (db.ts), this transaction was
+ * failing outright — a 500, not the designed 204 — the moment a thread had
+ * *any* tracked LLM call, because `llm_usage.message_id` (migration 22)
+ * still pointed at the message about to be deleted with no `ON DELETE`
+ * clause. The same gap existed for `highlight_tags` and `highlight_themes`
+ * (migrations 16, 17) — a tagged or theme-tagged highlight couldn't be
+ * deleted either, for the identical reason, just never hit by a manual test
+ * because M30 C/D's own Verify entries happened not to tag anything. Fixed
+ * the same way `deleteProviderProfile` already handles its own dangling
+ * `provider_roles.profile_id`: null the usage ledger's reference (a cost
+ * already spent stays in the accounting history; only the link to a
+ * conversation that no longer exists goes), delete the rest outright.
  */
 export function deleteHighlight(db: Database.Database, id: string): boolean {
   const result = db.transaction(() => {
+    db.prepare(
+      `UPDATE llm_usage SET message_id = NULL WHERE message_id IN
+         (SELECT m.id FROM messages m
+            JOIN threads t ON t.id = m.thread_id
+            WHERE t.highlight_id = ?)`,
+    ).run(id);
     db.prepare(
       `DELETE FROM publishes WHERE thread_id IN
          (SELECT id FROM threads WHERE highlight_id = ?)`,
@@ -233,6 +256,8 @@ export function deleteHighlight(db: Database.Database, id: string): boolean {
          (SELECT id FROM threads WHERE highlight_id = ?)`,
     ).run(id);
     db.prepare("DELETE FROM threads WHERE highlight_id = ?").run(id);
+    db.prepare("DELETE FROM highlight_tags WHERE highlight_id = ?").run(id);
+    db.prepare("DELETE FROM highlight_themes WHERE highlight_id = ?").run(id);
     return db.prepare("DELETE FROM highlights WHERE id = ?").run(id);
   })();
   return result.changes > 0;

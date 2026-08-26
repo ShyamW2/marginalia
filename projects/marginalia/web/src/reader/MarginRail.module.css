@@ -160,6 +160,31 @@
   position: relative;
 }
 
+/*
+ * Bridges the dead zone between the dot and its reveal button: `.removeButton`
+ * sits `margin-left` away from this wrapper's own (dot-sized) box, so a
+ * cursor crossing that gap passes over no element at all. `:hover` (and with
+ * it `.removeButton`'s opacity/pointer-events) drops the instant the pointer
+ * leaves the wrapper's box — which happens *before* the pointer reaches the
+ * button, since the button doesn't start until margin-left later — so the X
+ * vanishes mid-transit instead of ever being reachable (found live: "when I
+ * move the cursor to the X, the X disappears").
+ *
+ * An out-of-flow strip that exactly plugs that gap (never overlapping the
+ * button's own box, so it can't steal its clicks or sit on top of it in
+ * paint order) keeps the whole dot-to-button path one continuous hover
+ * target. Being absolutely positioned, it doesn't affect `.rail`'s flex
+ * centering — the dot's resting position is unchanged.
+ */
+.dotWrapper::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 100%;
+  width: 0.3rem;
+  height: 100%;
+}
+
 .dotWrapper:hover .removeButton {
   opacity: 1;
   pointer-events: auto;

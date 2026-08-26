@@ -1,0 +1,42 @@
+/* M30 E1's first real modal in the reader — 1000 matches SettingsModal's own
+   z-index, the app's established "a modal claims this" ceiling (see
+   PageFold3D's own z-index comment in ReaderView.module.css), so a delete
+   confirmation always wins over every anchored instrument beneath it. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, black 45%, transparent);
+}
+
+.panel {
+  width: min(24rem, calc(100vw - 2rem));
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+  padding: 1.1rem 1.2rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.message {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}

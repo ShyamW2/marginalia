@@ -24,6 +24,14 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem;
+  /* M30 E feedback "1a": the drag handle — same "grab the bare strip"
+     affordance as ThreadPanel's header. */
+  cursor: grab;
+  touch-action: none;
+}
+
+.header:active {
+  cursor: grabbing;
 }
 
 /* Serif, because the headword is a word from the book, not a UI label. */
@@ -81,4 +89,54 @@
   flex: 0 0 auto;
   padding: 0.2rem 0.5rem;
   font-size: 0.75rem;
+}
+
+/* M30 E feedback "1b": the manual deep-search gate — a dictionary miss no
+   longer runs the digest fallback on its own. */
+.deepenRow {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.roleSelect {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: inherit;
+  font-size: 0.75rem;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.25rem 0.4rem;
+}
+
+.deepenButton {
+  min-height: 0;
+  flex: 0 0 auto;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* The narrated progress — real stages of work, not a fabricated
+   chain-of-thought (dictionary/define.ts). Quiet and small: it's a receipt,
+   not the answer. */
+.thoughts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.thoughts li {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.thoughts li:last-child {
+  color: var(--color-text);
+  font-style: normal;
 }

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   CreateHighlightBodySchema,
+  DefineDeepenBodySchema,
   HighlightTagsSchema,
   UpdateHighlightImportanceBodySchema,
   UpdateHighlightNoteBodySchema,
@@ -18,7 +19,7 @@ import {
   setHighlightPanelOffset,
   setHighlightPanelSize,
 } from "../annotations/highlights.js";
-import { defineHighlight } from "../dictionary/define.js";
+import { defineHighlight, deepenDefinition } from "../dictionary/define.js";
 import { listTagsForHighlight, setTagsForHighlight } from "../annotations/tags.js";
 import { getResourceById } from "../library/store.js";
 
@@ -83,6 +84,72 @@ highlightsRouter.post("/:id/definition", async (req, res) => {
     setHighlightDefinition(getDb(), highlight.id, definition.definition, definition.source);
   }
   res.json(definition);
+});
+
+/**
+ * M30 E feedback: the reader's explicit "look deeper" — everything
+ * `POST /:id/definition` used to do automatically on a dictionary miss, now
+ * only on request, and streamed (SSE, same `data: {...}\n\n` convention as
+ * `threadsRouter`'s `streamThreadReply`) so the reader watches the real
+ * stages of work rather than a bare spinner: which occurrences of the term
+ * turned up, then the model composing the definition live.
+ *
+ * Always 200 — `deepenDefinition` never throws, its worst case is a `done`
+ * event carrying `reason: "not_found"`, the same designed empty state
+ * `POST /:id/definition` already had.
+ */
+highlightsRouter.post("/:id/definition/deepen", async (req, res) => {
+  const highlight = getHighlightById(getDb(), req.params.id);
+  if (!highlight) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const resource = getResourceById(getDb(), highlight.resourceId);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const parsed = DefineDeepenBodySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const role = parsed.data.role ?? "query";
+
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+  res.on("error", () => {
+    // client-side socket errors after disconnect are expected — nothing to do
+  });
+
+  let disconnected = false;
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    disconnected = true;
+  });
+
+  const db = getDb();
+  try {
+    for await (const event of deepenDefinition(db, resource, highlight, role)) {
+      if (disconnected) break;
+      if ("done" in event && event.definition.definition) {
+        // Only a real answer is stored — same rule as the non-deepened
+        // route above, for the same reason (M30 D's glossary).
+        setHighlightDefinition(db, highlight.id, event.definition.definition, event.definition.source);
+      }
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    }
+  } catch (err) {
+    if (!disconnected) {
+      console.error("[define] deepen stream failed:", err);
+      res.write(`data: ${JSON.stringify({ error: "Something went wrong talking to the LLM provider." })}\n\n`);
+    }
+  } finally {
+    if (!disconnected) res.end();
+  }
 });
 
 highlightsRouter.put("/:id/importance", (req, res) => {

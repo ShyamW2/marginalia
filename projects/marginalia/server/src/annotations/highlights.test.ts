@@ -76,6 +76,61 @@ describe("highlights store", () => {
     db.close();
   });
 
+  it("M30 E: deletes a highlight even when its thread has a tracked LLM call, a tag, and a theme", () => {
+    // Found live (2026-08-27) driving the new delete-confirmation flow on a
+    // real answered thread: with `foreign_keys = ON` (db.ts), this used to
+    // fail the whole transaction — a 500, not the designed 204 — the moment
+    // a thread had *any* llm_usage row pointing at one of its messages, or
+    // the highlight had a tag or a theme. None of those exist in the
+    // "cascades to its thread and messages" test above, which is exactly
+    // why this gap went unnoticed until a real book exercised it.
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    const highlight = createHighlight(db, {
+      resourceId,
+      exact: "the golden gate",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose",
+    });
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO threads (id, highlight_id, created_at) VALUES ('thread-1', @highlightId, @now)`,
+    ).run({ highlightId: highlight.id, now });
+    db.prepare(
+      `INSERT INTO messages (id, thread_id, role, content, created_at)
+       VALUES ('msg-1', 'thread-1', 'assistant', 'an answer', @now)`,
+    ).run({ now });
+    db.prepare(
+      `INSERT INTO llm_usage
+         (id, provider, model, operation, input_tokens, output_tokens, provenance, duration_ms, created_at, message_id)
+       VALUES ('usage-1', 'openai-compatible', 'qwen3.5', 'thread', 100, 50, 'reported', 1000, @now, 'msg-1')`,
+    ).run({ now });
+    db.prepare(`INSERT INTO highlight_tags (highlight_id, tag) VALUES (?, 'favorite')`).run(highlight.id);
+    db.prepare(`INSERT INTO highlight_themes (highlight_id, theme) VALUES (?, 'moral-choice')`).run(
+      highlight.id,
+    );
+
+    expect(deleteHighlight(db, highlight.id)).toBe(true);
+    expect(getHighlightById(db, highlight.id)).toBeUndefined();
+    expect(db.prepare("SELECT * FROM highlight_tags WHERE highlight_id = ?").get(highlight.id)).toBeUndefined();
+    expect(
+      db.prepare("SELECT * FROM highlight_themes WHERE highlight_id = ?").get(highlight.id),
+    ).toBeUndefined();
+    // The cost record survives — only its dangling link to the deleted
+    // message is cleared, same "fall back to null, never delete the
+    // accounting history" rule deleteProviderProfile already follows.
+    const usageRow = db.prepare("SELECT * FROM llm_usage WHERE id = 'usage-1'").get() as
+      | { message_id: string | null }
+      | undefined;
+    expect(usageRow).toBeDefined();
+    expect(usageRow?.message_id).toBeNull();
+    db.close();
+  });
+
   it("deleting a non-existent highlight is reported as a no-op", () => {
     const db = createDb(":memory:");
     expect(deleteHighlight(db, "missing")).toBe(false);

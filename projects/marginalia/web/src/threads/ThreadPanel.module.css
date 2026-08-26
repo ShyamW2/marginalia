@@ -141,6 +141,26 @@
   border-bottom: 1px solid var(--color-border);
 }
 
+/* Groups the two existing controls so the M30 E2 delete button can sit at
+   the row's far end without `space-between` spreading three items evenly
+   across it (which would leave TagEditor stranded mid-row instead of beside
+   ImportanceStars where it's always lived). */
+.metaLeft {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.deleteButton {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+}
+
+.deleteButton:hover {
+  color: var(--color-danger);
+}
+
 /* M13: the reader's own plain-text note — deliberately styled apart from
    the LLM conversation below (serif italic, a thin kind-tinted left rule,
    a slightly raised paper tone) so it reads as "written in the margin",

@@ -207,6 +207,25 @@ export function ScanIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** M30 E2: the thread panel's own delete affordance. A trash can rather than
+ * a second "×" in the same panel — the header already has one meaning
+ * "collapse this thread", and a lookalike glyph a few rows below it, meaning
+ * "destroy it", is exactly the ambiguity a delete control can't afford. */
+export function TrashIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M5 7h14M9.5 7V5.5a1.5 1.5 0 0 1 1.5-1.5h2a1.5 1.5 0 0 1 1.5 1.5V7M7.5 7l.8 12.1a1.5 1.5 0 0 0 1.5 1.4h4.4a1.5 1.5 0 0 0 1.5-1.4L16.5 7"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path d="M10.3 10.5v6M13.7 10.5v6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 /** M24.7 §F: the web-search control's narrow-width glyph — a globe, not a
  * new metaphor invented for this milestone (READER_REDESIGN.md §4 names it
  * directly). Circle plus one equator and two meridians reads as "globe" at

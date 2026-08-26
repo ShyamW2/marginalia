@@ -81,7 +81,8 @@ import { resolveSegmentIndexForOffset } from "../audio/segmentLookup.js";
 import { CastingModal } from "../audio/CastingModal.js";
 import { captureOverlayOrigin, type OverlayOrigin } from "../controls/overlayOrigin.js";
 import { cursorPastPageText } from "./pageTextEdge.js";
-import { PageCurl } from "./PageCurl.js";
+import { PageFold3D } from "./PageFold3D.js";
+import { FarLeafCover } from "./FarLeafCover.js";
 import { PageSlide } from "./PageSlide.js";
 import { DwellRing } from "./DwellRing.js";
 import { AskPill } from "./AskPill.js";
@@ -89,6 +90,7 @@ import { MarginRail } from "./MarginRail.js";
 import { ThreadPanel } from "../threads/ThreadPanel.js";
 import { AnnotationsOverview } from "./AnnotationsOverview.js";
 import { DefinitionCard, type DefinitionCardState } from "./DefinitionCard.js";
+import { DeleteConfirmDialog } from "./DeleteConfirmDialog.js";
 import { Glossary, glossaryEntries } from "./Glossary.js";
 import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, currentChapter as deriveCurrentChapter, type TocEntry } from "./toc.js";
 import { ChapterNav } from "./ChapterNav.js";
@@ -116,9 +118,11 @@ import {
   SPREAD_MIN_WIDTH,
   turnZoneForVisibleX,
 } from "./readerGeometry.js";
-import { usePageTurnAnimation } from "./usePageTurnAnimation.js";
+import { HINGE_ARC_RADIUS_MODE, usePageTurnAnimation } from "./usePageTurnAnimation.js";
 import { useFullscreenChrome } from "./useFullscreenChrome.js";
 import { useReaderPaneWidth } from "./useReaderPaneWidth.js";
+import { useReaderStripLayout } from "./useReaderStripLayout.js";
+import { useMarqueeOverflow } from "./useMarqueeOverflow.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -396,7 +400,6 @@ async function requestDefinition(highlightId: string): Promise<Definition> {
   }
 }
 
-
 interface PendingSelection {
   cfi: string;
   exact: string;
@@ -452,6 +455,13 @@ interface ReaderViewProps {
    * and the scan shortcut's own focus target. */
   onOpenDigest: (event: ReactMouseEvent<HTMLElement>) => void;
   onOpenScan: (event: ReactMouseEvent<HTMLElement>) => void;
+  /** App.tsx's own real "/settings" open-state and its `closeSettings` —
+   * threaded down for the embedded `NavCluster`'s toggle check, which
+   * cannot trust its own `useLocation()` in here (see `NavCluster`'s
+   * `settingsOpen` prop comment for why). Mirrors the existing
+   * `scanOpen`/`digestOpen` threading in `ReaderPage`. */
+  settingsOpen?: boolean;
+  onCloseSettings?: () => void;
   onPublish: () => void;
   publishing: boolean;
   scanButtonRef: RefObject<HTMLButtonElement>;
@@ -499,6 +509,8 @@ export function ReaderView({
   initialAutoplay,
   onOpenDigest,
   onOpenScan,
+  settingsOpen,
+  onCloseSettings,
   onPublish,
   publishing,
   scanButtonRef,
@@ -511,6 +523,21 @@ export function ReaderView({
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
   const reducedMotion = useReducedMotion();
+  // M24.7 §C, redone 2026-08-24: the strip's own row-count switch, and the
+  // identity block's title/author marquee — see useReaderStripLayout.ts and
+  // useMarqueeOverflow.ts, and ReaderView.module.css `.stripGrid`'s comment
+  // for why this moved from a `@container` query to a measured one.
+  const stripTopRowRef = useRef<HTMLDivElement>(null);
+  const stripFooterRef = useRef<HTMLDivElement>(null);
+  const stripLeftRef = useRef<HTMLDivElement>(null);
+  const stripRightRef = useRef<HTMLDivElement>(null);
+  const stripStacked = useReaderStripLayout(stripTopRowRef, stripLeftRef, stripRightRef);
+  const titleOuterRef = useRef<HTMLSpanElement>(null);
+  const titleInnerRef = useRef<HTMLSpanElement>(null);
+  const authorOuterRef = useRef<HTMLSpanElement>(null);
+  const authorInnerRef = useRef<HTMLSpanElement>(null);
+  const titleMarquee = useMarqueeOverflow(titleOuterRef, titleInnerRef, [resourceTitle]);
+  const authorMarquee = useMarqueeOverflow(authorOuterRef, authorInnerRef, [resourceAuthor]);
   const containerRef = useRef<HTMLDivElement>(null);
   // M19.6 "the skipped last page of a chapter": the element epub.js measures
   // as `container` (containerRef itself) must be an *integer* pixel width —
@@ -604,6 +631,8 @@ export function ReaderView({
     slide,
     gestureActive,
     getFoldPointer,
+    getFoldArc,
+    getFoldOrigin,
     getFoldBack,
     handleDrawCost,
     turnPage,
@@ -823,6 +852,12 @@ export function ReaderView({
   // M30 C: the Define result, anchored where the selection was. Null when no
   // lookup is showing; `result: null` inside it means one is in flight.
   const [definitionCard, setDefinitionCard] = useState<DefinitionCardState | null>(null);
+  // M30 E1: non-null while a threaded delete is awaiting confirmation — see
+  // handleDeleteHighlight/performDeleteHighlight.
+  const [pendingDelete, setPendingDelete] = useState<{
+    highlight: HighlightWithThread;
+    messageCount: number;
+  } | null>(null);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
   // expandedThread above; "persists for the session" means it survives
@@ -2653,12 +2688,18 @@ export function ReaderView({
     setDefinitionCard({ left, top, term, highlightId: created.id, result: null });
 
     const result = await requestDefinition(created.id);
-    // The definition lives on the highlight server-side; mirroring it into
-    // local state is what puts the entry in the glossary without a refetch.
+    applyDefinitionResult(created.id, result);
+  }
+
+  /** Shared by the initial dictionary lookup (handleDefine) and M30 E
+   * feedback's "look deeper" (onDeepened, passed to DefinitionCard): the
+   * definition lives on the highlight server-side; mirroring it into local
+   * state is what puts the entry in the glossary without a refetch. */
+  function applyDefinitionResult(highlightId: string, result: Definition) {
     if (result.definition) {
       setHighlights((prev) =>
         prev.map((h) =>
-          h.id === created.id
+          h.id === highlightId
             ? { ...h, definition: result.definition, definitionSource: result.source }
             : h,
         ),
@@ -2667,7 +2708,7 @@ export function ReaderView({
     // Guard against a second Define having replaced this card while the
     // lookup was in flight — the reader is faster than the digest rung.
     setDefinitionCard((prev) =>
-      prev && prev.highlightId === created.id ? { ...prev, result } : prev,
+      prev && prev.highlightId === highlightId ? { ...prev, result } : prev,
     );
   }
 
@@ -2679,7 +2720,6 @@ export function ReaderView({
     setExpandedThread({ highlightId: definitionCard.highlightId, top: definitionCard.top });
     setDefinitionCard(null);
   }
-
 
   // M22.6 C "'Play from here' joins the selection pill": starts listening
   // at the selected sentence instead of the section's first. Doesn't create
@@ -2701,7 +2741,13 @@ export function ReaderView({
     setPendingSelection(null);
   }
 
-  async function handleDeleteHighlight(highlight: HighlightWithThread) {
+  /**
+   * M30 E1: the actual, irreversible delete — unchanged from before this
+   * milestone. `handleDeleteHighlight` below is what call sites use; it
+   * gates this behind a confirmation whenever there's a thread with
+   * messages to lose.
+   */
+  async function performDeleteHighlight(highlight: HighlightWithThread) {
     const ok = await deleteHighlightRequest(highlight.id);
     if (!ok) return;
     setHighlights((prev) => prev.filter((h) => h.id !== highlight.id));
@@ -2720,6 +2766,25 @@ export function ReaderView({
     // M30 C: a card left open over a highlight that no longer exists would
     // offer an "Ask about this" that can't work.
     setDefinitionCard((prev) => (prev?.highlightId === highlight.id ? null : prev));
+  }
+
+  /**
+   * M30 E1: "the hazard is more urgent than the feature" — `deleteHighlight`
+   * cascades to the whole thread with no undo, so a highlight carrying a
+   * conversation gets a confirm step naming how many messages are about to
+   * go; a bare (un-threaded) highlight — cheap and reversible by
+   * re-highlighting — deletes immediately, same as before this milestone.
+   * The single entry point every call site (margin rail, annotations
+   * overview, and M30 E2's thread panel) already goes through, so the guard
+   * lives in exactly one place.
+   */
+  function handleDeleteHighlight(highlight: HighlightWithThread) {
+    const messageCount = highlight.thread?.messageCount ?? 0;
+    if (messageCount > 0) {
+      setPendingDelete({ highlight, messageCount });
+      return;
+    }
+    void performDeleteHighlight(highlight);
   }
 
   function handleNavigateToHighlight(highlight: HighlightWithThread) {
@@ -2797,7 +2862,6 @@ export function ReaderView({
   // and the panel's list can never disagree. `glossaryEntries` is the one
   // definition of "what is in the glossary" — there is no table to consult.
   const glossaryCount = useMemo(() => glossaryEntries(highlights).length, [highlights]);
-
 
   // M24.7 A: the listening cluster's icon (trigger and panel both) reads the
   // same play/pause state the old inline transport row did — computed once
@@ -3012,17 +3076,20 @@ export function ReaderView({
           panel; the pebble further down replaces the functions it carries
           that immersive mode still offers (digest, listening). */}
       {!fullscreenMode && (
-        <div className={styles.topRow}>
+        <div
+          className={`${styles.topRow} ${stripStacked ? "readerStripStacked" : ""}`}
+          ref={stripTopRowRef}
+        >
           {/* M24.7 A: one line, three zones — reader functions left, the
               book's identity centre, chrome right. Replaces the four places
               this chrome used to live in (ReaderPage's .titleBar,
               ReaderActionsCluster beside/below the card, and the
               audio/digest/provider controls that used to crowd this row).
-              M24.7 §C: the grid itself, split out of `.topRow` so the
-              `reader-strip` container query (established on `.topRow`) can
-              restyle it — see ReaderView.module.css `.topRow`'s comment. */}
+              M24.7 §C, redone 2026-08-24: the row-count switch is now
+              `stripStacked` (useReaderStripLayout), not a `@container` query
+              — see ReaderView.module.css `.stripGrid`'s comment for why. */}
           <div className={styles.stripGrid}>
-          <div className={styles.topRowLeft}>
+          <div className={styles.topRowLeft} ref={stripLeftRef}>
             <Button
               variant="ghost"
               size="sm"
@@ -3082,10 +3149,37 @@ export function ReaderView({
             <motion.div className={styles.coverThumb} layoutId={reducedMotion ? undefined : coverLayoutId(resourceId)}>
               <BookCover resourceId={resourceId} title={resourceTitle} />
             </motion.div>
-            <span className={styles.title}>{resourceTitle}</span>
-            {resourceAuthor && <span className={styles.author}>{resourceAuthor}</span>}
+            {/* Title above author (2026-08-24, operator's design) — a column
+                needs the *wider* of the two lines, not their combined width.
+                Each line is independently a fixed-size clipping viewport
+                (`.title`/`.author`) around a scrollable inner span; when the
+                inner span's natural width exceeds the viewport,
+                useMarqueeOverflow measures the overflow and the `.scrolling`
+                class ping-pongs it into view instead of just eliding it. */}
+            <div className={styles.identityText}>
+              <span className={styles.title} ref={titleOuterRef}>
+                <span
+                  className={`${styles.titleInner} ${titleMarquee.scrolling ? styles.scrolling : ""}`}
+                  style={titleMarquee.style}
+                  ref={titleInnerRef}
+                >
+                  {resourceTitle}
+                </span>
+              </span>
+              {resourceAuthor && (
+                <span className={styles.author} ref={authorOuterRef}>
+                  <span
+                    className={`${styles.authorInner} ${authorMarquee.scrolling ? styles.scrolling : ""}`}
+                    style={authorMarquee.style}
+                    ref={authorInnerRef}
+                  >
+                    {resourceAuthor}
+                  </span>
+                </span>
+              )}
+            </div>
           </div>
-          <div className={styles.topRowRight}>
+          <div className={styles.topRowRight} ref={stripRightRef}>
             {/* M24.7 A: the reader's own embedded, un-floated NavCluster — the
                 app-shell's floating instance is suppressed for the reader
                 route (App.tsx), since the pill must track the pane's edge,
@@ -3093,7 +3187,13 @@ export function ReaderView({
                 beside another pane. Registers the chrome-row's leading slot
                 so the reader's own Search/Scan/Publish can portal into it,
                 exactly like DeskPage's Import button does. */}
-            <NavCluster settingsTab="reading" floating={false} registersSlot />
+            <NavCluster
+              settingsTab="reading"
+              floating={false}
+              registersSlot
+              settingsOpen={settingsOpen}
+              onCloseSettings={onCloseSettings}
+            />
             <ChromeSlotPortal>
               <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
               <IconButton ref={scanButtonRef} icon={<ScanIcon />} label="Scan" onClick={onOpenScan} />
@@ -3141,17 +3241,37 @@ export function ReaderView({
               <PageSlide image={slide.image} layout={slide.layout} paper={slide.paper} />
             )}
             {curl && (
-              <PageCurl
-                image={curl.image}
-                anchor={curl.anchor}
-                leafX={curl.leafX}
-                stageWidth={curl.stageWidth}
-                leafWidth={curl.leafWidth}
-                leafHeight={curl.leafHeight}
-                getPointer={getFoldPointer}
-                getBack={getFoldBack}
-                onDrawCost={handleDrawCost}
-              />
+              <>
+                {/* M27 far-leaf-pre-flip fix: only in spread mode, where the
+                    far leaf is a real, distinct rect from the turning one —
+                    single-page mode's `farX` coincides with `curl.leafX`
+                    (readerGeometry.ts's `farLeafRect` collapses to the same
+                    whole-card rect `nearLeafRect` does there), and there is
+                    nothing to cover. */}
+                {curl.farX !== curl.leafX && (
+                  <FarLeafCover
+                    image={curl.image}
+                    farX={curl.farX}
+                    leafWidth={curl.leafWidth}
+                    leafHeight={curl.leafHeight}
+                    stageWidth={curl.stageWidth}
+                  />
+                )}
+                <PageFold3D
+                  image={curl.image}
+                  anchor={curl.anchor}
+                  leafWidth={curl.leafWidth}
+                  leafHeight={curl.leafHeight}
+                  leafX={curl.leafX}
+                  stageWidth={curl.stageWidth}
+                  getOrigin={getFoldOrigin}
+                  getPointer={getFoldPointer}
+                  getArc={getFoldArc}
+                  arcRadiusMode={HINGE_ARC_RADIUS_MODE}
+                  getBack={getFoldBack}
+                  onDrawCost={handleDrawCost}
+                />
+              </>
             )}
             {dwellRing && (
               <DwellRing
@@ -3256,6 +3376,8 @@ export function ReaderView({
                 state={definitionCard}
                 onClose={() => setDefinitionCard(null)}
                 onAsk={handleAskFromDefinition}
+                onDeepened={applyDefinitionResult}
+                appBoundsRef={appBoundsRef}
               />
             )}
           </AnimatePresence>
@@ -3282,11 +3404,25 @@ export function ReaderView({
                 providerConfigured={providerConfigured}
                 appBoundsRef={appBoundsRef}
                 onClose={() => setExpandedThread(null)}
+                onDelete={() => handleDeleteHighlight(expandedHighlight)}
                 onThreadChange={handleThreadChange}
                 onImportanceChange={handleImportanceChange}
                 onNoteChange={handleNoteChange}
                 onPanelOffsetChange={handlePanelOffsetChange}
                 onPanelSizeChange={handlePanelSizeChange}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {pendingDelete && (
+              <DeleteConfirmDialog
+                key="delete-confirm"
+                messageCount={pendingDelete.messageCount}
+                onCancel={() => setPendingDelete(null)}
+                onConfirm={() => {
+                  void performDeleteHighlight(pendingDelete.highlight);
+                  setPendingDelete(null);
+                }}
               />
             )}
           </AnimatePresence>
@@ -3396,7 +3532,10 @@ export function ReaderView({
           </div>
         </>
       ) : (
-        <div className={styles.footer}>
+        <div
+          className={`${styles.footer} ${stripStacked ? "readerStripStacked" : ""}`}
+          ref={stripFooterRef}
+        >
           {/* M24.7 B: the foot mirrors the strip — ‹ · page/percent · ›, with
               an instruments pebble at the right. The percent Slider + its
               SliderDial popover move here unchanged from the old .topRow —

@@ -17,6 +17,7 @@ import { ImportanceStars } from "../highlights/ImportanceStars.js";
 import { TagEditor } from "../highlights/TagEditor.js";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
+import { TrashIcon } from "../controls/icons.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { ProviderPicker } from "../settings/ProviderPicker.js";
 import { useOpenSettings } from "../settings/useOpenSettings.js";
@@ -97,6 +98,10 @@ interface ThreadPanelProps {
    * clamped back into on reopen. */
   appBoundsRef: RefObject<HTMLDivElement>;
   onClose: () => void;
+  /** M30 E2: delete this highlight (and its thread) from right where the
+   * reader is reading it — routes to the same `handleDeleteHighlight` the
+   * margin rail and annotations overview already use, guard and all. */
+  onDelete: () => void;
   onThreadChange: (highlightId: string, thread: ThreadSummary) => void;
   onImportanceChange: (highlightId: string, importance: HighlightImportance) => void;
   onNoteChange: (highlightId: string, note: string) => void;
@@ -127,6 +132,7 @@ export function ThreadPanel({
   providerConfigured,
   appBoundsRef,
   onClose,
+  onDelete,
   onThreadChange,
   onImportanceChange,
   onNoteChange,
@@ -527,26 +533,35 @@ export function ThreadPanel({
           setStreamingText(streamingTextRef.current);
         },
         onDone: (messageId, threadId, contextNote, contextUsage, contextDepth, contextChapters, provenance) => {
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: messageId,
-              threadId,
-              role: "assistant",
-              content: streamingTextRef.current,
-              contextNote,
-              contextDepth,
-              contextChapters,
-              createdAt: new Date().toISOString(),
-              provenance,
-            },
-          ]);
+          // M30 E1: the delete-confirmation count elsewhere (margin rail,
+          // annotations overview) needs the real total, not a guess through
+          // the optimistic-append/retry branching above — read it back off
+          // the functional update itself rather than recomputing it.
+          let nextMessageCount = 0;
+          setMessages((prev) => {
+            const next = [
+              ...prev,
+              {
+                id: messageId,
+                threadId,
+                role: "assistant" as const,
+                content: streamingTextRef.current,
+                contextNote,
+                contextDepth,
+                contextChapters,
+                createdAt: new Date().toISOString(),
+                provenance,
+              },
+            ];
+            nextMessageCount = next.length;
+            return next;
+          });
           if (contextUsage) {
             setContextUsageByMessageId((prev) => ({ ...prev, [messageId]: contextUsage }));
           }
           setStreamingText(null);
           abortRef.current = null;
-          onThreadChange(highlightId, { id: threadId, hasAnswer: true });
+          onThreadChange(highlightId, { id: threadId, hasAnswer: true, messageCount: nextMessageCount });
         },
         onError: (message) => {
           setError(message);
@@ -668,8 +683,21 @@ export function ThreadPanel({
       </div>
 
       <div className={styles.metaRow}>
-        <ImportanceStars value={highlightImportance} onChange={handleImportanceChange} size="small" />
-        <TagEditor tags={tags} onChange={handleTagsChange} />
+        <div className={styles.metaLeft}>
+          <ImportanceStars value={highlightImportance} onChange={handleImportanceChange} size="small" />
+          <TagEditor tags={tags} onChange={handleTagsChange} />
+        </div>
+        {/* M30 E2: "delete from where you are" — the panel already carries
+            everything handleDeleteHighlight needs, so this is one more prop
+            through the same seam rather than new logic (TASKS.md). */}
+        <IconButton
+          icon={<TrashIcon size={16} />}
+          label="Delete this highlight"
+          size="sm"
+          variant="ghost"
+          className={styles.deleteButton}
+          onClick={onDelete}
+        />
       </div>
 
       <div className={styles.noteSection}>

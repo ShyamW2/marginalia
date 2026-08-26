@@ -15,6 +15,7 @@ export const LLMProviderIdSchema = z.enum([
   "anthropic",
   "openai-compatible",
   "claude-agent",
+  "codex-cli",
 ]);
 export type LLMProviderId = z.infer<typeof LLMProviderIdSchema>;
 
@@ -217,8 +218,13 @@ export const DefinitionSchema = z.object({
   /** Human-facing provenance line: "WordNet 3.1", or the book's own title
    * for a digest-grounded answer. */
   attribution: z.string(),
-  /** Only meaningful when `source` is "" — why nothing came back. */
-  reason: z.enum(["", "not_a_term", "no_provider", "not_found"]),
+  /** Only meaningful when `source` is "" — why nothing came back.
+   * M30 E feedback: `dictionary_miss` is a fourth, non-final state — the
+   * dictionary came back empty but a provider is configured, so the reader
+   * gets asked before a call is made, rather than the digest fallback
+   * running automatically. `not_found` is what a *deepen* attempt returns
+   * when even that comes back empty. */
+  reason: z.enum(["", "not_a_term", "no_provider", "not_found", "dictionary_miss"]),
 });
 export type Definition = z.infer<typeof DefinitionSchema>;
 
@@ -279,6 +285,10 @@ export type ContextLadderDepth = z.infer<typeof ContextLadderDepthSchema>;
 export const ThreadSummarySchema = z.object({
   id: z.string(),
   hasAnswer: z.boolean(), // at least one assistant message has been persisted
+  /** M30 E1: how many messages a delete is about to take with it — the
+   * acceptance criterion is naming the count, not just "this has a
+   * thread". */
+  messageCount: z.number().int().nonnegative(),
 });
 export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
 
@@ -558,6 +568,35 @@ export type SettingsUpdate = z.infer<typeof SettingsUpdateSchema>;
 export const ProviderRoleSchema = z.enum(["query", "digest"]);
 export type ProviderRole = z.infer<typeof ProviderRoleSchema>;
 
+/**
+ * POST /api/highlights/:id/definition/deepen body — M30 E feedback. The
+ * reader picked "look deeper" and, optionally, which configured role's
+ * model should answer (same two roles Settings already exposes; there is no
+ * per-call model catalog beyond that). Defaults to "query" — today's
+ * automatic-fallback role — when omitted.
+ */
+export const DefineDeepenBodySchema = z.object({
+  role: ProviderRoleSchema.optional(),
+});
+export type DefineDeepenBody = z.infer<typeof DefineDeepenBodySchema>;
+
+/**
+ * SSE contract for the deepen stream: a `step` event per real stage of work
+ * (dictionary/define.ts narrates what it is actually doing — searching the
+ * text, reading occurrences, asking the model — never a fabricated
+ * chain-of-thought), then `text` chunks as the answer composes, then one
+ * `done` with the final `Definition`, or `error`. Mirrors
+ * `ThreadStreamEventSchema`'s shape on purpose — same client-side dispatch
+ * pattern (streamThread.ts / streamDefine.ts).
+ */
+export const DefineStreamEventSchema = z.union([
+  z.object({ step: z.string() }),
+  z.object({ text: z.string() }),
+  z.object({ done: z.literal(true), definition: DefinitionSchema }),
+  z.object({ error: z.string() }),
+]);
+export type DefineStreamEvent = z.infer<typeof DefineStreamEventSchema>;
+
 /** A complete, named provider config. Secrets masked on the wire, same
  * "***"-means-unchanged convention as Settings. */
 export const ProviderProfileSchema = z.object({
@@ -567,6 +606,7 @@ export const ProviderProfileSchema = z.object({
   anthropicModel: z.string(),
   anthropicApiKey: z.string(), // masked
   claudeAgentModel: z.string(),
+  codexModel: z.string(),
   openaiBaseUrl: z.string(),
   openaiModel: z.string(),
   openaiApiKey: z.string(), // masked
@@ -582,6 +622,7 @@ export const CreateProviderProfileBodySchema = z.object({
   anthropicModel: z.string().optional(),
   anthropicApiKey: z.string().optional(),
   claudeAgentModel: z.string().optional(),
+  codexModel: z.string().optional(),
   openaiBaseUrl: z.string().optional(),
   openaiModel: z.string().optional(),
   openaiApiKey: z.string().optional(),
@@ -678,6 +719,35 @@ export const ProviderAuthFlowStateSchema = z.object({
   message: z.string().nullable(),
 });
 export type ProviderAuthFlowState = z.infer<typeof ProviderAuthFlowStateSchema>;
+
+/**
+ * What the Settings setup guide knows about one CLI on *this* machine
+ * (decisions.md 2026-08-26). Read-only diagnostics: never credentials, only
+ * whether the executable was found, where, and what to do when it wasn't.
+ * Exists because "it's installed though" and "the server can see it" are two
+ * different facts, and only the second one makes the app work.
+ */
+export const ProviderCliDiagnosticsSchema = z.object({
+  provider: ProviderAuthProviderSchema,
+  /** The command name, e.g. "codex". */
+  bin: z.string(),
+  /** Absolute path we will actually spawn, or null when nothing was found. */
+  path: z.string().nullable(),
+  /** First line of `--version`, when the binary was found and answered. */
+  version: z.string().nullable(),
+  /** Where we looked — populated only when `path` is null, so a "not found"
+   * is inspectable rather than a shrug. */
+  searchedDirs: z.array(z.string()),
+  /** The env var that overrides the search outright. */
+  overrideEnvVar: z.string(),
+  overrideActive: z.boolean(),
+  installCommand: z.string(),
+  installUrl: z.string(),
+  /** The subscription/plan this provider needs — the requirement that isn't
+   * an API key and therefore isn't obvious. */
+  requires: z.string(),
+});
+export type ProviderCliDiagnostics = z.infer<typeof ProviderCliDiagnosticsSchema>;
 
 // ---------------------------------------------------------------------------
 // Usage ledger summary (M19 Usage divider — reads M17's ledger, decisions.md
@@ -993,6 +1063,16 @@ export const DigestChapterStatusSchema = z.object({
   // summary it came from). The positional fallback ("Chapter 7 · 34-39%")
   // is always derivable from the fields above, never gated.
   title: z.string().nullable(),
+  // The EPUB's own NCX chapter title, same field ScanChapterSchema already
+  // carries — unlike `title` above, never gated on `digested`/`revealed`:
+  // it's the book's own published table of contents, not digest output, so
+  // it isn't a spoiler in the sense that gate exists for. Lets an
+  // undigested (or not-yet-revealed) chapter still show its real name
+  // instead of a bare "Chapter 7" placeholder (found live 2026-08-23: a
+  // section the digest hadn't reached yet had no name at all, even though
+  // the book's own TOC already names it and the Scan's chapter dial shows
+  // that exact name for the same section).
+  tocTitle: z.string().nullable(),
   pastBookmark: z.boolean(),
   /** True when this chapter's spoiler content is currently being shown
    * despite being past the bookmark — i.e. the reader explicitly revealed

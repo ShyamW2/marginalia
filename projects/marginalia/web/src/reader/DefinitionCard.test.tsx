@@ -1,15 +1,31 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { type RefObject } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import type { Definition } from "@marginalia/shared";
+import type { Definition, ProviderRoleAssignment } from "@marginalia/shared";
 import { AskPill } from "./AskPill.js";
 import { DefinitionCard } from "./DefinitionCard.js";
 import { DEFAULT_KIND_LABELS } from "./highlightKinds.js";
 
 afterEach(cleanup);
 
+// useProviderRoles() (behind the M30 E feedback "look deeper" model picker)
+// fetches /api/provider-profiles and /api/provider-roles on mount — stubbed
+// globally so every DefinitionCard render below resolves without hitting a
+// real network call. Tests that care about the returned shape override this.
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({ ok: true, json: async () => [] }) as unknown as Response),
+  );
+});
+
 function card(result: Definition | null, term = "serendipity") {
   return { left: 100, top: 100, term, highlightId: "h1", result };
 }
+
+// A real ref works fine too, but the tests below don't exercise dragging —
+// framer-motion's dragConstraints only needs *some* RefObject shape.
+const noBoundsRef = { current: null } as unknown as RefObject<HTMLDivElement>;
 
 describe("AskPill's Define button", () => {
   function renderPill(exact: string, onDefine = vi.fn()) {
@@ -53,7 +69,15 @@ describe("AskPill's Define button", () => {
 
 describe("DefinitionCard", () => {
   it("shows a looking-up state instead of a spinner over the text", () => {
-    render(<DefinitionCard state={card(null)} onClose={vi.fn()} onAsk={vi.fn()} />);
+    render(
+      <DefinitionCard
+        state={card(null)}
+        onClose={vi.fn()}
+        onAsk={vi.fn()}
+        onDeepened={vi.fn()}
+        appBoundsRef={noBoundsRef}
+      />,
+    );
     expect(screen.getByText("Looking up…")).toBeTruthy();
   });
 
@@ -69,6 +93,8 @@ describe("DefinitionCard", () => {
         })}
         onClose={vi.fn()}
         onAsk={vi.fn()}
+        onDeepened={vi.fn()}
+        appBoundsRef={noBoundsRef}
       />,
     );
     expect(screen.getByText("(noun) good luck in making discoveries")).toBeTruthy();
@@ -87,6 +113,8 @@ describe("DefinitionCard", () => {
         })}
         onClose={vi.fn()}
         onAsk={vi.fn()}
+        onDeepened={vi.fn()}
+        appBoundsRef={noBoundsRef}
       />,
     );
     expect(screen.getByText("From the digest of Stranger in a Strange Land")).toBeTruthy();
@@ -107,6 +135,8 @@ describe("DefinitionCard", () => {
         )}
         onClose={vi.fn()}
         onAsk={vi.fn()}
+        onDeepened={vi.fn()}
+        appBoundsRef={noBoundsRef}
       />,
     );
     // Defining a different word than the one on the page is only honest if
@@ -123,7 +153,13 @@ describe("DefinitionCard", () => {
       reason: "not_found",
     };
     const { unmount } = render(
-      <DefinitionCard state={card(miss, "zharkovian")} onClose={vi.fn()} onAsk={vi.fn()} />,
+      <DefinitionCard
+        state={card(miss, "zharkovian")}
+        onClose={vi.fn()}
+        onAsk={vi.fn()}
+        onDeepened={vi.fn()}
+        appBoundsRef={noBoundsRef}
+      />,
     );
     expect(screen.getByText(/neither the dictionary nor this book's digest/)).toBeTruthy();
     unmount();
@@ -133,6 +169,8 @@ describe("DefinitionCard", () => {
         state={card({ ...miss, reason: "no_provider" }, "zharkovian")}
         onClose={vi.fn()}
         onAsk={vi.fn()}
+        onDeepened={vi.fn()}
+        appBoundsRef={noBoundsRef}
       />,
     );
     // Sending a reader to Settings for a word that simply isn't a word would
@@ -153,9 +191,70 @@ describe("DefinitionCard", () => {
         })}
         onClose={vi.fn()}
         onAsk={onAsk}
+        onDeepened={vi.fn()}
+        appBoundsRef={noBoundsRef}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Ask about this" }));
     expect(onAsk).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers a deeper search on a dictionary miss instead of running it automatically", async () => {
+    // M30 E feedback: a dictionary miss with a provider configured used to
+    // fall through to the digest rung on its own. It no longer does — the
+    // reader gets asked, via the offer this test looks for, and nothing
+    // beyond the roles/profiles GETs (useProviderRoles' own fetch) should
+    // have gone out yet.
+    const roleAssignment: ProviderRoleAssignment = {
+      role: "query",
+      profileId: "p1",
+      profile: {
+        id: "p1",
+        name: "Local Qwen",
+        provider: "openai-compatible",
+        anthropicModel: "",
+        anthropicApiKey: "",
+        claudeAgentModel: "",
+        codexModel: "",
+        openaiBaseUrl: "http://localhost:11434",
+        openaiModel: "qwen3.5",
+        openaiApiKey: "",
+        openaiContextTokens: 32768,
+        createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z",
+      },
+      configured: true,
+      maxResponseTokens: 2000,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => ({
+        ok: true,
+        json: async () => (url.includes("provider-roles") ? [roleAssignment] : []),
+      })) as unknown as typeof fetch,
+    );
+
+    const miss: Definition = {
+      headword: "timshel",
+      definition: "",
+      source: "",
+      attribution: "",
+      reason: "dictionary_miss",
+    };
+    render(
+      <DefinitionCard
+        state={card(miss, "timshel")}
+        onClose={vi.fn()}
+        onAsk={vi.fn()}
+        onDeepened={vi.fn()}
+        appBoundsRef={noBoundsRef}
+      />,
+    );
+
+    expect(await screen.findByText(/not in the dictionary/i)).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Look deeper" })).toBeTruthy();
+    expect(screen.getByText(/Local Qwen/)).toBeTruthy();
+    // The offer, not the search itself: no /definition/deepen call yet.
+    expect(fetch).not.toHaveBeenCalledWith(expect.stringContaining("/deepen"), expect.anything());
   });
 });

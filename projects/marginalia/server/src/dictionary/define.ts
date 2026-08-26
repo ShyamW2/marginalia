@@ -1,8 +1,9 @@
 import type Database from "better-sqlite3";
-import type { Definition, Highlight, Resource } from "@marginalia/shared";
+import type { Definition, DefineStreamEvent, Highlight, ProviderRole, Resource } from "@marginalia/shared";
 import { findAllOccurrences, isDefinableTerm, normalizeDefineTerm } from "@marginalia/shared";
 import { sectionLabel } from "../llm/context.js";
 import { getProvider, LLMError } from "../llm/provider.js";
+import { getRoleProfileRaw } from "../settings/providers.js";
 import { getBookDigest, listChapterDigests } from "../digest/store.js";
 import { getResourceTextSections } from "../library/store.js";
 import { getDictionary } from "./wordnet.js";
@@ -21,6 +22,18 @@ import { getDictionary } from "./wordnet.js";
  *     decision 8 as amended for M17), because the case it exists for is "a
  *     term this book has developed", and that is precisely what the digest
  *     and the surrounding pages carry.
+ *
+ *     ⚠️ M30 E feedback (2026-08-27): the fallback used to fire automatically
+ *     on a dictionary miss. Operator feedback on the shipped M30 C: a reader
+ *     who reaches for Define mid-sentence didn't necessarily ask for a
+ *     100+-second reasoning-model call — that decision belongs to them, not
+ *     to a miss. `defineHighlight` below now stops at the dictionary and
+ *     returns `reason: "dictionary_miss"` when a provider *is* configured
+ *     (still `"no_provider"` when one isn't — there's nothing to offer
+ *     deepening with). The digest-rung call itself moved to
+ *     `deepenDefinition`, run only once the reader explicitly asks, and
+ *     narrating its real stages as it goes (never a fabricated
+ *     chain-of-thought — see its own comment).
  *  3. **Under 100 output tokens, enforced twice — both times on our side.**
  *     The cap is a product constraint: a definition that runs long has
  *     stopped being a definition and started being a thread, which the reader
@@ -267,9 +280,16 @@ const NOT_A_TERM: Definition = {
 };
 
 /**
- * Resolves one Define. Never throws: every failure — an unusable selection,
- * a dictionary miss with no provider, a provider error mid-call — comes back
- * as a `Definition` with `source: ""` and a `reason` the UI can render.
+ * Resolves one Define from the dictionary alone. Never throws: every
+ * failure — an unusable selection, a dictionary miss — comes back as a
+ * `Definition` with `source: ""` and a `reason` the UI can render.
+ *
+ * M30 E feedback: this used to fall through to the digest rung
+ * automatically on a miss. It no longer does — `reason: "dictionary_miss"`
+ * tells the reader there's a deeper search available (`deepenDefinition`
+ * below) and lets *them* decide whether a 100+-second call is worth it,
+ * rather than the miss deciding for them. `no_provider` is unchanged: with
+ * nothing configured there is nothing to offer deepening with.
  */
 export async function defineHighlight(
   db: Database.Database,
@@ -294,22 +314,71 @@ export async function defineHighlight(
     }
   }
 
-  // --- Path 2: the digest rung, capped. Fallback only.
-  const provider = getProvider(
-    db,
-    "query",
-    "define",
-    resource.id,
-    undefined,
-    DEFINE_PROVIDER_MAX_TOKENS,
-  );
+  // A dictionary miss with no query provider configured has nothing to
+  // deepen with — same designed empty state as before M30 E.
+  const provider = getProvider(db, "query", "define", resource.id, undefined, DEFINE_PROVIDER_MAX_TOKENS);
   if (!provider) {
     return { headword: term, definition: "", source: "", attribution: "", reason: "no_provider" };
   }
+  return { headword: term, definition: "", source: "", attribution: "", reason: "dictionary_miss" };
+}
+
+/** `deepenDefinition`'s narration, alongside the real work it names. Never a
+ * fabricated chain-of-thought (settled decision 2's spirit: the model
+ * proposes, code disposes) — every line here corresponds to a real,
+ * deterministic step this function actually takes, in the order it takes
+ * them, before the model is asked anything at all. */
+function stepEvent(step: string): DefineStreamEvent {
+  return { step };
+}
+
+/**
+ * The digest-rung fallback (M30 C's "Path 2"), run only when the reader
+ * explicitly asks for it (M30 E feedback — see `defineHighlight`'s
+ * comment). An async generator rather than a plain promise so the route can
+ * forward each stage to the reader as it happens: which occurrences of the
+ * term it found, then the model composing the answer live, matching what
+ * `deepenDefinition`'s narration promises rather than a bare spinner.
+ *
+ * Still never throws to the caller — the last event this yields is always
+ * either `{done, definition}` (a real answer or `reason: "not_found"`, the
+ * same designed-failure states `defineHighlight` always had) or `{error}`
+ * for a genuinely unexpected failure the route couldn't have prevented.
+ */
+export async function* deepenDefinition(
+  db: Database.Database,
+  resource: Resource,
+  highlight: Highlight,
+  role: ProviderRole,
+): AsyncGenerator<DefineStreamEvent> {
+  const term = normalizeDefineTerm(highlight.exact);
+
+  const provider = getProvider(db, role, "define", resource.id, undefined, DEFINE_PROVIDER_MAX_TOKENS);
+  if (!provider) {
+    yield {
+      done: true,
+      definition: { headword: term, definition: "", source: "", attribution: "", reason: "no_provider" },
+    };
+    return;
+  }
+  // Cosmetic only (the narration names who's answering) — a role with a
+  // profile assigned but the profile since deleted is the one gap
+  // `getProvider` above already tolerates by resolving null, which this
+  // can't hit once `provider` is non-null.
+  const profileLabel = getRoleProfileRaw(db, role)?.name ?? "the model";
 
   try {
+    yield stepEvent(`Searching "${resource.title}" for "${term}"…`);
+    const sections = getResourceTextSections(db, resource.id);
+    const windows = occurrenceWindows(sections, term, resource.metadata.chapterTitles);
+    yield stepEvent(
+      windows.length > 0
+        ? `Reading context around ${windows.length} occurrence${windows.length === 1 ? "" : "s"}…`
+        : `No other occurrences found — reading the book's digest instead…`,
+    );
     const bookContext = buildDefineContext(db, resource, highlight, term);
 
+    yield stepEvent(`Asking ${profileLabel} for a definition…`);
     let answer = "";
     for await (const chunk of provider.stream({
       instructions: DEFINE_INSTRUCTIONS,
@@ -317,6 +386,7 @@ export async function defineHighlight(
       messages: [{ role: "user", content: `Define this term as it is used here: "${term}"` }],
     })) {
       answer += chunk.text;
+      if (chunk.text) yield { text: chunk.text };
       // The cap that actually holds, and the only one measured in *visible*
       // text. The slack lets clampToTokenBudget below find a real sentence
       // boundary to cut at rather than always ending mid-thought.
@@ -325,23 +395,28 @@ export async function defineHighlight(
 
     const cleaned = clampToTokenBudget(answer, DEFINE_MAX_OUTPUT_TOKENS);
     if (!cleaned || cleaned.toUpperCase().startsWith(NO_DEFINITION_SENTINEL)) {
-      return { headword: term, definition: "", source: "", attribution: "", reason: "not_found" };
+      yield {
+        done: true,
+        definition: { headword: term, definition: "", source: "", attribution: "", reason: "not_found" },
+      };
+      return;
     }
-    return {
-      headword: term,
-      definition: cleaned,
-      source: "digest",
-      attribution: resource.title,
-      reason: "",
+    yield {
+      done: true,
+      definition: { headword: term, definition: cleaned, source: "digest", attribution: resource.title, reason: "" },
     };
   } catch (err) {
-    // A provider failure is a miss, not a 500 — the reader gets the same
-    // designed empty state as a dictionary miss. The real error is logged
-    // rather than shown (same reasoning as threads.ts's ERROR_MESSAGES).
+    // A provider failure is a miss, not a crash — the reader gets the same
+    // designed empty state a dictionary miss shows. The real error is
+    // logged rather than shown (same reasoning as threads.ts's
+    // ERROR_MESSAGES).
     console.error(
       "[define] digest-rung lookup failed:",
       err instanceof LLMError ? `${err.code}: ${err.message}` : err,
     );
-    return { headword: term, definition: "", source: "", attribution: "", reason: "not_found" };
+    yield {
+      done: true,
+      definition: { headword: term, definition: "", source: "", attribution: "", reason: "not_found" },
+    };
   }
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createDb } from "../db.js";
 import { createHighlight, getHighlightById, setHighlightDefinition } from "../annotations/highlights.js";
-import { clampToTokenBudget, defineHighlight, renderDictionarySenses } from "./define.js";
+import { createProviderProfile, setProviderRole } from "../settings/providers.js";
+import { clampToTokenBudget, defineHighlight, deepenDefinition, renderDictionarySenses } from "./define.js";
 import type { Resource } from "@marginalia/shared";
 
 function seedBook(db: ReturnType<typeof createDb>) {
@@ -126,6 +127,28 @@ describe("defineHighlight", () => {
     db.close();
   });
 
+  it("M30 E feedback: reports dictionary_miss — not an automatic digest call — when a provider is configured", async () => {
+    const db = createDb(":memory:");
+    const resource = seedBook(db);
+    // claude-agent needs no API key to resolve (it uses the machine's own
+    // Claude Code login at call time), so this configures a real,
+    // non-null provider without making any network call itself — exactly
+    // what's needed to prove defineHighlight stops *before* calling it.
+    const profile = createProviderProfile(db, { name: "Local Agent", provider: "claude-agent" });
+    setProviderRole(db, "query", profile.id);
+
+    const definition = await defineHighlight(
+      db,
+      resource,
+      highlightOn(db, resource.id, "zharkovian"),
+    );
+
+    expect(definition.source).toBe("");
+    expect(definition.reason).toBe("dictionary_miss");
+    expect(definition.definition).toBe("");
+    db.close();
+  });
+
   it("stores a definition on the highlight, and clearing it empties both columns", () => {
     const db = createDb(":memory:");
     const resource = seedBook(db);
@@ -144,6 +167,28 @@ describe("defineHighlight", () => {
     // definition would be a row the glossary filter has to think about.
     setHighlightDefinition(db, highlight.id, "", "dictionary");
     expect(getHighlightById(db, highlight.id)?.definitionSource).toBe("");
+    db.close();
+  });
+});
+
+describe("deepenDefinition", () => {
+  it("yields a no_provider done event immediately, with no steps and no model call", async () => {
+    const db = createDb(":memory:");
+    const resource = seedBook(db);
+    const highlight = highlightOn(db, resource.id, "zharkovian");
+
+    const events = [];
+    for await (const event of deepenDefinition(db, resource, highlight, "query")) {
+      events.push(event);
+    }
+
+    // Exactly one event — proof nothing was narrated before the provider
+    // check, since there's nothing to search with.
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      done: true,
+      definition: { source: "", reason: "no_provider" },
+    });
     db.close();
   });
 });
