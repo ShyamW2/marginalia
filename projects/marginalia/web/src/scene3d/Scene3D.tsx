@@ -32,6 +32,7 @@ interface Scene3DContextValue {
   releaseLayer: (id: string) => void;
   setLayerFade: (id: string, fade: LayerFade | null) => void;
   setFade: (ms: number | null) => void;
+  elevate: (delta: 1 | -1) => void;
   contextLost: boolean;
 }
 
@@ -167,6 +168,16 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // How many consumers currently want the canvas *above* the app's chrome
+  // rather than behind it. A count rather than a flag because the hook is
+  // ref-counted (see `useScene3DElevated`), and StrictMode's mount/cleanup/
+  // mount double-invoke has to net out to one.
+  const [elevatedCount, setElevatedCount] = useState(0);
+  const elevate = useCallback(
+    (delta: 1 | -1) => setElevatedCount((n) => Math.max(0, n + delta)),
+    [],
+  );
+
   // How long the whole canvas takes to fade out, or null for "fully opaque".
   // See `useScene3DFade` for why this is a property of the canvas rather than
   // of a layer.
@@ -234,13 +245,19 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
 
   return (
     <Scene3DContext.Provider
-      value={{ setLayer, holdLayer, releaseLayer, setLayerFade, setFade, contextLost }}
+      value={{ setLayer, holdLayer, releaseLayer, setLayerFade, setFade, elevate, contextLost }}
     >
       {children}
       {shouldMount && (
         <div
           className={styles.canvasLayer}
           aria-hidden="true"
+          // The layering contract's one exception, and the whole of it lives in
+          // `Scene3D.module.css` — see the `[data-elevated]` rule there for why
+          // a turning page outranks the reader's chrome and a dialog still
+          // outranks the page. Absent rather than "false" when nobody is asking,
+          // so the ordinary case is exactly the CSS it always was.
+          data-elevated={elevatedCount > 0 ? "true" : undefined}
           // ⚠️ **A sticky canvas keeps showing its last frame.** WebGL does not
           // clear a drawing buffer just because nothing is drawing into it, and
           // `frameloop="never"` below means nothing will: the moment the Desk
@@ -506,6 +523,33 @@ export function useScene3DFade(ms: number | null): void {
     setFade(ms);
     return () => setFade(null);
   }, [ms, setFade]);
+}
+
+/**
+ * Lifts the **whole shared canvas** above the app's chrome for as long as the
+ * caller asks for it, and drops it back to the seam's ordinary `z-index: 0` on
+ * `false` or on unmount.
+ *
+ * ⚠️ **One consumer, and the argument for it does not generalise.** Every other
+ * 3D surface is scenery *behind* its room's DOM — that is the layering contract
+ * `Scene3D.module.css` opens with, and the Desk's hover card, notepad and
+ * listening tool are all built on it. A page being turned is the opposite kind
+ * of object: it has left the leaf, so the far leaf's cover, the strip, the nav
+ * pebble and the immersive pill all belong *under* it. Asking for this because
+ * a surface "looks better on top" would be re-opening the contract; asking for
+ * it because the thing you are drawing is physically off the page is not.
+ *
+ * Ref-counted, so overlapping callers can't leave the canvas stuck up high, and
+ * scoped to the caller's mount rather than to a mode — the elevation lives
+ * exactly as long as the gesture does.
+ */
+export function useScene3DElevated(elevated: boolean): void {
+  const { elevate } = useScene3DContext();
+  useEffect(() => {
+    if (!elevated) return;
+    elevate(1);
+    return () => elevate(-1);
+  }, [elevated, elevate]);
 }
 
 /**

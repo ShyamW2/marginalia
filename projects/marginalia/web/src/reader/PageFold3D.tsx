@@ -10,7 +10,7 @@ import {
   Vector3,
   type Group,
 } from "three";
-import { useScene3DLayer } from "../scene3d/Scene3D.js";
+import { useScene3DElevated, useScene3DLayer } from "../scene3d/Scene3D.js";
 import { CameraRig } from "../scene3d/CameraRig.js";
 import { DESK_CAMERA_UP, deskViewFrame } from "../desk/deskDepthMath.js";
 import { buildFoldMesh, type FoldMesh } from "./foldMesh.js";
@@ -21,6 +21,7 @@ import {
   leafSourceRect,
   samplePaperColor,
   sheetShadingAt,
+  type ArcRadiusMode,
   type FoldAnchor,
   type LeafSource,
   type Point,
@@ -41,7 +42,7 @@ import { drawCostP90 } from "./drawCost.js";
  * itself — one canvas, the pixel-for-pixel unit convention, a lost context
  * degrading to the 2D presentation — the seam already owns.
  *
- * ## Three things it inherits rather than decides
+ * ## What it inherits, and the one thing it claims
  *
  * - **The camera is the Desk's.** `deskViewFrame` hangs a real perspective
  *   camera above the viewport's centre such that the plane `y = 0` maps to it
@@ -50,6 +51,12 @@ import { drawCostP90 } from "./drawCost.js";
  *   than bringing a fourth camera. The leaf lies at `y = 0` and therefore lines
  *   up with its own DOM rect; only what *lifts* off it splays, which is the
  *   whole point of having a lens.
+ * - **The seam's layering contract, and the one exception to it.** Every other
+ *   consumer is scenery *behind* its room's DOM at `z-index: 0` (settled
+ *   decision 14c). A turning page is not scenery: it has lifted off the leaf, so
+ *   `useScene3DElevated` raises the whole canvas above the reader's chrome for
+ *   the length of the gesture. See that hook, and the `[data-elevated]` rule in
+ *   `Scene3D.module.css`, for why this does not generalise to any other surface.
  * - **A lost context is not its business.** `useScene3DAvailable()` goes false
  *   and the caller falls back down the ladder to the slide, through the
  *   gesture's one existing exit (PAGE_CURL.md §9). There is no escape hatch
@@ -109,6 +116,19 @@ export interface PageFold3DProps {
   getOrigin: () => Point;
   /** The live fold pointer in leaf-local coordinates, read once per frame. */
   getPointer: () => Point;
+  /** The roll's arc length in px, read once per frame — `curlArcLength` while
+   * a finger is on the sheet, and relaxing to nothing as a released one lands
+   * (`settleArc`). Per frame rather than per turn because a page flattens as
+   * it comes to rest: hold it fixed and the turn ends with the sheet still
+   * curled and floating its own roll-diameter above the leaf it landed on,
+   * which pops the moment the fold unmounts. See `settleArc`. */
+  getArc?: () => number;
+  /** Which leaf point the roll's physical size is realized at — see
+   * `ArcRadiusMode` in `pageFold.ts`. Undecided which one ships, so this is a
+   * plain prop rather than a per-frame getter: it is a harness toggle, not
+   * something that moves during a gesture. Defaults to `"anchor"`, today's
+   * shipped-shape behaviour. */
+  arcRadiusMode?: ArcRadiusMode;
   /** The back of the turning sheet, once its capture lands mid-fold. See
    * `PageCurl`'s own `getBack` for why this is a function. */
   getBack?: () => { image: HTMLCanvasElement; leafX: number } | null;
@@ -148,6 +168,13 @@ export function PageFold3D(props: PageFold3DProps) {
     [image, anchor, leafWidth, leafHeight, leafX, stageWidth],
   );
   useScene3DLayer(FOLD_LAYER_ID, node);
+  // ⚠️ **Mounted means turning**, which is what makes an unconditional `true`
+  // right here rather than a progress threshold: the reader mounts this only
+  // for the life of one gesture (`ReaderView`'s `PageCurlState`), and a fold at
+  // rest draws nothing anyway. Tying the elevation to the same mount as the
+  // layer means the canvas cannot be left up high by a gesture that ended in an
+  // exception — the layer's own unregistration and this share one cleanup.
+  useScene3DElevated(true);
   return null;
 }
 
@@ -299,7 +326,14 @@ function FoldLayer({ image, anchor, leafWidth, leafHeight, leafX, stageWidth, la
     sheet.material.uniforms.backWash!.value = wash;
 
     const startedAt = performance.now();
-    const cone = computeConeFold(anchor, props.getPointer(), leafWidth, leafHeight, arc);
+    const cone = computeConeFold(
+      anchor,
+      props.getPointer(),
+      leafWidth,
+      leafHeight,
+      props.getArc?.() ?? arc,
+      props.arcRadiusMode ?? "anchor",
+    );
     const mesh = cone ? buildFoldMesh(cone, leafWidth, leafHeight) : null;
     if (!mesh || mesh.vertexCount > MAX_VERTICES) {
       group.visible = false;

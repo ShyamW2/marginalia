@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { Rendition } from "epubjs";
 import {
   animate,
@@ -16,16 +16,20 @@ import {
   type CardLayout,
 } from "./cardSnapshot.js";
 import {
-  anchorForGrab,
+  anchorForPinch,
   anchorPoint,
-  constrainFoldPointer,
-  defaultCornerForDirection,
-  lerpPoint,
-  syntheticFoldPointer,
+  curlArcLength,
+  defaultPinchForDirection,
+  hingeRelease,
+  hingeSettlePointer,
+  settleArc,
+  syntheticHingePointer,
+  type ArcRadiusMode,
   type FoldAnchor,
   type Point,
 } from "./pageFold.js";
 import { farLeafRect, nearLeafRect } from "./readerGeometry.js";
+import { useScene3DAvailable } from "../scene3d/Scene3D.js";
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
@@ -67,6 +71,48 @@ const MIN_DRAW_SAMPLES = 12;
  * to reload to turn a page again. */
 const MAX_GESTURE_MS = 60_000;
 
+/**
+ * M27's shipped hinge tuning — the operator's own numbers off
+ * `harness/pageCone.html`'s control panel (2026-08-26), not a guess carried
+ * over from the flat model's. Four things, and none of them is the flat
+ * model's corresponding constant:
+ *
+ * - `ARC_RADIUS_MODE` is `"anchor"` (`ArcRadiusMode` in `pageFold.ts`) — the
+ *   `"farthest corner"` candidate was tried and not what shipped.
+ * - `ARC_CURVE` is a multiplier on `curlArcLength`, piecewise-linear over the
+ *   turn's own angular progress (`HingeRelease.progress`, 0 at rest, 1 fully
+ *   turned) rather than the flat model's single constant — a constant fights
+ *   `computeConeFold`'s own sweep cap (the roll cannot claim more angle than
+ *   the drag has swept), which is tightest mid-turn, so a big-enough constant
+ *   made a drag stall short of the spine. Big early, easing down through the
+ *   middle, easing further down late — the operator's own curve, found by
+ *   feel rather than derived.
+ * - `COMMIT_AT` is read in the hinge's own coordinate (`HingeRelease.progress`,
+ *   angular) and **is not `0.35`**: a hinge's turn spans the anchor to its own
+ *   mirror across the spine, two leaf widths of travel where the flat model's
+ *   threshold was tuned in one, so the same felt commit point is a smaller
+ *   fraction here. See `harness/pageCone.html`'s own `COMMIT_AT` comment for
+ *   the derivation; `0.271` is the operator's tuned value, not that derivation's.
+ * - `SETTLE_SCALE` scales both the commit-swing and the spring-back durations,
+ *   same as the harness's `?settle=`.
+ */
+export const HINGE_ARC_RADIUS_MODE: ArcRadiusMode = "anchor";
+const HINGE_ARC_CURVE = { start: 2.2, mid: 1.44, end: 0.4 };
+const HINGE_COMMIT_AT = 0.271;
+const HINGE_SETTLE_SCALE = 1.7;
+const HINGE_COMMIT_SECONDS = 0.16 * HINGE_SETTLE_SCALE;
+const HINGE_SPRING_BACK_SECONDS = 0.18 * HINGE_SETTLE_SCALE;
+
+/** `HINGE_ARC_CURVE` evaluated at a point in the turn — see the constant's own
+ * comment for why this varies at all. Piecewise-linear through (0, start),
+ * (0.5, mid), (1, end), same shape the harness's `arcMultiplierAt` tunes. */
+function hingeArcTarget(progress: number, leafWidth: number, leafHeight: number): number {
+  const t = Math.min(1, Math.max(0, progress));
+  const { start, mid, end } = HINGE_ARC_CURVE;
+  const multiplier = t <= 0.5 ? start + (mid - start) * (t / 0.5) : mid + (end - mid) * ((t - 0.5) / 0.5);
+  return curlArcLength(leafWidth, leafHeight) * multiplier;
+}
+
 /** Awaits `work`, but never for longer than `ms`, and never throws. Returns
  * false when the step was abandoned — the caller carries on regardless,
  * which is the entire point. */
@@ -94,6 +140,15 @@ export interface PageCurlState {
   stageWidth: number;
   leafWidth: number;
   leafHeight: number;
+  /** Where the **other**, non-turning leaf sits on this same departing
+   * bitmap — M27's far-leaf-pre-flip fix. In spread mode the drag advances
+   * the rendition at grab time, so the far leaf's live DOM shows the *next*
+   * spread's content from the first frame while this bitmap still has its
+   * old one; a consumer covers the far leaf with this slice of `image` for
+   * as long as `PageCurlState` is non-null, and drops it exactly when this
+   * does. Equal to `leafX` in single-page mode, where there is no far leaf —
+   * a consumer renders the cover only when the two differ. */
+  farX: number;
 }
 
 /** M20 step 3: the departing card of a *slide* turn — the same capture, one
@@ -176,6 +231,13 @@ export function usePageTurnAnimation({
   /** A drag is in flight — keep the grab surface mounted (see below). */
   gestureActive: boolean;
   getFoldPointer: () => Point;
+  /** The roll's live physical target, in px — `HINGE_ARC_CURVE` evaluated at
+   * wherever the gesture currently is. Sampled per frame by `PageFold3D`
+   * (its `getArc`), for the same reason `getFoldPointer` is a function. */
+  getFoldArc: () => number;
+  /** The turning leaf's top-left in viewport CSS px — `PageFold3D`'s
+   * `getOrigin`. See `originRef`'s own comment for why it is cached. */
+  getFoldOrigin: () => Point;
   /** The back of the turning sheet, or null while its capture is in flight
    * (M27). Sampled per frame by `PageCurl`; see `backCardRef`. */
   getFoldBack: () => { image: HTMLCanvasElement; leafX: number } | null;
@@ -205,6 +267,10 @@ export function usePageTurnAnimation({
 } {
   const stageControls = useAnimationControls();
   const stageReducedMotion = useReducedMotion();
+  // M27: the cone is a consumer of the app's one 3D seam (settled decision
+  // 14), not a second canvas — which is where the lost-context degrade comes
+  // from free. See `resolveRenderer`.
+  const scene3DAvailable = useScene3DAvailable();
   // M10 page curl: guards against overlapping turns (rapid key/gesture
   // repeats), and a device that's proven too slow to keep the fold at a
   // real frame rate. M20: turnProgress stays the 0-1 scalar the commit/
@@ -220,6 +286,11 @@ export function usePageTurnAnimation({
   // once against this scalar and read by whichever renderer is mounted.
   const turnProgress = useMotionValue(0);
   const pointerRef = useRef<Point>({ x: 0, y: 0 });
+  /** The hinge's own live arc target — `HINGE_ARC_CURVE` evaluated at the
+   * gesture's current progress. A ref for the same reason `pointerRef` is:
+   * written from a live pointermove and from a settle animation's `onUpdate`,
+   * neither of which may cost a React render. */
+  const foldArcRef = useRef<number>(0);
   /**
    * The back of the turning sheet — the post-advance card and which half of
    * it the back page is (M27). Sampled per frame by `PageCurl` for the same
@@ -239,7 +310,30 @@ export function usePageTurnAnimation({
   // iframe, after which no release event ever arrives (PAGE_CURL.md §9).
   const [gestureActive, setGestureActive] = useState(false);
 
+  /**
+   * The turning leaf's top-left in viewport CSS px — `PageFold3D`'s own
+   * `getOrigin`, the hinge's counterpart to `PageCurl`'s `left`/`top` inline
+   * style (the shared 3D canvas is viewport-fixed, so its consumers place
+   * themselves in viewport coordinates rather than a CSS-positioned parent).
+   * Cached rather than a fresh `getBoundingClientRect` every frame — refreshed
+   * at the start of every turn (where `cardRect` is already being measured
+   * for other reasons) and on a window resize, same as the harness's own
+   * `readOrigin`.
+   */
+  const originRef = useRef<Point>({ x: 0, y: 0 });
+  const activeLeafXRef = useRef(0);
+  const readOrigin = useCallback(() => {
+    const rect = cardRef.current?.getBoundingClientRect();
+    if (rect) originRef.current = { x: rect.left + activeLeafXRef.current, y: rect.top };
+  }, [cardRef]);
+  useEffect(() => {
+    window.addEventListener("resize", readOrigin);
+    return () => window.removeEventListener("resize", readOrigin);
+  }, [readOrigin]);
+
   const getFoldPointer = useCallback(() => pointerRef.current, []);
+  const getFoldArc = useCallback(() => foldArcRef.current, []);
+  const getFoldOrigin = useCallback(() => originRef.current, []);
   const getFoldBack = useCallback(() => backCardRef.current, []);
 
   /**
@@ -387,13 +481,20 @@ export function usePageTurnAnimation({
   const nextFrame = () =>
     new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-  /** The ladder, in one place. See `TurnRenderer`. */
+  /** The ladder, in one place. See `TurnRenderer`.
+   *
+   * M27: `scene3DAvailable` folds in `webglcontextlost` (and no-WebGL) as a
+   * designed state rather than a crash — settled decision 14's "a lost
+   * context stays a designed state, but is recoverable". It also repeats
+   * `!stageReducedMotion`, already checked above; that overlap is harmless
+   * and keeps this ladder correct even if the two checks are ever reordered. */
   const resolveRenderer = useCallback((): TurnRenderer => {
     if (stageReducedMotion) return "instant";
     if (pageTransition === "slide") return "slide";
     if (lowFpsRef.current) return "slide";
+    if (!scene3DAvailable) return "slide";
     return "curl";
-  }, [stageReducedMotion, pageTransition]);
+  }, [stageReducedMotion, pageTransition, scene3DAvailable]);
 
   const handleDrawCost = useCallback((p90DrawMs: number, samples: number) => {
     // One frame in ten eating a whole 30fps frame drawing the fold and
@@ -512,15 +613,15 @@ export function usePageTurnAnimation({
     [withTurnLock, turnPageSlideToSection],
   );
 
-  // M20's paper fold (decisions.md 2026-07-20): the departing page is
-  // rasterized to a bitmap (pageSnapshot.ts, which includes the marks-pane
-  // SVG overlay for free — a DOM sibling of the iframe inside the captured
-  // container, not inside the iframe — see NOTES.md M2/M3 friction) that
-  // folds about the perpendicular bisector of a corner and a (synthetic, for
-  // a programmatic turn) pointer sweeping across the leaf. The live DOM
-  // underneath is swapped to the new page *before* the fold plays, hidden
-  // behind the snapshot, so "swap to live DOM on settle" falls out of the
-  // canvas unmounting when the fold completes.
+  // M20's paper fold (decisions.md 2026-07-20), M27'd (decisions.md
+  // 2026-08-26) into the hinge: the departing page is rasterized to a bitmap
+  // (pageSnapshot.ts, which includes the marks-pane SVG overlay for free — a
+  // DOM sibling of the iframe inside the captured container, not inside the
+  // iframe — see NOTES.md M2/M3 friction) that turns on a cone anchored at
+  // the spine, its (synthetic, for a programmatic turn) pointer sweeping
+  // anchor-to-mirror. The live DOM underneath is swapped to the new page
+  // *before* the fold plays, hidden behind the snapshot, so "swap to live DOM
+  // on settle" falls out of the canvas unmounting when the fold completes.
   const turnPageCurl = useCallback(
     async (direction: "prev" | "next") => {
       const rendition = renditionRef.current;
@@ -541,10 +642,20 @@ export function usePageTurnAnimation({
         spreadMode,
         direction,
       );
-      const anchor = defaultCornerForDirection(direction);
+      const far = farLeafRect(
+        cardRect.width,
+        cardRect.height,
+        card.contentWidth,
+        spreadMode,
+        direction,
+      );
+      const anchor = defaultPinchForDirection(direction);
 
       turnProgress.set(0);
       pointerRef.current = anchorPoint(anchor, leaf.width, leaf.height);
+      foldArcRef.current = hingeArcTarget(0, leaf.width, leaf.height);
+      activeLeafXRef.current = leaf.x;
+      readOrigin();
       setCurl({
         image: card.image,
         anchor,
@@ -552,6 +663,7 @@ export function usePageTurnAnimation({
         stageWidth: cardRect.width,
         leafWidth: leaf.width,
         leafHeight: leaf.height,
+        farX: far.x,
       });
 
       // Same one-exit rule as the drag gesture (decisions.md 2026-08-03): a
@@ -577,7 +689,16 @@ export function usePageTurnAnimation({
             duration: 0.42,
             ease: [0.4, 0, 0.2, 1],
             onUpdate: (v) => {
-              pointerRef.current = syntheticFoldPointer(anchor, leaf.width, leaf.height, v);
+              // `v` is the pixel-linear anchor-to-mirror path
+              // `syntheticHingePointer` describes, which is reachable and
+              // monotonic 0→1 by construction (no `hingeRelease` needed to
+              // find "how far along" — unlike a real drag, this path was
+              // never going to be clamped). Used directly as the arc curve's
+              // own progress input for the same reason: a close-enough proxy
+              // for `HingeRelease.progress` on the one path guaranteed to
+              // reach 1.
+              pointerRef.current = syntheticHingePointer(anchor, leaf.width, leaf.height, v);
+              foldArcRef.current = hingeArcTarget(v, leaf.width, leaf.height);
             },
           }),
           SETTLE_ANIM_MS,
@@ -586,7 +707,7 @@ export function usePageTurnAnimation({
         setCurl(null);
       }
     },
-    [turnProgress, turnPageSlide, spreadMode, captureCard, beginTurn, captureBackOfSheet],
+    [turnProgress, turnPageSlide, spreadMode, captureCard, beginTurn, captureBackOfSheet, readOrigin],
   );
 
   /**
@@ -713,18 +834,27 @@ export function usePageTurnAnimation({
         spreadMode,
         direction,
       );
+      const far = farLeafRect(cardRect.width, cardRect.height, contentWidth, spreadMode, direction);
       const edge: "left" | "right" = direction === "prev" ? "left" : "right";
       const grabX = event.clientX - cardRect.left - leaf.x;
       const grabY = event.clientY - cardRect.top;
-      // Grab a corner region and the sheet is pinched there; grab the middle
-      // of the edge and the whole edge lifts, crease parallel to the spine.
-      const anchor = anchorForGrab(edge, grabY, leaf.height);
+      // The pinch is where the paper was grabbed — no band, no snap to the
+      // nearer corner, no separate anchor kind for a corner vs. an edge (M27:
+      // `EdgePinch` subsumes both, and a mid-edge pinch fans conically exactly
+      // as a corner does; see `anchorForPinch`'s own docs for why).
+      const anchor = anchorForPinch(edge, grabY, leaf.height);
       const anchorPx = anchorPoint(anchor, leaf.width, leaf.height);
       const dragRange = Math.max(leaf.width * 0.9, 120);
-      const foldPointer = (px: number, py: number) =>
-        constrainFoldPointer(anchor, { x: px, y: py }, leaf.width, leaf.height);
 
-      pointerRef.current = foldPointer(grabX, grabY);
+      // Raw and unconstrained, unlike the flat model's `constrainFoldPointer`:
+      // `computeConeFold` (via `hingeRelease`/`PageFold3D`) does its own
+      // constraining internally (`constrainToSpineHinge`), following a pointer
+      // past the paper's reach as far as the binding allows rather than
+      // pinning it to a line up front.
+      pointerRef.current = { x: grabX, y: grabY };
+      foldArcRef.current = hingeArcTarget(0, leaf.width, leaf.height);
+      activeLeafXRef.current = leaf.x;
+      readOrigin();
       turnProgress.set(0);
       // M20 step 3: which renderer this drag is wearing, decided once at
       // grab time so a settings save mid-gesture cannot change the thing
@@ -783,6 +913,7 @@ export function usePageTurnAnimation({
           stageWidth: cardRect.width,
           leafWidth: leaf.width,
           leafHeight: leaf.height,
+          farX: far.x,
         });
         await nextFrame();
         return true;
@@ -803,10 +934,13 @@ export function usePageTurnAnimation({
       const onMove = (moveEvent: PointerEvent) => {
         const px = moveEvent.clientX - cardRect.left - leaf.x;
         const py = moveEvent.clientY - cardRect.top;
-        pointerRef.current = foldPointer(px, py);
-        // Progress follows the *pointer*, not the constrained fold pointer:
-        // an edge peel that refuses to tilt should still commit when you drag
-        // far enough, however you got there.
+        pointerRef.current = { x: px, y: py };
+        // Progress follows the *pointer*, not any constrained fold point: an
+        // edge peel that refuses to tilt should still commit when you drag
+        // far enough, however you got there. (This is the slide's own
+        // pixel-linear progress, `turnProgress` — the curl's commit decision
+        // below reads the hinge's own angular one, `HingeRelease.progress`,
+        // which is a different coordinate; see `HINGE_COMMIT_AT`.)
         const dist = Math.hypot(px - anchorPx.x, py - anchorPx.y);
         const progress = clamp01(dist / dragRange);
         turnProgress.set(progress);
@@ -817,6 +951,14 @@ export function usePageTurnAnimation({
         // landed yet.
         if (ready && useSlide) {
           applyStageOffset(slideOffsetPx(direction, cardWidth, progress));
+        }
+        // The roll's live target — read off the *current* pointer, live,
+        // exactly as `getArc` needs it. `hingeRelease` needs no `arcTarget`
+        // to compute `.progress` (it only reads the cone's apex), so this has
+        // no circularity even though it feeds the very arc it will be handed.
+        if (!useSlide) {
+          const release = hingeRelease(anchor, pointerRef.current, leaf.width, leaf.height);
+          if (release) foldArcRef.current = hingeArcTarget(release.progress, leaf.width, leaf.height);
         }
       };
 
@@ -876,19 +1018,6 @@ export function usePageTurnAnimation({
               }),
               SETTLE_ANIM_MS,
             );
-          } else if (shouldCommit) {
-            const target = syntheticFoldPointer(anchor, leaf.width, leaf.height, 1);
-            await withDeadline(
-              animate(turnProgress, 1, {
-                duration: 0.16,
-                ease: "easeOut",
-                onUpdate: (v) => {
-                  const t = startProgress < 1 ? (v - startProgress) / (1 - startProgress) : 1;
-                  pointerRef.current = lerpPoint(releasePointer, target, clamp01(t));
-                },
-              }),
-              SETTLE_ANIM_MS,
-            );
           } else if (ready && useSlide) {
             // The slide steps back *after* its animation, which is the
             // opposite of the fold below — and for the same reason, stated
@@ -908,24 +1037,47 @@ export function usePageTurnAnimation({
             );
             if (advanced) await withDeadline(stepBack(), RENDITION_STEP_MS);
           } else if (ready) {
-            // Put the page back *before* the sheet lands, not after. The fold
-            // paints nothing once the pointer reaches the anchor, so a step
-            // back that outlives the animation shows the un-turned-to page
-            // full-screen for however long epub.js takes. Stepping back first
-            // costs only the shrinking opening briefly showing the page it is
-            // returning to, under the roll's own shadow.
-            if (advanced) await withDeadline(stepBack(), RENDITION_STEP_MS);
-            await withDeadline(
-              animate(turnProgress, 0, {
-                duration: 0.18,
-                ease: "easeOut",
-                onUpdate: (v) => {
-                  const t = startProgress > 0 ? (startProgress - v) / startProgress : 1;
-                  pointerRef.current = lerpPoint(releasePointer, anchorPx, clamp01(t));
-                },
-              }),
-              SETTLE_ANIM_MS,
-            );
+            // M27: the curl is now the hinge, and a bound sheet finishes its
+            // own turn rather than being lerped toward one — a drag can never
+            // reach the end (`constrainToSpineHinge`'s lens is where the
+            // paper runs out first), so what happens on release is the sheet
+            // swinging on the apex the release froze (`hingeRelease`), not a
+            // pointer chasing a target. Commit-or-spring-back is decided in
+            // the hinge's own angular coordinate — `HingeRelease.progress` —
+            // not `startProgress`, which is pixel-based and tuned for the
+            // slide; see `HINGE_COMMIT_AT`'s comment for why the two must not
+            // be conflated.
+            const release = hingeRelease(anchor, releasePointer, leaf.width, leaf.height);
+            if (release) {
+              const hingeCommit = release.progress > HINGE_COMMIT_AT;
+              const sweep = hingeCommit ? release.toTurned : release.toRest;
+              // Captured once at release, not read live off the curve for the
+              // rest of the settle: a mid-settle arc change would jump the
+              // curl (the same rule the harness's `arcAtRelease` follows).
+              const arcAtRelease = hingeArcTarget(release.progress, leaf.width, leaf.height);
+              // Same ordering rule as the flat model's, restated for the same
+              // reason: the fold paints nothing once the pointer is back on
+              // its own anchor (`computeConeFold`'s `travel < 0.01` branch),
+              // so a spring-back's step back has to land *before* that frame
+              // or the un-turned-to page shows full-screen while epub.js
+              // works. A commit needs no step here — it already happened at
+              // grab time.
+              if (!hingeCommit && advanced) await withDeadline(stepBack(), RENDITION_STEP_MS);
+              await withDeadline(
+                animate(0, 1, {
+                  duration: hingeCommit ? HINGE_COMMIT_SECONDS : HINGE_SPRING_BACK_SECONDS,
+                  ease: "easeOut",
+                  onUpdate: (t) => {
+                    pointerRef.current = hingeSettlePointer(release, sweep * t);
+                    // Only a landing relaxes the curl; a sheet falling back
+                    // keeps its roll and simply un-peels — same rule as the
+                    // harness's release, `settleArc`'s own docs.
+                    foldArcRef.current = hingeCommit ? settleArc(arcAtRelease, t) : arcAtRelease;
+                  },
+                }),
+                SETTLE_ANIM_MS,
+              );
+            }
           } else {
             // Snapshot never resolved before release (a very fast tap) — no
             // fold was ever visible, so treat it as a plain click-to-turn
@@ -989,6 +1141,7 @@ export function usePageTurnAnimation({
       containerRef,
       cardRef,
       renditionRef,
+      readOrigin,
     ],
   );
 
@@ -999,6 +1152,8 @@ export function usePageTurnAnimation({
     slide,
     gestureActive,
     getFoldPointer,
+    getFoldArc,
+    getFoldOrigin,
     getFoldBack,
     handleDrawCost,
     turnPage,

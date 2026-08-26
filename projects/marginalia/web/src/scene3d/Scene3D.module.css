@@ -21,6 +21,30 @@
   pointer-events: none;
 }
 
+/* ⚠️ **The one exception to the contract above, and it is a gesture, not a
+   surface.** A page being turned is the one 3D object that is *in front of the
+   screen* rather than behind the page: it lifts off the leaf, so every piece of
+   reader chrome it passes over — the far leaf's cover, the turn-zone vignette,
+   the strip, the nav pebble, the immersive pill — has to go under it, the way a
+   real sheet passes over everything on the desk. At `z-index: 0` the fold lost
+   all of them: in the windowed reader the sheet's tail vanished the moment it
+   crossed the gutter (the far-leaf cover is `z-index: 5`), and in immersive
+   mode it was invisible for the whole turn, because `.wrapperFullscreen` is a
+   `z-index: 50` fixed element and therefore a stacking context containing the
+   entire reader (operator report, 2026-08-26; both reproduced live).
+
+   `960` is chosen, not arbitrary: above `NavCluster`'s `950` — which the
+   operator's second ask names specifically — and below the `1000` that Settings
+   and the casting modal claim. A turning page outranks the room's own chrome; a
+   dialog still outranks the page.
+
+   Driven by `useScene3DElevated`, which is ref-counted and lives only as long
+   as the gesture, so the Desk's layer keeps the `z-index: 0` its own foreground
+   DOM was built against (see above) — this is not a new floor for the seam. */
+.canvasLayer[data-elevated="true"] {
+  z-index: 960;
+}
+
 .canvasLayer canvas {
   display: block;
   width: 100%;

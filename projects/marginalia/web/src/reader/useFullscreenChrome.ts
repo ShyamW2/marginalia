@@ -37,9 +37,10 @@ export function useFullscreenChrome(): {
   onPebblePointerEnter: () => void;
   onPebblePointerLeave: () => void;
 } {
-  // `wrapperRef` is "the app root" the browser Fullscreen API is requested
-  // on; degrades silently to an in-page-only fullscreen layout (ReaderView's
-  // own fixed-position CSS) if refused.
+  // The reader's own wrapper. It carries the in-page fullscreen layout
+  // (`ReaderView.module.css`'s `.wrapperFullscreen`) and nothing else — see
+  // `toggleFullscreen` for why the browser's Fullscreen API is deliberately
+  // *not* pointed at it.
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [fullscreenMode, setFullscreenMode] = useState(false);
   const fullscreenModeRef = useRef(fullscreenMode);
@@ -109,10 +110,26 @@ export function useFullscreenChrome(): {
     setFullscreenMode((prev) => {
       const next = !prev;
       if (next) {
-        // Can be refused (no user-gesture chain, or unsupported) — the
-        // in-page fullscreen layout still applies either way; only the
-        // browser's own chrome removal is lost.
-        void wrapperRef.current?.requestFullscreen?.().catch(() => {});
+        // ⚠️ **The document element, not the reader's wrapper — and this is a
+        // stacking rule, not a preference** (2026-08-26, found live driving a
+        // page turn in immersive mode). A real `requestFullscreen()` promotes
+        // its element into the browser's **top layer**, and nothing outside
+        // that element renders at all — no z-index reaches out of it, because
+        // the top layer is above the whole stacking order by construction.
+        // Fullscreening `.wrapper` therefore hid every fixed layer the app
+        // mounts at its root, the shared 3D canvas among them: the page curl
+        // was completely invisible for the length of every immersive turn, and
+        // raising the canvas over the reader's chrome (`useScene3DElevated`)
+        // could not fix it, because the problem was never depth.
+        //
+        // `documentElement` contains the shell, the canvas layer and anything
+        // else the app renders at the root, so fullscreen keeps the same
+        // picture the windowed reader has and merely drops the browser's own
+        // chrome — which was the only thing this call was ever for.
+        //
+        // Can still be refused (no user-gesture chain, or unsupported) — the
+        // in-page fullscreen layout applies either way.
+        void document.documentElement.requestFullscreen?.().catch(() => {});
       } else if (document.fullscreenElement) {
         void document.exitFullscreen?.();
       }

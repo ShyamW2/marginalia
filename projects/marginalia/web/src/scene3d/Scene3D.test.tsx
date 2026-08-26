@@ -4,6 +4,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import {
   Scene3DProvider,
   useScene3DAvailable,
+  useScene3DElevated,
   useScene3DHold,
   useScene3DLayer,
 } from "./Scene3D.js";
@@ -76,6 +77,11 @@ function canvasLayer(): HTMLElement | null {
 
 function Holder({ id }: { id: string }) {
   useScene3DHold(id);
+  return null;
+}
+
+function Elevator({ on = true }: { on?: boolean }) {
+  useScene3DElevated(on);
   return null;
 }
 
@@ -215,6 +221,66 @@ describe("Scene3DProvider", () => {
     rerender(<Room />);
     await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
     expect(screen.getByTestId("available").textContent).toBe("true");
+  });
+
+  // M27, operator's two asks (2026-08-26): a turning page is in front of the
+  // screen, so it has to outrank the reader's chrome — which at the seam's
+  // ordinary `z-index: 0` it did not. The number itself lives in
+  // `Scene3D.module.css`; what this file owns is *when* the attribute is on.
+  it("leaves the canvas at the seam's ordinary depth when nobody asks to be elevated", async () => {
+    render(
+      <Scene3DProvider>
+        <Registrar id="desk" />
+      </Scene3DProvider>,
+    );
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+    // Absent, not "false": the ordinary case must be exactly the CSS it always
+    // was, with no rule matching it.
+    expect(canvasLayer()?.hasAttribute("data-elevated")).toBe(false);
+  });
+
+  it("elevates the canvas while a consumer asks, and drops it again on unmount", async () => {
+    function Room({ turning }: { turning: boolean }) {
+      return (
+        <Scene3DProvider>
+          <Registrar id="desk" />
+          {turning && <Elevator />}
+        </Scene3DProvider>
+      );
+    }
+    const { rerender } = render(<Room turning={false} />);
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+
+    rerender(<Room turning={true} />);
+    await waitFor(() => expect(canvasLayer()?.getAttribute("data-elevated")).toBe("true"));
+
+    rerender(<Room turning={false} />);
+    await waitFor(() => expect(canvasLayer()?.hasAttribute("data-elevated")).toBe(false));
+  });
+
+  // The count, not a flag: two overlapping callers must not have the first one
+  // to leave strand the canvas above the app's chrome — which is what a boolean
+  // would do, and what a stuck elevation looks like is every dialog in the app
+  // rendering *under* an idle canvas.
+  it("stays elevated until the last consumer has let go", async () => {
+    function Room({ a, b }: { a: boolean; b: boolean }) {
+      return (
+        <Scene3DProvider>
+          <Registrar id="desk" />
+          {a && <Elevator />}
+          {b && <Elevator />}
+        </Scene3DProvider>
+      );
+    }
+    const { rerender } = render(<Room a={true} b={true} />);
+    await waitFor(() => expect(canvasLayer()?.getAttribute("data-elevated")).toBe("true"));
+
+    rerender(<Room a={false} b={true} />);
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+    expect(canvasLayer()?.getAttribute("data-elevated")).toBe("true");
+
+    rerender(<Room a={false} b={false} />);
+    await waitFor(() => expect(canvasLayer()?.hasAttribute("data-elevated")).toBe(false));
   });
 
   it("renders zero canvases under reduced motion even with content registered", () => {

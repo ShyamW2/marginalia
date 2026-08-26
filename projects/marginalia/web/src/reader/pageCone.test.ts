@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  anchorForPinch,
   anchorPoint,
   computeConeFold,
   computeFold,
   coneLiftAt,
+  constrainFoldPointer,
+  hingeRelease,
+  hingeSettlePointer,
+  settleArc,
   constrainToSpineHinge,
   curlArcLength,
   deformPoint,
@@ -26,7 +31,21 @@ import {
 const W = 600;
 const H = 800;
 const CORNERS: readonly Corner[] = ["topLeft", "topRight", "bottomLeft", "bottomRight"];
-const ANCHORS: readonly FoldAnchor[] = [...CORNERS, { edge: "left" }, { edge: "right" }];
+/** Every kind of anchor the geometry can be handed, including the `EdgePinch`
+ * that replaces the other two once the sheet is bound — a mid-edge one, which
+ * is the case the flat model had to pin flat, and an off-centre one, which is
+ * the case neither of the old two could name at all. */
+const PINCHES: readonly FoldAnchor[] = [
+  { edge: "left", t: 0.5 },
+  { edge: "right", t: 0.5 },
+  { edge: "right", t: 0.22 },
+];
+const ANCHORS: readonly FoldAnchor[] = [
+  ...CORNERS,
+  { edge: "left" },
+  { edge: "right" },
+  ...PINCHES,
+];
 
 /**
  * Both page modes, in the only terms the geometry knows them: a leaf is a
@@ -38,6 +57,12 @@ const LEAVES = [
   { mode: "spread", width: 460, height: 760 },
   { mode: "single-page", width: 920, height: 760 },
 ] as const;
+
+/** `pageFold.ts`'s own `FAR_APEX_DIAGONALS`, which is private to it. Only ever
+ * used here to ask "was this apex solved or merely held", so an approximation
+ * of it is the honest thing to keep: a test that had to be edited whenever the
+ * constant moved would be pinning the wrong thing. */
+const FAR_APEX_DIAGONALS_APPROX = 1e6;
 
 /** Drag depths well past the point where a tail exists, plus one shallow one. */
 const DEPTHS = [0.15, 0.35, 0.6, 0.85];
@@ -83,6 +108,101 @@ describe("spineEdgeForAnchor", () => {
     expect(spineEdgeForAnchor("topLeft")).toBe("right");
     expect(spineEdgeForAnchor({ edge: "right" })).toBe("left");
     expect(spineEdgeForAnchor({ edge: "left" })).toBe("right");
+  });
+});
+
+describe("EdgePinch — the anchor is where the paper was grabbed", () => {
+  it("puts the anchor at the grab, and makes the corners its own endpoints", () => {
+    // The point of the kind: no band, no snap. A grab a fifth of the way down
+    // anchors a fifth of the way down, and `t = 0`/`t = 1` are not special
+    // cases that agree with the corners — they *are* them.
+    expect(anchorPoint(anchorForPinch("right", H * 0.2, H), W, H)).toEqual({ x: W, y: H * 0.2 });
+    expect(anchorPoint(anchorForPinch("left", H * 0.2, H), W, H)).toEqual({ x: 0, y: H * 0.2 });
+    expect(anchorPoint({ edge: "right", t: 0 }, W, H)).toEqual(anchorPoint("topRight", W, H));
+    expect(anchorPoint({ edge: "right", t: 1 }, W, H)).toEqual(anchorPoint("bottomRight", W, H));
+    expect(anchorPoint({ edge: "left", t: 0 }, W, H)).toEqual(anchorPoint("topLeft", W, H));
+    expect(anchorPoint({ edge: "left", t: 1 }, W, H)).toEqual(anchorPoint("bottomLeft", W, H));
+    // A grab surface may be a shade taller than the leaf; the paper is not.
+    expect(anchorForPinch("right", -30, H).t).toBe(0);
+    expect(anchorForPinch("right", H + 30, H).t).toBe(1);
+    expect(spineEdgeForAnchor({ edge: "right", t: 0.4 })).toBe("left");
+    expect(spineEdgeForAnchor({ edge: "left", t: 0.4 })).toBe("right");
+  });
+
+  it("is not pinned flat the way an edge peel is — it fans like a corner", () => {
+    // The whole reason the kind exists. `EdgeAnchor`'s crease is held parallel
+    // to the spine because a flat crease cannot converge; a cone's rulings do,
+    // so the *same* grab tilts once it is a pinch. Pull square across and the
+    // apex is at infinity (the cylinder); pull up and across and it comes in.
+    const pinch: FoldAnchor = { edge: "right", t: 0.5 };
+    const c = anchorPoint(pinch, W, H);
+    expect(constrainFoldPointer(pinch, { x: c.x - 200, y: c.y - 260 }, W, H)).toEqual({
+      x: c.x - 200,
+      y: c.y - 260,
+    });
+    // ...where the edge peel of the same grab throws the tilt away.
+    expect(constrainFoldPointer({ edge: "right" }, { x: c.x - 200, y: c.y - 260 }, W, H)).toEqual({
+      x: c.x - 200,
+      y: c.y,
+    });
+
+    const square = computeConeFold(pinch, { x: c.x - 200, y: c.y }, W, H)!;
+    const tilted = computeConeFold(pinch, { x: c.x - 200, y: c.y - 60 }, W, H)!;
+    // Square across is the far field: the apex is held a million diagonals off
+    // and the two ends of the crease lift alike.
+    expect(Math.abs(square.apex.y)).toBeGreaterThan(H * 1e5);
+    const squareTop = coneLiftAt(square, { x: W, y: 0 });
+    const squareBottom = coneLiftAt(square, { x: W, y: H });
+    // Alike to a millionth, not to the last bit: the apex is held far rather
+    // than actually at infinity, so the far corner is a hair further from it.
+    expect(Math.abs(squareTop - squareBottom) / squareTop).toBeLessThan(1e-5);
+    // Pulled up and across, the apex comes in to a few leaf-lengths and the
+    // fan opens: the two ends of the outer edge stop lifting alike.
+    //
+    // Which of them lifts *more* is deliberately not asserted, because it is
+    // not monotonic in the tilt and the reason is real geometry rather than a
+    // wobble: lift is `r * arcAngle * profile`, so the corner further from the
+    // apex has the longer arc while the corner at the larger fan angle is
+    // further past the crease, and the two trade places as the drag steepens.
+    // A hard pull up ends as a diagonal fold hinged on the *bottom* gutter
+    // corner with the top corner left lying flat, which is what paper does.
+    // See NOTES.md 2026-08-26.
+    expect(Math.abs(tilted.apex.y)).toBeLessThan(H * 1e3);
+    const tiltedTop = coneLiftAt(tilted, { x: W, y: 0 });
+    const tiltedBottom = coneLiftAt(tilted, { x: W, y: H });
+    expect(Math.abs(tiltedTop - tiltedBottom) / tiltedTop).toBeGreaterThan(0.1);
+  });
+
+  it("crosses its own height without the sheet jumping", () => {
+    // A mid-edge pinch sits exactly on the apex's sign change — the apex runs
+    // off whichever end of the spine the pointer passes, and for *this* anchor
+    // the crossing is the natural drag rather than an unusual one. The two
+    // held apexes are ~1e-3 px apart by `FAR_APEX_DIAGONALS`'s construction,
+    // so this must not be able to be felt. Move that constant nearer and this
+    // is the test that goes first.
+    const pinch: FoldAnchor = { edge: "right", t: 0.5 };
+    const probe = { x: W * 0.72, y: H * 0.5 };
+    const steps = 600;
+    const span = H * 0.6;
+    const step = span / steps;
+    let previous: Point | null = null;
+    let previousApexY: number | null = null;
+    let swapped = false;
+    for (let i = 0; i <= steps; i++) {
+      const y = H * 0.5 - span / 2 + step * i;
+      const cone = computeConeFold(pinch, { x: W * 0.3, y }, W, H);
+      expect(cone).not.toBeNull();
+      if (previousApexY !== null && cone!.apex.y > 0 !== previousApexY > 0) swapped = true;
+      previousApexY = cone!.apex.y;
+      const here = deformPointOnCone(cone!, probe);
+      if (previous) {
+        expect(Math.hypot(here.x - previous.x, here.y - previous.y)).toBeLessThan(step * 3);
+      }
+      previous = here;
+    }
+    // The swap has to actually happen, or the assertions above proved nothing
+    // about the case this test is named for.
+    expect(swapped).toBe(true);
   });
 });
 
@@ -243,6 +363,200 @@ describe("constrainToSpineHinge — the binding is a limit on the drag too", () 
         }
         previous = here;
       }
+    }
+  });
+});
+
+describe("hingeRelease — the sheet finishes the turn on the hinge it already has", () => {
+  /** A drag stopped partway, from every anchor and at four depths. */
+  function releases(): { anchor: FoldAnchor; pointer: Point }[] {
+    const out: { anchor: FoldAnchor; pointer: Point }[] = [];
+    for (const anchor of ANCHORS) {
+      for (const t of DEPTHS) {
+        out.push({ anchor, pointer: draggedPointer(anchor, t) });
+        // ...and one pulled hard enough to be sitting on the clamp, which is
+        // the release the whole thing exists for (a drag cannot reach the end).
+        out.push({ anchor, pointer: syntheticHingePointer(anchor, W, H, t) });
+      }
+    }
+    return out;
+  }
+
+  it("swings the pointer onto the fully-turned pose", () => {
+    for (const { anchor, pointer } of releases()) {
+      const release = hingeRelease(anchor, pointer, W, H);
+      expect(release).not.toBeNull();
+      const landed = hingeSettlePointer(release!, release!.toTurned);
+      const turned = syntheticHingePointer(anchor, W, H, 1);
+      expect(landed.x).toBeCloseTo(turned.x, 3);
+      expect(landed.y).toBeCloseTo(turned.y, 3);
+    }
+  });
+
+  it("lands the sheet flat on the far side of the spine, with the arc relaxed", () => {
+    // The landing itself, which is the swing *and* `settleArc` — the whole
+    // point of that function is that the first without the second does not
+    // land. Both criteria are the ones an invisible unmount needs: the sheet's
+    // anchor on its mirror, and nothing of the leaf still off the page.
+    const full = curlArcLength(W, H);
+    for (const { anchor, pointer } of releases()) {
+      const release = hingeRelease(anchor, pointer, W, H)!;
+      const at = hingeSettlePointer(release, release.toTurned);
+      const cone = computeConeFold(anchor, at, W, H, settleArc(full, 1));
+      expect(cone).not.toBeNull();
+      const mirror = syntheticHingePointer(anchor, W, H, 1);
+      const landed = deformPointOnCone(cone!, anchorPoint(anchor, W, H));
+      expect(landed.x).toBeCloseTo(mirror.x, 1);
+      expect(landed.y).toBeCloseTo(mirror.y, 1);
+      // Flat: a sheet still floating its own roll-diameter is the pop this
+      // exists to remove.
+      for (const x of [W * 0.25, W * 0.5, W * 0.75, W]) {
+        for (const y of [0, H * 0.5, H]) {
+          expect(coneLiftAt(cone!, { x, y })).toBeLessThan(0.5);
+        }
+      }
+    }
+  });
+
+  it("does not land at all if the arc is held at the value it was dragged at", () => {
+    // The measurement behind `settleArc`, kept as a test so the relax cannot be
+    // quietly dropped as a flourish: with a fixed arc the crease saturates at
+    // the binding and the sheet stops ~100px short, still lifted.
+    const anchor: FoldAnchor = "bottomRight";
+    const release = hingeRelease(anchor, draggedPointer(anchor, 0.35), W, H)!;
+    const at = hingeSettlePointer(release, release.toTurned);
+    const cone = computeConeFold(anchor, at, W, H)!;
+    const mirror = syntheticHingePointer(anchor, W, H, 1);
+    const landed = deformPointOnCone(cone, anchorPoint(anchor, W, H));
+    expect(cone.creaseAngle).toBe(0); // saturated against the binding
+    expect(Math.hypot(landed.x - mirror.x, landed.y - mirror.y)).toBeGreaterThan(50);
+    expect(coneLiftAt(cone, { x: W * 0.5, y: H * 0.5 })).toBeGreaterThan(20);
+  });
+
+  it("puts the sheet back flat when it springs back instead", () => {
+    for (const { anchor, pointer } of releases()) {
+      const release = hingeRelease(anchor, pointer, W, H);
+      const rested = hingeSettlePointer(release!, release!.toRest);
+      const c = anchorPoint(anchor, W, H);
+      expect(rested.x).toBeCloseTo(c.x, 3);
+      expect(rested.y).toBeCloseTo(c.y, 3);
+      // The anchor back under its own start is the fold at rest: nothing drawn.
+      expect(computeConeFold(anchor, rested, W, H)).toBeNull();
+    }
+  });
+
+  it("never leaves the lens, so nothing on the path is ever clamped", () => {
+    // The claim that makes this a rotation rather than a lerp: every point of
+    // the circle about a legal apex re-solves to that same apex, so the swing
+    // cannot run out of paper partway. A lerp toward the turned pose does not
+    // have this property and would be clamped — visibly — mid-flight.
+    for (const { anchor, pointer } of releases()) {
+      const release = hingeRelease(anchor, pointer, W, H)!;
+      for (let i = 0; i <= 40; i++) {
+        const at = hingeSettlePointer(release, release.toTurned * (i / 40));
+        const reached = constrainToSpineHinge(anchor, at, W, H);
+        expect(reached.x).toBeCloseTo(at.x, 3);
+        expect(reached.y).toBeCloseTo(at.y, 3);
+      }
+    }
+  });
+
+  it("holds a real apex still for the whole swing, so the fan cannot collapse", () => {
+    // ...which is what keeps the fan the drag opened. Re-solving the cone at
+    // each step of the settle returns the apex the release froze — otherwise
+    // the sheet is quietly relaxing toward the far field as it lands, and the
+    // cone the milestone exists for is gone by the time you can see it.
+    //
+    // Stated of a *finite* apex only, and that is not a hedge. A release in
+    // the far field has no apex to hold: it is held at
+    // `FAR_APEX_DIAGONALS`, off one end or the other depending on which side
+    // of square-on the pointer passed, and the swing can cross that. The two
+    // held apexes differ by ~1e-3 px of geometry, which is what that constant
+    // was sized for — so the invariant that covers the far field is the
+    // continuity one below, not this one.
+    const full = curlArcLength(W, H);
+    const far = FAR_APEX_DIAGONALS_APPROX * Math.hypot(W, H);
+    for (const { anchor, pointer } of releases()) {
+      const release = hingeRelease(anchor, pointer, W, H)!;
+      if (Math.abs(release.apex.y) > far * 0.5) continue; // held, not solved
+      // Stops one step short of the landing, and for a stated reason rather
+      // than to dodge a failure: at the fully-turned pose every point of the
+      // spine is equidistant from anchor and pointer, so the apex is *not
+      // determined* there (`bisectorApexY` says so). It does not matter,
+      // because it is also the pose where `creaseAngle` reaches zero — the
+      // crease becomes the spine itself and the sheet reflects across the
+      // binding whatever apex the arithmetic happened to land on. The
+      // continuity test below covers the landing, and measures no step there
+      // bigger than the ordinary ones.
+      for (let i = 1; i < 40; i++) {
+        const t = i / 40;
+        const at = hingeSettlePointer(release, release.toTurned * t);
+        const cone = computeConeFold(anchor, at, W, H, settleArc(full, t));
+        if (!cone) continue;
+        expect(cone.apex.y).toBeCloseTo(release.apex.y, 6);
+        expect(cone.apex.x).toBeCloseTo(release.apex.x, 9);
+      }
+    }
+  });
+
+  it("moves the sheet no faster than the swing that drives it", () => {
+    // The invariant that does cover the far field, and the one a viewer would
+    // actually notice: whatever the apex does with its own representation, the
+    // paper may not jump. Note the arc relaxes over these steps too, so this
+    // is the settle as it is really driven rather than the swing alone.
+    const full = curlArcLength(W, H);
+    const steps = 240;
+    for (const { anchor, pointer } of releases()) {
+      const release = hingeRelease(anchor, pointer, W, H)!;
+      const probes = [
+        { x: W * 0.5, y: H * 0.5 },
+        { x: W * 0.95, y: H * 0.05 },
+        { x: W * 0.95, y: H * 0.95 },
+      ];
+      let previous: Point[] | null = null;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const at = hingeSettlePointer(release, release.toTurned * t);
+        const cone = computeConeFold(anchor, at, W, H, settleArc(full, t));
+        if (!cone) {
+          previous = null;
+          continue;
+        }
+        const here = probes.map((q) => deformPointOnCone(cone, q));
+        if (previous) {
+          for (let k = 0; k < here.length; k++) {
+            const moved = Math.hypot(here[k]!.x - previous[k]!.x, here[k]!.y - previous[k]!.y);
+            // Measured worst over all releases is 9.7px at these 240 steps and
+            // it halves as the steps double — i.e. smooth motion, not a bound
+            // that happens to hold. The landing step is the same size as the
+            // rest of them, which is the thing being claimed: the apex going
+            // undetermined at the mirror is invisible in the paper.
+            expect(moved).toBeLessThan(W / 50);
+          }
+        }
+        previous = here;
+      }
+    }
+  });
+
+  it("reads a deeper drag as more of the turn already made", () => {
+    // What the commit threshold reads, so it has to be monotone in the drag.
+    for (const anchor of ANCHORS) {
+      let previous = -Infinity;
+      for (let i = 1; i <= 20; i++) {
+        const release = hingeRelease(anchor, syntheticHingePointer(anchor, W, H, i / 20), W, H);
+        expect(release).not.toBeNull();
+        expect(release!.progress).toBeGreaterThan(previous);
+        previous = release!.progress;
+      }
+      // The synthetic path's own end is the fully-turned pose, by definition.
+      expect(previous).toBeCloseTo(1, 6);
+    }
+  });
+
+  it("has nothing to settle when the sheet was never lifted", () => {
+    for (const anchor of ANCHORS) {
+      expect(hingeRelease(anchor, anchorPoint(anchor, W, H), W, H)).toBeNull();
     }
   });
 });

@@ -62,30 +62,88 @@ export interface EdgeAnchor {
   edge: "left" | "right";
 }
 
-/** What the sheet is held by: a corner (the dog-ear pinch) or the middle of
- * an edge (the flat-handed peel). */
-export type FoldAnchor = Corner | EdgeAnchor;
+/**
+ * A pinch **anywhere along the outer edge**, at fraction `t` of the leaf's
+ * height — the anchor a real grab produces once the sheet is bound.
+ *
+ * The corners and the `EdgeAnchor` above are the two anchors the *flat* model
+ * could express, and between them they were the whole vocabulary: a grab was
+ * snapped to whichever it was nearest (`anchorForGrab`). A hinge needs neither
+ * the snap nor the special cases. The cone is solved from an anchor *point*
+ * and its distance to the two spine corners, and nothing in that construction
+ * asks whether the point is a corner — so the pinch is simply where you
+ * pinched, and `t = 0` and `t = 1` *are* the corners rather than being separate
+ * cases that happen to agree with them.
+ *
+ * What it buys is the thing `EdgeAnchor` had to give up. That one's crease is
+ * pinned parallel to the spine (`constrainFoldPointer`) because a flat crease
+ * cannot converge on anything; a cone's rulings fan, so a mid-edge pinch pulled
+ * square across is the far field — a near-cylinder creased through the pinch —
+ * and the *same* pinch pulled up and across brings the apex in and opens the
+ * fan, exactly as a corner's does. One behaviour along the whole edge, which is
+ * the whole of "correct physics wherever the paper is grabbed".
+ *
+ * ⚠️ **A mid-edge pinch sits on the apex's own sign change**, and it is worth
+ * knowing that is deliberate rather than a latent bug. The apex runs off
+ * whichever end of the spine the pointer passes on, so a drag crossing the
+ * pinch's own height swaps one held apex for the other — and for a mid-edge
+ * pinch that crossing is the *natural* drag rather than an unusual one. It is
+ * invisible because `FAR_APEX_DIAGONALS` was picked to make it so: the two
+ * held apexes differ by ~1e-3 px there. Moving that constant nearer breaks a
+ * mid-edge pinch first and most.
+ */
+export interface EdgePinch {
+  edge: "left" | "right";
+  /** Where along the edge, as a fraction of the leaf's height: 0 is the top
+   * corner, 1 the bottom. A fraction rather than px so an anchor outlives a
+   * re-layout, and so the corners are exactly its endpoints. */
+  t: number;
+}
+
+/** What the sheet is held by: a corner (the dog-ear pinch), the middle of an
+ * edge (the flat-handed peel), or a point along the edge (the hinge's own —
+ * see `EdgePinch`, which subsumes both of the others and retires with the flat
+ * painter's need for them). */
+export type FoldAnchor = Corner | EdgeAnchor | EdgePinch;
+
+export function isEdgePinch(anchor: FoldAnchor): anchor is EdgePinch {
+  return typeof anchor !== "string" && "t" in anchor;
+}
 
 export function isEdgeAnchor(anchor: FoldAnchor): anchor is EdgeAnchor {
-  return typeof anchor !== "string";
+  return typeof anchor !== "string" && !isEdgePinch(anchor);
 }
 
 /** The anchor's point on the leaf — the point that must land exactly under
  * the pointer, whichever kind of anchor it is. */
 export function anchorPoint(anchor: FoldAnchor, width: number, height: number): Point {
+  if (isEdgePinch(anchor)) {
+    return { x: anchor.edge === "left" ? 0 : width, y: anchor.t * height };
+  }
   if (isEdgeAnchor(anchor)) {
     return { x: anchor.edge === "left" ? 0 : width, y: height / 2 };
   }
   return cornerPoint(anchor, width, height);
 }
 
-/** Where the anchor sweeps *to* on a full flip: the far corner for a pinch,
- * the middle of the far edge for an edge peel. */
+/** Where the anchor sweeps *to* on a full flip: the far corner for a corner
+ * pinch, the middle of the far edge for an edge peel, and the far edge at its
+ * own height for an `EdgePinch`.
+ *
+ * ⚠️ This is the **flat** sweep's target, which `syntheticFoldPointer` then
+ * overshoots by 2.2x — it is a point inside the leaf, not the fully-turned
+ * position. A bound sheet's fully-turned position is the anchor's mirror
+ * *across the spine*, which is outside the leaf and is
+ * `syntheticHingePointer(..., 1)`. The two are different points and must not
+ * be swapped for one another. */
 export function oppositeAnchorPoint(
   anchor: FoldAnchor,
   width: number,
   height: number,
 ): Point {
+  if (isEdgePinch(anchor)) {
+    return { x: anchor.edge === "left" ? width : 0, y: anchor.t * height };
+  }
   if (isEdgeAnchor(anchor)) {
     return { x: anchor.edge === "left" ? width : 0, y: height / 2 };
   }
@@ -101,7 +159,10 @@ export function oppositeAnchorPoint(
  * pinned to the anchor's. The cursor keeps moving freely (the drag's
  * progress still tracks the real distance); it is only the sheet that
  * refuses to tilt, the way an edge lifted with a flat hand does. Corner
- * pinches are unconstrained and pass through untouched.
+ * pinches are unconstrained and pass through untouched — and so is an
+ * `EdgePinch`, which is the point of it: the tilt a flat crease cannot express
+ * is exactly what the cone's fan *is*, so constraining it would throw away the
+ * hinge's answer to the case this function exists to work around.
  */
 export function constrainFoldPointer(
   anchor: FoldAnchor,
@@ -134,11 +195,39 @@ export function anchorForGrab(
   return nearestCorner(edge, grabY, leafHeight);
 }
 
+/**
+ * What a grab at `grabY` on this edge is holding once the sheet is **bound**:
+ * that edge, exactly there.
+ *
+ * The hinge's counterpart to `anchorForGrab` above, and the whole of the
+ * difference is what is *missing* — no band, no snap, no choice between two
+ * kinds of anchor. See `EdgePinch` for why a cone needs none of them.
+ *
+ * Clamped to the leaf because a grab surface is free to be a pixel or two
+ * taller than the leaf it covers, and an anchor off the end of the edge is not
+ * a place the paper is.
+ */
+export function anchorForPinch(
+  edge: "left" | "right",
+  grabY: number,
+  leafHeight: number,
+): EdgePinch {
+  const t = leafHeight > 0 ? grabY / leafHeight : 0.5;
+  return { edge, t: Math.min(1, Math.max(0, t)) };
+}
+
 /** The corner Apple Books' own page-turn animation grabs by default, absent
  * a real pointer — the bottom of the edge, matching how you'd naturally
  * dog-ear a physical page. */
 export function defaultCornerForDirection(direction: "prev" | "next"): Corner {
   return direction === "next" ? "bottomRight" : "bottomLeft";
+}
+
+/** The hinge's counterpart to `defaultCornerForDirection`, for a click/keyboard
+ * turn under M27: the bottom of the turning edge, as an `EdgePinch` rather
+ * than a `Corner`, since the cone has no separate corner-anchor type. */
+export function defaultPinchForDirection(direction: "prev" | "next"): EdgePinch {
+  return { edge: direction === "next" ? "right" : "left", t: 1 };
 }
 
 export function cornerPoint(corner: Corner, width: number, height: number): Point {
@@ -493,7 +582,9 @@ export function computeFold(
  * page is still bound, it merely has no facing leaf to land on).
  */
 export function spineEdgeForAnchor(anchor: FoldAnchor): "left" | "right" {
-  if (isEdgeAnchor(anchor)) return anchor.edge === "left" ? "right" : "left";
+  if (isEdgePinch(anchor) || isEdgeAnchor(anchor)) {
+    return anchor.edge === "left" ? "right" : "left";
+  }
   return anchor === "topLeft" || anchor === "bottomLeft" ? "right" : "left";
 }
 
@@ -851,12 +942,57 @@ export function sampleConeAt(cone: ConeFold, p: Point): ConeSample {
  * hand-off to `computeFold` any more, because that hand-off returned the spine
  * to a model that lets it move. See `FAR_APEX_DIAGONALS`.
  */
+
+/**
+ * Which leaf point the roll's physical size (`arcTarget`) is realized *at*.
+ *
+ * `"anchor"` is what shipped 2026-08-25: the grabbed point gets exactly
+ * `arcTarget`. Because the roll's physical size scales with radius from the
+ * apex, and the apex sits at the anchor's own height on any drag deep enough
+ * to reach `constrainToSpineHinge`'s limit, every leaf point *farther* from
+ * the apex than the anchor — typically most of the leaf, on a corner-ish grab
+ * — gets a proportionally *larger* roll than `arcTarget`. That is where the
+ * sheet reads as swinging away from the spine rather than hugging it: found
+ * 2026-08-26 while investigating the operator's harness report ("only the
+ * corners touch the spine"). The spine edge itself is unaffected either way —
+ * it is fixed by construction (`deformPointOnCone`), not by this choice.
+ *
+ * `"farthest"` instead realizes `arcTarget` at the leaf's own farthest point
+ * from the apex (always a corner, by convexity), which caps the *worst-case*
+ * roll at the flat model's tuned size and tapers it smaller everywhere closer
+ * to the apex — including, now, at the anchor itself. Trades a tighter overall
+ * sheet for a smaller roll at the exact point being dragged.
+ *
+ * **Undecided which one ships.** Exposed as a runtime choice so the harness
+ * (`pageCone.html`) can put both in front of the operator; not wired to the
+ * reader either way yet.
+ */
+export type ArcRadiusMode = "anchor" | "farthest";
+
+/** The farthest a leaf point can be from `apex` — always a corner, since
+ * squared distance from an external point is convex over the leaf's
+ * rectangle and a convex function's max over a convex set sits at a vertex. */
+function farthestLeafRadius(apex: Point, width: number, height: number): number {
+  let max = 0;
+  for (const p of [
+    { x: 0, y: 0 },
+    { x: width, y: 0 },
+    { x: width, y: height },
+    { x: 0, y: height },
+  ]) {
+    const r = Math.hypot(p.x - apex.x, p.y - apex.y);
+    if (r > max) max = r;
+  }
+  return max;
+}
+
 export function computeConeFold(
   anchor: FoldAnchor,
   pointer: Point,
   width: number,
   height: number,
   arcTarget: number = curlArcLength(width, height),
+  arcRadiusMode: ArcRadiusMode = "anchor",
 ): ConeFold | null {
   const c = anchorPoint(anchor, width, height);
   const reached = constrainToSpineHinge(anchor, pointer, width, height);
@@ -901,10 +1037,12 @@ export function computeConeFold(
   // at all.
   if (!(sweep > 0)) return null;
 
-  // The roll's angular extent, so that its *physical* arc at the anchor is the
-  // same `arcTarget` the flat model uses there — and clamped by the sweep the
-  // same way, so a shallow drag rolls less rather than overshooting.
-  const arcAngle = Math.min(arcTarget / anchorRadius, sweep / (1 - ROLL_END.o));
+  // The roll's angular extent, so that its *physical* arc at the reference
+  // radius (the anchor, or the leaf's farthest point — see `ArcRadiusMode`)
+  // is the same `arcTarget` the flat model uses there — and clamped by the
+  // sweep the same way, so a shallow drag rolls less rather than overshooting.
+  const arcRadius = arcRadiusMode === "farthest" ? farthestLeafRadius(apex, width, height) : anchorRadius;
+  const arcAngle = Math.min(arcTarget / arcRadius, sweep / (1 - ROLL_END.o));
   // ...and the crease, from the same algebra as `creaseToCorner`: the anchor
   // sits at `arcAngle * ROLL_END.o - (psi - arcAngle)` once it is out on the
   // tail, and must land at `anchorAngle - sweep`.
@@ -924,6 +1062,165 @@ export function computeConeFold(
     anchorRadius,
   };
 }
+
+/**
+ * A **released** sheet, and the swing that finishes what the drag started.
+ *
+ * A drag can only take a bound sheet so far — `constrainToSpineHinge`'s lens
+ * is where the paper runs out, and a pointer parked at its edge leaves the
+ * leaf standing half-turned. What happens next is not a drag at all: the hand
+ * is gone, and the only things still acting on the sheet are its binding and
+ * its own weight. So the settle is **not** a lerp of the pointer toward some
+ * target, which would drag a phantom finger across the page and flatten the
+ * cone into the far field on the way (a straight pull square across *is* the
+ * far field — see `syntheticHingePointer`). It is the sheet swinging on the
+ * hinge it already has.
+ *
+ * Which makes it one rotation, and an exact one. **The apex is frozen at the
+ * value the release left it**, and the anchor turns about it — which is the
+ * one motion inextensibility permits, since a bound sheet's anchor keeps its
+ * distance from the apex and can only travel along that circle. Three
+ * consequences, all of them things a lerp does not get:
+ *
+ * - **The fan stays open.** The cone's shape is fixed by the apex; holding it
+ *   still means the sheet keeps the fan the drag gave it right through the
+ *   landing, instead of relaxing into a cylinder as the pointer straightens.
+ *   (Measured: a release with a finite apex re-solves to the same apex to the
+ *   last bit at every step of the swing. A release in the *far field* has no
+ *   meaningful apex to hold and its held one may swap ends mid-swing, which is
+ *   the ~1e-3 px non-event `FAR_APEX_DIAGONALS` was sized to make it.)
+ * - **The whole path is reachable, with nothing to clamp.** Every point of the
+ *   circle about a legal apex re-solves to *that* apex, because the apex is on
+ *   the perpendicular bisector of anchor→pointer by construction. So the swing
+ *   never touches the lens boundary and never has to be clamped mid-flight.
+ * - **It lands exactly.** The fully-turned pose — the anchor's mirror across
+ *   the spine, which is `syntheticHingePointer(..., 1)` — lies on that same
+ *   circle, because the apex is on the spine and a mirror across the spine
+ *   preserves distance from it.
+ *
+ * Both directions are the same rotation with a different angle: `toTurned`
+ * finishes the turn, `toRest` puts the sheet back down. `progress` is what
+ * decides between them, and it is an angular fraction rather than a distance
+ * because that is the coordinate the sheet actually moves in.
+ *
+ * ⚠️ **The swing is only half a settle; `settleArc` is the other half**, and a
+ * caller that animates the angle while holding the arc fixed gets a sheet that
+ * never lands. See it for why.
+ */
+export interface HingeRelease {
+  /** Frozen at the release. The swing turns about this and never re-solves it. */
+  apex: Point;
+  /** The released anchor as a vector from the apex: the arm the swing rides. */
+  arm: Point;
+  /** Signed angle from the release to the fully-turned pose. */
+  toTurned: number;
+  /** Signed angle from the release back to rest — the sheet flat on the page. */
+  toRest: number;
+  /** How much of the turn the drag itself made: 0 at rest, 1 fully turned.
+   * What a commit-or-spring-back threshold reads. */
+  progress: number;
+}
+
+/** Signed angle from `a` to `b`, in `(-PI, PI]`. Written from the cross and
+ * dot rather than as a difference of two `atan2`s because the far field puts
+ * both vectors a billion px long and a nanoradian apart, where the difference
+ * would be all rounding and this is not. */
+function signedAngleBetween(a: Point, b: Point): number {
+  return Math.atan2(a.x * b.y - a.y * b.x, a.x * b.x + a.y * b.y);
+}
+
+/**
+ * Read a release: the apex to swing about, how far there is left to go either
+ * way, and how much of the turn the drag already made.
+ *
+ * `null` for a drag that never moved the sheet — there is nothing to settle,
+ * and the caller should not animate a sheet that was never lifted.
+ */
+export function hingeRelease(
+  anchor: FoldAnchor,
+  pointer: Point,
+  width: number,
+  height: number,
+  arcTarget: number = curlArcLength(width, height),
+): HingeRelease | null {
+  const cone = computeConeFold(anchor, pointer, width, height, arcTarget);
+  if (!cone) return null;
+  const { apex } = cone;
+  const c = anchorPoint(anchor, width, height);
+  const reached = constrainToSpineHinge(anchor, pointer, width, height);
+  const turnedAt = syntheticHingePointer(anchor, width, height, 1);
+  const arm = { x: reached.x - apex.x, y: reached.y - apex.y };
+  const rest = { x: c.x - apex.x, y: c.y - apex.y };
+  const turned = { x: turnedAt.x - apex.x, y: turnedAt.y - apex.y };
+
+  const swept = signedAngleBetween(rest, arm);
+  // The turn goes the way the drag went; the total is measured from rest the
+  // same way, so that `toTurned` is a plain remainder and cannot disagree with
+  // `swept` about which direction "forward" is. Taking the sign from the drag
+  // rather than from `atan2` also sidesteps the fully-turned pose sitting at
+  // exactly PI, where the short way round is ambiguous in sign.
+  const direction = swept >= 0 ? 1 : -1;
+  const total = direction * Math.abs(signedAngleBetween(rest, turned));
+  return {
+    apex,
+    arm,
+    toTurned: total - swept,
+    toRest: -swept,
+    progress: total === 0 ? 1 : swept / total,
+  };
+}
+
+/** The pointer partway through a settle: the arm turned by `angle` about the
+ * frozen apex. Feed `toTurned * t` or `toRest * t` for `t` from 0 to 1. */
+export function hingeSettlePointer(release: HingeRelease, angle: number): Point {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return {
+    x: release.apex.x + release.arm.x * cos - release.arm.y * sin,
+    y: release.apex.y + release.arm.x * sin + release.arm.y * cos,
+  };
+}
+
+/**
+ * The curl the sheet still carries at `t` of the way through a settle — the
+ * half of the landing that is *not* the swing.
+ *
+ * **A page that finishes its turn with the arc it was dragged at never
+ * actually lands.** Two things go wrong at once, and they are the same thing:
+ * the roll is a fixed physical arc (`curlArcLength`), so it does not know the
+ * turn is ending. It leaves the sheet floating its own roll-diameter above the
+ * page it came to rest on — 80-odd px at a normal leaf, foreshortened by a
+ * real camera, so unmounting the fold there *pops*. And it eats the end of the
+ * turn: the crease has to clear `arcAngle * (1 + ROLL_END.o) / 2` of angle
+ * before the anchor can reach the mirror, so `creaseAngle` saturates at the
+ * binding with the anchor still ~120px short and the sheet stops moving while
+ * the animation runs on. Measured both, at every anchor.
+ *
+ * Relaxing the arc to nothing fixes both, and it is what paper does — a page
+ * flattens as it comes to rest, and the curl you can see is the one your hand
+ * is putting there. With it, the sheet lands **0.01 px from the mirror at zero
+ * lift**, which is a landing pixel-identical to the page underneath and
+ * therefore an invisible unmount.
+ *
+ * `1 - t^2` rather than a linear relax: the curl is the whole look of a turn
+ * and should not start deflating the moment the finger leaves. It holds three
+ * quarters of the arc through the first half of the settle and gives it all up
+ * in the last quarter.
+ *
+ * ⚠️ **The floor is not decoration.** `computeConeFold`'s `arcAngle <= 0`
+ * branch means "no roll, sheet undisturbed", not "sharp fold" — so an arc
+ * driven to exactly zero does not flatten the sheet onto the far leaf, it
+ * un-turns it. Approached from *above* the same limit is the sharp fold that
+ * is wanted, hence a floor rather than a zero.
+ */
+export function settleArc(fullArc: number, t: number): number {
+  const s = Math.min(1, Math.max(0, t));
+  return Math.max(SETTLE_ARC_FLOOR, fullArc * (1 - s * s));
+}
+
+/** Small enough that the roll it leaves is well under a pixel at any leaf
+ * size, large enough to stay on the sharp-fold side of `arcAngle <= 0`. */
+const SETTLE_ARC_FLOOR = 0.01;
 
 function offsetAlong(from: Point, dir: Point, distance: number): Point {
   return { x: from.x + dir.x * distance, y: from.y + dir.y * distance };

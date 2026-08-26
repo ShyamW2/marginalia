@@ -12,19 +12,56 @@
   .cell figcaption { font-size: 11px; font-weight: 600; margin: 0 0 5px 2px; }
   /* No z-index: the 3D seam's canvas is a fixed `z-index: 0` layer later in DOM
      order, and the sheet has to paint over the page it is turning away from. */
-  .stage { position: relative; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5); touch-action: none; }
+  .stage {
+    position: relative; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5);
+    touch-action: none; cursor: grab;
+    /* A drag that begins on the paper must be *this* page's drag: without
+       these the browser starts a text or image drag of its own and cancels
+       the pointer capture on the next frame. */
+    user-select: none; -webkit-user-select: none;
+  }
+  .stage:active { cursor: grabbing; }
   .stage .under { position: absolute; inset: 0; width: 100%; height: 100%; }
   .stage .flat { position: absolute; top: 0; }
   .stage .spine { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff4d4dcc; }
+  .controls {
+    display: flex; flex-wrap: wrap; align-items: flex-start; gap: 18px;
+    flex-basis: 100%; margin: 0 0 4px; padding: 10px 14px; border-radius: 6px;
+    background: #00000033;
+  }
+  .controls fieldset { border: 1px solid #ffffff33; border-radius: 4px; padding: 6px 10px; margin: 0; }
+  .controls legend { padding: 0 4px; font-size: 11px; font-weight: 600; }
+  .controls legend label { display: flex; align-items: center; gap: 5px; }
+  .controls fieldset label { display: block; font-size: 12px; padding: 2px 0; }
+  .controls fieldset.dim { opacity: 0.55; }
+  .controls .slider {
+    display: flex; flex-direction: column; gap: 3px; font-size: 11px;
+    font-weight: 600; min-width: 150px;
+  }
+  .controls .slider.dim { opacity: 0.4; }
+  .controls .slider .value { font-weight: 400; opacity: 0.8; margin-left: 4px; }
+  .controls .slider input[type="range"] { width: 100%; }
+  .controls fieldset .slider { min-width: 130px; padding: 2px 0; }
 </style>
 </head>
 <body>
 <header>
   <p><strong>The hinge, next to the fold it replaces.</strong> Both stages take the
-  <em>same</em> drag — move the pointer over either one. The difference to look for is at
-  the <strong>spine</strong>, the edge opposite the grab (the gutter in spread mode): the
-  flat sheet slides away from it, the hinged one is bound to it and cannot.
+  <em>same</em> drag. The difference to look for is at the <strong>spine</strong>, the edge
+  opposite the grab (the gutter in spread mode): the flat sheet slides away from it, the
+  hinged one is bound to it and cannot.
   See <code>docs/marginalia/PAGE_CURL.md</code> §2d and decisions.md 2026-08-26.</p>
+  <p><strong>It is a gesture, not a pose — press, drag, release.</strong> Grab the paper
+  anywhere and the sheet is held <em>there</em>: at a corner you get the dog-ear, at the
+  middle of the edge you get a crease through your own pinch, and either one fans as the
+  pointer rises. Let go and the sheet finishes the turn on its own — a drag can never
+  reach the end of a bound sheet's turn, because the paper runs out first — swinging about
+  the apex the release froze while its curl relaxes flat. Below the commit threshold it
+  falls back instead. Press again to re-arm.</p>
+  <p><strong>Watch the far leaf.</strong> It stays page 64 for the whole turn and only
+  becomes 66 when the sheet lands on it — 65 on the sheet, 66 on its back, 67 revealed
+  underneath. The reader advances the rendition at grab time and so shows 66 twice; that
+  is the thing this page is showing the fix for.</p>
   <p>Query params: <code>?model=both|flat|cone</code> ·
   <code>&amp;mode=spread|single</code> · <code>&amp;theme=paper|sepia|ink</code> ·
   <code>&amp;state=peel-20|drag-50|edge-pull|top-corner</code> (the same names
@@ -44,7 +81,18 @@
   splay with <code>?model=cone</code> and the window sized so the stage is near the middle.</p>
   <p><strong>What is not yet true of the app.</strong> Nothing is wired to the mesh — the
   reader still turns pages with the flat painter. This page drives
-  <code>PageFold3D</code> directly so the hinge can be judged before that wiring lands.</p>
+  <code>PageFold3D</code> directly so the hinge can be judged before that wiring lands.
+  Two consequences to expect rather than report: the <em>flat</em> stage's canvas is sized
+  to the leaf and cannot cross the gutter, so its half of a completed turn ends with the
+  sheet sliding off the page instead of landing on the facing one (that is §2d, not a bug
+  here); and only a <code>next</code> turn is fixtured — <code>prev</code> is the mirror
+  of everything above and is not built.</p>
+  <p><strong>Driving it under automation.</strong> <code>window.__fold</code> exposes the
+  live <code>anchor</code>, <code>pointer</code>, <code>arc</code> and <code>settling</code>,
+  so a screenshot can say which pose it caught. Wait on
+  <code>window.__foldHarnessReady</code>, and re-read the origin (dispatch a
+  <code>resize</code>) after changing anything above the stage — the leaf's viewport origin
+  is cached per frame, so hiding the header moves the stage without the fold hearing.</p>
 </header>
 <div id="grid"></div>
 <script type="module" src="./pageCone.tsx"></script>

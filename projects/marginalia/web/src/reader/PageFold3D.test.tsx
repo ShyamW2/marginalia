@@ -162,4 +162,26 @@ describe("PageFold3D — taking the shared canvas and giving it back", () => {
       expect(screen.getByTestId("scene-canvas").dataset.frameloop).toBe("never"),
     );
   });
+
+  // The operator's two asks, 2026-08-26: the sheet has to pass *over* the far
+  // leaf's cover and over the reader's chrome, which at the seam's ordinary
+  // `z-index: 0` it did not — in immersive mode it was invisible for the whole
+  // turn. Where the depth itself is decided is `Scene3D.module.css`; what this
+  // pins is that the fold asks, and that it stops asking when the turn ends.
+  it("elevates the shared canvas over the reader's chrome, and only while turning", async () => {
+    const layer = () => screen.getByTestId("scene-canvas").parentElement;
+    const view = render(
+      <Scene3DProvider>
+        <Fold />
+      </Scene3DProvider>,
+    );
+    await waitFor(() => expect(layer()?.getAttribute("data-elevated")).toBe("true"));
+
+    view.rerender(
+      <Scene3DProvider>
+        <div />
+      </Scene3DProvider>,
+    );
+    await waitFor(() => expect(layer()?.hasAttribute("data-elevated")).toBe(false));
+  });
 });

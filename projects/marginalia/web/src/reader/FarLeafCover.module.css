@@ -1,0 +1,19 @@
+/* Positioned to `.pageClip` exactly as PageCurl's/PageSlide's own wraps are —
+   see PageCurl.module.css for why the coordinates must be measured from
+   there. z-index:5 matches theirs too: sibling epub.js iframe content
+   otherwise paints above same-level DOM regardless of order, a well-known
+   iframe stacking quirk unrelated to (and unaffected by) the 3D seam's own
+   fixed z-index:0 layer, which lives outside this stacking context. */
+.wrap {
+  position: absolute;
+  top: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
