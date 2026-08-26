@@ -25,6 +25,10 @@ const SETTINGS: Settings = {
   ttsModelPath: "",
   audioDefaultVoice: "af_heart",
   audioAutoTurnPages: true,
+  kindLabelRose: "Regular annotation",
+  kindLabelSage: "Define",
+  kindLabelHoney: "Key quote",
+  kindLabelSlate: "Thematic Question",
 };
 
 const DEFAULT_PROFILE: ProviderProfile = {

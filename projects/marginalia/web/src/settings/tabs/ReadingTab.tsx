@@ -1,4 +1,5 @@
 import type {
+  HighlightKind,
   PageNumberMode,
   PageTransition,
   ReaderMargin,
@@ -7,12 +8,23 @@ import type {
 } from "@marginalia/shared";
 import { Button } from "../../controls/Button.js";
 import { Slider } from "../../controls/Slider.js";
+import { DEFAULT_KIND_LABELS, HIGHLIGHT_KINDS } from "../../reader/highlightKinds.js";
 import styles from "../SettingsPage.module.css";
 
 interface ReadingTabProps {
   form: Settings;
   update: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
 }
+
+// M30 A (decisions.md 2026-08-24, settled decision 16): the label is a
+// setting, the hue is not — this only maps a kind to its Settings field, it
+// never touches `--kind-*` in theme.css.
+const KIND_LABEL_FIELD: Record<HighlightKind, "kindLabelRose" | "kindLabelSage" | "kindLabelHoney" | "kindLabelSlate"> = {
+  rose: "kindLabelRose",
+  sage: "kindLabelSage",
+  honey: "kindLabelHoney",
+  slate: "kindLabelSlate",
+};
 
 // M22.5: "every 0.05" — today's step, i.e. the predetermined sizes the
 // reader already supports — generated so the top of the range can't
@@ -141,6 +153,31 @@ export function ReadingTab({ form, update }: ReadingTabProps) {
           ))}
         </div>
       </div>
+
+      {/* M30 A: labels are a setting, the four hues are not (settled
+          decision 16) — renaming here never migrates a stored highlight's
+          `kind`. Four text fields, so this joins Reading rather than
+          earning its own tab. */}
+      <h2 className={styles.sectionTitle}>Highlights</h2>
+      <p className={styles.hint}>
+        Names for the four highlight colors — clear a field to go back to its default.
+      </p>
+      {HIGHLIGHT_KINDS.map((kind) => (
+        <div className={styles.field} key={kind}>
+          <label className={styles.label} htmlFor={`kind-label-${kind}`}>
+            <span className={styles.kindLabelDot} style={{ background: `var(--kind-${kind})` }} aria-hidden="true" />
+            {kind[0].toUpperCase()}{kind.slice(1)}
+          </label>
+          <input
+            id={`kind-label-${kind}`}
+            className={styles.input}
+            type="text"
+            value={form[KIND_LABEL_FIELD[kind]]}
+            placeholder={DEFAULT_KIND_LABELS[kind]}
+            onChange={(e) => update(KIND_LABEL_FIELD[kind], e.target.value)}
+          />
+        </div>
+      ))}
     </>
   );
 }

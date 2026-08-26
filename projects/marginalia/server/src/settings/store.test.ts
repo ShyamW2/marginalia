@@ -32,4 +32,23 @@ describe("settings store", () => {
     ).toBe("curl");
     expect(updateSettings(db, { pageTransition: "slide" }).pageTransition).toBe("slide");
   });
+
+  it("defaults the four kind labels to the operator's names (M30 A, decisions.md 2026-08-24)", () => {
+    const settings = getSettings(createDb(":memory:"));
+    expect(settings.kindLabelRose).toBe("Regular annotation");
+    expect(settings.kindLabelSage).toBe("Define");
+    expect(settings.kindLabelHoney).toBe("Key quote");
+    expect(settings.kindLabelSlate).toBe("Thematic Question");
+  });
+
+  it("clearing a kind label to '' falls back to the default instead of persisting blank", () => {
+    // Acceptance (TASKS.md M30 A): "clearing a label field and reloading
+    // shows the default name, not a blank tooltip or an empty aria-label."
+    const db = createDb(":memory:");
+    expect(updateSettings(db, { kindLabelHoney: "Banger" }).kindLabelHoney).toBe("Banger");
+    expect(updateSettings(db, { kindLabelHoney: "" }).kindLabelHoney).toBe("Key quote");
+    expect(
+      db.prepare("SELECT value FROM settings WHERE key = 'kind_label_honey'").get(),
+    ).toBeUndefined();
+  });
 });

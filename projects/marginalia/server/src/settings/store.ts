@@ -54,9 +54,26 @@ const DEFAULTS = {
   // default so single-voice listening works with zero setup (AUDIO.md).
   audio_default_voice: "af_heart",
   audio_auto_turn_pages: "true",
+  // M30 A (decisions.md 2026-08-24): the operator's names for the four
+  // permanent kind slots — see settled decision 16. Deleted, never stored
+  // empty, on a clear (see updateSettings) so this default is what a
+  // cleared field falls back to.
+  kind_label_rose: "Regular annotation",
+  kind_label_sage: "Define",
+  kind_label_honey: "Key quote",
+  kind_label_slate: "Thematic Question",
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
+
+/** M30 A: clearing one of these to "" resets to the default rather than
+ * persisting a blank label — see updateSettings. */
+const KIND_LABEL_KEYS = new Set<SettingsKey>([
+  "kind_label_rose",
+  "kind_label_sage",
+  "kind_label_honey",
+  "kind_label_slate",
+]);
 
 const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   vault_path: "vaultPath",
@@ -74,6 +91,10 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   tts_model_path: "ttsModelPath",
   audio_default_voice: "audioDefaultVoice",
   audio_auto_turn_pages: "audioAutoTurnPages",
+  kind_label_rose: "kindLabelRose",
+  kind_label_sage: "kindLabelSage",
+  kind_label_honey: "kindLabelHoney",
+  kind_label_slate: "kindLabelSlate",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -106,6 +127,10 @@ export function getRawSettings(db: Database.Database): {
   ttsModelPath: string;
   audioDefaultVoice: string;
   audioAutoTurnPages: boolean;
+  kindLabelRose: string;
+  kindLabelSage: string;
+  kindLabelHoney: string;
+  kindLabelSlate: string;
 } {
   const raw = readRaw(db);
   return {
@@ -124,6 +149,10 @@ export function getRawSettings(db: Database.Database): {
     ttsModelPath: raw.tts_model_path || MODELS_DIR,
     audioDefaultVoice: raw.audio_default_voice,
     audioAutoTurnPages: raw.audio_auto_turn_pages === "true",
+    kindLabelRose: raw.kind_label_rose,
+    kindLabelSage: raw.kind_label_sage,
+    kindLabelHoney: raw.kind_label_honey,
+    kindLabelSlate: raw.kind_label_slate,
   };
 }
 
@@ -141,12 +170,21 @@ export function updateSettings(
     `INSERT INTO settings (key, value) VALUES (@key, @value)
      ON CONFLICT(key) DO UPDATE SET value = @value`,
   );
+  const clear = db.prepare("DELETE FROM settings WHERE key = ?");
 
   const applyAll = db.transaction(() => {
     for (const [field, value] of Object.entries(update)) {
       if (value === undefined) continue;
       const key = FIELD_TO_KEY[field as keyof Settings];
       if (!key) continue;
+      // M30 A: a kind label cleared to "" resets to its default rather than
+      // persisting a blank one — deleting the row lets the DEFAULTS merge
+      // in readRaw supply the fallback, the same mechanism an unset key
+      // already uses.
+      if (KIND_LABEL_KEYS.has(key) && value === "") {
+        clear.run(key);
+        continue;
+      }
       upsert.run({ key, value: String(value) });
     }
   });

@@ -1,6 +1,5 @@
 import { motion, useReducedMotion } from "motion/react";
-import type { HighlightWithThread } from "@marginalia/shared";
-import { KIND_LABELS } from "./highlightKinds.js";
+import type { HighlightKind, HighlightWithThread } from "@marginalia/shared";
 import { IconButton } from "../controls/IconButton.js";
 import styles from "./AnnotationsOverview.module.css";
 
@@ -14,6 +13,9 @@ interface AnnotationsOverviewProps {
   onJumpTo: (highlight: HighlightWithThread) => void;
   onDelete: (highlight: HighlightWithThread) => void;
   onClose: () => void;
+  /** M30 A: the reader's own names for the four kind slots — see
+   * highlightKinds.ts's `kindLabelsFromSettings`. */
+  labels: Record<HighlightKind, string>;
 }
 
 /**
@@ -30,6 +32,7 @@ export function AnnotationsOverview({
   onJumpTo,
   onDelete,
   onClose,
+  labels,
 }: AnnotationsOverviewProps) {
   const reducedMotion = useReducedMotion();
   const unanchoredCount = highlights.filter((h) => unanchoredIds.has(h.id)).length;
@@ -77,7 +80,7 @@ export function AnnotationsOverview({
                 ? "Answered"
                 : hasThread
                   ? "Awaiting answer"
-                  : KIND_LABELS[highlight.kind];
+                  : labels[highlight.kind];
             // M13: a note reads as annotated here too, distinguishable from
             // (and stackable with) the thread status.
             const status = hasNote && !unanchored ? `${baseStatus} \u00b7 Note` : baseStatus;

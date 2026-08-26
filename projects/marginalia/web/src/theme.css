@@ -47,11 +47,15 @@
    * slate = question (Ask's default). Same reference hue in both themes —
    * only the *treatment* (wash opacity, blend mode) differs per theme; see
    * reader/highlightKinds.ts for where these get applied to epub.js marks.
+   * M30 B (decisions.md 2026-08-24, settled decision 16): slate moved
+   * blue (212°) -> purple (273°) — the label changed too, but that's a
+   * setting now (settings/store.ts); this hue is still the permanent one
+   * the `slate` stored value renders as, in both themes.
    */
   --kind-rose: #c98a8a;
   --kind-sage: #8faa84;
   --kind-honey: #c9a869;
-  --kind-slate: #7f97b3;
+  --kind-slate: #9c7fb3;
 
   /*
    * Theme ramp (M24.5, "themes worth colouring"). One hue per book-level
@@ -63,17 +67,20 @@
    * M24.5 §2). Hues were chosen by solving for the 8 points, on top of the
    * 4 existing (unevenly-spaced) kind hues, that maximise the *minimum*
    * pairwise separation across all 12 — naive even 45° spacing only reaches
-   * ~10° from the nearest kind hue; this reaches ~28°. Saturation/lightness
-   * (32%, 60%) matches the kind colours' own muted range.
+   * ~10° from the nearest kind hue. Saturation/lightness (32%, 60%) matches
+   * the kind colours' own muted range.
+   * M30 B: re-solved after slate's move to 273° invalidated the previous
+   * solve (which reached ~28° against slate at 212°). New minimum pairwise
+   * separation across all 12: 28.0°.
    */
-  --theme-ramp-0: #afba78; /* olive */
-  --theme-ramp-1: #78ba81; /* moss */
-  --theme-ramp-2: #78ba9f; /* jade */
-  --theme-ramp-3: #78b6ba; /* teal */
-  --theme-ramp-4: #7978ba; /* indigo */
-  --theme-ramp-5: #9a78ba; /* violet */
-  --theme-ramp-6: #ba78b9; /* plum */
-  --theme-ramp-7: #ba7899; /* mauve */
+  --theme-ramp-0: #aeba78; /* olive */
+  --theme-ramp-1: #78ba84; /* moss */
+  --theme-ramp-2: #78baa4; /* jade */
+  --theme-ramp-3: #78b1ba; /* teal */
+  --theme-ramp-4: #7891ba; /* azure */
+  --theme-ramp-5: #7e78ba; /* indigo */
+  --theme-ramp-6: #ba78b7; /* plum */
+  --theme-ramp-7: #ba7898; /* mauve */
 
   --shadow-panel: 0 8px 24px rgba(40, 30, 15, 0.12);
   --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);

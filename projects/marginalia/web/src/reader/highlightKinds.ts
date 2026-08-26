@@ -1,14 +1,34 @@
-import type { HighlightKind } from "@marginalia/shared";
+import type { HighlightKind, Settings } from "@marginalia/shared";
 
 /** Render order for the selection pill's kind dots. */
 export const HIGHLIGHT_KINDS: HighlightKind[] = ["rose", "sage", "honey", "slate"];
 
-export const KIND_LABELS: Record<HighlightKind, string> = {
-  rose: "Revisit",
-  sage: "Definition",
-  honey: "Quote",
-  slate: "Question",
+/**
+ * M30 A (decisions.md 2026-08-24, settled decision 16): the label is a
+ * setting now — `Settings.kindLabel*` — these are only the fallback a
+ * consumer shows when that setting is unset or cleared. Nothing should read
+ * this object directly for display; go through `kindLabelsFromSettings`.
+ */
+export const DEFAULT_KIND_LABELS: Record<HighlightKind, string> = {
+  rose: "Regular annotation",
+  sage: "Define",
+  honey: "Key quote",
+  slate: "Thematic Question",
 };
+
+/** Resolves the four kind labels for display, falling back to the default
+ * name on an empty setting — the acceptance criterion is "never a nameless
+ * dot", not just "read the setting". */
+export function kindLabelsFromSettings(
+  settings: Pick<Settings, "kindLabelRose" | "kindLabelSage" | "kindLabelHoney" | "kindLabelSlate">,
+): Record<HighlightKind, string> {
+  return {
+    rose: settings.kindLabelRose || DEFAULT_KIND_LABELS.rose,
+    sage: settings.kindLabelSage || DEFAULT_KIND_LABELS.sage,
+    honey: settings.kindLabelHoney || DEFAULT_KIND_LABELS.honey,
+    slate: settings.kindLabelSlate || DEFAULT_KIND_LABELS.slate,
+  };
+}
 
 interface MarkThemeInput {
   kindColors: Record<HighlightKind, string>;

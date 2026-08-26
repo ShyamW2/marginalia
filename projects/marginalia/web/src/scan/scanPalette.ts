@@ -6,12 +6,15 @@ import type { HighlightKind } from "@marginalia/shared";
  * muted paper/ink tints into saturated neon-on-black — contrast-checked
  * against the scan's near-black panel background (~13.5:1 to 8.7:1 by eye,
  * comfortably past WCAG AA for the graphical elements they're used on).
+ * M30 B: slate moved blue (200°) -> purple (258°), independently of
+ * theme.css's paper `--kind-slate` move — see THEME_PHOSPHOR_RGB below for
+ * the re-solved ramp this invalidated.
  */
 const PHOSPHOR_RGB: Record<HighlightKind, [number, number, number]> = {
   rose: [255, 107, 129],
   sage: [89, 227, 157],
   honey: [255, 209, 102],
-  slate: [94, 200, 255],
+  slate: [142, 94, 255],
 };
 
 export function phosphorHue(kind: HighlightKind): string {
@@ -35,21 +38,23 @@ export const KIND_ORDER: HighlightKind[] = ["rose", "sage", "honey", "slate"];
  * this page's `#05070a` override the same way the untranslated kind hues
  * would. A *separate* set of 8 hues, not the same hues re-saturated: hue
  * separation was solved fresh against these four phosphor kind hues
- * (351°/150°/42°/200°, not the paper ramp's 0°/100°/39°/211° obstacles),
- * so it's still ~25° minimum apart from everything on this specific
- * surface. `colorIndex` (server/src/digest/canonicalThemes.ts) indexes
- * this the same way it indexes `--theme-ramp-*` — same identity, two
- * renderings, exactly like kind colours already work.
+ * (351°/150°/42°/258°, not the paper ramp's 0°/100°/39°/273° obstacles).
+ * `colorIndex` (server/src/digest/canonicalThemes.ts) indexes this the
+ * same way it indexes `--theme-ramp-*` — same identity, two renderings,
+ * exactly like kind colours already work.
+ * M30 B: re-solved after slate's move to 258° (was 200°) invalidated the
+ * previous solve. Minimum pairwise separation across all 12 phosphor
+ * hues: 26.8°.
  */
 const THEME_PHOSPHOR_RGB: [number, number, number][] = [
-  [243, 142, 104],
   [222, 243, 104],
   [160, 243, 104],
   [104, 243, 110],
-  [104, 243, 231],
-  [104, 108, 243],
-  [187, 104, 243],
-  [243, 104, 212],
+  [104, 243, 235],
+  [104, 188, 243],
+  [104, 125, 243],
+  [218, 104, 243],
+  [243, 104, 197],
 ];
 
 export function themePhosphorHue(colorIndex: number): string {

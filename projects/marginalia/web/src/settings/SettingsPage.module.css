@@ -93,6 +93,15 @@
   margin-bottom: 0.35rem;
 }
 
+.kindLabelDot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+  vertical-align: middle;
+}
+
 .input {
   width: 100%;
   padding: 0.55rem 0.7rem;

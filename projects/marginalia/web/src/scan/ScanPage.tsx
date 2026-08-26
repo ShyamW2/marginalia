@@ -12,6 +12,7 @@ import type {
 } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { updateHighlightImportance, updateHighlightTags } from "../highlights/highlightMeta.js";
+import { DEFAULT_KIND_LABELS, kindLabelsFromSettings } from "../reader/highlightKinds.js";
 import { onSettingsSaved } from "../settings/settingsBus.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
@@ -31,17 +32,27 @@ import styles from "./ScanPage.module.css";
 async function fetchScanCursorSettings(): Promise<{
   crtIntensity: number;
   cursorStyle: CursorStyleChoice;
+  kindLabels: Record<HighlightKind, string>;
 }> {
+  const fallback = { crtIntensity: 0.6, cursorStyle: "custom" as const, kindLabels: DEFAULT_KIND_LABELS };
   try {
     const res = await fetch("/api/settings");
-    if (!res.ok) return { crtIntensity: 0.6, cursorStyle: "custom" };
+    if (!res.ok) return fallback;
     const settings = (await res.json()) as {
       scanCrtIntensity: number;
       cursorStyle: CursorStyleChoice;
+      kindLabelRose: string;
+      kindLabelSage: string;
+      kindLabelHoney: string;
+      kindLabelSlate: string;
     };
-    return { crtIntensity: settings.scanCrtIntensity, cursorStyle: settings.cursorStyle };
+    return {
+      crtIntensity: settings.scanCrtIntensity,
+      cursorStyle: settings.cursorStyle,
+      kindLabels: kindLabelsFromSettings(settings),
+    };
   } catch {
-    return { crtIntensity: 0.6, cursorStyle: "custom" };
+    return fallback;
   }
 }
 
@@ -142,6 +153,7 @@ export function ScanPage({
   );
   const [crtIntensity, setCrtIntensity] = useState(0.6);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleChoice>("custom");
+  const [kindLabels, setKindLabels] = useState<Record<HighlightKind, string>>(DEFAULT_KIND_LABELS);
   const [spotlightOpen, setSpotlightOpen] = useState(false);
   // M19.5 "the semantic scan: two layers" (decisions.md 2026-07-29 later):
   // Mine (highlights) and Book (chapter themes) show independently — "Filter
@@ -161,13 +173,15 @@ export function ScanPage({
   );
 
   useEffect(() => {
-    fetchScanCursorSettings().then(({ crtIntensity, cursorStyle }) => {
+    fetchScanCursorSettings().then(({ crtIntensity, cursorStyle, kindLabels }) => {
       setCrtIntensity(crtIntensity);
       setCursorStyle(cursorStyle);
+      setKindLabels(kindLabels);
     });
     return onSettingsSaved((settings) => {
       setCrtIntensity(settings.scanCrtIntensity);
       setCursorStyle(settings.cursorStyle);
+      setKindLabels(kindLabelsFromSettings(settings));
     });
   }, []);
 
@@ -484,7 +498,8 @@ export function ScanPage({
                 className={filterKind === kind ? `${styles.kindButton} ${styles.kindButtonActive}` : styles.kindButton}
                 style={{ background: phosphorHue(kind) }}
                 aria-pressed={filterKind === kind}
-                aria-label={`Filter by ${kind}`}
+                title={kindLabels[kind]}
+                aria-label={`Filter by ${kindLabels[kind]}`}
                 onClick={() => setFilterKind((prev) => (prev === kind ? null : kind))}
               />
             ))}

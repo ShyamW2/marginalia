@@ -85,7 +85,8 @@ The design work here is restraint plus two signature elements.
   question about the text (the kind Ask defaults to). These are muted washes, not
   marker colors: they tint the paper, they never fight the ink. Reference hues
   (tune in situ; contrast-check both themes): rose `#c98a8a`, sage `#8faa84`,
-  honey `#c9a869`, slate `#7f97b3` — rendered as ~20%-opacity washes on paper,
+  honey `#c9a869`, slate `#9c7fb3` (moved blue -> purple, M30 B) — rendered as
+  ~20%-opacity washes on paper,
   slightly luminous lifted tints on ink. The kind also tints the highlight's rail
   dot and the thread panel's spine, and gives the scan's heat bands their hue.
 - **Reading focus mode.** One keystroke (`f`) hides every mark, tab, and rail dot for

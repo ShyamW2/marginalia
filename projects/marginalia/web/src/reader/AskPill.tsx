@@ -1,6 +1,6 @@
 import { motion, useReducedMotion } from "motion/react";
 import type { HighlightKind } from "@marginalia/shared";
-import { HIGHLIGHT_KINDS, KIND_LABELS } from "./highlightKinds.js";
+import { HIGHLIGHT_KINDS } from "./highlightKinds.js";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
 import { AudioTransportIcon } from "./AudioTransportIcon.js";
@@ -14,6 +14,9 @@ interface AskPillProps {
   /** M22.6 C "'Play from here' joins the selection pill": starts listening
    * at the selected sentence rather than the section's first. */
   onPlayFromHere: () => void;
+  /** M30 A: the reader's own names for the four kind slots (settings, not
+   * the hardcoded constant) — see highlightKinds.ts's `kindLabelsFromSettings`. */
+  labels: Record<HighlightKind, string>;
 }
 
 /**
@@ -24,7 +27,7 @@ interface AskPillProps {
  * (DESIGN.md: springs for anything the user "touches") — a plain fade under
  * reduced motion.
  */
-export function AskPill({ left, top, onPickKind, onAsk, onPlayFromHere }: AskPillProps) {
+export function AskPill({ left, top, onPickKind, onAsk, onPlayFromHere, labels }: AskPillProps) {
   const reducedMotion = useReducedMotion();
 
   return (
@@ -50,8 +53,8 @@ export function AskPill({ left, top, onPickKind, onAsk, onPlayFromHere }: AskPil
             key={kind}
             type="button"
             className={`${styles.dot} ${styles[kind]}`}
-            title={KIND_LABELS[kind]}
-            aria-label={`Mark as ${KIND_LABELS[kind].toLowerCase()}`}
+            title={labels[kind]}
+            aria-label={`Mark as ${labels[kind].toLowerCase()}`}
             onClick={() => onPickKind(kind)}
           />
         ))}

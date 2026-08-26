@@ -488,6 +488,15 @@ export const SettingsSchema = z.object({
   // run whose pre-flight estimate exceeds this many input tokens is
   // refused rather than started.
   digestTokenBudget: z.number().int().nonnegative(),
+  // M30 A (decisions.md 2026-08-24, settled decision 16): the label is a
+  // setting, the hue is not — rose|sage|honey|slate stay the permanent
+  // stored slots. An empty string means "unset"; store.ts deletes the row
+  // rather than persisting "" so the DEFAULTS merge falls back to the
+  // default name instead of a blank label.
+  kindLabelRose: z.string(),
+  kindLabelSage: z.string(),
+  kindLabelHoney: z.string(),
+  kindLabelSlate: z.string(),
 }).merge(AudioSettingsSchema);
 export type Settings = z.infer<typeof SettingsSchema>;
 

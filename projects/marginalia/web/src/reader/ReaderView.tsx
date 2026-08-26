@@ -58,7 +58,14 @@ import { coverLayoutId } from "../library/coverLayoutId.js";
 import { ChromeSlotPortal } from "../app/chromeSlot.js";
 import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
 import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
-import { audioTintStyle, hoverFillOpacity, markStyleForKind, searchMarkStyle } from "./highlightKinds.js";
+import {
+  audioTintStyle,
+  DEFAULT_KIND_LABELS,
+  hoverFillOpacity,
+  kindLabelsFromSettings,
+  markStyleForKind,
+  searchMarkStyle,
+} from "./highlightKinds.js";
 import { FindBar } from "./FindBar.js";
 import { useSearchHits } from "../search/useSearchHits.js";
 import { hitsForSection, stepFindCursor } from "../search/findCursor.js";
@@ -712,6 +719,9 @@ export function ReaderView({
   // mounted underneath the settings modal (M11) — settingsBus is how a
   // save reaches this component without a reload or a remount.
   const [readerMargin, setReaderMargin] = useState<ReaderMargin>("normal");
+  // M30 A: same live-via-settingsBus story as readerMargin above — the
+  // labels can be renamed from Settings without a reload.
+  const [kindLabels, setKindLabels] = useState<Record<HighlightKind, string>>(DEFAULT_KIND_LABELS);
   // M16 "reading text size": same live-via-settingsBus story as readerMargin
   // above, and the two are coupled (computeReaderGap derives the target
   // column width from fontScale) — fontScaleRef mirrors it for the
@@ -1448,6 +1458,7 @@ export function ReaderView({
       setPageTransition(settings.pageTransition);
       setCursorStyle(settings.cursorStyle);
       setAudioAutoTurnPages(settings.audioAutoTurnPages);
+      setKindLabels(kindLabelsFromSettings(settings));
     });
     fetchQueryRoleConfigured().then(setProviderConfigured);
   }, []);
@@ -1461,6 +1472,7 @@ export function ReaderView({
       setPageTransition(settings.pageTransition);
       setCursorStyle(settings.cursorStyle);
       setAudioAutoTurnPages(settings.audioAutoTurnPages);
+      setKindLabels(kindLabelsFromSettings(settings));
     });
   }, []);
 
@@ -3083,6 +3095,7 @@ export function ReaderView({
                 onPickKind={handlePickKind}
                 onAsk={handleAsk}
                 onPlayFromHere={() => void handlePlayFromSelection()}
+                labels={kindLabels}
               />
             )}
           </AnimatePresence>
@@ -3143,6 +3156,7 @@ export function ReaderView({
                 onJumpTo={handleJumpToHighlight}
                 onDelete={handleDeleteHighlight}
                 onClose={() => setShowAnnotations(false)}
+                labels={kindLabels}
               />
             )}
           </AnimatePresence>
