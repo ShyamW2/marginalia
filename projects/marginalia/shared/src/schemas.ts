@@ -158,6 +158,16 @@ export const HighlightImportanceSchema = z.union([
 ]);
 export type HighlightImportance = z.infer<typeof HighlightImportanceSchema>;
 
+/**
+ * Which of Define's two paths answered (M30 C, decisions.md 2026-08-24).
+ * Rendered to the reader, not merely logged: "what the dictionary says" and
+ * "what this book seems to mean by it" are different claims and must never
+ * look alike. `""` is the fourth state — no definition on this highlight,
+ * which is every highlight that wasn't created by Define.
+ */
+export const DefinitionSourceSchema = z.enum(["", "dictionary", "digest"]);
+export type DefinitionSource = z.infer<typeof DefinitionSourceSchema>;
+
 export const HighlightSchema = AnchorSchema.extend({
   id: z.string(), // uuid v4
   resourceId: z.string(),
@@ -178,9 +188,39 @@ export const HighlightSchema = AnchorSchema.extend({
   // mean an invisible panel.
   panelWidth: z.number().nullable(),
   panelHeight: z.number().nullable(),
+  // M30 C: the Define lookup's answer, living on the highlight it was looked
+  // up for. Empty string (never null) means "no definition" — which is what
+  // makes M30 D's glossary a one-predicate filter over this table rather
+  // than a table of its own. See migration 26.
+  definition: z.string(),
+  definitionSource: DefinitionSourceSchema,
   createdAt: z.string(),
 });
 export type Highlight = z.infer<typeof HighlightSchema>;
+
+/**
+ * The answer to one Define (M30 C). `source: ""` with an empty `definition`
+ * is the **designed empty state**, not an error: the dictionary missed and
+ * either no provider is configured or its answer came back empty. The route
+ * returns 200 for it, so the reader gets "no definition found" rather than a
+ * failure toast — and `reason` says which of those two happened, because
+ * "this word isn't in the dictionary" and "you have no provider configured"
+ * ask the reader for different things.
+ */
+export const DefinitionSchema = z.object({
+  /** The headword actually defined — differs from the selection when
+   * morphology resolved it ("running" -> "run"), and is shown for exactly
+   * that reason. Empty on a miss. */
+  headword: z.string(),
+  definition: z.string(),
+  source: DefinitionSourceSchema,
+  /** Human-facing provenance line: "WordNet 3.1", or the book's own title
+   * for a digest-grounded answer. */
+  attribution: z.string(),
+  /** Only meaningful when `source` is "" — why nothing came back. */
+  reason: z.enum(["", "not_a_term", "no_provider", "not_found"]),
+});
+export type Definition = z.infer<typeof DefinitionSchema>;
 
 export const UpdateHighlightImportanceBodySchema = z.object({
   importance: HighlightImportanceSchema,
@@ -651,6 +691,11 @@ export const UsageOperationSchema = z.enum([
   "cast",
   "thematic",
   "theme-distillation",
+  // M30 C: Define's digest-rung fallback. Its own tag rather than "thread" —
+  // it is the one operation with a hard product cap on output length, and
+  // folding it into threads would hide both that it is cheap and that a book
+  // is being defined at rather than discussed.
+  "define",
 ]);
 export type UsageOperation = z.infer<typeof UsageOperationSchema>;
 

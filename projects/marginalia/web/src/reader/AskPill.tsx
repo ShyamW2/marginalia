@@ -11,6 +11,16 @@ interface AskPillProps {
   top: number;
   onPickKind: (kind: HighlightKind) => void;
   onAsk: () => void;
+  /** M30 C "the Define button": looks the selection up (dictionary first,
+   * the book's digest as fallback) and attaches the answer to a new sage
+   * highlight. Never opens the thread panel — this is a lookup, not a
+   * conversation. */
+  onDefine: () => void;
+  /** M30 C: whether the selection is short enough to be a term. False
+   * disables the button rather than hiding it — a Define that silently
+   * vanishes on a long selection reads as a bug, where a disabled one with
+   * a reason teaches the rule. See `isDefinableTerm`. */
+  definable: boolean;
   /** M22.6 C "'Play from here' joins the selection pill": starts listening
    * at the selected sentence rather than the section's first. */
   onPlayFromHere: () => void;
@@ -22,12 +32,22 @@ interface AskPillProps {
 /**
  * The selection pill: four kind dots (mark the passage as rose/sage/
  * honey/slate, no thread opened), "Play from here" (starts listening at
- * this sentence), and "Ask" (always creates a slate highlight and opens the
+ * this sentence), "Define" (M30 C — a capped lookup on a short selection,
+ * no thread), and "Ask" (always creates a slate highlight and opens the
  * thread panel — docs/decisions.md 2026-07-19). Pops in with a spring
  * (DESIGN.md: springs for anything the user "touches") — a plain fade under
  * reduced motion.
  */
-export function AskPill({ left, top, onPickKind, onAsk, onPlayFromHere, labels }: AskPillProps) {
+export function AskPill({
+  left,
+  top,
+  onPickKind,
+  onAsk,
+  onDefine,
+  definable,
+  onPlayFromHere,
+  labels,
+}: AskPillProps) {
   const reducedMotion = useReducedMotion();
 
   return (
@@ -65,6 +85,24 @@ export function AskPill({ left, top, onPickKind, onAsk, onPlayFromHere, labels }
           className={styles.playFromButton}
           onClick={onPlayFromHere}
         />
+        <Button
+          variant="outline"
+          size="sm"
+          className={styles.defineButton}
+          onClick={onDefine}
+          disabled={!definable}
+          // A disabled button can't be focused, so the tooltip alone is
+          // unreachable by keyboard and screen reader — the reason rides on
+          // the accessible name too.
+          aria-label={definable ? undefined : "Define — select a word or a short phrase"}
+          title={
+            definable
+              ? "Look this up"
+              : "Select a word or a short phrase to define"
+          }
+        >
+          Define
+        </Button>
         <Button variant="solid" size="sm" className={styles.askButton} onClick={onAsk}>
           Ask
         </Button>

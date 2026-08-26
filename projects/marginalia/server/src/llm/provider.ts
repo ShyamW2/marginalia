@@ -119,10 +119,19 @@ export function getProvider(
   operation: LLMOperation,
   resourceId: string | null = null,
   onUsageLogged?: (row: UsageLedgerRow) => void,
+  maxResponseTokensOverride?: number,
 ): LLMProvider | null {
   const profile = getRoleProfileRaw(db, role);
   if (!profile) return null;
-  const maxResponseTokens = getRoleMaxResponseTokens(db, role);
+  // M30 C: the role's configured response length is the default. The one
+  // override, added with its rule attached: **a caller may only replace this
+  // if it caps the reader-visible output itself.** Define does (<100 tokens,
+  // enforced in dictionary/define.ts), and needs the larger provider budget
+  // because on a reasoning model the role ceiling is spent on thinking
+  // tokens the reader never sees — see the measurements in define.ts. Any
+  // caller whose output goes straight to the reader must not use this.
+  const maxResponseTokens =
+    maxResponseTokensOverride ?? getRoleMaxResponseTokens(db, role);
   // Hoisted below into a plain const — a nested `function` declaration
   // capturing `profile` directly loses TS's null-narrowing on it (TS can't
   // prove the closure only runs after the `if (!profile)` guard above).

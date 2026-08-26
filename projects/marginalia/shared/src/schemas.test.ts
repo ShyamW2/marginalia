@@ -95,6 +95,11 @@ describe("schemas smoke test", () => {
       ttsModelPath: "/tmp/models",
       audioDefaultVoice: "af_heart",
       audioAutoTurnPages: true,
+      // M30 A moved the four highlight-kind labels into Settings.
+      kindLabelRose: "Regular annotation",
+      kindLabelSage: "Define",
+      kindLabelHoney: "Key quote",
+      kindLabelSlate: "Thematic Question",
     });
     expect(result.success).toBe(true);
   });
@@ -131,6 +136,10 @@ describe("schemas smoke test", () => {
       panelDy: 0,
       panelWidth: null,
       panelHeight: null,
+      // M30 C: a highlight always carries the definition pair, empty when
+      // Define never ran on it.
+      definition: "",
+      definitionSource: "" as const,
       createdAt: new Date().toISOString(),
     };
     expect(HighlightSchema.safeParse({ ...base, note: "" }).success).toBe(true);
@@ -153,6 +162,8 @@ describe("schemas smoke test", () => {
       kind: "rose" as const,
       importance: 0 as const,
       note: "",
+      definition: "",
+      definitionSource: "" as const,
       createdAt: new Date().toISOString(),
     };
     expect(HighlightSchema.safeParse(base).success).toBe(false);

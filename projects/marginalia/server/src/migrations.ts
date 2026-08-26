@@ -614,4 +614,28 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX idx_theme_parents_resource ON theme_parents(resource_id);
     `,
   },
+  {
+    // M30 C "the Define button": a definition rides on the highlight it was
+    // looked up for, as two columns rather than a table of its own.
+    //
+    // ⚠️ This is the shape M30 D's glossary depends on. The glossary is a
+    // *filtered view* — "sage highlights in this book whose definition isn't
+    // empty" — and a `definitions` (or `glossary`) table would be a second
+    // source of truth that goes stale the moment a highlight is deleted.
+    // Living on the row means deleteHighlight already cleans it up, with no
+    // cascade to write and none to forget.
+    //
+    // `definition_source` records *which of Define's two paths answered* —
+    // 'dictionary' (the bundled WordNet, offline) or 'digest' (the capped
+    // M17 digest-rung call). It is shown to the reader, not just logged:
+    // "what the dictionary says" and "what this book seems to mean by it"
+    // are different claims and must not look alike. Empty string means no
+    // definition, matching `definition`'s own default — never NULL, so the
+    // glossary's filter is one predicate rather than two.
+    version: 26,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN definition TEXT NOT NULL DEFAULT '';
+      ALTER TABLE highlights ADD COLUMN definition_source TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];

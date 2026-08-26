@@ -44,6 +44,8 @@ describe("tagHighlightThemes", () => {
       panelDy: 0,
       panelWidth: null,
       panelHeight: null,
+      definition: "",
+      definitionSource: "" as const,
       createdAt: new Date().toISOString(),
     };
     const themes = await tagHighlightThemes(provider, highlight, "", ["autonomy", "consequence"]);
@@ -71,6 +73,8 @@ describe("tagHighlightThemes", () => {
       panelDy: 0,
       panelWidth: null,
       panelHeight: null,
+      definition: "",
+      definitionSource: "" as const,
       createdAt: new Date().toISOString(),
     };
     const themes = await tagHighlightThemes(provider, highlight, "", []);

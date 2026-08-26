@@ -1,0 +1,84 @@
+/* Same positioning trick as AskPill: the offset lives on a static wrapper so
+   motion's own transform (scale/y) doesn't clobber it. The card replaces the
+   pill in place, so it sits at the same anchor. */
+.cardPosition {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 8px));
+  z-index: 6;
+}
+
+.card {
+  width: min(20rem, 60vw);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-panel);
+  padding: 0.6rem 0.75rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* Serif, because the headword is a word from the book, not a UI label. */
+.headword {
+  font-family: var(--font-serif);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.close {
+  min-height: 0;
+  flex: 0 0 auto;
+  margin: -0.15rem -0.25rem 0 0;
+}
+
+.definition,
+.empty,
+.looking {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--color-text);
+  /* Multiple dictionary senses arrive newline-separated and are numbered —
+     they are a list the reader reads, not a paragraph. */
+  white-space: pre-line;
+}
+
+.empty,
+.looking {
+  color: var(--color-text-muted);
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.1rem;
+}
+
+/* Which of Define's two paths answered. Quiet, but never absent: "what the
+   dictionary says" and "what this book means by it" are different claims. */
+.attribution {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.askMore {
+  min-height: 0;
+  flex: 0 0 auto;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.75rem;
+}

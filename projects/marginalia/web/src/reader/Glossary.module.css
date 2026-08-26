@@ -1,0 +1,108 @@
+/* Sibling of AnnotationsOverview's panel — same corner, same shape, same
+   register. The two are the reader's two list instruments and should not
+   look like two different products. */
+.panel {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  width: min(320px, calc(100% - 2rem));
+  max-height: calc(100% - 1.5rem);
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-panel);
+  z-index: 10;
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.title {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  color: var(--color-text);
+}
+
+.empty {
+  padding: 1rem 0.75rem;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: var(--color-text-muted);
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.item {
+  display: flex;
+  align-items: stretch;
+}
+
+.entry {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-left: 2px solid var(--kind-sage);
+  border-radius: 0 6px 6px 0;
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+  transition: background var(--duration-standard) var(--ease-standard);
+}
+
+.entry:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+.entry:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.entry:disabled {
+  cursor: default;
+}
+
+/* The word as it appears on the page — serif, because it is the book's. */
+.term {
+  font-family: var(--font-serif);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.definition {
+  font-size: 0.8rem;
+  line-height: 1.4;
+  color: var(--color-text);
+  /* Numbered senses arrive newline-separated. */
+  white-space: pre-line;
+}
+
+.source {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+}
+
+.entry.unanchored .source {
+  color: var(--color-danger);
+}

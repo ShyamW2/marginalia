@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type Database from "better-sqlite3";
 import type {
+  DefinitionSource,
   Highlight,
   HighlightImportance,
   HighlightKind,
@@ -22,6 +23,8 @@ interface HighlightRow {
   panel_dy: number;
   panel_width: number | null;
   panel_height: number | null;
+  definition: string;
+  definition_source: string;
   created_at: string;
 }
 
@@ -41,6 +44,8 @@ function rowToHighlight(row: HighlightRow): Highlight {
     panelDy: row.panel_dy,
     panelWidth: row.panel_width,
     panelHeight: row.panel_height,
+    definition: row.definition,
+    definitionSource: row.definition_source as DefinitionSource,
     createdAt: row.created_at,
   };
 }
@@ -72,6 +77,8 @@ export function createHighlight(
     panelDy: 0, // matches the highlights.panel_dy column's DEFAULT 0
     panelWidth: null, // matches panel_width's implicit NULL default
     panelHeight: null, // matches panel_height's implicit NULL default
+    definition: "", // matches the highlights.definition column's DEFAULT ''
+    definitionSource: "", // matches definition_source's DEFAULT ''
     createdAt: new Date().toISOString(),
   };
 
@@ -136,6 +143,22 @@ export function setHighlightImportance(
 /** M13: the reader's own note — plain text, autosaved, never sent to an LLM. */
 export function setHighlightNote(db: Database.Database, id: string, note: string): void {
   db.prepare("UPDATE highlights SET note = ? WHERE id = ?").run(note, id);
+}
+
+/**
+ * M30 C: attaches a Define lookup's answer to the highlight it was looked up
+ * for. Writing an empty `definition` clears the pair, which is how a
+ * highlight leaves M30 D's glossary without anything having to delete it.
+ */
+export function setHighlightDefinition(
+  db: Database.Database,
+  id: string,
+  definition: string,
+  source: DefinitionSource,
+): void {
+  db.prepare(
+    "UPDATE highlights SET definition = ?, definition_source = ? WHERE id = ?",
+  ).run(definition, definition ? source : "", id);
 }
 
 /** M14: the thread panel's dragged position, stored as an offset from its anchor. */

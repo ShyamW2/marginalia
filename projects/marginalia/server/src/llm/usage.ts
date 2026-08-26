@@ -19,7 +19,19 @@ import { getProviderProfile } from "../settings/providers.js";
  * "broken down by operation" would lose the plot/thematic distinction this
  * milestone exists to draw if the two shared a tag).
  */
-export type LLMOperation = "thread" | "extract" | "digest" | "cast" | "thematic" | "theme-distillation";
+export type LLMOperation =
+  | "thread"
+  | "extract"
+  | "digest"
+  | "cast"
+  | "thematic"
+  | "theme-distillation"
+  // M30 C: Define's digest-rung fallback. Its own tag rather than "thread"
+  // because it is the one operation in the app with a hard *product* cap on
+  // output length — a ledger that folded it into threads would hide both
+  // that Define is cheap and that a book is being defined at rather than
+  // discussed.
+  | "define";
 
 /**
  * Every number's provenance: `reported` (the provider returned real counts),

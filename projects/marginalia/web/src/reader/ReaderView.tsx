@@ -18,8 +18,11 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
   findAnchorInText,
+  isDefinableTerm,
+  normalizeDefineTerm,
   type CreateHighlightBody,
   type CursorStyleChoice,
+  type Definition,
   type HighlightImportance,
   type HighlightKind,
   type HighlightWithThread,
@@ -85,6 +88,8 @@ import { AskPill } from "./AskPill.js";
 import { MarginRail } from "./MarginRail.js";
 import { ThreadPanel } from "../threads/ThreadPanel.js";
 import { AnnotationsOverview } from "./AnnotationsOverview.js";
+import { DefinitionCard, type DefinitionCardState } from "./DefinitionCard.js";
+import { Glossary, glossaryEntries } from "./Glossary.js";
 import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, currentChapter as deriveCurrentChapter, type TocEntry } from "./toc.js";
 import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
@@ -367,6 +372,30 @@ async function deleteHighlightRequest(id: string): Promise<boolean> {
   const res = await fetch(`/api/highlights/${id}`, { method: "DELETE" });
   return res.ok;
 }
+
+/**
+ * M30 C: resolves the Define lookup for a highlight the client just created.
+ * Never rejects — the route answers 200 for every miss (see its comment), and
+ * a network failure is folded into the same designed empty state, because
+ * "no definition found" is the honest thing to show either way.
+ */
+async function requestDefinition(highlightId: string): Promise<Definition> {
+  const miss: Definition = {
+    headword: "",
+    definition: "",
+    source: "",
+    attribution: "",
+    reason: "not_found",
+  };
+  try {
+    const res = await fetch(`/api/highlights/${highlightId}/definition`, { method: "POST" });
+    if (!res.ok) return miss;
+    return (await res.json()) as Definition;
+  } catch {
+    return miss;
+  }
+}
+
 
 interface PendingSelection {
   cfi: string;
@@ -786,6 +815,14 @@ export function ReaderView({
     playerRef.current = player;
   }, [player]);
   const [showAnnotations, setShowAnnotations] = useState(false);
+  // M30 D: the glossary instrument. Mutually exclusive with the annotations
+  // overview below — they occupy the same corner of the stage, and two
+  // stacked lists over the page is exactly the clutter DESIGN.md's
+  // "instruments, not rooms" rule exists to avoid.
+  const [showGlossary, setShowGlossary] = useState(false);
+  // M30 C: the Define result, anchored where the selection was. Null when no
+  // lookup is showing; `result: null` inside it means one is in flight.
+  const [definitionCard, setDefinitionCard] = useState<DefinitionCardState | null>(null);
   // Reading focus mode (DESIGN.md): hides marks + rail dots for a clean
   // page. Local, resets on remount — same "no persistence needed" call as
   // expandedThread above; "persists for the session" means it survives
@@ -996,6 +1033,7 @@ export function ReaderView({
     }
     setPendingSelection(null);
     setExpandedThread(null);
+    setDefinitionCard(null);
     setProgressPopoverOpen(false);
     if (fullscreenModeRef.current) toggleFullscreen();
   }, [closeFindBar, toggleFullscreen]);
@@ -1003,7 +1041,10 @@ export function ReaderView({
     setFocusMode((prev) => {
       const next = !prev;
       // A clean page and an open annotations list are contradictory.
-      if (next) setShowAnnotations(false);
+      if (next) {
+        setShowAnnotations(false);
+        setShowGlossary(false);
+      }
       return next;
     });
   }, []);
@@ -1418,11 +1459,13 @@ export function ReaderView({
   // read an answer while being talked at." One effect covers all three
   // rather than touching every place that sets these three pieces of state.
   useEffect(() => {
-    if (pendingSelection || expandedThread || showAnnotations) {
+    // M30 adds the two Define/glossary surfaces to the same rule: you cannot
+    // read a definition while being talked at either.
+    if (pendingSelection || expandedThread || showAnnotations || showGlossary || definitionCard) {
       playerRef.current.pause();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingSelection, expandedThread, showAnnotations]);
+  }, [pendingSelection, expandedThread, showAnnotations, showGlossary, definitionCard]);
 
   // M22.6 C: a stopped session has no voice left to be detached from —
   // clears the leash so the next "Listen" starts fresh and following.
@@ -2573,6 +2616,71 @@ export function ReaderView({
     void createHighlightFromSelection("slate", true);
   }
 
+  /**
+   * M30 C "the Define button". Three things this deliberately does *not* do:
+   *
+   *  - It never invents a fifth kind. A definition is a **sage** highlight —
+   *    the slot whose default name is literally "Define" — so the scan, the
+   *    filters and the vault all keep working on it with no new enum value
+   *    (settled decision 16: a kind's identity is its slot).
+   *  - It never opens the thread panel. This is a lookup; the card it opens
+   *    instead carries the one escalation ("Ask about this") for a reader who
+   *    wanted a conversation after all.
+   *  - It never leaves a spinner over the text. The card mounts immediately
+   *    in its own looking-up state and resolves in place.
+   */
+  async function handleDefine() {
+    if (!pendingSelection) return;
+    const { exact, left, top, contents } = pendingSelection;
+    const term = normalizeDefineTerm(exact);
+
+    const created = await postHighlight({
+      resourceId,
+      exact,
+      prefix: pendingSelection.prefix,
+      suffix: pendingSelection.suffix,
+      cfi: pendingSelection.cfi,
+      spineIndex: pendingSelection.spineIndex,
+      kind: "sage",
+    });
+    contents.window.getSelection()?.removeAllRanges();
+    setPendingSelection(null);
+    if (!created) return;
+
+    setHighlights((prev) => [...prev, created]);
+    resolvedIdsRef.current.add(created.id);
+    attachOwnedMark(created.id, created.cfi, created.kind);
+    setDefinitionCard({ left, top, term, highlightId: created.id, result: null });
+
+    const result = await requestDefinition(created.id);
+    // The definition lives on the highlight server-side; mirroring it into
+    // local state is what puts the entry in the glossary without a refetch.
+    if (result.definition) {
+      setHighlights((prev) =>
+        prev.map((h) =>
+          h.id === created.id
+            ? { ...h, definition: result.definition, definitionSource: result.source }
+            : h,
+        ),
+      );
+    }
+    // Guard against a second Define having replaced this card while the
+    // lookup was in flight — the reader is faster than the digest rung.
+    setDefinitionCard((prev) =>
+      prev && prev.highlightId === created.id ? { ...prev, result } : prev,
+    );
+  }
+
+  /** The definition card's "Ask about this": the same sage highlight becomes
+   * a conversation, rather than Define having quietly opened one nobody
+   * asked for. */
+  function handleAskFromDefinition() {
+    if (!definitionCard?.highlightId) return;
+    setExpandedThread({ highlightId: definitionCard.highlightId, top: definitionCard.top });
+    setDefinitionCard(null);
+  }
+
+
   // M22.6 C "'Play from here' joins the selection pill": starts listening
   // at the selected sentence instead of the section's first. Doesn't create
   // a highlight — this is a playback action, not a marking one — so it
@@ -2609,6 +2717,9 @@ export function ReaderView({
     const remaining = highlightsRef.current.filter((h) => h.id !== highlight.id);
     detachOwnedMark(highlight.id, attachedCfi, remaining);
     setExpandedThread((prev) => (prev?.highlightId === highlight.id ? null : prev));
+    // M30 C: a card left open over a highlight that no longer exists would
+    // offer an "Ask about this" that can't work.
+    setDefinitionCard((prev) => (prev?.highlightId === highlight.id ? null : prev));
   }
 
   function handleNavigateToHighlight(highlight: HighlightWithThread) {
@@ -2625,6 +2736,16 @@ export function ReaderView({
     handleNavigateToHighlight(highlight);
     handleOpenThread(highlight);
     setShowAnnotations(false);
+  }
+
+  /** M30 D glossary jump-to-passage. Unlike the annotations overview's jump
+   * (which opens the thread, because every entry there is one), this only
+   * navigates: a glossary entry is a word you looked up, and landing on it
+   * with a conversation panel open would be answering a question the reader
+   * didn't ask. */
+  function handleJumpToGlossaryEntry(highlight: HighlightWithThread) {
+    handleNavigateToHighlight(highlight);
+    setShowGlossary(false);
   }
 
   function handleThreadChange(highlightId: string, thread: ThreadSummary) {
@@ -2671,6 +2792,12 @@ export function ReaderView({
   const expandedHighlight = expandedThread
     ? highlights.find((h) => h.id === expandedThread.highlightId)
     : undefined;
+
+  // M30 D: the same filter the Glossary panel applies, so the strip's count
+  // and the panel's list can never disagree. `glossaryEntries` is the one
+  // definition of "what is in the glossary" — there is no table to consult.
+  const glossaryCount = useMemo(() => glossaryEntries(highlights).length, [highlights]);
+
 
   // M24.7 A: the listening cluster's icon (trigger and panel both) reads the
   // same play/pause state the old inline transport row did — computed once
@@ -2901,7 +3028,10 @@ export function ReaderView({
               size="sm"
               className={styles.annotationsButton}
               pressed={focusMode}
-              onClick={() => setShowAnnotations((prev) => !prev)}
+              onClick={() => {
+                setShowGlossary(false);
+                setShowAnnotations((prev) => !prev);
+              }}
               aria-label={focusMode ? "Notes hidden — press N to show" : undefined}
               title={focusMode ? "Notes hidden — press N to show" : undefined}
             >
@@ -2912,6 +3042,24 @@ export function ReaderView({
                 </span>
               )}
             </Button>
+            {/* M30 D: the glossary is an instrument over the Book (settled
+                decision 13), so it sits beside Annotations rather than
+                becoming a room. Hidden until the book has one — an empty
+                control in the strip advertising a feature the reader hasn't
+                used yet is chrome, not an affordance. */}
+            {glossaryCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={styles.annotationsButton}
+                onClick={() => {
+                  setShowAnnotations(false);
+                  setShowGlossary((prev) => !prev);
+                }}
+              >
+                Glossary ({glossaryCount})
+              </Button>
+            )}
             <ChapterNav
               toc={toc}
               chapterStops={chapterStopsList}
@@ -3094,8 +3242,20 @@ export function ReaderView({
                 top={pendingSelection.top}
                 onPickKind={handlePickKind}
                 onAsk={handleAsk}
+                onDefine={() => void handleDefine()}
+                definable={isDefinableTerm(pendingSelection.exact)}
                 onPlayFromHere={() => void handlePlayFromSelection()}
                 labels={kindLabels}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {definitionCard && (
+              <DefinitionCard
+                key="definition-card"
+                state={definitionCard}
+                onClose={() => setDefinitionCard(null)}
+                onAsk={handleAskFromDefinition}
               />
             )}
           </AnimatePresence>
@@ -3157,6 +3317,17 @@ export function ReaderView({
                 onDelete={handleDeleteHighlight}
                 onClose={() => setShowAnnotations(false)}
                 labels={kindLabels}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {showGlossary && (
+              <Glossary
+                key="glossary"
+                highlights={highlights}
+                unanchoredIds={unanchoredIds}
+                onJumpTo={handleJumpToGlossaryEntry}
+                onClose={() => setShowGlossary(false)}
               />
             )}
           </AnimatePresence>
