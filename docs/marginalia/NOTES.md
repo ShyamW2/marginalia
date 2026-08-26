@@ -6765,3 +6765,50 @@ pixels. This machine's Chromium composites in software, so the mesh's *look* —
 particular the shadow, which trades `drawPageFold`'s `shadowBlur` for a contact falloff
 because WebGL has no cheap equivalent — is unjudged. It goes to the harness on the
 operator's Mac with the rest of M27's Verify.
+
+## M27 — three things only looking at it could have found — 2026-08-26
+
+`pageCone.html`: the shipped flat painter and the hinged mesh side by side, driven by one
+drag. Built because the mesh had passed every test it had and had never been *rendered* —
+`foldMesh.test.ts` can prove a vertex sits on the surface and cannot tell you the sheet is
+inside out. Three defects in the first four frames, none of which a unit test was ever
+going to catch:
+
+**1. The shadow compounded to black.** Built from the mesh's own forty-odd wedges, which is
+the obvious thing to do and is wrong: a rolled sheet's wedges **overlap once deformed** —
+the tail comes back over the roll — so a translucent shadow drawn from them accumulates
+alpha wherever the sheet has folded over itself. It rendered as a hard black wedge lying
+across the page. Now two polygons, the roll's and the tail's, clipped coarsely; they cannot
+overlap themselves, which is also exactly why `drawPageFold` has two.
+
+**2. The sheet showed its back page on the half of the leaf that had not lifted.** The cause
+was a **texture setting**, not the geometry: three's `CanvasTexture` defaults to
+`flipY = true`, uploading the bitmap upside down so `v = 0` is its bottom row, while every
+other coordinate in the fold runs downward from the top. Worth recording because of what
+happened next — the symptom reads exactly like an inverted triangle winding, and inverting
+the winding to chase it produced a *second* wrong answer that compounded with the first into
+a clean 180° rotation, which reads like neither. Two flips are indistinguishable from one
+when the fixture is a paragraph of prose.
+
+**So the harness grew `?fixture=letters`**: one huge glyph a side, plus a tick in the
+top-left corner only. A letter cannot be mirrored without saying so, and the corner tick
+separates "upside down" from "left-right reversed". It settled in one screenshot what three
+readings of prose had not. Keep it for anything that maps a texture onto a surface.
+
+**3. And one thing that is not a defect: the mesh delivers ask (c) for free.** PAGE_CURL
+§2c — "text squeezing into the curl" — is listed as *out of scope* for M27, on the grounds
+that it is a projection problem the band painter cannot solve. A mesh maps the texture onto
+the actual curved surface, so the page's own text bends into the roll without anything being
+written for it. Visible at `?state=peel-20` along the lifted edge. §2c should be re-read
+after the wiring lands rather than left as an open item.
+
+**What the harness is not.** This machine composites in software, so what these frames
+prove is *shape, orientation and texture mapping* — not smoothness, not the shadow's look,
+not cost. The falloff that replaced `shadowBlur` in particular is a proposal and still owes
+a side-by-side on a real compositor.
+
+**Also true of the hinge, and worth expecting before it is called a bug:** for the same
+pointer a bound sheet turns *much* further than a free one, and a shallow corner pull lifts
+the leaf's **whole outer edge** rather than dog-earing the corner. Both are correct — a page
+bound at the gutter pivots about it — and both are large visible changes from the shipped
+fold. They are the first thing to look at on the operator's Mac.

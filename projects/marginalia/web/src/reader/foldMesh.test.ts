@@ -128,9 +128,15 @@ describe("buildFoldMesh — the tessellation's own promises", () => {
   });
 
   it("faces the reader where the sheet is flat, and away from them on the tail", () => {
-    // What lets one draw with `FrontSide` and one with `BackSide` put the right
-    // page on each side. Nothing sets this — it falls out of the winding being
-    // taken from the source polygon and the tail having turned through PI.
+    // What lets one fragment shader put the right page on each side. Nothing
+    // sets it — it falls out of the winding being taken from the source polygon
+    // and the tail having turned through PI.
+    //
+    // ⚠️ Getting this backwards is not a subtle artefact: it puts the leaf's
+    // back page on the part of it that has not lifted at all. That symptom was
+    // seen in the harness and *was not this* — it was a texture `flipY` — and
+    // inverting these two expectations to chase it made the render worse, not
+    // better. If the sheet's sides look swapped, check the texture first.
     let flatTris = 0;
     let tailTris = 0;
     eachMesh((mesh) => {
@@ -168,15 +174,23 @@ describe("buildFoldMesh — the tessellation's own promises", () => {
     expect(Math.min(...counts)).toBeGreaterThan(20);
   });
 
-  it("throws a shadow from the roll, and from the tail once there is one", () => {
-    // Two footprints, matching the two shadows `drawPageFold` throws — the gap
-    // under a lifted sheet darkens all round it rather than in one direction.
+  it("throws each shadow as a single polygon that cannot overlap itself", () => {
+    // The regression this exists for, caught in the harness: built from the
+    // mesh's own forty-odd wedges, the shadow compounds its alpha wherever the
+    // deformed sheet folds back over itself, and a page turn grows a hard black
+    // wedge across it. A rectangle cut by two rulings has at most six corners,
+    // so a count in that range *is* the "one convex polygon" property.
     eachMesh((mesh) => {
-      expect(mesh.rollShadow.length % 2).toBe(0);
-      expect(mesh.tailShadow.length % 2).toBe(0);
-      expect(mesh.rollShadow.length).toBeGreaterThan(0);
-      const hasTail = Array.from(mesh.phi).some((v) => v > Math.PI - 1e-9);
-      expect(mesh.tailShadow.length > 0).toBe(hasTail);
+      expect(mesh.rollShadow.length % 3).toBe(0);
+      expect(mesh.tailShadow.length % 3).toBe(0);
+      expect(mesh.rollShadow.length / 3).toBeGreaterThanOrEqual(3);
+      expect(mesh.rollShadow.length / 3).toBeLessThanOrEqual(6);
+      expect(mesh.tailShadow.length / 3).toBeLessThanOrEqual(6);
+      // Each footprint point carries the height of the sheet above it, which is
+      // where the shadow's softness comes from with no blur available.
+      for (const buffer of [mesh.rollShadow, mesh.tailShadow]) {
+        for (let i = 2; i < buffer.length; i += 3) expect(buffer[i]!).toBeGreaterThanOrEqual(0);
+      }
     });
   });
 

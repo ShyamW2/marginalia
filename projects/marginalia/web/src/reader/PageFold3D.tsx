@@ -74,15 +74,21 @@ const MAX_VERTICES = 1024;
  * separate it from the page it belongs to. */
 const SHADOW_LIFT = 0.05;
 
-/** Contact falloff: the gap under a lifted sheet is darkest where the sheet is
- * nearly touching and opens up as it rises. ⚠️ **A proposal, not a settled
- * look.** `drawPageFold` throws two constant-alpha shadows and softens them
- * with `shadowBlur`, which has no cheap WebGL equivalent; this trades the blur
- * for a falloff that is at least physical. It owes a side-by-side against the
- * 2D shadow in the harness on a real compositor before it is called done —
- * see TASKS.md's Verify. */
+/**
+ * Contact falloff: the gap under a lifted sheet is darkest where the sheet is
+ * nearly touching and opens up as it rises, reaching half strength once the
+ * sheet is `SHADOW_FALLOFF_PX` off the page.
+ *
+ * ⚠️ **A proposal, not a settled look.** `drawPageFold` throws two
+ * constant-alpha shadows and softens them with `shadowBlur`, which has no cheap
+ * WebGL equivalent — a blur means a render target and a second pass. This
+ * trades the blur for a falloff that is at least physical, and it is the
+ * *gradient* doing the softening rather than a blur radius. It owes a
+ * side-by-side against the 2D shadow in the harness on a real compositor
+ * before it is called done — see TASKS.md's Verify.
+ */
 const SHADOW_FALLOFF_PX = 90;
-const SHADOW_ALPHA = 0.34;
+const SHADOW_ALPHA = 0.4;
 
 export interface PageFold3DProps {
   /** The departing **card**'s bitmap: the page snapshot composited over the
@@ -327,6 +333,14 @@ function FoldLayer({ image, anchor, leafWidth, leafHeight, leafX, stageWidth, la
 function makeTexture(canvas: HTMLCanvasElement): CanvasTexture {
   const texture = new CanvasTexture(canvas);
   texture.colorSpace = NoColorSpace;
+  // ⚠️ three's default is `flipY = true`, which uploads the bitmap upside down
+  // so that `v = 0` is its *bottom* row. Every other coordinate in the fold —
+  // `LeafSource`, the leaf's own px, the card bitmap's — runs downward from the
+  // top, and `uvMap` computes `v` that way. Leaving the default on flips the
+  // sheet vertically, which compounds with the back face's `u` mirroring into a
+  // clean 180° rotation and reads as "the back page is wrong" rather than as a
+  // texture setting.
+  texture.flipY = false;
   return texture;
 }
 
@@ -454,8 +468,9 @@ function writeSheet(
 }
 
 /** The lifted sheet's footprint, laid flat just above the page it darkens.
- * Alpha falls off with how far the sheet above it has risen, which is the
- * contact-shadow reading of `SHADOW_FALLOFF_PX`. */
+ * Alpha falls off with how far the sheet above it has risen — see
+ * `SHADOW_FALLOFF_PX`, which is where this shadow's softness comes from in the
+ * absence of a blur. */
 function writeShadow(geometry: BufferGeometry, mesh: FoldMesh) {
   const position = geometry.getAttribute("position") as BufferAttribute;
   const alpha = geometry.getAttribute("alpha") as BufferAttribute;
@@ -463,14 +478,14 @@ function writeShadow(geometry: BufferGeometry, mesh: FoldMesh) {
   const alphas = alpha.array as Float32Array;
   let vertices = 0;
   for (const polygon of [mesh.rollShadow, mesh.tailShadow]) {
-    const points = polygon.length / 2;
+    const points = polygon.length / 3;
     for (let i = 1; i + 1 < points; i++) {
       for (const k of [0, i, i + 1]) {
         if (vertices >= MAX_VERTICES) break;
-        out[vertices * 3] = polygon[k * 2]!;
+        out[vertices * 3] = polygon[k * 3]!;
         out[vertices * 3 + 1] = SHADOW_LIFT;
-        out[vertices * 3 + 2] = polygon[k * 2 + 1]!;
-        alphas[vertices] = SHADOW_ALPHA;
+        out[vertices * 3 + 2] = polygon[k * 3 + 1]!;
+        alphas[vertices] = SHADOW_ALPHA / (1 + polygon[k * 3 + 2]! / SHADOW_FALLOFF_PX);
         vertices++;
       }
     }

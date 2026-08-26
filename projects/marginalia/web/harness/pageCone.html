@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Page fold harness — the hinge</title>
+<style>
+  body { margin: 0; background: #4e5257; font: 13px/1.4 system-ui, sans-serif; color: #e6e6e6; }
+  header { padding: 12px 14px 0; max-width: 1100px; }
+  header code { background: #00000033; padding: 1px 5px; border-radius: 3px; }
+  #grid { display: flex; flex-wrap: wrap; gap: 20px; padding: 14px; align-items: flex-start; }
+  .cell { margin: 0; }
+  .cell figcaption { font-size: 11px; font-weight: 600; margin: 0 0 5px 2px; }
+  /* No z-index: the 3D seam's canvas is a fixed `z-index: 0` layer later in DOM
+     order, and the sheet has to paint over the page it is turning away from. */
+  .stage { position: relative; box-shadow: 0 6px 22px rgba(0, 0, 0, 0.5); touch-action: none; }
+  .stage .under { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .stage .flat { position: absolute; top: 0; }
+  .stage .spine { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff4d4dcc; }
+</style>
+</head>
+<body>
+<header>
+  <p><strong>The hinge, next to the fold it replaces.</strong> Both stages take the
+  <em>same</em> drag — move the pointer over either one. The difference to look for is at
+  the <strong>spine</strong>, the edge opposite the grab (the gutter in spread mode): the
+  flat sheet slides away from it, the hinged one is bound to it and cannot.
+  See <code>docs/marginalia/PAGE_CURL.md</code> §2d and decisions.md 2026-08-26.</p>
+  <p>Query params: <code>?model=both|flat|cone</code> ·
+  <code>&amp;mode=spread|single</code> · <code>&amp;theme=paper|sepia|ink</code> ·
+  <code>&amp;state=peel-20|drag-50|edge-pull|top-corner</code> (the same names
+  <code>pageFold.html</code> uses, so the two can be put side by side) ·
+  <code>&amp;t=0.6</code> (a point on the hinged sweep instead — that path is square
+  across, i.e. the far field, and shows no fan) ·
+  <code>&amp;anchor=bottomRight|topRight</code> ·
+  <code>&amp;w=380&amp;h=540&amp;dpr=2</code> · <code>&amp;debug=1</code> (mark the spine) ·
+  <code>&amp;fixture=letters</code> (one huge glyph a side instead of prose — the only way
+  to see at a glance whether a face is mirrored, upside down, or the wrong side of the
+  sheet: turning the right leaf should show <strong>R</strong> upright on the part still
+  lying flat, and <strong>A</strong> mirrored on the part folded over)</p>
+  <p><strong>One thing to allow for when judging.</strong> The 3D seam's camera is fitted
+  to the <em>viewport</em>, and it is a real lens — so a stage sitting far from the centre
+  of the window is seen more obliquely than the reader's own leaf ever is, and its lifted
+  sheet splays further. Judge the shape side by side, but judge the <em>amount</em> of
+  splay with <code>?model=cone</code> and the window sized so the stage is near the middle.</p>
+  <p><strong>What is not yet true of the app.</strong> Nothing is wired to the mesh — the
+  reader still turns pages with the flat painter. This page drives
+  <code>PageFold3D</code> directly so the hinge can be judged before that wiring lands.</p>
+</header>
+<div id="grid"></div>
+<script type="module" src="./pageCone.tsx"></script>
+</body>
+</html>

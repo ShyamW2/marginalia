@@ -572,6 +572,13 @@ open 'http://localhost:5173/harness/pageFold.html?only=drag-50&w=620&h=860'
 open 'http://localhost:5173/harness/pageFold.html?arc=1.6'   # exaggerate the roll
 open 'http://localhost:5173/harness/pageFold.html?back=mirror'  # M27: the pre-M27 back, to compare
 
+# The hinge (M27), beside the fold it replaces — both stages take the same drag.
+open http://localhost:5173/harness/pageCone.html
+open 'http://localhost:5173/harness/pageCone.html?state=peel-20'     # same state names as above
+open 'http://localhost:5173/harness/pageCone.html?model=cone&t=0.62' # past the spine
+open 'http://localhost:5173/harness/pageCone.html?fixture=letters'   # orientation, unambiguously
+open 'http://localhost:5173/harness/pageCone.html?mode=single&debug=1'
+
 # Tests and typecheck.
 cd projects/marginalia/web && npx vitest run src/reader/pageFold.test.ts
 cd projects/marginalia/web && npx tsc --noEmit -p tsconfig.json

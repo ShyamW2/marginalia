@@ -45,13 +45,15 @@
 // reload. Serve with `pnpm dev` and open /harness/pageFold.html.
 import {
   computeFold,
-  cornerPoint,
   curlArcLength,
   drawPageFold,
   leafSourceRect,
   samplePaperColor,
   syntheticFoldPointer,
 } from "/src/reader/pageFold.ts";
+// Shared with pageCone.html so the two harnesses draw the *same* page — they
+// exist to be compared against each other. See samplePage.js.
+import { BODY, NEXT, THEMES, foldStates, makePage as makeSamplePage } from "./samplePage.js";
 
 const q = new URLSearchParams(location.search);
 const ONLY = q.get("only");
@@ -63,83 +65,15 @@ const ARC = Number(q.get("arc") ?? 1);
 // pre-M27 fold exactly and is here to be compared against, not as a fallback.
 const BACK_MODE = q.get("back") ?? "real";
 
-// Reader themes, taken from web/src/theme.css so the harness lies about nothing.
-const THEMES = {
-  paper: { bg: "#faf7f0", fg: "#2b2721", head: "#9c8f78" },
-  sepia: { bg: "#f4ecd8", fg: "#3b332a", head: "#9c8f78" },
-  ink: { bg: "#1c1a17", fg: "#e8e2d6", head: "#7a736a" },
-};
 const themeArg = q.get("theme") ?? "paper";
 const themes = themeArg === "all" ? Object.keys(THEMES) : [themeArg];
 
-const BODY =
-  "from the same campus we stuck together, sharing the load during the morning deliveries and generally looking out for each other. We laughed constantly at the porters' foul-mouthed exchanges. We made a game of things. We had good banter. The mornings flew by whenever our hours coincided, and after a while I began to really fancy her. ¶ But one day something changed. Soph had been moping around through our entire Thursday shift. Every crate of fish we hauled off the trucks suddenly seemed to take her twice the effort. She even complained about the smell, and all of us had deadened to that long ago. It was obvious something was on her mind, so that morning I followed her through the back door of the warehouse, where she always snuck out for a cigarette. ¶ 'Got a spare?' ¶ 'You don't smoke,' she said. ¶ I watched two streams of the stuff billow from her nostrils. 'I'm willing to give it a go.' ¶ 'Bad idea.' ¶ 'I hear you lose weight.'";
-const NEXT =
-  "Westermann tried to keep her own body language calm and unflustered, but she'd already wasted an hour she did not have. The bar's aircon was blowing warm and the man opposite her had not once looked up from the datareader he'd brought along. \u00b6 She sat opposite him. Standard check of her own: no one in the bar watching her now, their attention had moved to other things. From the breast pocket of her cammie tunic, she drew a wafer and laid it on the greasy table, data chip facing up. \u00b6 Beside it, she piled her winnings. The cash, he scooped away. The wafer, he didn't touch. \u00b6 'That is not what we agreed,' he said, still reading. 'You were to bring the whole set, and you have brought me a third of it.' \u00b6 'I brought what there was.' \u00b6 'Then there is a difficulty, because what there was is not what I paid for.' He set the datareader face down at last, and the noise of the bar seemed to arrive all at once, as though someone had opened a door. 'You understand the position this puts me in.' \u00b6 She did. She had understood it on the walk over, and had come anyway, which was either courage or the other thing. Outside, the rain had started up again against the awnings, and somewhere down the strip a transport was winding itself up to leave.";
+const makePage = (text, theme, folio) => makeSamplePage(text, theme, folio, { width: W, height: H, dpr: DPR });
 
-/** A stand-in for a captured page: justified serif body, running head, folio. Close
- * enough to a real epub.js snapshot for judging how the sheet deforms and shades. */
-function makePage(text, theme, folio) {
-  const c = document.createElement("canvas");
-  c.width = W * DPR;
-  c.height = H * DPR;
-  const x = c.getContext("2d");
-  x.scale(DPR, DPR);
-  x.fillStyle = theme.bg;
-  x.fillRect(0, 0, W, H);
-
-  const scale = W / 340;
-  x.fillStyle = theme.head;
-  x.font = `italic ${9.5 * scale}px Georgia, serif`;
-  x.textAlign = "center";
-  x.fillText("Circling the Square", W / 2, 28 * scale);
-
-  x.textAlign = "left";
-  x.fillStyle = theme.fg;
-  x.font = `${13 * scale}px Georgia, serif`;
-  const margin = 32 * scale;
-  const lineHeight = 18.5 * scale;
-  let y = 62 * scale;
-  let line = "";
-  let indent = 15 * scale;
-  for (const word of text.split(/\s+/)) {
-    if (word === "¶") {
-      if (line) {
-        x.fillText(line, margin + indent, y);
-        y += lineHeight;
-      }
-      line = "";
-      indent = 15 * scale;
-      continue;
-    }
-    const trial = line ? `${line} ${word}` : word;
-    if (x.measureText(trial).width > W - 2 * margin - indent) {
-      x.fillText(line, margin + indent, y);
-      y += lineHeight;
-      line = word;
-      indent = 0;
-    } else {
-      line = trial;
-    }
-    if (y > H - 48 * scale) break;
-  }
-  if (line && y <= H - 48 * scale) x.fillText(line, margin + indent, y);
-
-  x.fillStyle = theme.head;
-  x.textAlign = "center";
-  x.font = `${10 * scale}px Georgia, serif`;
-  x.fillText(folio, W / 2, H - 26 * scale);
-  return c;
-}
-
-const br = cornerPoint("bottomRight", W, H);
-const tr = cornerPoint("topRight", W, H);
-/** The states worth looking at every time something changes. */
+/** The states worth looking at every time something changes. The hand-driven
+ * four are shared with pageCone.html so the two harnesses can be compared. */
 const STATES = {
-  "peel-20": ["bottomRight", { x: br.x - W * 0.4, y: br.y - H * 0.12 }],
-  "drag-50": ["bottomRight", { x: br.x - W * 0.72, y: br.y - H * 0.3 }],
-  "edge-pull": ["bottomRight", { x: br.x - W * 0.45, y: br.y - 6 }],
-  "top-corner": ["topRight", { x: tr.x - W * 0.55, y: tr.y + H * 0.26 }],
+  ...foldStates(W, H),
   "auto-30": ["bottomRight", syntheticFoldPointer("bottomRight", W, H, 0.3)],
   "auto-55": ["bottomRight", syntheticFoldPointer("bottomRight", W, H, 0.55)],
   "auto-80": ["bottomRight", syntheticFoldPointer("bottomRight", W, H, 0.8)],
