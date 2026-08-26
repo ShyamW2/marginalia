@@ -6709,3 +6709,59 @@ still eating `arc * (1 + rollEndO)` ≈ 151px of the sheet. The flat model pays 
 overshooting the pointer; a bound sheet cannot. The leaf is fully covered regardless, which
 is what the acceptance asks — it is the corner's resting place that is short, on the last
 frame of a turn that is about to be replaced by the real rendition anyway.
+
+## M27 — the fold's mesh: why a fan of 169 vertices beats a grid of thirty thousand — 2026-08-26
+
+Building the WebGL renderer's first half (`foldMesh.ts`, `PageFold3D.tsx` — the wiring is a
+separate pass). Ruling in decisions.md 2026-08-26; these are the numbers behind it.
+
+**The tessellation is not a taste question.** The cone's deformation depends on `psi`, the
+fan angle past the crease, and on nothing else — the exact analogue of the flat model
+depending on `w` alone. Two things follow that decide the mesh outright:
+
+- **Along a ruling the surface is straight.** At fixed `psi` the position is
+  `apex + r * direction` and the lift is `r * arcAngle * z(psi)` — *both linear in `r`*. Two
+  vertices per ruling are therefore exact, not an approximation.
+- **All the curvature is in the roll**, and the roll's angular span is not a fixed fraction
+  of the leaf's. On a 460x760 leaf a dog-ear's `arcAngle` is 0.16 rad against a leaf
+  spanning ~1 rad; in the far field it is **1.35e-7 rad** against the same ~1 rad. A
+  uniform grid resolving the lip in the first case misses it entirely in the second.
+
+Measured vertex counts across six anchors, two leaf sizes and six drags each: **127–169**,
+never more. A uniform grid fine enough to put ~20 steps across the roll's footprint on the
+same leaf is ~18,000 vertices — and would still have nothing in the roll in the far field.
+The flat page and the tail take one wedge each because they are planar; the roll takes the
+profile's own 40. It is `drawPageFold`'s band decomposition with one more dimension.
+
+**Watertightness is the property this can silently get wrong**, so it is tested by summing
+*source-space* triangle area and comparing to the leaf's — an overlap counts twice and a gap
+counts short, so one number catches both. Holds to 1e-9 relative across every case.
+
+**The deformation cannot go in a vertex shader**, which was the obvious optimisation and is
+the wrong one. The apex is held up to a million leaf-diagonals down the spine, so a leaf
+coordinate is a *cancellation* against a number near `1e9` — float32's ulp there is about
+60 px. The CPU does it in float64 and uploads positions, which is affordable precisely
+because the fan is 169 vertices and not 18,000. This is the concrete form of the float32
+warning in the hinge entry above.
+
+**One acceptance criterion had already expired, found while sizing the work, not while
+failing it.** M27 asks that `pageTransition: "slide"` be provable by
+`document.querySelectorAll("canvas").length === 0` through a whole turn. `Scene3DProvider`
+latches `everRegistered`, so a session that has shown the Desk keeps a canvas mounted for
+the app's life and the count is non-zero before the reader is even reached. The criterion
+dates from 2026-08-03, before M23 existed. Restated in decisions.md as the thing it was
+actually protecting: under "slide" the fold registers no 3D layer and mounts no grab
+surface.
+
+**Colour, because it would have read as a bug rather than as a setting.** three.js converts
+output colour space inside the material's own fragment shader. A hand-written
+`ShaderMaterial` includes none of that, so declaring the card textures `NoColorSpace` and
+writing `gl_FragColor` directly passes the bitmap's bytes through untouched — the same
+pixels canvas 2D was putting on screen. Getting this wrong shifts the reading surface's
+paper colour on the frame a turn starts, in a direction that looks like a theme bug.
+
+**Not measured here, and it is the honest gap:** every number above is arithmetic, not
+pixels. This machine's Chromium composites in software, so the mesh's *look* — and in
+particular the shadow, which trades `drawPageFold`'s `shadowBlur` for a contact falloff
+because WebGL has no cheap equivalent — is unjudged. It goes to the harness on the
+operator's Mac with the rest of M27's Verify.

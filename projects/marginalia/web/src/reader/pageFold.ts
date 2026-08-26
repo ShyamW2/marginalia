@@ -319,8 +319,13 @@ export function syntheticFoldPointer(
 
 /** Sutherland-Hodgman clip of a convex polygon against one half-plane: the
  * line through `linePoint` with normal `normal`, keeping the side where
- * `dot(p - linePoint, normal) <= 0`. */
-function clipHalfPlane(poly: Point[], linePoint: Point, normal: Point): Point[] {
+ * `dot(p - linePoint, normal) <= 0`.
+ *
+ * Exported for `foldMesh.ts`, which clips the leaf against the *rulings* of a
+ * cone with exactly this — the fan's wedges are half-plane pairs through the
+ * apex, so the mesh and the flat painter's bands cut their source polygons
+ * with one routine rather than two. */
+export function clipHalfPlane(poly: Point[], linePoint: Point, normal: Point): Point[] {
   if (poly.length === 0) return [];
   const side = (p: Point) => (p.x - linePoint.x) * normal.x + (p.y - linePoint.y) * normal.y;
   const out: Point[] = [];
@@ -772,6 +777,55 @@ export function constrainToSpineHinge(
 }
 
 /**
+ * Everything the *renderer* needs about one leaf point on the cone, in one
+ * angle computation: where it lands, how far it is lifted, and which way the
+ * sheet is facing there.
+ *
+ * `deformPointOnCone` and `coneLiftAt` above stay as they are — they are the
+ * two properties the model is *tested* on, and they read better one at a time.
+ * This is the same arithmetic said once for a mesh that wants all three per
+ * vertex, and it agrees with both by construction (and by test).
+ */
+export interface ConeSample {
+  /** Where the point lands on the page, in leaf px: the ground projection,
+   * identical to `deformPointOnCone`. */
+  at: Point;
+  /** How far off the leaf it is lifted, in leaf px: identical to
+   * `coneLiftAt`. This is a real third dimension, not a fake — the flat
+   * painter throws it away and shades instead, a mesh gives it to a camera. */
+  lift: number;
+  /** The sheet's tangent angle there: 0 flat and face-up, `PI/2` edge-on to
+   * the reader, `PI` flat and face-down out on the tail. What the shading
+   * reads, and the one quantity the 2D painter derives per *band* that a mesh
+   * needs per *vertex*. */
+  phi: number;
+  /** How far past the crease, as fan angle. Negative on the flat page, `0` at
+   * the crease, `arcAngle` where the tail begins. The cone's own coordinate —
+   * the deformation depends on this and nothing else, exactly as the flat
+   * model's depends on `w` alone, and it is what a mesh tessellates *along*. */
+  psi: number;
+}
+
+export function sampleConeAt(cone: ConeFold, p: Point): ConeSample {
+  const v = { x: p.x - cone.apex.x, y: p.y - cone.apex.y };
+  const r = Math.hypot(v.x, v.y);
+  if (r < 1e-9) return { at: { x: p.x, y: p.y }, lift: 0, phi: 0, psi: -cone.creaseAngle };
+  const psi = coneAngle(cone, v) - cone.creaseAngle;
+  const turned = cone.creaseAngle + coneAngularOffset(cone, psi);
+  const cos = Math.cos(turned);
+  const sin = Math.sin(turned) * cone.winding;
+  const at: Point = {
+    x: cone.apex.x + r * (cone.spineDir.x * cos - cone.spineDir.y * sin),
+    y: cone.apex.y + r * (cone.spineDir.y * cos + cone.spineDir.x * sin),
+  };
+  if (psi <= 0 || cone.arcAngle <= 0) return { at, lift: 0, phi: 0, psi };
+  const arcLength = r * cone.arcAngle;
+  if (psi >= cone.arcAngle) return { at, lift: arcLength * ROLL_END.z, phi: Math.PI, psi };
+  const sample = profileAt((psi / cone.arcAngle) * ROLL_SAMPLES);
+  return { at, lift: arcLength * sample.z, phi: sample.phi, psi };
+}
+
+/**
  * Solve the cone for a drag: apex, crease and arc such that **the grabbed
  * anchor lands under the pointer, as far as a bound sheet can reach it**.
  *
@@ -1122,6 +1176,45 @@ function backOfSheet(paper: Rgb): Rgb {
     Math.round(paper[2] + (255 - paper[2]) * lift),
   ];
 }
+
+/**
+ * The paper's own shading where its tangent has turned through `phi`, as the
+ * two numbers every renderer of this sheet needs: what to multiply the sampled
+ * texel by, and how much white to add on top.
+ *
+ * Exported so the mesh renderer shades from the **same tuned model** as the
+ * band painter rather than growing a second one — these constants were judged
+ * against real pages in three reading themes and they are not re-derivable
+ * from a lighting rig. A mesh reads this per *vertex* where `drawPageFold`
+ * reads it per *band*; that is the only difference.
+ */
+export function sheetShadingAt(
+  phi: number,
+  back: boolean,
+  paper: Rgb,
+): { light: number; sheen: number } {
+  return { light: lightAt(phi, back), sheen: sheenAt(phi) * sheenScale(paper) };
+}
+
+/**
+ * What the back of the sheet is washed toward, and by how much — the mesh's
+ * counterpart to the `source-atop` fill `drawPageFold` lays over its back
+ * layer, and exported for the same reason `sheetShadingAt` is.
+ *
+ * `real` is whether the sheet's other side is the leaf's actual other page or
+ * the front standing in for it, and it is the whole difference between the two
+ * constants: a stand-in is washed nearly out (`1 - SHOW_THROUGH`) because its
+ * mirrored text must not be legible, a real back only lifted (`BACK_LIFT`)
+ * because its text is supposed to be there.
+ */
+export function backOfSheetPaper(paper: Rgb, real: boolean): { color: Rgb; wash: number } {
+  return { color: backOfSheet(paper), wash: real ? BACK_LIFT : 1 - SHOW_THROUGH };
+}
+
+/** How finely the roll is sampled — the fan's own resolution, so a mesh
+ * tessellating across the roll inherits the profile's fidelity instead of
+ * picking a number. */
+export const ROLL_SAMPLE_COUNT = ROLL_SAMPLES;
 
 /** A shading factor as something canvas can paint: darkening is black,
  * brightening is white, both at the matching alpha. */
