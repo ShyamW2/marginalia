@@ -8,6 +8,8 @@ import {
   UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
   UpdateBriefBodySchema,
   UpdateContextLadderBodySchema,
+  UpdateChapterQuestionNoteBodySchema,
+  UpsertChapterQuestionBodySchema,
   type DigestStatus,
   type ThematicStatus,
 } from "@marginalia/shared";
@@ -43,6 +45,12 @@ import {
   setContextLadderDepth,
 } from "../digest/ladder.js";
 import { createHighlight, findHighlightByExact } from "../annotations/highlights.js";
+import {
+  getChapterQuestion,
+  listChapterQuestions,
+  setChapterQuestionNote,
+  upsertChapterQuestion,
+} from "../digest/chapterQuestions.js";
 import { startJob } from "../jobs/registry.js";
 
 export const digestRouter: Router = Router();
@@ -521,6 +529,65 @@ digestRouter.post("/:id/chapter-anchor", (req, res) => {
     kind: "slate", // "a question about the text" — the existing kind Ask defaults to
   });
   res.status(201).json(highlight);
+});
+
+// ---------------------------------------------------------------------------
+// M32 B — a chapter-level question of your own (no passage to anchor to)
+// ---------------------------------------------------------------------------
+
+digestRouter.get("/:id/chapter-questions", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  res.json({ questions: listChapterQuestions(db, resource.id) });
+});
+
+digestRouter.put("/:id/chapter-questions/:spineIndex", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const spineIndex = Number(req.params.spineIndex);
+  if (!Number.isInteger(spineIndex) || spineIndex < 0) {
+    res.status(400).json({ error: "invalid_spine_index" });
+    return;
+  }
+  const parsed = UpsertChapterQuestionBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  res.json(upsertChapterQuestion(db, resource.id, spineIndex, parsed.data.question));
+});
+
+digestRouter.put("/:id/chapter-questions/:spineIndex/note", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const spineIndex = Number(req.params.spineIndex);
+  if (!Number.isInteger(spineIndex) || spineIndex < 0) {
+    res.status(400).json({ error: "invalid_spine_index" });
+    return;
+  }
+  const parsed = UpdateChapterQuestionNoteBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  if (!getChapterQuestion(db, resource.id, spineIndex)) {
+    res.status(404).json({ error: "chapter_question_not_found" });
+    return;
+  }
+  setChapterQuestionNote(db, resource.id, spineIndex, parsed.data.note);
+  res.json(getChapterQuestion(db, resource.id, spineIndex));
 });
 
 /**

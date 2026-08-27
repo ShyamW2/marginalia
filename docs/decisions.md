@@ -3,6 +3,31 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-27 (yet later) — M32 landed; a chip-text bug found live along the way
+
+M32 (TASKS.md) built as scoped: the chapter-end affordance (`ChapterEndPrompt.tsx`, wired
+into `ReaderView.tsx`'s `handleRelocated`) is a plain read of the existing thematic layer —
+it never starts a job from the reading path — and the one new storage shape
+(`chapter_questions`, migration 27) gives the reader their own chapter-level question with
+an autosaved note, reusing `setHighlightNote`'s exact debounce. Its "re-findable" home is the
+digest page, which already lists both kinds of question per chapter (`ChapterQuestionBox.tsx`
+alongside the existing AI-posed ones); `createChapterAnchor`/`fetchThematicStatus` were pulled
+out of `DigestPage.tsx` into `digest/digestApi.ts` so the reader could reuse them instead of a
+second implementation.
+
+Verified live against the real dev server and library book (not just `vitest`): the two new
+endpoints round-tripped over `curl`, and a synthetic `thematic_digests` row (inserted, then
+removed) drove the actual reader in a headless browser across a real chapter boundary. That
+pass surfaced a real bug, unrelated to this milestone's own code: `.questionChip`'s resting
+state (`DigestPage.module.css`, and copied into the new `ChapterEndPrompt.module.css`) coloured
+its label with `--color-accent-text` — a token `useAccent.ts` derives to read *on top of* a
+solid `--color-accent` fill, not over the page's own paper background the chip actually sits
+on at rest. Under this profile's configured accent, that resolved to white text on a light
+background — invisible. Fixed in both places to the plain `--color-text` token; left
+`:hover`'s `color: var(--color-bg)` alone (that state's background genuinely is the accent
+fill). All test-seeded rows and the one highlight created while clicking through were deleted
+afterward — the library's real annotation count was checked back to 7 before and after.
+
 ## 2026-08-27 (even later) — M31 C6: the pinch resizes the reader, not the setting
 
 DESIGN.md names the pinch-to-resize instrument "an instrument, not a setting", framed there

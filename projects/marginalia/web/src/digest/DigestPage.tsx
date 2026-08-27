@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Link, useLocation, useNavigate, type Location } from "react-router-dom";
-import type { AudioSectionsResponse, DigestStatus, ScanBookTheme, ThematicStatus } from "@marginalia/shared";
+import type {
+  AudioSectionsResponse,
+  ChapterQuestion,
+  DigestStatus,
+  ScanBookTheme,
+  ThematicStatus,
+} from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
@@ -9,6 +15,8 @@ import { useJobs } from "../jobs/JobsContext.js";
 import { startJobRequest } from "../jobs/jobsApi.js";
 import { deleteAllAudio, deleteSectionAudio, fetchAudioSections } from "../audio/audioApi.js";
 import { themeRampColor } from "./themeRamp.js";
+import { createChapterAnchor, fetchChapterQuestions, fetchThematicStatus, revealParams } from "./digestApi.js";
+import { ChapterQuestionBox } from "./ChapterQuestionBox.js";
 import styles from "./DigestPage.module.css";
 
 /** M22.5 G: "N MB"/"N KB" for the rendered-audio column — no existing
@@ -18,12 +26,6 @@ function formatBytes(bytes: number): string {
   const mb = bytes / (1024 * 1024);
   if (mb >= 1) return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-}
-
-function revealParams(revealed: Set<number>): URLSearchParams {
-  const params = new URLSearchParams();
-  if (revealed.size > 0) params.set("reveal", [...revealed].join(","));
-  return params;
 }
 
 /**
@@ -53,17 +55,6 @@ async function fetchDigestStatus(
   }
 }
 
-async function fetchThematicStatus(resourceId: string, revealed: Set<number>): Promise<ThematicStatus | null> {
-  try {
-    const qs = revealParams(revealed).toString();
-    const res = await fetch(`/api/resources/${resourceId}/thematic${qs ? `?${qs}` : ""}`);
-    if (!res.ok) return null;
-    return (await res.json()) as ThematicStatus;
-  } catch {
-    return null;
-  }
-}
-
 async function fetchBookThemes(resourceId: string): Promise<ScanBookTheme[]> {
   try {
     const res = await fetch(`/api/resources/${resourceId}/theme-distillation`);
@@ -85,24 +76,6 @@ async function saveBrief(resourceId: string, text: string): Promise<boolean> {
     return res.ok;
   } catch {
     return false;
-  }
-}
-
-async function createChapterAnchor(
-  resourceId: string,
-  spineIndex: number,
-  quote: string,
-): Promise<{ id: string } | null> {
-  try {
-    const res = await fetch(`/api/resources/${resourceId}/chapter-anchor`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spineIndex, quote }),
-    });
-    if (!res.ok) return null;
-    return (await res.json()) as { id: string };
-  } catch {
-    return null;
   }
 }
 
@@ -150,6 +123,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const [bookThemes, setBookThemes] = useState<ScanBookTheme[]>([]);
   const [distillJobId, setDistillJobId] = useState<string | null>(null);
   const [distillError, setDistillError] = useState<string | null>(null);
+  const [chapterQuestions, setChapterQuestions] = useState<ChapterQuestion[]>([]);
   const [audioSections, setAudioSections] = useState<AudioSectionsResponse | null>(null);
   const [deletingSpine, setDeletingSpine] = useState<number | null>(null);
   const [deletingAllAudio, setDeletingAllAudio] = useState(false);
@@ -174,6 +148,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
       }
     });
     fetchBookThemes(id).then(setBookThemes);
+    fetchChapterQuestions(id).then(setChapterQuestions);
   }
 
   function loadAudio() {
@@ -191,6 +166,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     setRevealBook(false);
     setAudioSections(null);
     setBookThemes([]);
+    setChapterQuestions([]);
     load();
     loadAudio();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -358,6 +334,11 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
 
   const thematicByIndex = new Map((thematic?.chapters ?? []).map((c) => [c.spineIndex, c]));
   const audioByIndex = new Map((audioSections?.sections ?? []).map((s) => [s.spineIndex, s]));
+  const chapterQuestionByIndex = new Map(chapterQuestions.map((q) => [q.spineIndex, q]));
+
+  function handleChapterQuestionCreated(created: ChapterQuestion) {
+    setChapterQuestions((prev) => [...prev.filter((q) => q.spineIndex !== created.spineIndex), created]);
+  }
 
   return (
     <div className={`${styles.page} register-paper`}>
@@ -554,6 +535,13 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                       )}
                     </div>
                   )}
+
+                  <ChapterQuestionBox
+                    resourceId={id}
+                    spineIndex={c.spineIndex}
+                    question={chapterQuestionByIndex.get(c.spineIndex) ?? null}
+                    onCreated={handleChapterQuestionCreated}
+                  />
                 </article>
               );
             })}

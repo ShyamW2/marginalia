@@ -1274,6 +1274,37 @@ export const CreateChapterAnchorBodySchema = z.object({
 export type CreateChapterAnchorBody = z.infer<typeof CreateChapterAnchorBodySchema>;
 
 // ---------------------------------------------------------------------------
+// M32 B — a chapter-level question of your own (no passage to anchor to, so
+// this isn't a highlight — see chapter_questions in migrations.ts). One row
+// per chapter: `question` is the reader's own prompt, `note` is the
+// answer-space, autosaved the same way a highlight's note is.
+// ---------------------------------------------------------------------------
+
+export const ChapterQuestionSchema = z.object({
+  resourceId: z.string(),
+  spineIndex: z.number().int().nonnegative(),
+  question: z.string(),
+  note: z.string(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ChapterQuestion = z.infer<typeof ChapterQuestionSchema>;
+
+/** PUT /api/resources/:id/chapter-questions/:spineIndex body — creates the
+ * question on first write, updates its text on any later one. */
+export const UpsertChapterQuestionBodySchema = z.object({
+  question: z.string().min(1).max(2000),
+});
+export type UpsertChapterQuestionBody = z.infer<typeof UpsertChapterQuestionBodySchema>;
+
+/** PUT /api/resources/:id/chapter-questions/:spineIndex/note body — same
+ * uncapped plain-text shape as UpdateHighlightNoteBodySchema. */
+export const UpdateChapterQuestionNoteBodySchema = z.object({
+  note: z.string(),
+});
+export type UpdateChapterQuestionNoteBody = z.infer<typeof UpdateChapterQuestionNoteBodySchema>;
+
+// ---------------------------------------------------------------------------
 // The context ladder (M17 — "the brain button")
 // ---------------------------------------------------------------------------
 

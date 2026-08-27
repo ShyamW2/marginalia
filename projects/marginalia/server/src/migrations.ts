@@ -648,4 +648,26 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE highlights ADD COLUMN definition_source TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    // M32 B "your own chapter-level questions" (decisions.md 2026-08-24,
+    // TASKS.md M32): the one genuinely new storage shape the milestone needs
+    // — a question about a chapter *as a whole*, with nothing to anchor to
+    // (every highlight requires an anchor; see shared/anchorText.ts and
+    // CLAUDE.md's engineering discipline). One row per chapter: `question` is
+    // the reader's own prompt, `note` is the answer-space, reusing the
+    // highlight note's plain-text/autosave shape (highlights.note, M13)
+    // rather than inventing a second editing model.
+    version: 27,
+    sql: `
+      CREATE TABLE chapter_questions (
+        resource_id   TEXT NOT NULL REFERENCES resources(id),
+        spine_index   INTEGER NOT NULL,
+        question      TEXT NOT NULL,
+        note          TEXT NOT NULL DEFAULT '',
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        PRIMARY KEY (resource_id, spine_index)
+      );
+    `,
+  },
 ];

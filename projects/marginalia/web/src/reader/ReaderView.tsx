@@ -38,6 +38,7 @@ import {
   type SearchMatchMode,
   type Settings,
   type SpreadMode,
+  type ThematicQuestion,
   type ThreadSummary,
 } from "@marginalia/shared";
 import { useJobs } from "../jobs/JobsContext.js";
@@ -130,6 +131,8 @@ import { useReaderStripLayout } from "./useReaderStripLayout.js";
 import { useMarqueeOverflow } from "./useMarqueeOverflow.js";
 import { PinchResizeInstrument } from "./PinchResizeInstrument.js";
 import { TEXT_SIZE_MAX, TEXT_SIZE_MIN } from "../settings/tabs/ReadingTab.js";
+import { ChapterEndPrompt } from "./ChapterEndPrompt.js";
+import { createChapterAnchor, fetchThematicStatus } from "../digest/digestApi.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -1015,6 +1018,16 @@ export function ReaderView({
      * draft textarea from this once, on mount, via its own `key`-per-
      * highlight remount. */
     initialDraft?: string;
+  } | null>(null);
+  // M32 A "the chapter-end affordance": the just-finished chapter's posed
+  // questions, shown quietly once `handleRelocated` sees the reader cross
+  // forward into the next chapter — never set for an undigested chapter
+  // (ReaderView never kicks off a thematic run from the reading path; see
+  // `checkChapterEndQuestions`). Local, resets to null on every mount, same
+  // as `expandedThread` above.
+  const [chapterEndPrompt, setChapterEndPrompt] = useState<{
+    spineIndex: number;
+    questions: ThematicQuestion[];
   } | null>(null);
   const [providerConfigured, setProviderConfigured] = useState(false);
   // M21: whether an audio-driven page turn should happen automatically —
@@ -2444,8 +2457,17 @@ export function ReaderView({
     }
 
     function handleRelocated(location: Location) {
+      // M32 A: captured before the ref below overwrites it — the signal for
+      // "the reader just crossed a chapter boundary" is comparing this
+      // relocation's index against the one *before* it, forward only (a
+      // backward jump, e.g. re-reading, never counts as "finishing" a
+      // chapter). See checkChapterEndQuestions.
+      const previousSpineIndex = currentSpineIndexRef.current;
       currentCfiRef.current = location.start.cfi;
       currentSpineIndexRef.current = location.start.index;
+      if (previousSpineIndex !== null && location.start.index > previousSpineIndex) {
+        void checkChapterEndQuestions(previousSpineIndex);
+      }
       setAtStart(Boolean(location.atStart));
       setAtEnd(Boolean(location.atEnd));
       setCurrentSpineIndex(location.start.index);
@@ -3431,6 +3453,42 @@ export function ReaderView({
     setExpandedThread({ highlightId: highlight.id, top: DEFAULT_THREAD_PANEL_TOP });
   }
 
+  /**
+   * M32 A: a plain read of the thematic layer's already-generated data for
+   * the chapter the reader just finished — never starts a job (that stays a
+   * digest-page action the reader takes deliberately). `reveal` names this
+   * one chapter explicitly rather than waiting on the saved bookmark, which
+   * lags this relocation by up to POSITION_SAVE_DEBOUNCE_MS.
+   */
+  async function checkChapterEndQuestions(spineIndex: number) {
+    // Crossing another boundary always clears whatever chapter the prompt
+    // was showing before — never leaves a stale one up once its own chapter
+    // is several pages behind.
+    setChapterEndPrompt(null);
+    const status = await fetchThematicStatus(resourceId, new Set([spineIndex]));
+    const chapter = status?.chapters.find((c) => c.spineIndex === spineIndex);
+    if (chapter?.analyzed && chapter.questions.length > 0) {
+      setChapterEndPrompt({ spineIndex, questions: chapter.questions });
+    }
+  }
+
+  /** Clicking a chapter-end question turns its verbatim quote into a real,
+   * anchored highlight (the same seam the digest page's own question chips
+   * use — decision 11: the model returns text, code locates it) and opens a
+   * thread on it, pre-filled, without navigating away from wherever the
+   * reader currently is. */
+  async function handleChapterEndAsk(spineIndex: number, question: ThematicQuestion) {
+    setChapterEndPrompt(null);
+    const created = await createChapterAnchor(resourceId, spineIndex, question.quote);
+    if (!created) return;
+    setHighlights(await fetchHighlights(resourceId));
+    setExpandedThread({
+      highlightId: created.id,
+      top: DEFAULT_THREAD_PANEL_TOP,
+      initialDraft: question.text,
+    });
+  }
+
   /** Annotations overview "jump-to": same as clicking a margin-rail dot,
    * plus closing the overview so the destination isn't obscured. */
   function handleJumpToHighlight(highlight: HighlightWithThread) {
@@ -4091,6 +4149,16 @@ export function ReaderView({
                 onNoteChange={handleNoteChange}
                 onPanelOffsetChange={handlePanelOffsetChange}
                 onPanelSizeChange={handlePanelSizeChange}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {chapterEndPrompt && (
+              <ChapterEndPrompt
+                key={`chapter-end-${chapterEndPrompt.spineIndex}`}
+                questions={chapterEndPrompt.questions}
+                onAskQuestion={(question) => void handleChapterEndAsk(chapterEndPrompt.spineIndex, question)}
+                onDismiss={() => setChapterEndPrompt(null)}
               />
             )}
           </AnimatePresence>

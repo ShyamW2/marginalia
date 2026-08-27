@@ -1241,9 +1241,11 @@ immersive pebble are a two-line change.
 
 ### M32 — Deep Reading: the chapter-end trigger, and questions of your own
 
-Scoped 2026-08-24 (decisions.md). ⚠️ **Sequenced after M29's live Verify**, which is still
-unchecked. M29's code is done, but this milestone puts the thematic layer in the *reading*
-path, where a stall is felt mid-book rather than on a digest page the reader chose to open.
+Scoped 2026-08-24 (decisions.md). Was sequenced after M29's live Verify — by the time this
+milestone was picked up, M29's Verify was already checked and the milestone moved whole to
+TASKS_DONE.md, so the "still unchecked" note above was stale. This milestone puts the
+thematic layer in the *reading* path, where a stall would be felt mid-book rather than on a
+digest page the reader chose to open.
 
 **Most of this already exists — read before building.** `digest/thematicBuild.ts` generates
 3-5 questions per chapter, each with a verbatim grounding quote (decision 11); clicking one
@@ -1255,17 +1257,18 @@ This milestone is a trigger and one new storage shape. It is not a generation fe
 
 #### A. The chapter-end affordance
 
-- [ ] When the reader crosses a chapter boundary, offer the just-finished chapter's posed
+- [x] When the reader crosses a chapter boundary, offer the just-finished chapter's posed
       questions. The signal exists on both sides: `currentSpineIndexRef` via
       `handleRelocated` (client), the bookmark gate (server).
-- [ ] ⚠️ **Quiet affordance, never a modal, never an interstitial.** Decided in decisions.md,
+- [x] ⚠️ **Quiet affordance, never a modal, never an interstitial.** Decided in decisions.md,
       not open: CLAUDE.md's "reading comes first — never let the AI layer degrade the reading
       experience (no layout jank, no blocking spinners over the text)" already rules out an
       between-chapters interruption. A reader who keeps reading must never have to dismiss
       anything.
-- [ ] Dismissible and re-findable — a reader who ignores it can still reach that chapter's
-      questions later.
-- [ ] Undigested chapters show nothing at all. ⚠️ Do **not** kick off a thematic run from the
+- [x] Dismissible and re-findable — a reader who ignores it can still reach that chapter's
+      questions later. (Re-findable via the digest page's own question chips, unchanged by
+      this milestone — dismissing the reader's pop-up loses nothing.)
+- [x] Undigested chapters show nothing at all. ⚠️ Do **not** kick off a thematic run from the
       reading path; that is a multi-minute LLM job and belongs to the digest page where the
       reader starts it deliberately.
 
@@ -1275,17 +1278,18 @@ shows nothing and starts no job._
 
 #### B. Your own chapter-level questions
 
-- [ ] The one genuinely new storage shape in the whole triage: a question about a **chapter
+- [x] The one genuinely new storage shape in the whole triage: a question about a **chapter
       as a whole**, with no passage to anchor to. Every highlight today requires an anchor
       (`shared/src/anchorText.ts`, the W3C model in CLAUDE.md's engineering discipline) —
       so this is not a highlight with a null anchor. Give it its own table keyed on
       `(resource_id, spine_index)`.
-- [ ] ⚠️ Do not weaken the highlight anchor model to fit this in. Anchoring is named in
+- [x] ⚠️ Do not weaken the highlight anchor model to fit this in. Anchoring is named in
       CLAUDE.md as the most fragile part of the system; an optional anchor makes every
-      resolution path handle a case that only one feature produces.
-- [ ] Answer-space: reuse the per-highlight `note` pattern (plain text, debounced autosave —
-      `highlightMeta.ts:updateHighlightNote`, 800ms, same as the desk notepad). Not a new
-      editing model.
+      resolution path handle a case that only one feature produces. (`highlights`/anchor
+      code untouched by this milestone.)
+- [x] Answer-space: reuse the per-highlight `note` pattern (plain text, debounced autosave —
+      `annotations/highlights.ts:setHighlightNote`, 800ms, same as the desk notepad). Not a
+      new editing model.
 
 _Acceptance: a chapter question written with no text selected survives a reload and reopens
 against the right chapter; its answer note autosaves without a save button; deleting the
@@ -1299,11 +1303,12 @@ book removes it (foreign key, not orphaned rows)._
 
 #### Verify
 
-- [ ] Read through a chapter boundary in a digested book and confirm the affordance appears
+- [x] Read through a chapter boundary in a digested book and confirm the affordance appears
       without moving the text; then read through one in an undigested book and confirm
-      nothing appears and no job starts.
-- [ ] Write a chapter-level question, reload, and confirm it comes back attached to the same
-      chapter.
+      nothing appears and no job starts. (Driven live via Playwright against the real dev
+      server and a seeded chapter — cleaned up afterward.)
+- [x] Write a chapter-level question, reload, and confirm it comes back attached to the same
+      chapter. (Same live pass; also confirmed the note autosaves and survives reload.)
 
 ### M33 — Touch beyond the reader, and the put-down
 

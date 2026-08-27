@@ -285,7 +285,12 @@
 .questionChip {
   font-size: 0.8rem;
   border: 1px solid var(--color-accent);
-  color: var(--color-accent-text, var(--color-text));
+  /* Not --color-accent-text: found live while building M32 — that token is
+     derived to read *on top of* a solid --color-accent fill (useAccent.ts),
+     and this chip's resting state is transparent over the page's own
+     background, so a custom accent whose derived accent-text is white made
+     the label invisible here. */
+  color: var(--color-text);
   background: transparent;
   border-radius: 999px;
   padding: 0.3rem 0.75rem;

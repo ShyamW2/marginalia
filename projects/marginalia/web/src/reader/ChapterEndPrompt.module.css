@@ -1,0 +1,71 @@
+/* Same fixed-overlay tier as JobToastStack (web/src/jobs/JobToastStack.module.css)
+   — outside `.stage`'s own layer scale (see ReaderView.module.css's head
+   comment), so it never has to reason about the reader's internal z-order.
+   Left corner: JobToastStack already owns the bottom-right. */
+.wrap {
+  position: fixed;
+  left: 1rem;
+  bottom: 1rem;
+  z-index: 50;
+  width: 19rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-raised);
+  box-shadow: 0 6px 18px color-mix(in srgb, black 18%, transparent);
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.label {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.dismiss {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.2rem;
+}
+.dismiss:hover {
+  color: var(--color-text);
+}
+
+.questionRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.questionChip {
+  font-size: 0.78rem;
+  border: 1px solid var(--color-accent);
+  /* Not --color-accent-text: that token is derived to read *on top of* a
+     solid --color-accent fill (useAccent.ts) — this chip's resting state is
+     transparent over the page's own background, so it needs the page's own
+     text colour instead. Confirmed live: a custom accent whose derived
+     accent-text is white made this chip's label invisible against the
+     reader's paper background. */
+  color: var(--color-text);
+  background: transparent;
+  border-radius: 999px;
+  padding: 0.28rem 0.65rem;
+  cursor: pointer;
+  text-align: left;
+}
+.questionChip:hover {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
