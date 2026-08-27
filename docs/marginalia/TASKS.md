@@ -750,13 +750,19 @@ about our gestures. See decisions.md 2026-08-27 (later) for the diagnosis.
       app-wide, not per-room, since both the Scan's pinch (B) and text-resize (C6) will
       need the gesture free everywhere. C6 itself is not built yet; only the zoom-blocking
       half of this pairing exists so far.
-      ⚠️ **Verified live 2026-08-27: still zooms over the book page, not elsewhere.** The
-      listener is on the parent `document`; epub.js renders each section into its own
-      `sandbox="allow-same-origin"` iframe, and DOM events (gesture events included) never
+      ⚠️ **Verified live 2026-08-27: two different pinches, only one of them ours.** The
+      operator's report was "pinch still zooms" — turns out to be two gestures conflated.
+      **Pinch-to-reveal-open-tabs** is iPadOS Safari's own multitasking gesture (same family
+      as pinching closed on the Home Screen); it runs in Safari's native chrome, never
+      reaches the page's content view, and no web-page API — `preventDefault`, `touch-action`,
+      anything — can intercept it. Not a bug, not in scope, not fixable from here, standalone
+      mode or not. **Pinch-to-magnify-the-page-content** is the real target and is still
+      broken: the listener is on the parent `document`, epub.js renders each section into its
+      own `sandbox="allow-same-origin"` iframe, and DOM events (gesture events included) never
       bubble across a frame boundary — the exact fact M31 C2 already names for
       `touchstart`/`move`/`end`, just not yet applied here. A pinch that starts over app
-      chrome outside the iframe is still blocked; one over the page itself is not. Left as
-      a stub rather than chased now — the operator's call, since it is moot the moment this
+      chrome outside the iframe is still blocked; one over the book page itself is not. Left
+      as a stub rather than chased now — the operator's call, since it is moot the moment this
       stops being a bare Safari tab (standalone/Home-Screen mode removes system pinch-zoom
       outright per the note above, and a future native wrapper removes it a second way).
       If it is ever worth fixing in-tab, the fix is C2's: attach the same listener to each
@@ -832,6 +838,27 @@ That distinguishes *wrong offset* from *wrong extent*, and it points at extent.
       the iPad's tab, turn a page, and compare both consoles' numbers and images against the
       same turn done on the Mac** — that comparison is what decides which stage diverges;
       do not apply the CSS-`scale` fallback until it does.
+- [x] **0i.** Found before 0h's console comparison was even run: the operator's Web
+      Inspector session showed no `[marginalia]` log at all after a real page turn — the
+      capture never reached `rasterize`. Console instead showed
+      `Promoted URL from http://www.w3.org/1999/xhtml to https` (Safari's own mixed-content
+      upgrade notice) followed by a CORS failure fetching it. Traced to
+      `inlineCssUrls`/`CSS_URL` (`pageSnapshot.ts`): EPUB content CSS routinely opens with
+      `@namespace url(http://www.w3.org/1999/xhtml);` and/or
+      `@namespace epub url(http://www.idpf.org/2007/ops);` — an XML namespace identifier,
+      never a fetchable asset — and the regex cannot tell that apart from a real
+      `@font-face`/`background` `url()`. The resulting fetch always fails (a real
+      w3.org/idpf.org URL, CORS-blocked from this origin) while costing a full network
+      round-trip, and live on the iPad it was slow enough to plausibly blow
+      `CAPTURE_TIMEOUT_MS` and silently abort the whole capture before `rasterize` ever ran
+      — a more specific candidate than 0g's viewport theory for *why iPad and not the Mac*,
+      if the Mac's earlier pass had a faster path to the same failing request rather than a
+      genuinely different geometry. **Fixed**: `NAMESPACE_RULE` strips `@namespace ...
+      url(...);` from the text `CSS_URL` searches (not from the returned CSS — the
+      declaration itself is harmless and stays), so the namespace's `url()` is never added
+      to the fetch set. Covered by a new `pageSnapshot.test.ts` case; does not by itself
+      confirm or rule out 0g's hypothesis — re-run 0h's comparison now that this stops
+      contaminating it.
 
 _Acceptance: on the iPad — a curl, a slide and a book-opening each show the departing page
 at the same size and position as the live page under it, with no band, no gap and no black.

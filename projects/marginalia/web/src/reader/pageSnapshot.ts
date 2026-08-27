@@ -176,6 +176,24 @@ const OVERFLOW_OVERRIDE = "html,body{overflow:visible !important}";
 const CSS_URL = /url\(\s*(['"]?)([^'")]+)\1\s*\)/g;
 
 /**
+ * `@namespace [prefix] url(...);` declares an XML namespace — EPUB content
+ * CSS routinely opens with `@namespace url(http://www.w3.org/1999/xhtml);`
+ * and/or `@namespace epub url(http://www.idpf.org/2007/ops);` — and its
+ * `url()` is an identifier, never a fetchable resource. `CSS_URL` cannot
+ * tell the two apart on its own, and fetching a real w3.org/idpf.org URL
+ * always fails (CORS) while costing a full network round-trip. Found live
+ * on the iPad (M31 §0h): that failing fetch was slow enough to help blow
+ * `CAPTURE_TIMEOUT_MS`, silently aborting the whole capture before
+ * `rasterize` ever ran — a very plausible reason the iPad-only render bug
+ * (0f) didn't reproduce on the Mac, if that pass had a faster path to the
+ * same failing request rather than a genuinely different geometry. Stripped
+ * from the *search* text only — the rule itself stays in the returned CSS
+ * unchanged, since nothing in `resolved` will ever have an entry for it
+ * either way.
+ */
+const NAMESPACE_RULE = /@namespace\s+(?:[\w-]+\s+)?url\([^)]*\)\s*;/g;
+
+/**
  * Rewrites every `url()` in a stylesheet to an inline `data:` URI.
  *
  * `blob:` and same-origin URLs are both unfetchable from inside an SVG image,
@@ -189,7 +207,7 @@ export async function inlineCssUrls(
   fetchAsset: (url: string) => Promise<string | null>,
 ): Promise<string> {
   const urls = new Set<string>();
-  for (const match of css.matchAll(CSS_URL)) {
+  for (const match of css.replace(NAMESPACE_RULE, "").matchAll(CSS_URL)) {
     const url = match[2]!;
     if (!url.startsWith("data:")) urls.add(url);
   }

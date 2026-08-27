@@ -162,4 +162,21 @@ describe("inlineCssUrls", () => {
     expect(await inlineCssUrls("p{color:red}", fetchAsset)).toBe("p{color:red}");
     expect(fetchAsset).not.toHaveBeenCalled();
   });
+
+  it("never fetches an @namespace declaration's url() — it is an identifier, not an asset", async () => {
+    // M31 §0h, found live on the iPad: EPUB content CSS routinely opens with
+    // exactly these two lines, and a real w3.org/idpf.org fetch always fails
+    // (CORS) while costing a network round-trip the capture cannot afford.
+    const fetchAsset = vi.fn(async () => "data:font/woff2;base64,AAAA");
+    const css =
+      '@namespace url(http://www.w3.org/1999/xhtml);\n' +
+      '@namespace epub url("http://www.idpf.org/2007/ops");\n' +
+      '@font-face { src: url("blob:http://x/abc") format("woff2"); }';
+    const out = await inlineCssUrls(css, fetchAsset);
+    expect(fetchAsset).toHaveBeenCalledTimes(1);
+    expect(fetchAsset).toHaveBeenCalledWith("blob:http://x/abc");
+    expect(out).toContain("@namespace url(http://www.w3.org/1999/xhtml);");
+    expect(out).toContain('@namespace epub url("http://www.idpf.org/2007/ops");');
+    expect(out).toContain('url("data:font/woff2;base64,AAAA")');
+  });
 });
