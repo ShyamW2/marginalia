@@ -162,12 +162,31 @@ doc), never by drift.
    accident). `LibraryGrid` is the keyboard/screen-reader path for the Desk. New library
    presentations — the 3D shelf, or anything after it — are **additional view modes**, never
    replacements. A library you cannot Tab through is a regression regardless of how it looks.
+16. **A highlight kind's identity is its slot, not its presentation** (2026-08-24, M30).
+   `rose|sage|honey|slate` are permanent stored values — what the DB, the scan, the filters
+   and the vault key off. The **label is a setting; the hue is not.** Labels carry no
+   coupling, so readers rename them freely; the four reference hues do, and cannot be handed
+   to a colour picker: `theme.css`'s eight theme-ramp hues were *solved* for maximum minimum
+   pairwise separation against the four kind hues (~28°, where naive 45° spacing reached
+   ~10°), and `scan/scanPalette.ts` carries a second, independent solve for the scan's
+   phosphor translation. A free picker makes hue collision the reader's problem on two
+   surfaces deliberately engineered so it isn't. Renaming a kind never migrates a row, and
+   must never be able to make two kinds indistinguishable on the reader or the scan. Moving
+   a kind hue on purpose (M30 moves `slate` blue→purple) means re-running **both** solves and
+   recording the new minimum separations. *A fifth kind was offered and declined — the four
+   slots already say what was wanted; revisit only when a fifth can be named.*
 
 ## Discipline
 
 ### Product discipline
 - **The highlight is the prompt.** Every AI interaction starts from a selection in the
   text. No free-floating chat box in v1 — it dilutes the core interaction.
+  *Bounded 2026-08-24 (M30's Define button, the first canned-prompt button in the app):*
+  the app may supply the *question* as well as the selection, but **only where the question
+  is fully determined by the selection itself.** "Define this word" is; "summarise this
+  chapter" is not — it needs a scope the selection doesn't carry, and is a different
+  feature. The rule this preserves is that the reader still chooses the subject by
+  selecting it.
 - **Beauty is a requirement, not a coat of paint.** Typography, spacing, motion, and
   dark mode are acceptance criteria. A feature that works but looks clumsy is not done.
 - **Reading comes first.** Marginalia must be a reader you'd choose even with the AI
