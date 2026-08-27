@@ -180,7 +180,11 @@ export function App() {
                 outranks whatever room or instrument is currently on screen. */}
             <ServerStatusBanner />
             {!isReaderRoom && (
-              <NavCluster settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)} />
+              <NavCluster
+                settingsTab={settingsTabForRoom(background?.pathname ?? location.pathname)}
+                settingsOpen={settingsOpen}
+                onCloseSettings={closeSettings}
+              />
             )}
             <main className={styles.main}>
               <Suspense fallback={<div className={styles.routeFallback} />}>
@@ -204,6 +208,8 @@ export function App() {
                         digestOpen={digestId !== null}
                         onCloseScan={closeScan}
                         onCloseDigest={closeDigest}
+                        settingsOpen={settingsOpen}
+                        onCloseSettings={closeSettings}
                       />
                     }
                   />

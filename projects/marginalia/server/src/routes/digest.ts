@@ -109,6 +109,11 @@ function buildDigestStatus(
       characters: showContent ? (digest?.characters ?? []) : [],
       generatedAt: digest?.generatedAt ?? null,
       title: showContent ? (digest?.title ?? null) : null,
+      // Not spoiler-gated, unlike `title` above — the EPUB's own NCX title
+      // (same source `ScanChapter` already surfaces via the Scan's chapter
+      // dial, digested or not), so a chapter without a digest yet still
+      // shows a real name instead of a bare positional fallback.
+      tocTitle: resource.metadata.chapterTitles?.[String(s.spineIndex)] ?? null,
       pastBookmark,
       revealed,
     };

@@ -480,11 +480,17 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
               const t = thematicByIndex.get(c.spineIndex);
               const audio = audioByIndex.get(c.spineIndex);
               const chapterLabel = `S${c.chapterNumber} · ${formatRange(c.startPercent, c.lengthPercent)}`;
+              // The digest's own title wins once it's revealed; otherwise
+              // fall back to the book's own TOC name (never gated — see
+              // `tocTitle`'s schema comment) rather than showing a bare
+              // "S7" for a section that hasn't been digested yet but does
+              // have a real chapter name.
+              const displayTitle = c.title ?? c.tocTitle;
               return (
                 <article key={c.spineIndex} className={styles.chapterCard}>
                   <h3 className={styles.chapterTitle}>
-                    {c.title ?? chapterLabel}
-                    {c.title && <span className={styles.chapterMeta}> — {chapterLabel}</span>}
+                    {displayTitle ?? chapterLabel}
+                    {displayTitle && <span className={styles.chapterMeta}> — {chapterLabel}</span>}
                   </h3>
 
                   {audio && (

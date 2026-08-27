@@ -40,6 +40,27 @@ interface NavClusterProps {
    * App-shell's floating one is suppressed while the reader route is
    * active (App.tsx). */
   registersSlot?: boolean;
+  /** Whether `/settings` is genuinely open right now, from App.tsx's own
+   * (real, un-remapped) location — required for any instance mounted under
+   * a route's `<Routes location>` override (the reader's embedded copy).
+   * `<Routes location>` wraps its matched subtree in a fresh
+   * `LocationContext`, so a `useLocation()` read from in there is pinned to
+   * that route's own path forever and can never see an overlay stacked
+   * above it — exactly the trap App.tsx's own comment on `ReaderPage`
+   * documents for `scanOpen`/`digestOpen`, just never extended to
+   * Settings. Without this prop, this component's own `location.pathname`
+   * check silently always reads "not open", so every `s` press (or click)
+   * takes the "open" branch and stacks another `/settings` entry instead of
+   * closing the one already showing (found live 2026-08-23: "s" n times
+   * needed n Escapes to undo). Omitted (not just falsy) only by the
+   * App-shell's own floating instance, which sits outside any `<Routes
+   * location>` override and reads the real location on its own. */
+  settingsOpen?: boolean;
+  /** Paired with `settingsOpen` — closes it via App.tsx's own `closeSettings`
+   * (which does know the real `background`), rather than this component
+   * trying to read `location.state.background` off a location that isn't
+   * really `/settings`. */
+  onCloseSettings?: () => void;
   className?: string;
 }
 
@@ -50,7 +71,14 @@ interface NavClusterProps {
  * handler and the keyboard path do the same navigation, from the same
  * component, so they can't drift apart.
  */
-export function NavCluster({ settingsTab, floating = true, registersSlot = floating, className }: NavClusterProps) {
+export function NavCluster({
+  settingsTab,
+  floating = true,
+  registersSlot = floating,
+  settingsOpen,
+  onCloseSettings,
+  className,
+}: NavClusterProps) {
   const { choice, setChoice } = useTheme();
   const location = useLocation();
   const navigate = useNavigate();
@@ -68,7 +96,20 @@ export function NavCluster({ settingsTab, floating = true, registersSlot = float
     // Navigating to /settings while already there used to push a second
     // /settings-over-/settings entry — one Escape/`s` closed it back to the
     // first /settings, not to the room, which read as "it takes two goes".
-    if (location.pathname === "/settings") {
+    //
+    // `settingsOpen`/`onCloseSettings` (when passed) are App.tsx's own real
+    // values, not this component's `location.pathname` — this instance may
+    // be mounted under a route's `<Routes location>` override (the reader's
+    // embedded copy), where `location` is pinned to that route's own path
+    // and can never see `/settings` open above it (see the props' own
+    // comment). Falls back to the local check for the App-shell's floating
+    // instance, which isn't under any such override.
+    const isOpen = settingsOpen ?? location.pathname === "/settings";
+    if (isOpen) {
+      if (onCloseSettings) {
+        onCloseSettings();
+        return;
+      }
       const background = (location.state as { background?: Location } | null)?.background;
       if (background) navigate(-1);
       else navigate("/");
@@ -141,12 +182,13 @@ export function NavCluster({ settingsTab, floating = true, registersSlot = float
           proximity-revealed labels was one too many). Still `role="group"`
           over three real, individually-focusable buttons — the thumb is
           `aria-hidden` decoration.
-          M24.7 §C: at the reader's narrow (`<= 600px`) pane, the nav pebble
+          M24.7 §C: in the reader's stacked (narrow) layout, the nav pebble
           shares row 1 with the book's identity and has to give up room —
-          this trio collapses to the single `.themeCycle` button below via a
-          `reader-strip` container query (NavCluster.module.css), never a JS
-          breakpoint. Both stay mounted; only `display` toggles, so nothing
-          here needs to know which form is showing. */}
+          this trio collapses to the single `.themeCycle` button below via
+          the `readerStripStacked` class useReaderStripLayout toggles on
+          `.topRow` (NavCluster.module.css). Both stay mounted; only
+          `display` toggles, so nothing here needs to know which form is
+          showing. */}
       <div className={styles.themeGroup} role="group" aria-label="Theme">
         <div className={styles.themePill}>
           {activeThemeIndex >= 0 && (

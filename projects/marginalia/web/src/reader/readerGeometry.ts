@@ -69,6 +69,30 @@ export function turnZoneForVisibleX(
   return null;
 }
 
+/** M31 A5: how far a press must travel along a dominant horizontal axis
+ * before it is a drag at all. The pointer contract's own number (DESIGN.md,
+ * "The pointer contract"), and deliberately upstream of — and much smaller
+ * than — the fold's commit thresholds (`HINGE_COMMIT_AT`, the slide's 0.35),
+ * which decide whether a *declared* drag lands or springs back. */
+export const DECLARE_DRAG_PX = 6;
+
+/**
+ * Which way a drag on paper turns the page, or `null` while it has not yet
+ * said.
+ *
+ * ⚠️ **The direction is the drag's to give, never the grab point's.** The
+ * spine gutter and the foot of a short page belong to both directions; only
+ * the travel says which (DESIGN.md). The sheet follows the finger: dragging
+ * **left** turns **forward**, dragging **right** turns **back**. A vertical
+ * drag has no dominant horizontal axis and does nothing at all — which is also
+ * what leaves M31 C9's downward departure gesture a clear field.
+ */
+export function declaredTurnDirection(dx: number, dy: number): "prev" | "next" | null {
+  if (Math.abs(dx) < DECLARE_DRAG_PX) return null;
+  if (Math.abs(dx) <= Math.abs(dy)) return null;
+  return dx < 0 ? "next" : "prev";
+}
+
 export interface LeafRect {
   x: number;
   width: number;

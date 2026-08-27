@@ -1,10 +1,16 @@
 /* Positioning lives on this static wrapper, not the motion.div — motion
    drives that element's own `transform` (scale/y) for the pop-in spring, so
    the two can't share one transform without one clobbering the other. */
+/* ⚠️ M31 B1: the pill's own number used to be 5 and the turn grab surface's 6,
+   and since neither `.stage` nor `.pageClip` opens a stacking context those two
+   compared directly — the pill's dots were *under* the page-turn surface and
+   the click went to the turn, not the dot. The order now lives in one place,
+   as a scale documented at the head of `ReaderView.module.css`; this
+   references it rather than restating a number. */
 .pillPosition {
   position: absolute;
   transform: translate(-50%, calc(-100% - 8px));
-  z-index: 5;
+  z-index: var(--reader-z-ask-pill);
 }
 
 .pill {

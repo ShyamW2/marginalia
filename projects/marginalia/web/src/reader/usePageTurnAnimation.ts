@@ -28,7 +28,7 @@ import {
   type FoldAnchor,
   type Point,
 } from "./pageFold.js";
-import { farLeafRect, nearLeafRect } from "./readerGeometry.js";
+import { declaredTurnDirection, farLeafRect, nearLeafRect } from "./readerGeometry.js";
 import { useScene3DAvailable } from "../scene3d/Scene3D.js";
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
@@ -260,10 +260,8 @@ export function usePageTurnAnimation({
    * of one) — jumps straight there in one `rendition.display()` call instead
    * of walking single pages toward it, and is likewise `turnLockRef`-guarded. */
   turnPageSlideToSectionGuarded: (spineIndex: number) => Promise<void>;
-  handleGrabPointerDown: (
-    direction: "prev" | "next",
-    event: React.PointerEvent<HTMLDivElement>,
-  ) => void;
+  /** ⚠️ M31 A5: takes no direction. The press arms; the drag decides. */
+  handleGrabPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
 } {
   const stageControls = useAnimationControls();
   const stageReducedMotion = useReducedMotion();
@@ -800,27 +798,26 @@ export function usePageTurnAnimation({
   // pointer's y, which tilts a crease that should stay parallel to the
   // spine). Shares turnProgress/curl/turnLockRef with the click-triggered
   // fold above — same visual, driven a different way.
-  const handleGrabPointerDown = useCallback(
-    (direction: "prev" | "next", event: React.PointerEvent<HTMLDivElement>) => {
-      if (turnLockRef.current || stageReducedMotion) return;
+  //
+  // ⚠️ **M31 A5: this is the drag proper, and nothing here runs on the press.**
+  // The direction is handed in by `handleGrabPointerDown` below, which will not
+  // call this until the drag has declared a dominant horizontal axis — the grab
+  // surface is now all paper, so which side was pressed can no longer say which
+  // way the page goes (DESIGN.md, "The pointer contract"). `down` is where the
+  // paper was pinched; `declared` is where the pointer was when the axis was
+  // settled, so the sheet picks up mid-gesture rather than snapping.
+  const beginGrabDrag = useCallback(
+    (
+      surface: HTMLDivElement,
+      pointerId: number,
+      direction: "prev" | "next",
+      down: { x: number; y: number },
+      declared: { x: number; y: number },
+    ) => {
       const container = containerRef.current;
       const card = cardRef.current;
       const activeRendition = renditionRef.current;
       if (!container || !card || !activeRendition) return;
-
-      // Without this, the drag's pointermove/up events are only guaranteed
-      // to reach this handler while the pointer stays over the grab
-      // surface — the moment the drag crosses into the epub.js iframe next
-      // to it (the whole point of a page-edge drag gesture), the browser
-      // hands raw pointer events to that iframe's own document instead.
-      // Found live (NOTES.md M10): with a real Chromium pointer drag, that
-      // leaked into epub.js's sandboxed (`allow-scripts` intentionally
-      // absent — `allowScriptedContent: false`) content in a way that
-      // crashed the tab outright, not just misbehaved. Capturing the
-      // pointer keeps every event routed to this element regardless of
-      // where the cursor physically travels, same as native drag/resize
-      // handles.
-      event.currentTarget.setPointerCapture(event.pointerId);
 
       turnLockRef.current = true;
       setGestureActive(true);
@@ -836,22 +833,45 @@ export function usePageTurnAnimation({
       );
       const far = farLeafRect(cardRect.width, cardRect.height, contentWidth, spreadMode, direction);
       const edge: "left" | "right" = direction === "prev" ? "left" : "right";
-      const grabX = event.clientX - cardRect.left - leaf.x;
-      const grabY = event.clientY - cardRect.top;
+      const grabY = down.y - cardRect.top;
       // The pinch is where the paper was grabbed — no band, no snap to the
       // nearer corner, no separate anchor kind for a corner vs. an edge (M27:
       // `EdgePinch` subsumes both, and a mid-edge pinch fans conically exactly
       // as a corner does; see `anchorForPinch`'s own docs for why).
+      //
+      // ⚠️ M31 A5: only the *height* of the grab survives, not its x. The grab
+      // can now be anywhere on the paper — the spine gutter, the foot of the
+      // page, the far leaf's outer margin — while the sheet that peels is
+      // always the near leaf for the declared direction, so a grab x taken in
+      // this leaf's own coordinates is frequently outside it and sometimes
+      // negative. The turning edge is the direction's edge; the grab only says
+      // how high up that edge the paper was taken.
       const anchor = anchorForPinch(edge, grabY, leaf.height);
       const anchorPx = anchorPoint(anchor, leaf.width, leaf.height);
       const dragRange = Math.max(leaf.width * 0.9, 120);
 
-      // Raw and unconstrained, unlike the flat model's `constrainFoldPointer`:
-      // `computeConeFold` (via `hingeRelease`/`PageFold3D`) does its own
-      // constraining internally (`constrainToSpineHinge`), following a pointer
-      // past the paper's reach as far as the binding allows rather than
-      // pinning it to a line up front.
-      pointerRef.current = { x: grabX, y: grabY };
+      /** The fold pointer for a pointer position, in leaf coordinates.
+       *
+       * ⚠️ M31 A5 changed what this means, and the change is load-bearing. It
+       * used to be the raw grab point: fine while the surface was an ellipse
+       * hugging the turning edge, where the grab already sat on the anchor and
+       * `dist` started near zero. Grabbing mid-page would now start the fold
+       * half-turned. So the pinched corner starts *at rest on the anchor* and
+       * moves by the pointer's own travel — "the sheet follows the finger",
+       * literally, and `dist` below becomes distance travelled. For a grab on
+       * the edge (the old case) the two are the same point.
+       *
+       * Raw and unconstrained, unlike the flat model's `constrainFoldPointer`:
+       * `computeConeFold` (via `hingeRelease`/`PageFold3D`) does its own
+       * constraining internally (`constrainToSpineHinge`), following a pointer
+       * past the paper's reach as far as the binding allows rather than
+       * pinning it to a line up front. */
+      const foldPointerFor = (clientX: number, clientY: number) => ({
+        x: anchorPx.x + (clientX - down.x),
+        y: anchorPx.y + (clientY - down.y),
+      });
+
+      pointerRef.current = foldPointerFor(declared.x, declared.y);
       foldArcRef.current = hingeArcTarget(0, leaf.width, leaf.height);
       activeLeafXRef.current = leaf.x;
       readOrigin();
@@ -932,8 +952,7 @@ export function usePageTurnAnimation({
       });
 
       const onMove = (moveEvent: PointerEvent) => {
-        const px = moveEvent.clientX - cardRect.left - leaf.x;
-        const py = moveEvent.clientY - cardRect.top;
+        const { x: px, y: py } = foldPointerFor(moveEvent.clientX, moveEvent.clientY);
         pointerRef.current = { x: px, y: py };
         // Progress follows the *pointer*, not any constrained fold point: an
         // edge peel that refuses to tilt should still commit when you drag
@@ -962,8 +981,6 @@ export function usePageTurnAnimation({
         }
       };
 
-      const surface = event.currentTarget;
-      const pointerId = event.pointerId;
       let finished = false;
       let poll = 0;
       let deadman = 0;
@@ -1079,9 +1096,12 @@ export function usePageTurnAnimation({
               );
             }
           } else {
-            // Snapshot never resolved before release (a very fast tap) — no
-            // fold was ever visible, so treat it as a plain click-to-turn
-            // rather than silently doing nothing.
+            // Snapshot never resolved before release (a very fast flick) — no
+            // fold was ever visible, so run the turn as an animated one rather
+            // than silently doing nothing. ⚠️ This is *not* a click: since M31
+            // A5 nothing reaches here without a declared horizontal drag, so
+            // the reader did ask for a page turn and is owed one; it just
+            // outran the capture.
             turnLockRef.current = false;
             await withDeadline(turnPage(direction), RENDITION_STEP_MS + SETTLE_ANIM_MS);
           }
@@ -1129,7 +1149,6 @@ export function usePageTurnAnimation({
     },
     [
       turnProgress,
-      stageReducedMotion,
       spreadMode,
       turnPage,
       captureCard,
@@ -1143,6 +1162,88 @@ export function usePageTurnAnimation({
       renditionRef,
       readOrigin,
     ],
+  );
+
+  /**
+   * M31 A5, "direction from the drag, not the grab point" (DESIGN.md, "The
+   * pointer contract"). The press only *arms*: it takes pointer capture and
+   * then watches. Nothing is snapshotted, nothing is advanced and nothing is
+   * painted until the pointer has travelled `DECLARE_DRAG_PX` along a dominant
+   * horizontal axis — dragging **left** turns forward, **right** turns back,
+   * and the sheet follows the finger from there.
+   *
+   * A press that never declares — a plain click, a vertical drag — releases
+   * the capture and does nothing at all. That is the whole of "a click never
+   * turns a page", and it also retires the advance-and-step-back a stray press
+   * on the old edge strip used to cost.
+   *
+   * ⚠️ The axis stays under review for the life of the press rather than being
+   * judged once: a reader who starts a peel with a small downward wobble is
+   * still starting a peel, and the gesture should find them.
+   */
+  const handleGrabPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (turnLockRef.current) return;
+      const surface = event.currentTarget;
+      const pointerId = event.pointerId;
+      const down = { x: event.clientX, y: event.clientY };
+
+      // Taken at pointerdown, before the drag has declared, and it has to be:
+      // capture needs a real parent-document `pointerdown` (the pointer
+      // contract's invariant 2), and by the time 6px have been travelled the
+      // pointer may already be over the sandboxed epub.js iframe, where there
+      // is no second chance to ask for it. See `beginGrabDrag` for what an
+      // uncaptured drag across that iframe did (NOTES.md M10 — a tab crash).
+      surface.setPointerCapture(pointerId);
+
+      const detach = () => {
+        window.removeEventListener("pointermove", onArmMove);
+        window.removeEventListener("pointerup", onArmEnd);
+        window.removeEventListener("pointercancel", onArmEnd);
+        surface.removeEventListener("lostpointercapture", onArmEnd);
+      };
+
+      function onArmMove(moveEvent: PointerEvent) {
+        if (moveEvent.pointerId !== pointerId) return;
+        const direction = declaredTurnDirection(
+          moveEvent.clientX - down.x,
+          moveEvent.clientY - down.y,
+        );
+        if (!direction) return;
+        detach();
+        // ⚠️ Reduced motion still turns the page. Before M31 A1 a reader with
+        // `prefers-reduced-motion` set turned pages by *clicking* the turn
+        // zone — the grab surface was suppressed entirely, since there is no
+        // peel to drag. Retiring the click without this branch would have left
+        // them the `‹ ›` buttons and the arrow keys and nothing else on the
+        // page itself, which is the contract quietly not applying to them. The
+        // gesture is the same; only the animation is dropped, which is what
+        // `resolveRenderer`'s "instant" already means everywhere else.
+        if (stageReducedMotion) {
+          if (surface.hasPointerCapture(pointerId)) surface.releasePointerCapture(pointerId);
+          void turnPage(direction);
+          return;
+        }
+        beginGrabDrag(surface, pointerId, direction, down, {
+          x: moveEvent.clientX,
+          y: moveEvent.clientY,
+        });
+      }
+
+      function onArmEnd() {
+        detach();
+        // Handing the capture back matters: the surface is a live element the
+        // reader keeps pointing at, and a capture left on it would swallow
+        // hovers over the page underneath until the next press.
+        if (surface.hasPointerCapture(pointerId)) surface.releasePointerCapture(pointerId);
+      }
+
+      window.addEventListener("pointermove", onArmMove);
+      window.addEventListener("pointerup", onArmEnd);
+      window.addEventListener("pointercancel", onArmEnd);
+      surface.addEventListener("lostpointercapture", onArmEnd);
+    },
+    [beginGrabDrag, stageReducedMotion, turnPage],
   );
 
   return {

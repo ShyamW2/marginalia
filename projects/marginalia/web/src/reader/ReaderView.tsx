@@ -80,7 +80,7 @@ import { fetchSectionManifest, updateAudioState } from "../audio/audioApi.js";
 import { resolveSegmentIndexForOffset } from "../audio/segmentLookup.js";
 import { CastingModal } from "../audio/CastingModal.js";
 import { captureOverlayOrigin, type OverlayOrigin } from "../controls/overlayOrigin.js";
-import { cursorPastPageText } from "./pageTextEdge.js";
+import { cursorPastPageText, pointIsOverInk } from "./pageTextEdge.js";
 import { PageFold3D } from "./PageFold3D.js";
 import { FarLeafCover } from "./FarLeafCover.js";
 import { PageSlide } from "./PageSlide.js";
@@ -626,7 +626,6 @@ export function ReaderView({
   const [pageTransition, setPageTransition] = useState<PageTransition>("slide");
   const {
     stageControls,
-    stageReducedMotion,
     curl,
     slide,
     gestureActive,
@@ -647,9 +646,10 @@ export function ReaderView({
     spreadMode,
     pageTransition,
   });
-  // The book-loading effect's internal handlers (keydown, click-to-turn)
-  // close over `rendition` directly and don't re-run per-render, so they
-  // reach the current turnPage through this ref rather than a stale closure.
+  // The book-loading effect's internal handlers (keydown, and the audio
+  // auto-turn) close over `rendition` directly and don't re-run per-render, so
+  // they reach the current turnPage through this ref rather than a stale
+  // closure. (It used to be named for click-to-turn, retired at M31 A1.)
   const turnPageRef = useRef<(direction: "prev" | "next") => void>(() => {});
   // Same story, for M12's `[`/`]` chapter-jump shortcuts — jumpToChapter
   // depends on `toc`/`currentSpineIndex` render state, not stable across
@@ -737,6 +737,11 @@ export function ReaderView({
   const [unanchoredIds, setUnanchoredIds] = useState<Set<string>>(new Set());
   const [pendingSelection, setPendingSelection] =
     useState<PendingSelection | null>(null);
+  // Read from `hasLiveSelection` (M31 A7), which runs inside a pointerdown
+  // handler and must see the current value rather than the one this render
+  // closed over — the same ref-mirror pattern as focusModeRef/themeVarsRef.
+  const pendingSelectionRef = useRef<PendingSelection | null>(null);
+  pendingSelectionRef.current = pendingSelection;
   // Reopening a book always restores threads collapsed (SPEC) — this state
   // is local and resets to null on every mount, no persistence needed.
   const [expandedThread, setExpandedThread] = useState<{
@@ -1121,11 +1126,25 @@ export function ReaderView({
     { key: SHORTCUT_KEYS.find, meta: true, handler: handleFindShortcut, allowWhileTyping: true },
   ]);
 
-  // M11 semicircular turn zones: which edge (if any) the pointer is
-  // currently hovering, driving both the parent-document vignette and the
-  // directional cursor written onto the iframe body — see
-  // handleContentMouseMove in the book-loading effect below.
-  const [turnZoneHover, setTurnZoneHover] = useState<"prev" | "next" | null>(null);
+  // M11's semicircular turn zones announced *click*-to-turn, and M31 A6
+  // retired that: an affordance may not outlive its gesture (the pointer
+  // contract's invariant 5). What is left is one boolean — is the pointer on
+  // grabbable paper? — driving the same two edge vignettes together, because
+  // paper is now the whole page outside the ink and the direction is no longer
+  // a property of *where* you press. The directional `w-resize`/`e-resize`
+  // cursor is gone with it; over paper the grab surface's own `cursor: grab`
+  // says the true thing, and over ink the iframe keeps its own cursor.
+  const [paperHover, setPaperHover] = useState(false);
+  // M31 A3/A4: `.turnGrabSurface` — one element over the whole page, whose
+  // `pointer-events` follow the live ink/paper answer. Written as an inline
+  // style rather than through React state on purpose: this changes on
+  // mousemove, and a render per pointer move is exactly what the rest of this
+  // file's hover handling already refuses to pay.
+  const grabSurfaceRef = useRef<HTMLDivElement | null>(null);
+  // ⚠️ Frozen for the life of a press. The ink/paper decision belongs to the
+  // moment the paper was taken; letting it change under a live gesture would
+  // move `pointer-events` on the element currently holding pointer capture.
+  const pointerHeldRef = useRef(false);
   // The content document the cursor was last set on, so it can be cleared
   // when the pointer leaves the stage entirely from the *parent* document's
   // side (a plain onPointerLeave on the container — mousemove inside the
@@ -1145,6 +1164,169 @@ export function ReaderView({
     el.style.fillOpacity = "";
     hoveredMarkElRef.current = null;
   }
+
+  // ── M31 A3/A4/A6/A7: the grab surface steps aside ─────────────────────────
+  //
+  // The pointer contract's invariant 1: *nothing in the parent document may
+  // hold pointer events over ink.* An overlay above the epub iframe does not
+  // merely make selection awkward there — the iframe never hears the press at
+  // all, which is why you could not start a highlight on the first character
+  // of a line at the page edge. Invariant 2 says the fix is not to delete the
+  // surface: it needs `setPointerCapture`, capture needs a real
+  // parent-document `pointerdown`, and an uncaptured drag crossing the
+  // sandboxed iframe is a reproduced tab crash (NOTES.md M10). So it steps
+  // aside instead, live, on every pointer move.
+
+  /** Whether `.turnGrabSurface` currently holds pointer events. Mirrors the
+   * inline style rather than owning it, so the two cannot disagree. */
+  const grabArmedRef = useRef(false);
+  /** ⚠️ The surface is armed for a **mouse or pen only**, and starts disarmed
+   * (`pointer-events: none` is its CSS default). Touch is M31 C's job and does
+   * not exist yet: arming for a finger would mean every touch anywhere on the
+   * page landed on a parent-document overlay instead of the text, which is
+   * invariant 1 broken for touch exactly as it was for the mouse. Until C, a
+   * finger simply never meets this element. iOS synthesises a mousemove after
+   * a tap, so this is tracked rather than assumed. */
+  const pointerTypeRef = useRef<string>("mouse");
+
+  function setGrabSurfaceArmed(armed: boolean) {
+    if (grabArmedRef.current === armed) return;
+    grabArmedRef.current = armed;
+    const surface = grabSurfaceRef.current;
+    if (surface) surface.style.pointerEvents = armed ? "auto" : "none";
+    setPaperHover(armed);
+  }
+
+  /** Every rendered section's contents. ⚠️ epub.js's own `.d.ts` says this
+   * returns one `Contents`; the implementation returns an array (one per
+   * rendered view), and in a spread there can be two. */
+  function renderedContents(): Contents[] {
+    const result = renditionRef.current?.getContents() as unknown;
+    if (Array.isArray(result)) return result as Contents[];
+    return result ? [result as Contents] : [];
+  }
+
+  /** The ink test for a point in the *parent* document's coordinates.
+   *
+   * ⚠️ The `containerRef` bound is not a nicety. epub.js lays each section out
+   * in one enormously wide multi-column iframe and reveals the current page by
+   * shifting the iframe element itself inside an overflow-clipped container —
+   * so the iframe's own `getBoundingClientRect()` spans far off both sides of
+   * the visible page, and a point out in the reader's margin maps cleanly onto
+   * a glyph in a column nobody can see. Without this bound the outer margin —
+   * the single most important piece of paper on the page — reports ink. */
+  function pointerOverInkAt(viewportX: number, viewportY: number): boolean {
+    const container = containerRef.current;
+    if (!container) return false;
+    const bounds = container.getBoundingClientRect();
+    if (
+      viewportX < bounds.left ||
+      viewportX > bounds.right ||
+      viewportY < bounds.top ||
+      viewportY > bounds.bottom
+    ) {
+      return false;
+    }
+    for (const contents of renderedContents()) {
+      const frame = contents.document.defaultView?.frameElement as HTMLElement | null | undefined;
+      if (!frame) continue;
+      const rect = frame.getBoundingClientRect();
+      if (pointIsOverInk(contents.document, viewportX - rect.left, viewportY - rect.top)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** ⚠️ Frozen while a press is down (`pointerHeldRef`): the ink/paper
+   * decision belongs to the moment the paper was taken, and moving
+   * `pointer-events` on the element that is currently holding pointer capture
+   * is not something to find out about live. */
+  function updatePointerOverPaper(
+    contents: Contents | null,
+    local: { x: number; y: number } | null,
+    viewport: { x: number; y: number },
+  ) {
+    // ⚠️ `isPointerDownInContentRef` is the M19.6 dwell's own guard, and it is
+    // load-bearing here for a second reason: a drag-selection held out past
+    // the last word on the page is *over paper*, and re-arming the surface
+    // under it would put a parent-document element in the middle of a live
+    // native selection drag. The answer taken at mousedown is the answer for
+    // the whole press, from either side.
+    if (pointerHeldRef.current || isPointerDownInContentRef.current) return;
+    if (pointerTypeRef.current !== "mouse" && pointerTypeRef.current !== "pen") {
+      setGrabSurfaceArmed(false);
+      return;
+    }
+    const overInk =
+      contents && local
+        ? pointIsOverInk(contents.document, local.x, local.y)
+        : pointerOverInkAt(viewport.x, viewport.y);
+    setGrabSurfaceArmed(!overInk);
+  }
+
+  /** The parent document's half of the ink/paper stream. Fires for the outer
+   * margin, the gutter beside the iframe, and for the grab surface itself
+   * while it is armed — everything except the inside of the iframe, whose
+   * events never bubble out here and which `handleContentMouseMove` covers. */
+  function handleStagePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    pointerTypeRef.current = event.pointerType;
+    const target = event.target as HTMLElement | null;
+    // Panels, the pill, the definition card and the pane-resize handle are
+    // siblings of `.pageClip`, not children — a hover over one of them is not
+    // a hover over paper, and must neither arm the grab nor light the glow.
+    if (!target?.closest(`[data-page-surface]`)) {
+      setGrabSurfaceArmed(false);
+      return;
+    }
+    updatePointerOverPaper(null, null, { x: event.clientX, y: event.clientY });
+  }
+
+  /** Invariant 3: *a live selection disarms every turn gesture.* Today a press
+   * on the grab surface mid-selection starts a curl, which destroys the
+   * selection and costs an advance and a step back for nothing. The surface
+   * stays armed so the press is swallowed rather than falling through to the
+   * iframe, where the native mousedown would collapse the selection — the
+   * acceptance criterion is that holding a selection and pressing the outer
+   * margin leaves it *intact*. The M19.6 dwell is the one exception and runs
+   * on a different path entirely. */
+  function hasLiveSelection(): boolean {
+    if (pendingSelectionRef.current) return true;
+    return renderedContents().some((contents) =>
+      Boolean(contents.window.getSelection()?.toString()),
+    );
+  }
+
+  function handleGrabSurfacePointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    pointerTypeRef.current = event.pointerType;
+    if (event.pointerType !== "mouse" && event.pointerType !== "pen") {
+      // A finger that reached this element at all means the arming above got
+      // it wrong (an iOS-synthesised mousemove, most likely). Stand down so
+      // the *next* touch reaches the text, and swallow this one rather than
+      // starting a gesture touch has no contract for until M31 C.
+      setGrabSurfaceArmed(false);
+      return;
+    }
+    if (hasLiveSelection()) return;
+    pointerHeldRef.current = true;
+    handleGrabPointerDown(event);
+  }
+
+  // The other end of `pointerHeldRef`. Window-level rather than on the surface
+  // because a press that took pointer capture can end anywhere — including
+  // after the surface itself has unmounted mid-gesture, which is the case
+  // `gestureActive` exists to make survivable (PAGE_CURL.md §9).
+  useEffect(() => {
+    function release() {
+      pointerHeldRef.current = false;
+    }
+    window.addEventListener("pointerup", release);
+    window.addEventListener("pointercancel", release);
+    return () => {
+      window.removeEventListener("pointerup", release);
+      window.removeEventListener("pointercancel", release);
+    };
+  }, []);
 
   // M19.6 "highlight across a page boundary" (decisions.md 2026-07-30
   // later): holding a drag-selection at the page edge dwells ~2s, then
@@ -1178,7 +1360,7 @@ export function ReaderView({
     // in progress is exactly the same kind of turn-zone affordance, so it
     // cancels here too.
     if (!focusMode) return;
-    setTurnZoneHover(null);
+    setPaperHover(false);
     cancelDwell();
     if (lastContentsWithCursorRef.current) {
       lastContentsWithCursorRef.current.document.body.style.cursor = "";
@@ -1957,16 +2139,26 @@ export function ReaderView({
         | HTMLElement
         | null
         | undefined;
-      const container = containerRef.current;
-      if (!iframeEl || !container) return;
+      // ⚠️ M31 B2, confirmed by reading the stack rather than by guessing:
+      // `AskPill` is `position: absolute` and renders as a **direct child of
+      // `.stage`** (outside `.pageClip`, so a panel can roam past the page's
+      // own edge), so `.stage` is its containing block and the only box these
+      // numbers may be measured against. They used to be measured against
+      // `.epubContainer` — which is inset from `.stage` by `.marginWrapper`'s
+      // padding, i.e. by the reader's *margin setting*. The pill was therefore
+      // drawn short of the selection by exactly that margin, up and to the
+      // left, and moved further off the more generous the margin got. That is
+      // part of why it kept landing in the turn zone.
+      const stage = stageRef.current;
+      if (!iframeEl || !stage) return;
 
       const iframeRect = iframeEl.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
       const rangeRect = range.getBoundingClientRect();
 
       const rawLeft =
-        iframeRect.left + rangeRect.left + rangeRect.width / 2 - containerRect.left;
-      const rawTop = iframeRect.top + rangeRect.top - containerRect.top;
+        iframeRect.left + rangeRect.left + rangeRect.width / 2 - stageRect.left;
+      const rawTop = iframeRect.top + rangeRect.top - stageRect.top;
 
       setPendingSelection({
         cfi: cfiRange,
@@ -1977,7 +2169,7 @@ export function ReaderView({
         contents,
         // Clamp so a selection right at the edge of the visible page can't
         // push the pill (which renders above the selection) off-screen.
-        left: Math.min(Math.max(rawLeft, 40), containerRect.width - 40),
+        left: Math.min(Math.max(rawLeft, 40), stageRect.width - 40),
         top: Math.max(rawTop, 40),
       });
     }
@@ -2014,6 +2206,24 @@ export function ReaderView({
       return null;
     }
 
+    /**
+     * ⚠️ **M31 A1: a click never turns a page.** This handler used to end by
+     * translating the click into container space, asking
+     * `turnZoneForVisibleX` which edge band it fell in, and turning — and that
+     * is retired deliberately, not trimmed for tidiness. A click-turn band
+     * wide enough to hit is a band wide enough to swallow the start of a
+     * highlight, and no redivision of the page fixes it: the two gestures
+     * overlap by nature (DESIGN.md, "The pointer contract"; decisions.md
+     * 2026-08-27). Page turns now come from `←`/`→`, the foot's `‹ ›`, and a
+     * drag on paper.
+     *
+     * ⚠️ `turnZoneForVisibleX` itself survives and is still imported — it is
+     * the region M19.6's dwell listens in (invariant 4), not a click target.
+     * Deleting it silently removes highlighting across a page boundary.
+     *
+     * What is left is the two jobs that were never about turning: don't
+     * swallow a real link, and dismiss a pending pill.
+     */
     function handleContentClick(event: MouseEvent, contents: Contents) {
       const target = event.target as HTMLElement | null;
       // Old Gutenberg-style markup often has unclosed `<a id="...">` bookmark
@@ -2022,46 +2232,17 @@ export function ReaderView({
       if (target?.closest("a[href]")) return;
       if (contents.window.getSelection()?.toString()) return;
       setPendingSelection(null);
-
-      // epub.js's paginated flow renders the whole section into one wide
-      // multi-column iframe and reveals the current page via scroll offset,
-      // so event.clientX is relative to that wide canvas, not the visible
-      // viewport. Translate through the iframe's own screen position to get
-      // a coordinate relative to our (viewport-sized) container instead.
-      const iframeEl = contents.document.defaultView?.frameElement as
-        | HTMLElement
-        | null
-        | undefined;
-      const container = containerRef.current;
-      if (!iframeEl || !container) return;
-
-      const iframeRect = iframeEl.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-
-      // A click that lands on a highlight mark is that mark's own action
-      // (handleMarkClicked, above) — never a page turn, even inside a turn
-      // zone. Viewport-relative coordinates (not container-relative
-      // visibleX below), since that's what the marks' own
-      // getBoundingClientRect() is in.
-      if (findMarkAtViewportPoint(iframeRect.left + event.clientX, iframeRect.top + event.clientY)) {
-        return;
-      }
-
-      const visibleX = iframeRect.left + event.clientX - containerRect.left;
-      const zone = turnZoneForVisibleX(visibleX, containerRect.width);
-
-      if (zone === "prev") turnPageRef.current("prev");
-      else if (zone === "next") turnPageRef.current("next");
     }
     rendition.on("click", handleContentClick);
 
-    // M11 semicircular turn zones (DESIGN.md 2026-07-20 entry): a directional
-    // cursor and a soft vignette announce the click-turn zones above without
-    // adding an interactive overlay over the iframe — that would kill text
-    // selection. The cursor is written straight onto the iframe's own body
-    // (the one thing we're allowed to touch from in here); the vignette is a
-    // pointer-events:none sibling in the parent document, driven by this
-    // same hover state.
+    // The forwarded mousemove does three jobs at once: the iframe's own
+    // cursor, the mark hover boost, and M19.6's dwell. Since M31 A3 it also
+    // feeds the ink/paper answer that drives the grab surface — this is the
+    // half of that stream that fires while the surface is standing aside
+    // (`pointer-events: none` over ink); `handleStagePointerMove` in the
+    // parent document is the other half. Between them they cover the page,
+    // and neither can cover it alone: events inside the sandboxed iframe
+    // never bubble out, and the outer margin is not inside the iframe.
     function handleContentMouseMove(event: MouseEvent, contents: Contents) {
       const iframeEl = contents.document.defaultView?.frameElement as
         | HTMLElement
@@ -2079,28 +2260,32 @@ export function ReaderView({
         ? null
         : turnZoneForVisibleX(visibleX, containerRect.width);
 
+      // M31 A3: the surface steps aside over ink and takes the page back over
+      // paper. Fed the *iframe's* own coordinates here — this handler only
+      // ever fires for a point inside it — rather than re-deriving them.
+      updatePointerOverPaper(
+        contents,
+        { x: event.clientX, y: event.clientY },
+        { x: viewportX, y: viewportY },
+      );
+
       // M20.7 "per-room cursors" — precedence, written down per the
-      // TASKS.md warning: (1) a turn zone always wins, regardless of the
-      // cursorStyle setting — it's a functional gesture affordance, not
-      // room decor, and DESIGN.md's Room 2 notes are explicit that this
-      // room otherwise stays still; (2) failing that, cursorStyle "custom"
-      // shows the reader's own accent — a fine nib, i.e. an explicit
+      // TASKS.md warning. ⚠️ **M31 A6 removed the first rung**: the
+      // directional `w-resize`/`e-resize` a turn zone used to force is gone,
+      // because clicking a turn zone no longer turns and an affordance may not
+      // outlive its gesture (invariant 5). Over paper the reader now gets the
+      // grab surface's own `cursor: grab`, which is a parent-document element
+      // and needs nothing written in here. What remains: (1) cursorStyle
+      // "custom" shows the reader's own accent — a fine nib, i.e. an explicit
       // `text` cursor — but only while a selection actually exists in this
       // section, per DESIGN.md ("Cursor may switch to a fine I-beam/nib
-      // during selection, nothing more"); (3) otherwise the inline style is
+      // during selection, nothing more"); (2) otherwise the inline style is
       // cleared so the iframe's native default applies untouched, which is
       // also exactly what "system" gets everywhere in this room.
       const hasSelection = Boolean(contents.window.getSelection()?.toString());
       lastContentsWithCursorRef.current = contents;
       contents.document.body.style.cursor =
-        zone === "prev"
-          ? "w-resize"
-          : zone === "next"
-            ? "e-resize"
-            : cursorStyleRef.current === "custom" && hasSelection
-              ? "text"
-              : "";
-      setTurnZoneHover((prev) => (prev === zone ? prev : zone));
+        cursorStyleRef.current === "custom" && hasSelection ? "text" : "";
 
       // M16 "highlights pop on hover": marks-pane's SVG overlay is
       // pointer-events:none (its own library default), so real CSS :hover
@@ -2847,7 +3032,10 @@ export function ReaderView({
    * entirely (into the parent document, or out of the window) — this
    * catches that case so the vignette/cursor don't get stuck lit. */
   function handleStagePointerLeave() {
-    setTurnZoneHover(null);
+    // M31 A3: the surface stands down on the way out, so the page is never
+    // left with a parent-document overlay armed over text nobody is pointing
+    // at — and so re-entry starts from a known state.
+    setGrabSurfaceArmed(false);
     if (lastContentsWithCursorRef.current) {
       lastContentsWithCursorRef.current.document.body.style.cursor = "";
     }
@@ -3216,9 +3404,16 @@ export function ReaderView({
             stageRef.current = node;
             if (externalStageRef) externalStageRef.current = node;
           }}
+          onPointerMove={handleStagePointerMove}
           onPointerLeave={handleStagePointerLeave}
         >
-          <div className={styles.pageClip} ref={pageClipRef}>
+          {/* `data-page-surface`: everything inside this box is the page
+              itself — paper, ink, and the turn gesture's own decorations.
+              `handleStagePointerMove` (M31 A3) uses it to tell a hover over
+              the page from a hover over the pill, a thread panel or the
+              pane-resize handle, which are siblings of this element rather
+              than children and are emphatically not paper. */}
+          <div className={styles.pageClip} ref={pageClipRef} data-page-surface>
             {/* M20 step 3 "the next page slides over": while a slide is
                 live this is the *incoming* page — it gets a stacking context
                 above the departing card below it and its own opaque paper, so
@@ -3282,50 +3477,69 @@ export function ReaderView({
                 refused={dwellRing.refused}
               />
             )}
+            {/* M31 A6, invariant 5 — "an affordance may not outlive its
+                gesture". These two ellipses used to light one at a time, by
+                which click-turn zone the cursor was in; clicking no longer
+                turns, and the direction is no longer a property of where you
+                press, so a one-sided glow would be advertising a direction the
+                page does not have. They light *together*, and only while the
+                pointer is on grabbable paper — the honest statement being "the
+                sheet can be taken here", not "this side goes forward". Which
+                way it goes is the drag's to say. */}
             {!focusMode && (
               <>
                 <div
                   aria-hidden="true"
                   className={`${styles.turnZoneVignette} ${styles.turnZoneVignetteLeft} ${
-                    turnZoneHover === "prev" ? styles.turnZoneVignetteVisible : ""
+                    paperHover ? styles.turnZoneVignetteVisible : ""
                   }`}
                 />
                 <div
                   aria-hidden="true"
                   className={`${styles.turnZoneVignette} ${styles.turnZoneVignetteRight} ${
-                    turnZoneHover === "next" ? styles.turnZoneVignetteVisible : ""
+                    paperHover ? styles.turnZoneVignetteVisible : ""
                   }`}
                 />
               </>
             )}
-            {/* M20 "grab anywhere in the outer band": the old 18px edgeGrab
-                strips are retired — the M11 semicircular zone shape
-                (turnZoneVignette above) becomes the grab surface itself,
-                just with pointer-events enabled and a real onPointerDown,
-                so the fold anchors to whichever corner is nearest the grab
-                point instead of always the same edge-centred hinge. It
-                stays an ellipse hugging the very edge (not the full 30%
-                click-turn zone) so the rest of the band is still free for
-                text selection. */}
-            {/* `|| gestureActive`: the element holding the pointer capture
-                may not unmount while a drag is live. If it does — which a
+            {/* M31 A4: **one surface, over all the paper** — outer margins,
+                spine gutter, below the last line, a blank verso. M20's two
+                edge-hugging ellipses were a compromise with the ink they sat
+                on top of ("the rest of the band is still free for text
+                selection"), and that compromise is what made the very edge of
+                a line unselectable. There is no compromise left to make: the
+                surface's `pointer-events` follow the live ink/paper answer
+                (`setGrabSurfaceArmed`), so it only ever exists where there is
+                no text to steal a press from. It is still a parent-document
+                element and still takes pointer capture — invariant 2, and
+                NOTES.md M10's tab crash is why.
+
+                `|| gestureActive`: the element holding the pointer capture may
+                not unmount while a drag is live. If it does — which a
                 re-pagination mid-drag would do by flipping `status` to
-                loading — capture is released to the sandboxed epub.js
-                iframe, the page stops receiving pointer input, and the
-                gesture never hears that it ended (PAGE_CURL.md §9). */}
-            {(status === "ready" || gestureActive) && !stageReducedMotion && (
-              <>
-                <div
-                  className={`${styles.turnGrabSurface} ${styles.turnGrabSurfaceLeft}`}
-                  aria-hidden="true"
-                  onPointerDown={(event) => handleGrabPointerDown("prev", event)}
-                />
-                <div
-                  className={`${styles.turnGrabSurface} ${styles.turnGrabSurfaceRight}`}
-                  aria-hidden="true"
-                  onPointerDown={(event) => handleGrabPointerDown("next", event)}
-                />
-              </>
+                loading — capture is released to the sandboxed epub.js iframe,
+                the page stops receiving pointer input, and the gesture never
+                hears that it ended (PAGE_CURL.md §9). */}
+            {/* ⚠️ Not gated on `stageReducedMotion` since M31 A5. It used to be —
+                there is no peel to drag under reduced motion — but with
+                click-to-turn retired that left a reduced-motion reader with no
+                way to turn a page *on the page*. The gesture is the same; the
+                drag just commits an instant turn (see `handleGrabPointerDown`). */}
+            {(status === "ready" || gestureActive) && (
+              <div
+                // A callback ref, not a plain one: this element unmounts and
+                // remounts across a re-pagination, and the armed state lives
+                // in an inline style (a render per pointer move is not
+                // affordable) — which a remount would silently drop back to
+                // the CSS default while `grabArmedRef` still said "armed".
+                ref={(node) => {
+                  grabSurfaceRef.current = node;
+                  if (node) node.style.pointerEvents = grabArmedRef.current ? "auto" : "none";
+                }}
+                className={styles.turnGrabSurface}
+                aria-hidden="true"
+                onPointerDown={handleGrabSurfacePointerDown}
+              />
             )}
             {status === "loading" && (
               <div className={styles.overlay}>Loading book…</div>

@@ -51,9 +51,23 @@ interface ReaderPageProps {
   digestOpen?: boolean;
   onCloseScan?: () => void;
   onCloseDigest?: () => void;
+  /** Same story as `scanOpen`/`digestOpen` above, for Settings: App.tsx's
+   * real, un-remapped open-state, threaded down for the embedded
+   * `NavCluster`'s "s" toggle (see `NavCluster`'s `settingsOpen` prop
+   * comment for why this room's own `useLocation()` can't tell on its
+   * own). */
+  settingsOpen?: boolean;
+  onCloseSettings?: () => void;
 }
 
-export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }: ReaderPageProps) {
+export function ReaderPage({
+  scanOpen,
+  digestOpen,
+  onCloseScan,
+  onCloseDigest,
+  settingsOpen,
+  onCloseSettings,
+}: ReaderPageProps) {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -290,6 +304,8 @@ export function ReaderPage({ scanOpen, digestOpen, onCloseScan, onCloseDigest }:
             initialAutoplay={initialLocationState?.listenOnOpen}
             onOpenDigest={handleOpenDigest}
             onOpenScan={handleOpenScan}
+            settingsOpen={settingsOpen}
+            onCloseSettings={onCloseSettings}
             onPublish={handlePublish}
             publishing={publishing}
             scanButtonRef={scanButtonRef}

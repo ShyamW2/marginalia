@@ -16,7 +16,7 @@
   inset: 0;
   overflow: hidden;
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--reader-z-departing-page);
 }
 
 /* Sized and offset inline from the CardLayout, in the card's own CSS px —

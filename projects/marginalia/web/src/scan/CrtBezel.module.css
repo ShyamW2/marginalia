@@ -16,6 +16,17 @@
     0 1px 0 rgba(255, 255, 255, 0.06) inset,
     0 24px 60px rgba(0, 0, 0, 0.5),
     0 4px 14px rgba(0, 0, 0, 0.35);
+  /* `height: 100%` (not just `max-height`) is what actually bounds this —
+     without it the flex column has no definite cross size, so `.screen`'s
+     `flex: 1` has no extra space to claim and the whole chassis just grows
+     to fit its content instead of filling the panel. That left `.screen`'s
+     `overflow: hidden` clipping nothing (there was never any overflow to
+     clip) and ScanPage's own `overflow-y: auto` inert for the same reason —
+     the Scan looked unscrollable because nothing upstream of it was ever
+     actually constrained (found live 2026-08-23: the Digest spotlight's
+     FROM/TO controls fell off the bottom of the CRT screen with no way to
+     reach them). */
+  height: 100%;
   max-height: 100%;
   min-height: 0;
 }

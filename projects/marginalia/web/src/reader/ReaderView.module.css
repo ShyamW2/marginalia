@@ -1,3 +1,64 @@
+/* ── The reader's layer scale ────────────────────────────────────────────────
+ *
+ * ⚠️ **One place, one order.** M31 B1: `AskPill` sat at 5 and the turn grab
+ * surface at 6, and because `.stage`, `.pageClip` and `.readerRow` are all
+ * positioned *without* a `z-index` — so none of them opens a stacking context
+ * — those two numbers, written in two different files that had never been read
+ * together, compared directly. The pill's dots were under the page-turn
+ * surface and swallowed the click. decisions.md 2026-08-26 had already had to
+ * untangle this same stack once. So the order lives here, as tokens, and the
+ * pieces reference it instead of restating numbers:
+ *
+ *   | layer                     | token                        |  z |
+ *   |---------------------------|------------------------------|----|
+ *   | turn-zone vignette        | --reader-z-turn-vignette     |  4 |
+ *   | departing page            | --reader-z-departing-page    |  5 |
+ *   | incoming page (slide)     | --reader-z-incoming-page     |  6 |
+ *   | turn grab surface         | --reader-z-grab-surface      |  7 |
+ *   | ask pill                  | --reader-z-ask-pill          |  8 |
+ *   | pane resize handle        | --reader-z-pane-handle       |  9 |
+ *   | definition card           | --reader-z-definition-card   | 10 |
+ *   | roaming panels            | --reader-z-panel             | 11 |
+ *   | find bar                  | --reader-z-find-bar          | 12 |
+ *   | dwell ring                | --reader-z-dwell-ring        | 50 |
+ *
+ * Two **fixed points** outside this file, and they are fixed because other
+ * documents depend on them — do not renumber them here, and do not let
+ * anything in the table above cross them:
+ *
+ *   - **960** — the turning page. `Scene3D.module.css`'s
+ *     `.canvasLayer[data-elevated="true"]`: above `NavCluster`'s 950, below a
+ *     modal's 1000. Settled decision 14's one exception to the layering
+ *     contract (CLAUDE.md); its own comment is the authority.
+ *   - **1000** — a modal. `DeleteConfirmDialog`, Settings, the casting modal.
+ *     A dialog outranks a turning page.
+ *
+ * Everything in the table lives inside `.stage`'s stacking context and is
+ * therefore *below* both, which is the point: a turning sheet passes over the
+ * reader's own chrome, and a dialog passes over everything.
+ *
+ * ⚠️ **Not in the table, and deliberately so:** `.wrapperFullscreen` (50),
+ * `.fullscreenFloating` (25), `.immersiveHairline` (20) and
+ * `.immersiveVignette` (6), further down this file. Those are the immersive
+ * chrome and they live in the `.wrapper`/`.readerRow` contexts, not in
+ * `.stage`'s — their numbers never meet the ones above and must not be read
+ * against them. (`.wrapperFullscreen` is a fixed, z-indexed element and
+ * therefore a stacking context containing the entire reader, which is exactly
+ * why the fold has to leave it: see the 960 note above.)
+ */
+:root {
+  --reader-z-turn-vignette: 4;
+  --reader-z-departing-page: 5;
+  --reader-z-incoming-page: 6;
+  --reader-z-grab-surface: 7;
+  --reader-z-ask-pill: 8;
+  --reader-z-pane-handle: 9;
+  --reader-z-definition-card: 10;
+  --reader-z-panel: 11;
+  --reader-z-find-bar: 12;
+  --reader-z-dwell-ring: 50;
+}
+
 /* The reader room has no in-flow header — NavCluster is `position: fixed`
    (NavCluster.module.css ".floating") and contributes nothing to layout —
    so the wrapper claims the full viewport height. (It used to reserve
@@ -41,11 +102,14 @@
    moved to the foot (§B) along with the rest of .progressWrap.
 
    M24.7 §C: this is now the *container* (sized + floating + query context),
-   not the grid itself — a size container can't be queried by rules applied
-   to itself (MDN "CSS containment/Container queries": the search for a
-   matching ancestor container starts at the styled element's parent), so
-   the actual grid moved to the `.stripGrid` child below, which the
-   `@container reader-strip` block further down restyles. */
+   not the grid itself — the actual grid moved to the `.stripGrid` child
+   below. 2026-08-24: the two-row switch stopped being a `@container` query
+   at all — see `.stripGrid`'s own comment for why. `.topRow` keeps
+   `container-type: inline-size` regardless, because `PageNumberDisplay`,
+   `ChapterNav` and `NavCluster` still key their *own* narrow-mode rules off
+   the `readerStripStacked` marker class (below), not off this container —
+   the container establishment itself is no longer load-bearing, but nothing
+   here removes it since nothing else was checked to be safe without it. */
 .topRow {
   width: 100%;
   max-width: var(--reader-max-width, 800px);
@@ -55,36 +119,74 @@
   container-name: reader-strip;
 }
 
-/* M24.7 §C: the actual three-zone grid, pulled out of `.topRow` so it can be
- * the thing a `@container reader-strip` query restyles (see `.topRow`'s own
- * comment for why it can't restyle itself). `grid-template-areas` rather
- * than reordering the three DOM children — the narrow layout below just
- * reflows the same three named areas into two rows. */
+/* M24.7 §C, redone 2026-08-24: three real bugs found live, in order.
+ *
+ * 1. The original `minmax(0, 1fr) auto minmax(0, 1fr)` let the *centre*
+ *    column balloon to a long title's full unwrapped width, squeezing left/
+ *    right below their own content's minimum — diagnosed and "fixed" by
+ *    bounding the centre track, but that fix (`minmax(0, auto)`, later an
+ *    explicit `max-width` on `.topRowCenter`) was solving the wrong element:
+ *    measured live (Playwright, `East of Eden (Steinbeck "Essentials")` at
+ *    an 800px pane), `.topRowCenter` obeyed its cap exactly (rendered at
+ *    300px) and the overlap *still happened* — because `.topRowLeft`
+ *    (Annotations + chapter nav), not the centre zone, was the thing
+ *    overflowing: its track resolved to 234px but its content rendered at
+ *    348px, spilling 114px into the centre column regardless of what the
+ *    centre column did.
+ * 2. The real fix inverts which zones are allowed to concede space. Left and
+ *    right hold *functional controls* (buttons, the chapter nav, the nav
+ *    pebble) that must never be partially clipped — an overlapping icon is a
+ *    broken control, not a graceful degradation. The book's title/author is
+ *    the one thing in this row that's safe to truncate or scroll. So left
+ *    and right are bare `auto` — sized to their own content, full stop,
+ *    never compressed — and centre is the sole flexible track
+ *    (`minmax(0, 1fr)`), absorbing whatever's left and free to shrink to 0.
+ *    `.topRowCenter` itself keeps no `max-width` (removed): a grid item's
+ *    default `justify-self: stretch` fills the whole 1fr track, and
+ *    `.topRowCenter`'s own `justify-content: center` centres the cover+text
+ *    group within it — so a wide pane shows the full title with even
+ *    breathing room on both sides for free, and a narrow one shrinks the
+ *    same box down to whatever room is actually left, no separate rule
+ *    needed for either case.
+ * 3. The two-row switch itself stopped being this file's `@container` query
+ *    (was `<= 720px`, before that `<= 600px`) — a fixed pane-width threshold
+ *    can't know how much of that width a long title needs, which is exactly
+ *    what caused bug 1. `useReaderStripLayout` measures `.topRow`'s width
+ *    against `.topRowLeft`'s and `.topRowRight`'s *actual* rendered widths
+ *    (stable now that they're bare `auto` and never compressed) and toggles
+ *    the `readerStripStacked` class on `.topRow`/`.footer` once what's left
+ *    for the identity block drops below a usable minimum — still "the pane,
+ *    never the viewport" (ground rule intact), just measured in JS because
+ *    the decision needs three elements' widths, which no single container
+ *    query can see at once.
+ * 4. `column-gap` is real (not zero) for the same reason bug 1 needed a real
+ *    fix rather than a bound: right at the stacked layout's own narrow edge
+ *    (identity block shrunk to just the cover thumbnail), the grid's own
+ *    math is correct — the two tracks are genuinely adjacent, not
+ *    overlapping — but "adjacent with 0px between them" still reads as the
+ *    cover touching the nav pebble (found live at a 420px pane, no overlap
+ *    in any measured rect, but the screenshot plainly shows it touching). A
+ *    fixed floor gap is cheap insurance the flexible track's own slack
+ *    already made unnecessary at comfortable widths. */
 .stripGrid {
   display: grid;
-  /* `minmax(0, 1fr)`, not a bare `1fr`: a grid track's implicit
-   * `min-width: auto` otherwise sizes it to its content's minimum
-   * intrinsic width even past its "fair" fr share. */
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   grid-template-areas: "left center right";
   align-items: center;
+  column-gap: 0.75rem;
   min-height: 1.5rem;
 }
 
-/* M24.7 §C: `<= 600px` — row 1 becomes identity + nav pebble, row 2 is the
- * reader's own functions alone, full width (READER_REDESIGN.md §3). */
-@container reader-strip (max-width: 600px) {
-  .stripGrid {
-    grid-template-columns: 1fr auto;
-    grid-template-areas:
-      "center right"
-      "left left";
-    row-gap: 0.35rem;
-  }
+:global(.readerStripStacked) .stripGrid {
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    "center right"
+    "left left";
+  row-gap: 0.35rem;
+}
 
-  .topRowLeft {
-    justify-self: stretch;
-  }
+:global(.readerStripStacked) .topRowLeft {
+  justify-self: stretch;
 }
 
 .topRowLeft {
@@ -96,9 +198,11 @@
   gap: 0.35rem;
 }
 
-/* M24.7 A: the strip's centre zone — cover thumb + title + author, moved
-   down from ReaderPage's own .titleBar row (which stopped existing as a
-   separate row). Carries the doorway transition's layoutId (M7). */
+/* M24.7 A: the strip's centre zone — cover thumb + title/author, moved down
+   from ReaderPage's own .titleBar row (which stopped existing as a separate
+   row). Carries the doorway transition's layoutId (M7). No `max-width`
+   here (2026-08-24) — see `.stripGrid`'s comment; this box fills its 1fr
+   track and centres its own content within it. */
 .topRowCenter {
   grid-area: center;
   display: flex;
@@ -120,20 +224,93 @@
   border-radius: 3px;
 }
 
+/* Title-above-author (2026-08-24, operator's design): was a single flex row
+ * ("title  ·  author" side by side), sized by their *combined* width. A
+ * column halves the footprint the identity block needs, because the two
+ * lines now compete for width against each other's line, not against a
+ * shared row. */
+.identityText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+/* `.title`/`.author` are the fixed-size clipping viewport; `.titleInner`/
+ * `.authorInner` (ReaderView.tsx) carry the text and are what actually
+ * translates when scrolling. `min-width: 0` is explicit rather than relied
+ * on — `overflow: hidden` already gives a flex item an automatic minimum
+ * size of 0 per spec, but every other zone in this strip states it outright,
+ * and an implicit minimum is exactly what let the overlap bug above ship
+ * untested. */
+.title,
+.author {
+  position: relative;
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+}
+
 .title {
   font-size: 0.95rem;
   color: var(--color-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .author {
   font-size: 0.82rem;
   color: var(--color-text-muted);
-  white-space: nowrap;
+}
+
+.titleInner,
+.authorInner {
+  display: inline-block;
+}
+
+/* Default state: no animation, and `.title`/`.author`'s own `overflow:
+ * hidden` plus this ellipsis is the fallback for text that overflows but
+ * isn't (yet, or ever, under reduced motion) scrolling. */
+.titleInner,
+.authorInner {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Applied by useMarqueeOverflow (ReaderView.tsx) only once measured
+ * `scrollWidth > clientWidth` — i.e. the text is genuinely clipped, not
+ * merely close to its box. `--marquee-distance` (the overflow amount) and
+ * `--marquee-duration` (scaled to distance, so a barely-clipped line doesn't
+ * crawl at the same speed as a badly-clipped one) are set inline per
+ * element, since both depend on a live pixel measurement no CSS selector
+ * can express. Ping-pong rather than a looping scroll: reveals the tail,
+ * holds, returns, holds — no duplicated text trick needed for a seamless
+ * wrap. */
+.scrolling {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  animation: readerTitleMarquee var(--marquee-duration, 6s) ease-in-out infinite;
+}
+
+@keyframes readerTitleMarquee {
+  0%,
+  12% {
+    transform: translateX(0);
+  }
+  88%,
+  100% {
+    transform: translateX(var(--marquee-distance, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrolling {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    animation: none;
+    transform: none;
+  }
 }
 
 .topRowRight {
@@ -290,7 +467,7 @@
    node directly, and clears it in the gesture's one exit. */
 .marginWrapperSliding {
   position: relative;
-  z-index: 6;
+  z-index: var(--reader-z-incoming-page);
   background: var(--color-bg);
   will-change: transform;
 }
@@ -353,7 +530,7 @@
   max-width: 220px;
   pointer-events: none;
   opacity: 0;
-  z-index: 4;
+  z-index: var(--reader-z-turn-vignette);
   transition: opacity var(--duration-standard) var(--ease-standard);
 }
 
@@ -373,22 +550,42 @@
   background: radial-gradient(ellipse at 100% 50%, var(--color-accent) 0%, transparent 70%);
 }
 
-/* M20 "grab anywhere in the outer band" (decisions.md 2026-07-20): replaces
-   the old 18px .edgeGrab strip. Same ellipse geometry as .turnZoneVignette
-   above (hugging the page edge, bulging toward vertical centre) so the
-   surface you can *see* announced is the surface you can actually grab —
-   but pointer-events: auto and a real onPointerDown, since this is the
-   live drag-to-fold gesture, not the purely decorative vignette. Still
-   narrower than the full 30% click-turn zone at top/bottom, which lives
-   inside the epub iframe's own content and stays reachable for text
-   selection and click-to-turn outside this ellipse. */
+/* M20 "grab anywhere in the outer band" (decisions.md 2026-07-20) replaced the
+   old 18px .edgeGrab strip with two ellipses hugging the page edges — narrow
+   on purpose, because they sat on top of live text and every pixel they
+   covered was a pixel you could not start a selection in. That compromise is
+   what M31 was opened to fix: at 90% zoom in a spread you could not begin a
+   highlight on the first character of a line.
+
+   ⚠️ **M31 A3/A4: one surface, over the whole page, and inert by default.**
+   It no longer trades against the ink, because it is not allowed to coexist
+   with it: `ReaderView`'s `setGrabSurfaceArmed` flips `pointer-events` from
+   the live ink/paper hit-test on every pointer move (the pointer contract's
+   invariant 1 — *nothing in the parent document may hold pointer events over
+   ink*). Over paper it takes the press; over ink it is not there at all. So
+   there is nothing left to keep it narrow, and it covers all the paper the
+   contract names: outer margins, spine gutter, below the last line, a blank
+   verso.
+
+   ⚠️ `pointer-events: none` is the **default here, not just the over-ink
+   state**, and JS only ever arms it for a mouse or pen. Touch has no contract
+   yet (M31 C); a surface armed for a finger would mean every touch anywhere on
+   the page landed on this element instead of the text.
+
+   ⚠️ It stays a parent-document element (invariant 2). It needs
+   `setPointerCapture`, capture needs a real parent-document `pointerdown`, and
+   an uncaptured drag crossing the sandboxed iframe is a reproduced tab crash
+   (NOTES.md M10). Step aside, never delete.
+
+   The cursor is the other half of M31 A6: over paper you get `grab`, which is
+   true — you can take the sheet — where the old `w-resize`/`e-resize` promised
+   a click-turn that no longer exists. Over ink this element is not in the hit
+   test at all, so the iframe's own cursor shows through untouched. */
 .turnGrabSurface {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 20%;
-  max-width: 220px;
-  z-index: 6;
+  inset: 0;
+  z-index: var(--reader-z-grab-surface);
+  pointer-events: none;
   cursor: grab;
   touch-action: none;
 }
@@ -397,23 +594,17 @@
   cursor: grabbing;
 }
 
-.turnGrabSurfaceLeft {
-  left: 0;
-  clip-path: ellipse(75% 60% at 0% 50%);
-}
-
-.turnGrabSurfaceRight {
-  right: 0;
-  clip-path: ellipse(75% 60% at 100% 50%);
-}
-
 /* M19.6 "the reading pane is resizable" (decisions.md 2026-07-30 later): a
-   quiet handle just *outside* .stage's own border — deliberately not at
-   right:0 the way .turnGrabSurfaceRight above is, so it never overlaps
-   M10/M20's drag-to-fold surface (a different gesture at the page's own
-   inner edge). Invisible at rest, like .turnGrabSurface, reading the paper
-   register's "quiet until touched" convention; a soft accent bar appears on
-   hover/drag so the affordance is discoverable without being decoration. */
+   quiet handle just *outside* .stage's own border — deliberately at
+   `right: -8px` rather than `right: 0`, so it never overlaps M10/M20's
+   drag-to-fold surface (a different gesture at the page's own inner edge).
+   ⚠️ That separation matters more since M31 A4, not less: the grab surface is
+   now the whole page, so this handle's only defence against being shadowed by
+   it is sitting outside `.stage` altogether — plus its place in the layer
+   scale at the head of this file, above the grab surface. Invisible at rest,
+   like .turnGrabSurface, reading the paper register's "quiet until touched"
+   convention; a soft accent bar appears on hover/drag so the affordance is
+   discoverable without being decoration. */
 .paneResizeHandle {
   position: absolute;
   top: 0;
@@ -422,7 +613,7 @@
   width: 12px;
   cursor: ew-resize;
   touch-action: none;
-  z-index: 7;
+  z-index: var(--reader-z-pane-handle);
 }
 
 .paneResizeHandle::after {

@@ -4,7 +4,7 @@
 .cardPosition {
   position: absolute;
   transform: translate(-50%, calc(-100% - 8px));
-  z-index: 6;
+  z-index: var(--reader-z-definition-card);
 }
 
 .card {

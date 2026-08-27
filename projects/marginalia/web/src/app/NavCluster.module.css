@@ -80,23 +80,23 @@
 }
 
 /* M24.7 §C: the narrow-pane single cycling button — hidden by default
- * (the trio above is the wide/base form); a `reader-strip` container query
- * swaps them (only the reader's own embedded NavCluster instance sits
- * inside that container, so the always-floating App-shell one and DeskPage's
- * are untouched — this rule simply never matches there). */
+ * (the trio above is the wide/base form); the `readerStripStacked` marker
+ * (toggled by useReaderStripLayout, ReaderView.tsx — 2026-08-24, was a
+ * `reader-strip` container query; see ReaderView.module.css `.stripGrid`'s
+ * comment for why) swaps them. Only the reader's own embedded NavCluster
+ * instance sits inside `.topRow`, so the always-floating App-shell one and
+ * DeskPage's are untouched — this rule simply never matches there. */
 .themeCycle {
   display: none;
   margin-left: 0.15rem;
 }
 
-@container reader-strip (max-width: 600px) {
-  .themeGroup {
-    display: none;
-  }
+:global(.readerStripStacked) .themeGroup {
+  display: none;
+}
 
-  .themeCycle {
-    display: inline-flex;
-  }
+:global(.readerStripStacked) .themeCycle {
+  display: inline-flex;
 }
 
 /* The App-shell placement: fixed, top-right, above every room.

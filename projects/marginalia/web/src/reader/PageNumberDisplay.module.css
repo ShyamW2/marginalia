@@ -7,20 +7,21 @@
   white-space: nowrap;
 }
 
-/* M24.7 §C: both forms are in the DOM; the foot's `reader-strip` container
- * (ReaderView.module.css `.footer`) picks between them by width, not a JS
- * breakpoint. Wide is the default (no `@container` block needed to show
- * `.full` — it's the base rule); narrow flips them below. */
+/* M24.7 §C: both forms are in the DOM; `useReaderStripLayout`
+ * (ReaderView.tsx) picks between them by toggling `readerStripStacked` on
+ * the foot (ReaderView.module.css `.footer`), not a container query
+ * (2026-08-24 — see ReaderView.module.css `.stripGrid`'s comment for why:
+ * the switch needs three elements' measured widths, which a container query
+ * can't see). Wide is the default (no rule needed to show `.full` — it's the
+ * base rule); stacked flips them below. */
 .compact {
   display: none;
 }
 
-@container reader-strip (max-width: 600px) {
-  .full {
-    display: none;
-  }
+:global(.readerStripStacked) .full {
+  display: none;
+}
 
-  .compact {
-    display: inline;
-  }
+:global(.readerStripStacked) .compact {
+  display: inline;
 }

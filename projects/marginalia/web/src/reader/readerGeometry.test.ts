@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   computeReaderGap,
+  DECLARE_DRAG_PX,
+  declaredTurnDirection,
   farLeafRect,
   nearLeafRect,
   READER_MARGIN_PX,
@@ -191,5 +193,41 @@ describe("farLeafRect", () => {
       width: 1200,
       height: 900,
     });
+  });
+});
+
+describe("declaredTurnDirection", () => {
+  it("says nothing until the drag has travelled the threshold", () => {
+    expect(declaredTurnDirection(0, 0)).toBeNull();
+    expect(declaredTurnDirection(DECLARE_DRAG_PX - 1, 0)).toBeNull();
+    expect(declaredTurnDirection(-(DECLARE_DRAG_PX - 1), 0)).toBeNull();
+  });
+
+  it("turns forward on a leftward drag and back on a rightward one", () => {
+    expect(declaredTurnDirection(-40, 0)).toBe("next");
+    expect(declaredTurnDirection(40, 0)).toBe("prev");
+  });
+
+  it("gives the same answer wherever the drag began — the grab point is not an input", () => {
+    // M31 A5's whole point: this function cannot see where the press landed,
+    // so the spine gutter and the outer margin cannot disagree about which way
+    // the same drag goes.
+    expect(declaredTurnDirection(-40, 0)).toBe(declaredTurnDirection(-40, 0));
+  });
+
+  it("refuses a vertical drag however far it travels", () => {
+    expect(declaredTurnDirection(0, 400)).toBeNull();
+    expect(declaredTurnDirection(0, -400)).toBeNull();
+    // Diagonal, but vertically dominant — still not a page turn. This is the
+    // clear field M31 C9's downward departure gesture needs.
+    expect(declaredTurnDirection(30, 60)).toBeNull();
+  });
+
+  it("takes a diagonal drag that is horizontally dominant", () => {
+    expect(declaredTurnDirection(-60, 30)).toBe("next");
+  });
+
+  it("refuses an exact 45° drag rather than guessing", () => {
+    expect(declaredTurnDirection(50, 50)).toBeNull();
   });
 });

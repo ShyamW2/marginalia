@@ -88,3 +88,67 @@ export function cursorPastPageText(
   const order = cursorCaret.compareBoundaryPoints(Range.START_TO_START, edgeCaret);
   return zone === "next" ? order >= 0 : order <= 0;
 }
+
+/**
+ * "Is there a glyph under this point?" — the ink/paper test the M31 pointer
+ * contract is built on (DESIGN.md, "How ink is detected").
+ *
+ * ⚠️ `caretRangeAt` above **snaps to the nearest caret and never returns null
+ * in a margin**, so asking it alone answers "where would a caret go", not "is
+ * there ink here": a press 200px out in the outer margin still resolves to the
+ * end of the nearest line. The test is one step further — take that caret,
+ * extend it by one character, and ask whether the point actually falls inside
+ * the resulting line box.
+ *
+ * Both directions are probed, and that is not belt-and-braces. A point in the
+ * space *between two words* can snap to the caret after the space, whose
+ * forward character is the next word's first glyph — a rect that starts to the
+ * right of the point. Forward-only would call the inter-word gap "paper" and
+ * turn the page under a reader trying to select. The backward probe is the
+ * space's own rect, which contains the point.
+ */
+export function pointIsOverInk(doc: Document, x: number, y: number): boolean {
+  const caret = caretRangeAt(doc, x, y);
+  if (!caret) return false;
+  for (const probe of oneCharacterProbes(caret)) {
+    const rects = probe.getClientRects();
+    for (let i = 0; i < rects.length; i += 1) {
+      const r = rects[i];
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+    }
+  }
+  return false;
+}
+
+/** The character just after the caret and the one just before it, as ranges —
+ * whichever of the two exist. A caret at the very start or end of its own node
+ * only has one; a caret with neither (an empty node) has none, and a point
+ * over an empty node is paper by definition. */
+function oneCharacterProbes(caret: Range): Range[] {
+  const node = caret.startContainer;
+  const offset = caret.startOffset;
+  // nodeType compared numerically rather than against Node.TEXT_NODE so this
+  // stays unit-testable against a fake document (there is no global `Node`).
+  const length =
+    node.nodeType === 3 ? (node as Text).data.length : node.childNodes.length;
+  const probes: Range[] = [];
+  if (offset < length) {
+    const forward = caret.cloneRange();
+    try {
+      forward.setEnd(node, offset + 1);
+      probes.push(forward);
+    } catch {
+      /* a node that refuses the offset contributes no probe */
+    }
+  }
+  if (offset > 0) {
+    const back = caret.cloneRange();
+    try {
+      back.setStart(node, offset - 1);
+      probes.push(back);
+    } catch {
+      /* as above */
+    }
+  }
+  return probes;
+}

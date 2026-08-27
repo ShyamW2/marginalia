@@ -21,21 +21,21 @@
   transition: color var(--duration-standard) var(--ease-standard);
 }
 
-/* M24.7 §C: at the strip's narrow (`<= 600px`) two-row layout, `.topRowLeft`
- * gets its own full-width row (ReaderView.module.css) — the label takes
- * that slack instead of holding its wide-layout 220px cap, so it reads a
- * full title rather than eliding to "S…" (READER_REDESIGN.md §3). */
-@container reader-strip (max-width: 600px) {
-  .wrap {
-    flex: 1;
-    min-width: 0;
-  }
+/* M24.7 §C: in the strip's stacked two-row layout (`readerStripStacked`,
+ * toggled by useReaderStripLayout — 2026-08-24, was a `@container` query;
+ * see ReaderView.module.css `.stripGrid`'s comment), `.topRowLeft` gets its
+ * own full-width row (ReaderView.module.css) — the label takes that slack
+ * instead of holding its wide-layout 220px cap, so it reads a full title
+ * rather than eliding to "S…" (READER_REDESIGN.md §3). */
+:global(.readerStripStacked) .wrap {
+  flex: 1;
+  min-width: 0;
+}
 
-  .label {
-    flex: 1;
-    min-width: 0;
-    max-width: none;
-  }
+:global(.readerStripStacked) .label {
+  flex: 1;
+  min-width: 0;
+  max-width: none;
 }
 
 /* M22.5 (decisions.md 2026-08-04 "nothing else may occupy the top-right
