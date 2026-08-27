@@ -9,6 +9,7 @@ import type {
 import { Button } from "../../controls/Button.js";
 import { Slider } from "../../controls/Slider.js";
 import { DEFAULT_KIND_LABELS, HIGHLIGHT_KINDS } from "../../reader/highlightKinds.js";
+import { useCoarsePointer } from "../useCoarsePointer.js";
 import styles from "../SettingsPage.module.css";
 
 interface ReadingTabProps {
@@ -30,14 +31,20 @@ const KIND_LABEL_FIELD: Record<HighlightKind, "kindLabelRose" | "kindLabelSage" 
 // reader already supports — generated so the top of the range can't
 // silently fall out of sync with the bottom, same reasoning as the two
 // token-slider detent lists in ProviderPicker.tsx.
-const TEXT_SIZE_MIN = 0.8;
-const TEXT_SIZE_MAX = 1.6;
-const TEXT_SIZE_DETENTS: number[] = [];
+//
+// Exported since M31 C6: the reader's own pinch-to-resize instrument
+// (PinchResizeInstrument.tsx) renders the identical `Slider` config, so
+// these three are the one source of truth for both rather than a value
+// silently drifting between the two places it's typed.
+export const TEXT_SIZE_MIN = 0.8;
+export const TEXT_SIZE_MAX = 1.6;
+export const TEXT_SIZE_DETENTS: number[] = [];
 for (let d = TEXT_SIZE_MIN; d <= TEXT_SIZE_MAX + 1e-9; d += 0.05) {
   TEXT_SIZE_DETENTS.push(Math.round(d * 100) / 100);
 }
 
 export function ReadingTab({ form, update }: ReadingTabProps) {
+  const coarsePointer = useCoarsePointer();
   return (
     <>
       <div className={styles.field}>
@@ -129,6 +136,13 @@ export function ReadingTab({ form, update }: ReadingTabProps) {
           formatValue={(v) => `${Math.round(v * 100)}%`}
           onCommit={(value) => update("readerFontScale", value)}
         />
+        {/* M31 C8: this replaces the on-page gesture hint the operator
+            originally wanted (DESIGN.md) — there is no hint overlay in the
+            reader itself, only this mention, and only where the gesture
+            actually exists. */}
+        {coarsePointer && (
+          <p className={styles.hint}>Pinch the page in the reader to resize text live.</p>
+        )}
       </div>
       <div className={styles.field}>
         <label className={styles.label}>Page numbers</label>

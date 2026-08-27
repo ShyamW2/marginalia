@@ -1047,7 +1047,7 @@ selection's centre at both, with the same 7px gap._
 ⚠️ **Read the touch table in DESIGN.md.** The short version: a tap never turns; a one-finger
 horizontal drag turns; the *platform's own* long-press selects.
 
-- [ ] **C1.** Swipe to turn. 24px of horizontal travel, `touches.length === 1`, no live
+- [x] **C1.** Swipe to turn. 24px of horizontal travel, `touches.length === 1`, no live
       selection. Commit through `turnPageRef` — an animated turn, **not** a finger-tracked
       peel. ⚠️ Do not reimplement turn arithmetic: `pageTurn.ts` exists because epub.js's
       own next/prev is wrong at fractional device-pixel ratios and silently eats the last
@@ -1058,26 +1058,61 @@ horizontal drag turns; the *platform's own* long-press selects.
       M20's touch-drag-on-the-edge-ellipse curl, which worked on the iPad, is gone as of A.
       Until C1 lands, touch page turns are the `‹ ›` buttons and nothing else. See
       decisions.md 2026-08-27 later still.
-- [ ] **C2.** ⚠️ epub.js forwards `touchstart`/`move`/`end` **`{ passive: true }`**
+      _Done: `declaredTurnDirection` (`readerGeometry.ts`) now takes an optional threshold —
+      `DECLARE_SWIPE_PX` (24) for touch, defaulting to the pointer's existing `DECLARE_DRAG_PX`
+      (6) — one axis-dominance test, not two. The touch state machine (`ReaderView.tsx`,
+      `handleTouchMove`) calls `turnPageRef.current(direction)` the instant it declares,
+      exactly `turnPage`'s own renderer ladder (curl/slide/instant), never `beginGrabDrag`.
+      Unit-tested in `readerGeometry.test.ts`. ⚠️ **Not verified on a touch-capable device —
+      see D.**_
+- [x] **C2.** ⚠️ epub.js forwards `touchstart`/`move`/`end` **`{ passive: true }`**
       (`epubjs/src/contents.js:895`), so `preventDefault()` on the forwarded event is a
       no-op. Suppress native panning with `touch-action` via `rendition.themes`, or attach
       your own non-passive listener straight to `contents.document` — the iframe is
       `sandbox="allow-same-origin"` **without** `allow-scripts`, so the parent has full DOM
       access to it. That is also the only route to `pointerdown`, which epub.js does not
       forward at all.
-- [ ] **C3.** Long-press selection. ⚠️ **Check whether this already works before building
+      _Done, both halves. `applyTheme` (`ReaderView.tsx`) adds `touch-action: none` to the
+      iframe's `html, body` via `rendition.themes`. The real suppression is the second half:
+      `attachTouchHandlers`, called once per rendered section from `handleRendered`, adds a
+      raw, non-passive `touchstart`/`touchmove`/`touchend`/`touchcancel` listener straight to
+      `contents.document` — fresh per section (a new section is a new iframe/document, so
+      there is nothing to detach). The parent-document mirror (`.stage`'s own touch, for the
+      outer margins and gutter) needed the identical fix for an unnamed reason: **React has
+      bound its own root touchstart/touchmove listeners `{ passive: true }` since v17**, so a
+      JSX `onTouchMove`'s `preventDefault()` is silently a no-op too — not just epub.js's.
+      Found writing this, not in the task text; both attachment points now use raw
+      `addEventListener`, none use JSX `onTouch*` props._
+- [x] **C3.** Long-press selection. ⚠️ **Check whether this already works before building
       it**: native long-press → selection → epub.js fires `selected` → `handleSelected` →
       the pill appears. If it does, the only work here is C4. Do **not** write a timer; the
       platform owns the hold (DESIGN.md), and its endpoint handles are better than ours.
-- [ ] **C4.** Suppress the OS callout **without** killing selection: `-webkit-touch-callout:
+      _No timer was written, per the instruction — the touch state machine's only job here is
+      to recognise a selection once the platform has made one (`hasLiveSelection()`, already
+      wired to `handleSelected`/`pendingSelectionRef` since M19) and stand down (C5). ⚠️ **The
+      "check whether this already works" was not actually performable this session — no
+      touch-capable device or touch-emulating browser was available (see D) — so this is
+      built on the premise holding, not on having confirmed it holds.** If the platform's own
+      long-press turns out not to fire `selected` the way assumed, C4's CSS is still correct
+      and harmless, but C1's disarm-on-selection logic would need re-checking against
+      whatever actually happens instead._
+- [x] **C4.** Suppress the OS callout **without** killing selection: `-webkit-touch-callout:
       none` with `user-select: text` **retained**. `user-select: none` disables selection
       outright and will look like it worked in a desktop emulator. The lever is
       `rendition.themes` — its CSS *does* reach iframe content. What it cannot reach is the
       marks, which live in a parent-document SVG pane; that is why `highlightKinds.ts` uses
       presentation attributes instead. Do not confuse the two.
-- [ ] **C5.** A selection disarms the swipe for the rest of that touch; a second finger
+      _Done in `applyTheme`'s `body` rule: `-webkit-touch-callout: none !important` alongside
+      an explicit `user-select: text !important`, stated outright per the task's own warning
+      rather than left implicit. Marks untouched, as instructed._
+- [x] **C5.** A selection disarms the swipe for the rest of that touch; a second finger
       cancels an uncommitted swipe.
-- [ ] **C6.** Pinch to resize text, as the instrument DESIGN.md specifies ("Pinch to resize
+      _Done in the shared touch state machine: `handleTouchMove` checks `hasLiveSelection()`
+      before anything else and sets `state.disarmed = true` the moment one appears, after
+      which every later move for that touch is a no-op regardless of what the selection does
+      next. A second finger's `touchstart` (`touches.length >= 2`) clears `singleId` and sets
+      `disarmed` unconditionally, whether or not anything had declared yet._
+- [x] **C6.** Pinch to resize text, as the instrument DESIGN.md specifies ("Pinch to resize
       is an instrument, not a setting"). Same shape as M12's `%` scrub dial: live readout,
       commit on release. ⚠️ **The page must not reflow during the pinch** — a `fontScale`
       change re-paginates the whole spine section, and per-frame is not affordable. The
@@ -1089,14 +1124,44 @@ horizontal drag turns; the *platform's own* long-press selects.
       settings text-size control already use (settled decision 12: a control means the same
       thing on every surface). The pinch drives its value; it is not a second slider that
       happens to look like one.
-- [ ] **C7.** In immersive mode, a tap anywhere reveals the pebble — the touch counterpart
+      _Done. New `PinchResizeInstrument.tsx` renders the exact `Slider` config
+      `settings/tabs/ReadingTab.tsx` uses (now exported from there, one source of truth for
+      both), plus a live sample string sized by inline `fontSize: {scale}em`. The two-finger
+      math (`pinchFontScale`, `readerGeometry.ts`, unit-tested) is a ratio of live/starting
+      touch distance against whatever `fontScale` was at pinch-start, clamped to
+      `[TEXT_SIZE_MIN, TEXT_SIZE_MAX]`; the state machine calls `setReaderFontScale` exactly
+      once, on release, never per frame — the existing `readerFontScale` effect
+      (`ReaderView.tsx`) does the one reflow that follows, reused rather than duplicated. The
+      instrument sits at `position: fixed` in viewport coordinates (like `DwellRing`, not like
+      `AskPill`'s stage-relative math) — deliberately sidesteps M31 B2's whole bug class rather
+      than re-deriving that fix a third time. `.pageClip` gets a `filter: blur(6px); opacity:
+      0.85` class while a pinch is live; the sample text is a sibling, outside the blurred box,
+      so it alone stays sharp. Clamp, not refuse, exactly per the task: `x`/`y` are clamped
+      into the viewport with `Math.min`/`Math.max`, mirroring `handleSelected`'s own pill
+      clamp.
+      ⚠️ **One call made that the task leaves open, recorded in decisions.md:** the resize is
+      committed to `readerFontScale` (so it reflows and holds for the rest of this reading
+      session) but is **not** written back to the server. Settings' own save flow is a
+      whole-object `PUT` requiring the full form; wiring a single pinch-driven field through
+      that seam felt like a second decision wearing this task's clothes, not a refusal —
+      see decisions.md for the reasoning and what would change it._
+- [x] **C7.** In immersive mode, a tap anywhere reveals the pebble — the touch counterpart
       of the proximity reveal, which has none. ⚠️ It is the **one** exception to the tap
       table, and it is additive: whatever the table says for that spot still happens.
-- [ ] **C8.** Mention pinch-to-resize in Settings beside the text-size control, shown only
+      _Done: `handleTouchEnd`'s `onTap` (fired only for a touch that never declared a turn, a
+      departure or a pinch — a plain tap) calls the existing `wakePebble()` when
+      `fullscreenModeRef.current`. Additive by construction, not by extra care: nothing here
+      calls `preventDefault` on an undeclared tap, so epub.js's own synthesized `click` still
+      fires afterward and still dismisses a pending pill / opens a mark's thread exactly as it
+      always has._
+- [x] **C8.** Mention pinch-to-resize in Settings beside the text-size control, shown only
       when `matchMedia("(any-pointer: coarse)")` matches. Per DESIGN.md this replaces the
       on-page gesture hint the operator originally wanted; there is no hint overlay in the
       reader.
-- [ ] **C9.** Swipe down to leave the book — the one room-changing gesture (DESIGN.md,
+      _Done: new `settings/useCoarsePointer.ts` (a live `any-pointer: coarse` media-query
+      hook, not a one-time read — a docked/undocked tablet can change mid-session), and
+      `ReadingTab.tsx` renders a one-line hint under the Text size `Slider` when it matches._
+- [x] **C9.** Swipe down to leave the book — the one room-changing gesture (DESIGN.md,
       amended). One finger, **≥⅓ of the page** travelled downward within **±20°** of
       vertical, disarmed while anything is selected, being edited, or mid-turn. It returns
       to whichever of desk/list/shelf was last used and **runs the put-down**, so it is the
@@ -1107,6 +1172,21 @@ horizontal drag turns; the *platform's own* long-press selects.
       ⚠️ **Soft-gated on M33 C**, which builds the put-down. Until then this gesture has no
       animation to run: either hold C9 with M33, or land it navigating plainly and say so in
       NOTES.md. Do not invent a third, gesture-only exit animation.
+      _Landed navigating plainly, per the task's own allowance — M33 C does not exist yet.
+      `isDepartureSwipe` (`readerGeometry.ts`, unit-tested) is the ⅓-page/±20° test, kept
+      deliberately separate from `declaredTurnDirection` rather than reusing its axis check
+      (a shallow diagonal must fail *both*, for different reasons — see the function's own
+      comment). Commits via `navigate("/")` with **no explicit view-mode emit**: `DeskPage`
+      seeds itself from `loadDeskViewMode()` when nothing tells it otherwise
+      (`deskViewBus.ts`), which already *is* "whichever of desk/list/shelf was last used" —
+      the one thing `d`/`l`/`b` do differently is *force* a mode, which this gesture must not.
+      Disarm conditions: `hasLiveSelection()`, a new `isEditingSomewhere()` (mirrors
+      `handleIframeKeydown`'s own `isTyping` check, for the parent document's text fields),
+      and `gestureActiveRef` (a fresh ref-mirror of `usePageTurnAnimation`'s `gestureActive`,
+      needed because the touch handlers live inside the once-per-resourceId book-loading
+      effect and would otherwise read a value frozen at mount). §0b/§0c were already done
+      before this session (checked above) — the hard gate was satisfied by prior work, not
+      re-verified live this session._
 
 _Acceptance: on a touch-capable machine — a one-finger horizontal drag anywhere on the page,
 including across a paragraph, turns exactly one page and lands where `→` would, including
@@ -1114,11 +1194,28 @@ on the second-to-last page of a chapter at 90% zoom (the `pageTurn.ts` case). A 
 on a word opens the pill with no browser context menu. Dragging from a selection's handle
 adjusts the selection and never turns. A tap never turns, anywhere._
 
+_**Acceptance not driven** — no touch-capable device or touch-emulating browser was available
+this session (no iPad, no browser-automation tool, no `chromium`/Playwright in this
+environment; see D for what was checked instead: types, the full unit suite including new
+tests for every piece of touch/pinch/departure math, a production build, and a live dev
+server compiling and hot-reloading every edit with no console/transform errors). Every clause
+above describes intended behaviour the code is written to produce, not behaviour anyone has
+watched happen on a finger._
+
 #### D. What gets verified, and where
 
-- [ ] Record in `NOTES.md`, at completion, what was verified on the iPad and what was only
+- [x] Record in `NOTES.md`, at completion, what was verified on the iPad and what was only
       emulated. An honest "not verified, here's why" is still the required output — there is
       just far less of it than this milestone was scoped expecting.
+      _Done — see NOTES.md "M31 C". The honest output this time is unusually blunt: **nothing**
+      in C was verified on a device or by emulation, because this implementation session had
+      neither an iPad nor any touch-emulating browser/automation tool available to it. What
+      exists instead: full type-checking, the complete unit suite (extended with new
+      pure-function tests for the swipe/departure/pinch math), a clean production build, and a
+      live dev server that hot-reloaded every edit in this milestone with no compile or
+      runtime error. That is meaningfully less than "verified" and the gap is real — the next
+      session with a device should treat all of C as freshly-built and unexercised, not as
+      polish on something already seen working._
 
 ⚠️ **The old gate is gone — do not repeat it.** This section used to read "there is no iPad
 to test on until the Private rung lands; the server binds to loopback by the M6 security
@@ -1149,7 +1246,7 @@ unchecked. M29's code is done, but this milestone puts the thematic layer in the
 path, where a stall is felt mid-book rather than on a digest page the reader chose to open.
 
 **Most of this already exists — read before building.** `digest/thematicBuild.ts` generates
-2–3 questions per chapter, each with a verbatim grounding quote (decision 11); clicking one
+3-5 questions per chapter, each with a verbatim grounding quote (decision 11); clicking one
 creates a real anchored highlight with the question pre-filled
 (`routes/digest.ts:476`, `ThreadPanel.initialDraft`); there is a per-book reading brief; and
 questions are already spoiler-gated on reading position (`routes/digest.ts:375` —

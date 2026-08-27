@@ -15,6 +15,7 @@ import type { Book, Contents, Location, Rendition } from "epubjs";
 // prototype before any mark is drawn. See marksPanePatch.ts.
 import "./marksPanePatch.js";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { useNavigate } from "react-router-dom";
 import {
   UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
   findAnchorInText,
@@ -112,6 +113,10 @@ import {
 } from "./pageTurn.js";
 import {
   computeReaderGap,
+  DECLARE_SWIPE_PX,
+  declaredTurnDirection,
+  isDepartureSwipe,
+  pinchFontScale,
   READER_MARGIN_PX,
   READER_TARGET_COLUMN_WIDTH,
   SPREAD_GUTTER,
@@ -123,6 +128,8 @@ import { useFullscreenChrome } from "./useFullscreenChrome.js";
 import { useReaderPaneWidth } from "./useReaderPaneWidth.js";
 import { useReaderStripLayout } from "./useReaderStripLayout.js";
 import { useMarqueeOverflow } from "./useMarqueeOverflow.js";
+import { PinchResizeInstrument } from "./PinchResizeInstrument.js";
+import { TEXT_SIZE_MAX, TEXT_SIZE_MIN } from "../settings/tabs/ReadingTab.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -240,6 +247,15 @@ function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
     "html, body": {
       background: `${vars.bg} !important`,
       color: `${vars.text} !important`,
+      // M31 C2: epub.js forwards touchstart/move/end `{ passive: true }`
+      // (epubjs/src/contents.js), so `preventDefault()` on the forwarded
+      // event is always a no-op — the real suppression of native panning has
+      // to come from CSS. `none`, not `pan-y`: the paginated column layout
+      // never scrolls on its own, so there is nothing native left to permit,
+      // and our own touchstart/move/end listeners (attached straight to this
+      // document — the other half of C2) own both the horizontal swipe and
+      // the vertical departure gesture from here.
+      "touch-action": "none !important",
     },
     body: {
       "font-family": `${vars.fontSerif} !important`,
@@ -250,6 +266,14 @@ function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
       // every layout pass, so this rule only matters for the brief
       // pre-layout flash and any non-paginated fallback rendering.
       padding: "0 3rem !important",
+      // M31 C4: suppress iOS's "Save/Copy/Look Up" callout on a long-press
+      // *without* touching selection — `user-select: none` would kill
+      // selection outright and pass in a desktop emulator, which is exactly
+      // the mistake to avoid (TASKS.md). `text` is the platform default; it
+      // is stated explicitly so nothing here can be read as an accidental
+      // `none`.
+      "-webkit-touch-callout": "none !important",
+      "user-select": "text !important",
     },
     a: { color: `${vars.accent} !important` },
     "::selection": { background: `${vars.highlightActive} !important` },
@@ -259,6 +283,235 @@ function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
     },
   });
   rendition.themes.select("app");
+}
+
+/**
+ * M31 C: one touch state machine, wired up at two independent attachment
+ * points — a plain `React.TouchEvent` listener on `.stage` for the parent
+ * document's own paper (the outer margins, the spine gutter: genuinely
+ * outside the sandboxed epub.js iframe), and a raw, non-passive
+ * `addEventListener` straight on each rendered section's `contents.document`
+ * for the ink inside it (C2: epub.js's own forwarded touch events are
+ * `{ passive: true }`, so `preventDefault()` on them is always a no-op).
+ *
+ * ⚠️ The two are independent, not one continuous stream. A touch's
+ * `touchmove`/`touchend` are dispatched to wherever its `touchstart` first
+ * landed (the platform's own "implicit touch capture"), and `TouchEvent
+ * .touches` only ever lists touches whose target lives in *that* document —
+ * exactly the "events inside the sandboxed iframe never bubble out" fact
+ * `handleStagePointerMove`/`handleContentMouseMove` already live with for
+ * the mouse. A swipe or pinch that starts and stays within one region (ink
+ * only, or paper only) works correctly; one that straddles the ink/paper
+ * boundary — a finger planted in the outer margin, the other on the text —
+ * is a known gap, recorded in NOTES.md rather than silently unhandled.
+ *
+ * Per DESIGN.md's touch table, the ink/paper test itself is *not* needed
+ * here — "does a selection exist?" is the whole discriminator, because the
+ * platform only ever selects over ink via its own hold-then-drag. That is
+ * what lets one state machine serve both attachment points identically.
+ */
+interface TouchGestureState {
+  /** The single finger being watched for a horizontal turn or a vertical
+   * departure — its own `Touch.identifier`, or null between gestures. */
+  singleId: number | null;
+  startX: number;
+  startY: number;
+  /** A turn or a departure already fired for this touch — ignore the rest
+   * of its travel rather than re-firing (C1 is a discrete commit, not a
+   * finger-tracked peel; DESIGN.md, "Commit through turnPageRef"). */
+  committed: boolean;
+  /** C5: a selection appeared, or a second finger arrived — stops tracking
+   * `singleId` as a turn/departure candidate for the rest of this touch. */
+  disarmed: boolean;
+  /** The two fingers of a live pinch (C6), by identifier — null when not
+   * pinching. Set the instant a second finger arrives, which also disarms
+   * whatever `singleId` was doing (C5: "a second finger cancels an
+   * uncommitted swipe"). */
+  pinchIds: [number, number] | null;
+  pinchStartDist: number;
+  pinchStartScale: number;
+  /** The last scale `handleTouchMove` computed — what a lifted finger
+   * commits, since the touchend that ends a pinch carries no distance of
+   * its own to recompute one from. */
+  pinchLastScale: number;
+}
+
+function freshTouchGestureState(): TouchGestureState {
+  return {
+    singleId: null,
+    startX: 0,
+    startY: 0,
+    committed: false,
+    disarmed: false,
+    pinchIds: null,
+    pinchStartDist: 0,
+    pinchStartScale: 1,
+    pinchLastScale: 1,
+  };
+}
+
+interface TouchGestureCallbacks {
+  hasLiveSelection: () => boolean;
+  /** C9's "disarmed while... being edited" — the AskPill/ThreadPanel/
+   * DefinitionCard/Settings text fields all live in the parent document. */
+  isEditingSomewhere: () => boolean;
+  /** C9's "disarmed while... mid-turn". */
+  isMidTurn: () => boolean;
+  /** The card's own height, in viewport px — `pageClipRef`'s box, "the whole
+   * sheet" (readerGeometry.ts's own framing), for `isDepartureSwipe`'s
+   * page-fraction test. */
+  getPageHeight: () => number;
+  /** Viewport px for a touch's own `clientX`/`clientY` — identity for the
+   * parent-document attachment, `+ iframeRect.left/top` for the one inside
+   * the sandboxed iframe (the exact conversion `handleContentMouseMove`
+   * already does for the mouse). */
+  toViewport: (clientX: number, clientY: number) => { x: number; y: number };
+  fontScale: () => number;
+  onCommitTurn: (direction: "prev" | "next") => void;
+  onCommitDeparture: () => void;
+  /** C7: "in immersive mode, a tap anywhere reveals the pebble" — fired for
+   * a touch that ends without ever declaring a turn, a departure or a
+   * pinch, i.e. a plain tap. Additive (DESIGN.md): whatever else a tap does
+   * at that spot — dismiss a pending pill, open a mark's thread, both via
+   * the native `click` epub.js still synthesizes — still happens too. */
+  onTap: () => void;
+  onPinchPreview: (scale: number, viewportX: number, viewportY: number) => void;
+  onPinchCommit: (scale: number) => void;
+  onPinchEnd: () => void;
+}
+
+/** Distance between two touches' viewport points — the pinch's own ruler. */
+function touchPairDistance(ax: number, ay: number, bx: number, by: number): number {
+  return Math.hypot(ax - bx, ay - by);
+}
+
+function handleTouchStart(
+  state: TouchGestureState,
+  touches: TouchList,
+  callbacks: TouchGestureCallbacks,
+): void {
+  if (touches.length >= 2) {
+    state.singleId = null;
+    state.disarmed = true;
+    const a = touches[0];
+    const b = touches[1];
+    state.pinchIds = [a.identifier, b.identifier];
+    const va = callbacks.toViewport(a.clientX, a.clientY);
+    const vb = callbacks.toViewport(b.clientX, b.clientY);
+    state.pinchStartDist = touchPairDistance(va.x, va.y, vb.x, vb.y);
+    state.pinchStartScale = callbacks.fontScale();
+    state.pinchLastScale = state.pinchStartScale;
+    return;
+  }
+  if (callbacks.hasLiveSelection() || callbacks.isEditingSomewhere()) return;
+  const t = touches[0];
+  if (!t) return;
+  state.singleId = t.identifier;
+  state.startX = t.clientX;
+  state.startY = t.clientY;
+  state.committed = false;
+  state.disarmed = false;
+}
+
+function findTouch(touches: TouchList, id: number): Touch | null {
+  for (let i = 0; i < touches.length; i += 1) {
+    if (touches[i].identifier === id) return touches[i];
+  }
+  return null;
+}
+
+/** Returns whether the caller should `preventDefault()` the move — true for
+ * exactly the cases C2 wants native panning suppressed on: a live pinch, or
+ * an un-disarmed single-finger candidate. Never true once a selection exists
+ * or a second finger has disarmed the touch — the platform needs the event
+ * untouched to keep extending a native selection. */
+function handleTouchMove(
+  state: TouchGestureState,
+  touches: TouchList,
+  callbacks: TouchGestureCallbacks,
+): boolean {
+  if (state.pinchIds) {
+    const a = findTouch(touches, state.pinchIds[0]);
+    const b = findTouch(touches, state.pinchIds[1]);
+    if (!a || !b) return false;
+    const va = callbacks.toViewport(a.clientX, a.clientY);
+    const vb = callbacks.toViewport(b.clientX, b.clientY);
+    const dist = touchPairDistance(va.x, va.y, vb.x, vb.y);
+    const scale = pinchFontScale(
+      state.pinchStartDist,
+      dist,
+      state.pinchStartScale,
+      TEXT_SIZE_MIN,
+      TEXT_SIZE_MAX,
+    );
+    state.pinchLastScale = scale;
+    const centreX = (va.x + vb.x) / 2;
+    const centreY = (va.y + vb.y) / 2;
+    callbacks.onPinchPreview(scale, centreX, centreY);
+    return true;
+  }
+  if (state.singleId === null || state.disarmed || state.committed) return false;
+  if (callbacks.hasLiveSelection()) {
+    // C5: "a selection disarms the swipe for the rest of that touch" — the
+    // platform's own long-press just won; stand down and let it extend
+    // natively, untouched by us from here on.
+    state.disarmed = true;
+    return false;
+  }
+  const t = findTouch(touches, state.singleId);
+  if (!t) return false;
+  const dx = t.clientX - state.startX;
+  const dy = t.clientY - state.startY;
+
+  const direction = declaredTurnDirection(dx, dy, DECLARE_SWIPE_PX);
+  if (direction) {
+    state.committed = true;
+    callbacks.onCommitTurn(direction);
+    return true;
+  }
+
+  if (
+    !callbacks.isEditingSomewhere() &&
+    !callbacks.isMidTurn() &&
+    isDepartureSwipe(dx, dy, callbacks.getPageHeight())
+  ) {
+    state.committed = true;
+    callbacks.onCommitDeparture();
+    return true;
+  }
+
+  // Still undeclared — suppress native panning/back-swipe regardless (C2),
+  // since no selection exists yet and this single finger is still a live
+  // swipe/departure candidate.
+  return true;
+}
+
+function handleTouchEnd(state: TouchGestureState, callbacks: TouchGestureCallbacks): void {
+  if (state.pinchIds) {
+    callbacks.onPinchCommit(state.pinchLastScale);
+    callbacks.onPinchEnd();
+    state.pinchIds = null;
+    return;
+  }
+  if (state.singleId !== null && !state.committed && !state.disarmed) {
+    // No turn, no departure, no selection — a plain tap.
+    callbacks.onTap();
+  }
+  state.singleId = null;
+  state.committed = false;
+  state.disarmed = false;
+}
+
+/** A system interruption (an incoming call, the OS taking the gesture for
+ * itself) — reset tracking without committing. An already-committed turn or
+ * departure already ran synchronously inside `handleTouchMove` and cannot be
+ * undone; an in-flight, uncommitted pinch is discarded rather than applied. */
+function handleTouchCancel(
+  state: TouchGestureState,
+  callbacks: Pick<TouchGestureCallbacks, "onPinchEnd">,
+): void {
+  if (state.pinchIds) callbacks.onPinchEnd();
+  Object.assign(state, freshTouchGestureState());
 }
 
 async function fetchPosition(
@@ -651,6 +904,15 @@ export function ReaderView({
   // they reach the current turnPage through this ref rather than a stale
   // closure. (It used to be named for click-to-turn, retired at M31 A1.)
   const turnPageRef = useRef<(direction: "prev" | "next") => void>(() => {});
+  // M31 C9: "disarmed... mid-turn" (DESIGN.md) needs a synchronous read of
+  // `gestureActive` from inside the once-per-resourceId book-loading effect's
+  // touch handlers, where the state value itself would be frozen at whatever
+  // it was on mount — same "mirror it into a ref" story as fontScaleRef/
+  // focusModeRef elsewhere in this file.
+  const gestureActiveRef = useRef(gestureActive);
+  useEffect(() => {
+    gestureActiveRef.current = gestureActive;
+  }, [gestureActive]);
   // Same story, for M12's `[`/`]` chapter-jump shortcuts — jumpToChapter
   // depends on `toc`/`currentSpineIndex` render state, not stable across
   // the load effect's single run.
@@ -794,6 +1056,16 @@ export function ReaderView({
   useEffect(() => {
     fontScaleRef.current = readerFontScale;
   }, [readerFontScale]);
+  // M31 C6: the pinch-to-resize instrument's live state, while a two-finger
+  // pinch is in progress — null the rest of the time, which is also what
+  // unmounts PinchResizeInstrument and lifts the page blur. `scale` drives
+  // both the popup's Slider and (via inline style) the live sample text;
+  // committed to `readerFontScale` only on release, never per frame (DESIGN.md:
+  // "the page does not reflow during the pinch"). A ref, not read from this
+  // state, is what the commit itself reads — see `pinchLiveScaleRef` below.
+  const [pinchInstrument, setPinchInstrument] = useState<
+    { scale: number; x: number; y: number } | null
+  >(null);
   // M19.6 "page numbers, book-wide and stable": same live-via-settingsBus
   // story as readerMargin/readerFontScale above.
   const [pageNumberMode, setPageNumberMode] = useState<PageNumberMode>("off");
@@ -1042,6 +1314,15 @@ export function ReaderView({
   } = useFullscreenChrome();
   const { effectivePaneWidth, paneWidthDragging, handlePaneResizePointerDown } =
     useReaderPaneWidth(readerPaneWidth, setReaderPaneWidth, spreadMode, fullscreenMode);
+  // M31 C9: the departure swipe's own room navigation — plain, per TASKS.md's
+  // own allowance ("land it navigating plainly and say so in NOTES.md")
+  // while the put-down animation it's soft-gated on (M33 C) doesn't exist
+  // yet. `navigate("/")` with no mode emit is deliberate: `DeskPage` seeds
+  // its view from `loadDeskViewMode()` (deskViewBus.ts) when nothing tells
+  // it otherwise, which is already "whichever of desk/list/shelf was last
+  // used" — the exact thing this gesture is specified to land on — so this
+  // needs no bus emit of its own, unlike `d`/`l`/`b` which *force* a mode.
+  const navigate = useNavigate();
 
   // M19.7: the reader's shortcuts, as discrete handlers the shared registry
   // (useShortcuts) can dispatch by key — replacing the single monolithic
@@ -1180,13 +1461,14 @@ export function ReaderView({
   /** Whether `.turnGrabSurface` currently holds pointer events. Mirrors the
    * inline style rather than owning it, so the two cannot disagree. */
   const grabArmedRef = useRef(false);
-  /** ⚠️ The surface is armed for a **mouse or pen only**, and starts disarmed
-   * (`pointer-events: none` is its CSS default). Touch is M31 C's job and does
-   * not exist yet: arming for a finger would mean every touch anywhere on the
+  /** ⚠️ The surface is armed for a **mouse or pen only**, permanently — not
+   * a placeholder until M31 C, which is built and deliberately does not use
+   * this element at all (see `TouchGestureState` above `fetchPosition`).
+   * Arming this surface for a finger would mean every touch anywhere on the
    * page landed on a parent-document overlay instead of the text, which is
-   * invariant 1 broken for touch exactly as it was for the mouse. Until C, a
-   * finger simply never meets this element. iOS synthesises a mousemove after
-   * a tap, so this is tracked rather than assumed. */
+   * invariant 1 broken for touch exactly as it was for the mouse — so a
+   * finger simply never meets this element, ever. iOS synthesises a
+   * mousemove after a tap, so this is tracked rather than assumed. */
   const pointerTypeRef = useRef<string>("mouse");
 
   function setGrabSurfaceArmed(armed: boolean) {
@@ -1302,8 +1584,9 @@ export function ReaderView({
     if (event.pointerType !== "mouse" && event.pointerType !== "pen") {
       // A finger that reached this element at all means the arming above got
       // it wrong (an iOS-synthesised mousemove, most likely). Stand down so
-      // the *next* touch reaches the text, and swallow this one rather than
-      // starting a gesture touch has no contract for until M31 C.
+      // the *next* touch reaches the text, and swallow this one — this
+      // surface is never the right handler for a touch gesture; that is
+      // `TouchGestureState`'s job, on a wholly different pair of listeners.
       setGrabSurfaceArmed(false);
       return;
     }
@@ -1326,6 +1609,103 @@ export function ReaderView({
       window.removeEventListener("pointerup", release);
       window.removeEventListener("pointercancel", release);
     };
+  }, []);
+
+  // M31 C9: "disarmed while... being edited" — a real check of the parent
+  // document's own focus, the same `isTyping` shape `handleIframeKeydown`
+  // already uses for the same job (its own comment explains why: a typed
+  // keypress must not double as a shortcut). AskPill/ThreadPanel/
+  // DefinitionCard/Settings inputs are all parent-document elements, so this
+  // one check covers every one of them.
+  function isEditingSomewhere(): boolean {
+    const active = document.activeElement as HTMLElement | null;
+    return (
+      active?.tagName === "TEXTAREA" || active?.tagName === "INPUT" || Boolean(active?.isContentEditable)
+    );
+  }
+
+  // ── M31 C: touch, the parent-document half ─────────────────────────────
+  //
+  // `.stage`'s own `onTouch*` — the outer margins and the spine gutter,
+  // genuinely outside the sandboxed epub.js iframe. See the big comment
+  // above `TouchGestureState` for why this is a wholly independent state
+  // machine from the iframe-content one below, not one continuous stream.
+  const stageTouchRef = useRef<TouchGestureState>(freshTouchGestureState());
+
+  function stageTouchCallbacks(): TouchGestureCallbacks {
+    return {
+      hasLiveSelection,
+      isEditingSomewhere,
+      isMidTurn: () => gestureActiveRef.current,
+      getPageHeight: () => pageClipRef.current?.getBoundingClientRect().height ?? 0,
+      toViewport: (clientX, clientY) => ({ x: clientX, y: clientY }),
+      fontScale: () => fontScaleRef.current,
+      onCommitTurn: (direction) => turnPageRef.current(direction),
+      onCommitDeparture: () => {
+        if (hasLiveSelection() || isEditingSomewhere() || gestureActiveRef.current) return;
+        navigate("/");
+      },
+      onTap: () => {
+        if (fullscreenModeRef.current) wakePebble();
+      },
+      onPinchPreview: (scale, viewportX, viewportY) => {
+        setPinchInstrument({
+          scale,
+          // M31 C6: "100px above the pinch's centre point", clamped into
+          // view the same way `handleSelected` clamps the pill (M31 B2) —
+          // clamp, never refuse (DESIGN.md).
+          x: Math.min(Math.max(viewportX, 60), window.innerWidth - 60),
+          y: Math.max(viewportY - 100, 40),
+        });
+      },
+      onPinchCommit: (scale) => setReaderFontScale(scale),
+      onPinchEnd: () => setPinchInstrument(null),
+    };
+  }
+
+  // ⚠️ A raw `addEventListener`, not JSX `onTouch*` props — React has bound
+  // its own root-level touchstart/touchmove listeners `{ passive: true }`
+  // since v17 (matching the browser's own default), so `preventDefault()`
+  // inside a synthetic `onTouchMove` handler is silently a no-op (a console
+  // warning, not a thrown error) exactly like C2's epub.js-forwarded case.
+  // This is the parent-document mirror of that same fact, not a special case
+  // of it.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    function onStart(event: TouchEvent) {
+      // Same guard as `handleStagePointerMove`'s own: the pill, a panel and
+      // the pane-resize handle are `.stage`'s children too, not just
+      // `.pageClip`'s — a touch that starts on one of them is not a touch on
+      // the page, and "implicit touch capture" (the platform's own rule)
+      // means checking only here is enough; this touch's own move/end stay
+      // targeted at whatever this resolved to for its whole lifetime.
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest("[data-page-surface]")) return;
+      handleTouchStart(stageTouchRef.current, event.touches, stageTouchCallbacks());
+    }
+    function onMove(event: TouchEvent) {
+      if (handleTouchMove(stageTouchRef.current, event.touches, stageTouchCallbacks())) {
+        event.preventDefault();
+      }
+    }
+    function onEnd() {
+      handleTouchEnd(stageTouchRef.current, stageTouchCallbacks());
+    }
+    function onCancel() {
+      handleTouchCancel(stageTouchRef.current, stageTouchCallbacks());
+    }
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd, { passive: true });
+    el.addEventListener("touchcancel", onCancel, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onCancel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // M19.6 "highlight across a page boundary" (decisions.md 2026-07-30
@@ -2104,12 +2484,83 @@ export function ReaderView({
     }
     rendition.on("relocated", handleRelocated);
 
+    // M31 C: the iframe-content half of the touch state machine — see the
+    // big comment above `TouchGestureState` (ReaderView.tsx, module scope)
+    // for why this cannot be `rendition.on("touchstart"/...)`. epub.js does
+    // forward those, but `{ passive: true }` (epubjs/src/contents.js), so
+    // `preventDefault()` on the forwarded event is always a no-op; C2's own
+    // fix is a raw, non-passive listener straight on `contents.document`,
+    // which is what this is. Fresh per rendered section, deliberately: a new
+    // section is a genuinely new iframe/document (epub.js destroys the old
+    // one), so there is nothing to detach and no stale state to carry over —
+    // the old listeners and their `TouchGestureState` simply go with it.
+    function attachTouchHandlers(contents: Contents) {
+      const state = freshTouchGestureState();
+
+      function toViewport(clientX: number, clientY: number) {
+        const frame = contents.document.defaultView?.frameElement as HTMLElement | null | undefined;
+        if (!frame) return { x: clientX, y: clientY };
+        const rect = frame.getBoundingClientRect();
+        return { x: rect.left + clientX, y: rect.top + clientY };
+      }
+
+      function callbacks(): TouchGestureCallbacks {
+        return {
+          hasLiveSelection,
+          isEditingSomewhere,
+          isMidTurn: () => gestureActiveRef.current,
+          getPageHeight: () => pageClipRef.current?.getBoundingClientRect().height ?? 0,
+          toViewport,
+          fontScale: () => fontScaleRef.current,
+          onCommitTurn: (direction) => turnPageRef.current(direction),
+          onCommitDeparture: () => {
+            if (hasLiveSelection() || isEditingSomewhere() || gestureActiveRef.current) return;
+            navigate("/");
+          },
+          onTap: () => {
+            if (fullscreenModeRef.current) wakePebble();
+          },
+          onPinchPreview: (scale, viewportX, viewportY) => {
+            setPinchInstrument({
+              scale,
+              x: Math.min(Math.max(viewportX, 60), window.innerWidth - 60),
+              y: Math.max(viewportY - 100, 40),
+            });
+          },
+          onPinchCommit: (scale) => setReaderFontScale(scale),
+          onPinchEnd: () => setPinchInstrument(null),
+        };
+      }
+
+      contents.document.addEventListener(
+        "touchstart",
+        (event) => handleTouchStart(state, event.touches, callbacks()),
+        { passive: true },
+      );
+      contents.document.addEventListener(
+        "touchmove",
+        (event) => {
+          if (handleTouchMove(state, event.touches, callbacks())) event.preventDefault();
+        },
+        { passive: false },
+      );
+      contents.document.addEventListener("touchend", () => handleTouchEnd(state, callbacks()), {
+        passive: true,
+      });
+      contents.document.addEventListener(
+        "touchcancel",
+        () => handleTouchCancel(state, callbacks()),
+        { passive: true },
+      );
+    }
+
     function handleRendered(_section: unknown, view: unknown) {
       const contents = (view as ViewWithContents).contents;
       if (!contents) return;
       currentContentsRef.current = contents;
       resolveHighlightsForSection(contents);
       paintSearchMarksForSection(contents);
+      attachTouchHandlers(contents);
 
       // The section's fonts may still be loading at this point; when they
       // land, the text re-breaks at the same expanded width and every overlay
@@ -3413,7 +3864,11 @@ export function ReaderView({
               the page from a hover over the pill, a thread panel or the
               pane-resize handle, which are siblings of this element rather
               than children and are emphatically not paper. */}
-          <div className={styles.pageClip} ref={pageClipRef} data-page-surface>
+          <div
+            className={`${styles.pageClip} ${pinchInstrument ? styles.pageBlurred : ""}`}
+            ref={pageClipRef}
+            data-page-surface
+          >
             {/* M20 step 3 "the next page slides over": while a slide is
                 live this is the *incoming* page — it gets a stacking context
                 above the departing card below it and its own opaque paper, so
@@ -3583,6 +4038,18 @@ export function ReaderView({
               />
             )}
           </AnimatePresence>
+          {/* M31 C6: no AnimatePresence — same directness as DwellRing, and
+              for the same reason: the instrument's whole life is the pinch's
+              own, which ends abruptly (a lifted finger), not on a timer an
+              exit animation would have something to outlast. */}
+          {pinchInstrument && (
+            <PinchResizeInstrument
+              scale={pinchInstrument.scale}
+              x={pinchInstrument.x}
+              y={pinchInstrument.y}
+              onCommit={(value) => setReaderFontScale(value)}
+            />
+          )}
           <AnimatePresence>
             {definitionCard && (
               <DefinitionCard

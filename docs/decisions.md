@@ -3,6 +3,35 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-27 (even later) — M31 C6: the pinch resizes the reader, not the setting
+
+DESIGN.md names the pinch-to-resize instrument "an instrument, not a setting", framed there
+as a *behavioural* rule (the page doesn't reflow live, the reader gets a dial instead of a
+form field). Building it surfaced a second reading of the same words worth deciding on
+purpose rather than by default: does a pinch's resize **persist** past this reading session,
+the way Settings' own text-size `Slider` does?
+
+It does not, as shipped. `setReaderFontScale` is called once on release — the existing
+`readerFontScale` effect reflows the page exactly as it would for any other change to that
+state, and the size holds for the rest of this session (surviving further page turns, room
+changes, anything short of a reload) — but nothing writes it to `/api/settings`. Reopening
+the book, or reloading the tab, reverts to whatever Settings last saved.
+
+**Why:** Settings' save path (`SettingsPage.tsx`'s `handleSave`) is a whole-object `PUT` — it
+sends the entire form, not a delta. `ReaderView.tsx` never writes to that endpoint today (it
+only ever reads it, at mount and via `settingsBus`); giving the reader itself a footgun that
+can silently overwrite whatever else is in Settings — a stale font-scale form value never
+mind — the moment a reader pinches, felt like a second, undiscussed API decision arriving
+inside a gesture-implementation task, not a refusal of the feature. The instrument still does
+everything DESIGN.md specifies live: readout, sample text, blur, clamp, reflow-once-on-release
+— it just doesn't survive a reload.
+
+**How to apply:** if a future session decides pinch-set text size should persist, the shape
+is either (a) give the reader a narrow, single-field PATCH endpoint rather than routing
+through the whole-object `PUT`, or (b) have the reader fetch-then-merge before writing the
+full object back, mirroring what Settings' own form already holds. Either is a real API
+change and belongs to its own task, not folded silently into a gesture's commit handler.
+
 ## 2026-08-27 (later still) — M31 A/B: three calls the pointer contract left open
 
 Implementing the contract (DESIGN.md, "The pointer contract") turned up three questions it

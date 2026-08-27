@@ -1,0 +1,31 @@
+/* M31 C6: `position: fixed`, viewport coordinates — same convention as
+   DwellRing.module.css, not the stage-relative one AskPill/DefinitionCard
+   use (M31 B2). Both are legitimate; this one is simpler and sidesteps B2's
+   whole class of bug, which only exists because AskPill renders outside
+   `.pageClip`'s own box. This instrument has no such ancestor to be inset
+   by. */
+.instrument {
+  position: fixed;
+  transform: translate(-50%, -100%);
+  z-index: var(--reader-z-pinch-instrument);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1rem;
+  border: var(--control-border-width) solid var(--control-border-color);
+  border-radius: var(--control-radius);
+  background: var(--control-bg);
+  box-shadow: var(--shadow-panel);
+}
+
+.sample {
+  margin: 0;
+  max-width: 60vw;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-serif);
+  color: var(--color-text);
+  /* fontSize is set inline, live, from the pinch's own scale. */
+}

@@ -2,9 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   computeReaderGap,
   DECLARE_DRAG_PX,
+  DECLARE_SWIPE_PX,
   declaredTurnDirection,
+  DEPARTURE_FRACTION_OF_PAGE,
+  DEPARTURE_MAX_ANGLE_DEG,
   farLeafRect,
+  isDepartureSwipe,
   nearLeafRect,
+  pinchFontScale,
   READER_MARGIN_PX,
   READER_TARGET_COLUMN_WIDTH,
   SPREAD_GUTTER,
@@ -229,5 +234,61 @@ describe("declaredTurnDirection", () => {
 
   it("refuses an exact 45° drag rather than guessing", () => {
     expect(declaredTurnDirection(50, 50)).toBeNull();
+  });
+
+  it("M31 C1: touch's swipe threshold is bigger, and passed in rather than baked in", () => {
+    expect(DECLARE_SWIPE_PX).toBeGreaterThan(DECLARE_DRAG_PX);
+    expect(declaredTurnDirection(DECLARE_SWIPE_PX - 1, 0, DECLARE_SWIPE_PX)).toBeNull();
+    expect(declaredTurnDirection(-DECLARE_SWIPE_PX, 0, DECLARE_SWIPE_PX)).toBe("next");
+    expect(declaredTurnDirection(DECLARE_SWIPE_PX, 0, DECLARE_SWIPE_PX)).toBe("prev");
+    // Between the two thresholds: enough for a mouse drag, not yet a swipe.
+    expect(declaredTurnDirection(10, 0, DECLARE_SWIPE_PX)).toBeNull();
+    expect(declaredTurnDirection(10, 0)).toBe("prev");
+  });
+});
+
+describe("isDepartureSwipe", () => {
+  const PAGE_HEIGHT = 900;
+  const COMMIT_DY = PAGE_HEIGHT * DEPARTURE_FRACTION_OF_PAGE + 1;
+
+  it("refuses until the throw clears a third of the page", () => {
+    expect(isDepartureSwipe(0, PAGE_HEIGHT * DEPARTURE_FRACTION_OF_PAGE - 1, PAGE_HEIGHT)).toBe(false);
+    expect(isDepartureSwipe(0, COMMIT_DY, PAGE_HEIGHT)).toBe(true);
+  });
+
+  it("refuses upward and sideways travel outright", () => {
+    expect(isDepartureSwipe(0, -COMMIT_DY, PAGE_HEIGHT)).toBe(false);
+    expect(isDepartureSwipe(COMMIT_DY, 0, PAGE_HEIGHT)).toBe(false);
+  });
+
+  it("stays within ±20° of vertical, refusing a shallower diagonal", () => {
+    const angle = (deg: number) => COMMIT_DY * Math.tan((deg * Math.PI) / 180);
+    expect(isDepartureSwipe(angle(DEPARTURE_MAX_ANGLE_DEG - 1), COMMIT_DY, PAGE_HEIGHT)).toBe(true);
+    expect(isDepartureSwipe(angle(DEPARTURE_MAX_ANGLE_DEG + 5), COMMIT_DY, PAGE_HEIGHT)).toBe(false);
+  });
+
+  it("is false on a degenerate page height", () => {
+    expect(isDepartureSwipe(0, 100, 0)).toBe(false);
+  });
+});
+
+describe("pinchFontScale", () => {
+  it("is unchanged at a 1:1 distance ratio", () => {
+    expect(pinchFontScale(100, 100, 1.2, 0.8, 1.6)).toBeCloseTo(1.2, 6);
+  });
+
+  it("scales up on a wider distance and down on a narrower one", () => {
+    expect(pinchFontScale(100, 200, 1, 0.5, 3)).toBeCloseTo(2, 6);
+    expect(pinchFontScale(100, 50, 1, 0.5, 3)).toBeCloseTo(0.5, 6);
+  });
+
+  it("clamps to the reader's own font-scale range", () => {
+    expect(pinchFontScale(100, 1000, 1, 0.8, 1.6)).toBe(1.6);
+    expect(pinchFontScale(100, 1, 1, 0.8, 1.6)).toBe(0.8);
+  });
+
+  it("falls back to the clamped starting scale on a degenerate start distance", () => {
+    expect(pinchFontScale(0, 100, 1.2, 0.8, 1.6)).toBeCloseTo(1.2, 6);
+    expect(pinchFontScale(0, 100, 2, 0.8, 1.6)).toBe(1.6);
   });
 });

@@ -21,6 +21,7 @@
  *   | roaming panels            | --reader-z-panel             | 11 |
  *   | find bar                  | --reader-z-find-bar          | 12 |
  *   | dwell ring                | --reader-z-dwell-ring        | 50 |
+ *   | pinch-resize instrument   | --reader-z-pinch-instrument  | 51 |
  *
  * Two **fixed points** outside this file, and they are fixed because other
  * documents depend on them — do not renumber them here, and do not let
@@ -57,6 +58,14 @@
   --reader-z-panel: 11;
   --reader-z-find-bar: 12;
   --reader-z-dwell-ring: 50;
+  /* M31 C6: `position: fixed` like the dwell ring, for the same reason — it
+     escapes `.stage`'s stacking context to compare against the root, so its
+     number lives in this same higher tier rather than the 4-12 one above.
+     One above the dwell ring: the two can never really coexist (a pinch
+     disarms the swipe, and the dwell only runs mid-selection-drag), but if
+     they ever did, the instrument the reader is actively resizing text with
+     should win. */
+  --reader-z-pinch-instrument: 51;
 }
 
 /* The reader room has no in-flow header — NavCluster is `position: fixed`
@@ -435,6 +444,25 @@
   inset: 0;
   overflow: hidden;
   border-radius: inherit;
+  /* M31 C: the parent-document half of the touch surface — the outer
+     margins and spine gutter are genuinely outside the sandboxed epub.js
+     iframe (M14's own comment on .marginWrapper), so a swipe or pinch begun
+     there needs the browser's own panning/pinch-zoom out of the way exactly
+     as C2 gets it out of the way inside the iframe via `rendition.themes`.
+     `touch-action: none` on `.turnGrabSurface` alone was never enough: that
+     element is `pointer-events: none` for a finger forever (M31 A4), so it
+     is never in the hit-test touch runs against. */
+  touch-action: none;
+}
+
+/* M31 C6: "the page does not reflow during the pinch... this is why the
+   page is blurred and lightened while the instrument is up" (DESIGN.md).
+   Applied to `.pageClip` rather than `.epubContainer` alone so the curl/
+   slide overlays and the highlight marks blur with the text they belong to,
+   not just the live DOM underneath them. */
+.pageBlurred {
+  filter: blur(6px);
+  opacity: 0.85;
 }
 
 /* M14 "customisable page margins" (decisions.md 2026-07-27): the outer
@@ -568,9 +596,14 @@
    verso.
 
    ⚠️ `pointer-events: none` is the **default here, not just the over-ink
-   state**, and JS only ever arms it for a mouse or pen. Touch has no contract
-   yet (M31 C); a surface armed for a finger would mean every touch anywhere on
-   the page landed on this element instead of the text.
+   state**, and JS only ever arms it for a mouse or pen — permanently, not
+   just until M31 C landed. A surface armed for a finger would mean every
+   touch anywhere on the page landed on this element instead of the text
+   (invariant 1, broken for touch exactly as it was for the mouse). Touch's
+   own turn gesture (M31 C1) is a wholly separate mechanism — a raw
+   `touchstart`/`move`/`end` listener on `contents.document` and on `.stage`,
+   never this surface — precisely because this surface cannot be armed for
+   it. See `ReaderView.tsx`'s `TouchGestureState` for that mechanism.
 
    ⚠️ It stays a parent-document element (invariant 2). It needs
    `setPointerCapture`, capture needs a real parent-document `pointerdown`, and

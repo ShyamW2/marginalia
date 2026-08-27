@@ -7312,3 +7312,75 @@ real spread mode, a real book — not a mock), on **Linux/Chromium**:
 **Not verified:** anything on the iPad, and anything in Safari. All of the above is Chromium
 on Linux. §0 and C are where the device work lives, and the honest position is that A and B
 are *pointer* work verified on a pointer machine.
+
+## M31 C — touch, built with no touch-capable device or emulator in reach — 2026-08-27
+
+The whole of C — swipe-to-turn, the iframe/parent-document non-passive listeners, long-press
+selection's own CSS, the disarm rules, pinch-to-resize, the immersive tap, the Settings
+mention, and the departure swipe — landed this session. **None of it was driven on a finger.**
+This session had no iPad, no touch-emulating browser, and no browser-automation tool
+(`chromium`/`google-chrome`/Playwright/`chromium-cli` were all absent from the environment) —
+a materially different position from A/B's, which at least had Chromium/Linux and CDP mouse
+events to drive against. What was actually checked:
+
+- **Types**: `tsc -b`, clean.
+- **The full unit suite**: 467 tests, all passing, including new cases for every piece of
+  pure touch/pinch/departure math (`declaredTurnDirection`'s new threshold parameter,
+  `isDepartureSwipe`, `pinchFontScale` — all in `readerGeometry.test.ts`).
+- **A production build**: `vite build`, clean (the pre-existing single-chunk-size warning is
+  unrelated and unchanged).
+- **The live dev server**: already running from a prior session (`pnpm dev`, port 5173) —
+  every edit in this milestone hot-reloaded with no compile or console error, including the
+  moment a stray duplicate `useNavigate` import briefly existed mid-edit and was caught by
+  HMR's own error overlay before the next edit removed it. That is evidence the bundle is
+  well-formed, not evidence any gesture works.
+
+### One real bug found writing this, not asked for by the task
+
+C2 says epub.js's own forwarded touch events are `{ passive: true }`, so `preventDefault()`
+on them is a no-op — the documented reason the fix has to be a raw listener on
+`contents.document`. The parent-document half (`.stage`'s own touch, for the outer margins
+and the spine gutter) needed the identical fix for an *undocumented* reason: **React has
+bound its own root-level `touchstart`/`touchmove` listeners `{ passive: true }` since v17**
+(matching the browser's own default, to avoid the "Unable to preventDefault inside passive
+event listener" warning), so a JSX `onTouchMove={...}` handler's `preventDefault()` is
+silently a no-op there too. First written with JSX `onTouch*` props, on the assumption that
+only epub.js's forwarding was passive; caught before it shipped by writing out what
+`preventDefault()` actually needed to accomplish (suppressing native panning) and realizing
+the parent-document path had never been given the tool to do it. Both attachment points now
+use a raw `addEventListener` with an explicit `{ passive: false }` on `touchmove`; neither
+uses a JSX `onTouch*` prop.
+
+### The known gap: a gesture that straddles ink and paper
+
+Touch's "implicit touch capture" means a touch's `touchmove`/`touchend` are always dispatched
+to wherever its `touchstart` first landed, and `TouchEvent.touches` only ever lists touches
+targeting that same document. The iframe-content listener and the parent-document (`.stage`)
+listener are therefore two genuinely independent state machines, each blind to touches that
+started in the other's document — the same "events inside the sandboxed iframe never bubble
+out" fact `handleStagePointerMove`/`handleContentMouseMove` already live with for the mouse,
+just extended to touch. A swipe or a pinch that starts and stays in one region (all-ink or
+all-paper) is handled correctly by construction; one that straddles the boundary — a finger
+planted in the outer margin, the other on the text — is not something either state machine
+can see whole. Left as a known limitation rather than chased, since fixing it would mean
+sharing gesture state across the iframe boundary, which is the exact seam NOTES.md's M2/M3
+friction already documents as expensive to cross.
+
+### What C3 actually rests on
+
+C3 asked to *check* whether the platform's own long-press already produces a selection
+(native hold → `selected` → `handleSelected` → the pill) before writing anything. That check
+needs a touch-capable surface to run on, which this session didn't have. C4's CSS and C5's
+disarm logic are built on the assumption that it does — `hasLiveSelection()` is the same
+function `handleSelected`'s own selection has always driven, unmodified — but the assumption
+itself was never confirmed this pass. If it turns out not to hold on real iOS Safari (an
+unusual outcome, but the task explicitly didn't want it assumed), C4's CSS stays correct and
+harmless regardless; C1/C5's disarm-on-selection would need a second look against whatever
+the platform does instead.
+
+### C6's one judgement call, recorded properly in decisions.md
+
+The pinch commits to `readerFontScale` (so it reflows and holds for the rest of the reading
+session) but never reaches the server — Settings' own save is a whole-object `PUT`, and
+threading one pinch-driven field through that seam looked like a second, undiscussed decision
+riding along inside this one. Full reasoning in decisions.md, dated with this entry.

@@ -76,6 +76,14 @@ export function turnZoneForVisibleX(
  * which decide whether a *declared* drag lands or springs back. */
 export const DECLARE_DRAG_PX = 6;
 
+/** M31 C1: touch's own declare threshold (DESIGN.md's touch table — "24px of
+ * horizontal travel commits a page turn"). Bigger than `DECLARE_DRAG_PX` on
+ * purpose: a mouse press already told the grab surface it was on grabbable
+ * paper before the drag even started (hover arms it); a touch has no hover,
+ * so the threshold alone is what tells an intentional swipe from the few px
+ * of travel a finger reports just settling onto the glass. */
+export const DECLARE_SWIPE_PX = 24;
+
 /**
  * Which way a drag on paper turns the page, or `null` while it has not yet
  * said.
@@ -86,11 +94,58 @@ export const DECLARE_DRAG_PX = 6;
  * **left** turns **forward**, dragging **right** turns **back**. A vertical
  * drag has no dominant horizontal axis and does nothing at all — which is also
  * what leaves M31 C9's downward departure gesture a clear field.
+ *
+ * `thresholdPx` defaults to the pointer's `DECLARE_DRAG_PX`; touch's swipe
+ * (M31 C1) calls this with `DECLARE_SWIPE_PX` instead — same axis-dominance
+ * test, a bigger gate before it fires.
  */
-export function declaredTurnDirection(dx: number, dy: number): "prev" | "next" | null {
-  if (Math.abs(dx) < DECLARE_DRAG_PX) return null;
+export function declaredTurnDirection(
+  dx: number,
+  dy: number,
+  thresholdPx: number = DECLARE_DRAG_PX,
+): "prev" | "next" | null {
+  if (Math.abs(dx) < thresholdPx) return null;
   if (Math.abs(dx) <= Math.abs(dy)) return null;
   return dx < 0 ? "next" : "prev";
+}
+
+/**
+ * M31 C9: the one room-changing touch gesture (DESIGN.md, "Gestures outside
+ * the reader") — a long, steep, one-finger downward throw. A separate test
+ * from `declaredTurnDirection`'s, not a reuse of it: that test only asks
+ * "is this drag dominantly horizontal or not", which a diagonal drag fails
+ * without that making it either steep enough or long enough to leave the
+ * book — a shallow diagonal must stay a no-op (the touch table's rule),
+ * not accidentally depart.
+ */
+export const DEPARTURE_FRACTION_OF_PAGE = 1 / 3;
+export const DEPARTURE_MAX_ANGLE_DEG = 20;
+
+export function isDepartureSwipe(dx: number, dy: number, pageHeight: number): boolean {
+  if (dy <= 0 || pageHeight <= 0) return false;
+  if (dy < pageHeight * DEPARTURE_FRACTION_OF_PAGE) return false;
+  const angleFromVerticalDeg = (Math.atan2(Math.abs(dx), dy) * 180) / Math.PI;
+  return angleFromVerticalDeg <= DEPARTURE_MAX_ANGLE_DEG;
+}
+
+/**
+ * M31 C6: the pinch's live scale — a ratio of the two touches' current
+ * distance over their distance when the pinch began, applied to whatever
+ * fontScale was in effect at that moment (not to 1) and clamped to the
+ * reader's own range. "The pinch drives its value" (DESIGN.md): this is the
+ * whole of that math, kept pure and testable rather than inlined into the
+ * touch handler.
+ */
+export function pinchFontScale(
+  startDistance: number,
+  currentDistance: number,
+  startScale: number,
+  min: number,
+  max: number,
+): number {
+  if (startDistance <= 0) return Math.min(max, Math.max(min, startScale));
+  const scale = startScale * (currentDistance / startDistance);
+  return Math.min(max, Math.max(min, scale));
 }
 
 export interface LeafRect {
