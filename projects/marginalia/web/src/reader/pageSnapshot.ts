@@ -62,6 +62,7 @@
  *   into a string rather than handed over as an object URL, and it is not an
  *   optimization anyone should undo.
  */
+import { recordSnapshotDebug } from "./snapshotDebug.js";
 
 // Best-effort deadline. A `try/catch` around a capture does nothing for a
 // *hang* — a promise that never settles doesn't throw — and M10 hit a real
@@ -379,7 +380,23 @@ async function rasterize(svgs: string[], viewport: CaptureViewport): Promise<str
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("no 2d context for the snapshot");
   for (const image of images) ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/png");
+  const dataUrl = canvas.toDataURL("image/png");
+
+  // M31 §0h: see snapshotDebug.ts — the iPad-only render-wrong bug is a
+  // geometry mismatch (0f/0g), and this is one of the two log points the
+  // task calls for, compared Mac-console-against-iPad-console.
+  if (import.meta.env.DEV) {
+    console.debug("[marginalia] pageSnapshot.rasterize", {
+      "viewport.width": viewport.width,
+      "viewport.height": viewport.height,
+      devicePixelRatio: window.devicePixelRatio,
+      scale,
+      "canvas.width": canvas.width,
+      "canvas.height": canvas.height,
+    });
+    recordSnapshotDebug({ rasterizeDataUrl: dataUrl });
+  }
+  return dataUrl;
 }
 
 /** The page's own background, read off the section document rather than the

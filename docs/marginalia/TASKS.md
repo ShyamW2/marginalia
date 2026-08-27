@@ -750,6 +750,17 @@ about our gestures. See decisions.md 2026-08-27 (later) for the diagnosis.
       app-wide, not per-room, since both the Scan's pinch (B) and text-resize (C6) will
       need the gesture free everywhere. C6 itself is not built yet; only the zoom-blocking
       half of this pairing exists so far.
+      ⚠️ **Verified live 2026-08-27: still zooms over the book page, not elsewhere.** The
+      listener is on the parent `document`; epub.js renders each section into its own
+      `sandbox="allow-same-origin"` iframe, and DOM events (gesture events included) never
+      bubble across a frame boundary — the exact fact M31 C2 already names for
+      `touchstart`/`move`/`end`, just not yet applied here. A pinch that starts over app
+      chrome outside the iframe is still blocked; one over the page itself is not. Left as
+      a stub rather than chased now — the operator's call, since it is moot the moment this
+      stops being a bare Safari tab (standalone/Home-Screen mode removes system pinch-zoom
+      outright per the note above, and a future native wrapper removes it a second way).
+      If it is ever worth fixing in-tab, the fix is C2's: attach the same listener to each
+      section's `contents.document` as epub.js renders it, not a second mechanism.
 - [x] **0e.** ⚠️ **The app has zero width-based media queries** — measured 2026-08-23
       (decisions.md): all seven `@media` rules are `prefers-reduced-motion` or
       `prefers-color-scheme`. Nothing about the layout currently responds to an iPad in
@@ -792,7 +803,7 @@ That distinguishes *wrong offset* from *wrong extent*, and it points at extent.
       device pixel ratio is ruled out as the cause. What is left is something measured
       differently on that device, which is the same shape as 0a. **0g is now the leading
       hypothesis, not one of several.**
-- [ ] **0g.** ⚠️ **Re-test after 0a — the leading hypothesis, per 0f.** Both known iPad
+- [x] **0g.** ⚠️ **Re-test after 0a — the leading hypothesis, per 0f.** Both known iPad
       faults are viewport-measurement faults, and both are absent on the Mac.
       `CaptureViewport` and `CardLayout` are measured off the reader's own boxes, and
       0a establishes those boxes are taller than the visible window on this device.
@@ -800,7 +811,9 @@ That distinguishes *wrong offset* from *wrong extent*, and it points at extent.
       (`bitmapWidth / layout.contentWidth`) — exactly the shape of code that is silently
       wrong when one of its two inputs was measured on a viewport that is not the visible
       one. This may change or vanish once the layout is fixed. Do not fix it before 0a.
-- [ ] **0h.** If it survives 0a: instrument rather than guess. Log `viewport.width/height`,
+      **Re-tested 2026-08-27, after 0a: still reproduces.** The hypothesis did not resolve
+      on its own — 0h's instrumentation is next, not a second guess.
+- [x] **0h.** If it survives 0a: instrument rather than guess. Log `viewport.width/height`,
       `canvas.width/height` in `rasterize`, `image.naturalWidth/naturalHeight` and
       `layout.contentWidth` in `composeCardSnapshot`, on the Mac and on the iPad, and dump
       the intermediate PNG. One comparison of those five numbers across the two machines
@@ -809,6 +822,16 @@ That distinguishes *wrong offset* from *wrong extent*, and it points at extent.
       apply `ctx.scale(scale, scale)` before `drawImage` at intrinsic size, instead of
       passing a scaled destination rect — same output, one less place for an SVG image's
       intrinsic size to be interpreted differently.
+      **Instrumentation added 2026-08-27**, not yet run on the iPad. `pageSnapshot.ts`'s
+      `rasterize` and `cardSnapshot.ts`'s `composeCardSnapshot` each log their numbers via
+      `console.debug` (DEV-gated, `[marginalia]`-tagged) and stash their PNG on
+      `window.__marginaliaSnapshotDebug` (`snapshotDebug.ts`) — `.rasterizeDataUrl` /
+      `.composedDataUrl`, either pasteable into a new tab's address bar to view the
+      intermediate bitmap directly, since logging a full data URL to the console is not
+      practical at page-image size. **Next: open Safari's Develop menu on the Mac, inspect
+      the iPad's tab, turn a page, and compare both consoles' numbers and images against the
+      same turn done on the Mac** — that comparison is what decides which stage diverges;
+      do not apply the CSS-`scale` fallback until it does.
 
 _Acceptance: on the iPad — a curl, a slide and a book-opening each show the departing page
 at the same size and position as the live page under it, with no band, no gap and no black.

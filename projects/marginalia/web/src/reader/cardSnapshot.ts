@@ -23,6 +23,7 @@
  * is a real cost on the interaction path for no benefit.
  */
 import { samplePaperColor, type Rgb } from "./pageFold.js";
+import { recordSnapshotDebug } from "./snapshotDebug.js";
 
 /** Where the captured content sits inside the card, in CSS px. All four
  * numbers come from `getBoundingClientRect()` on `.pageClip` and
@@ -154,5 +155,20 @@ export async function composeCardSnapshot(
   ctx.fillStyle = paper ?? rgbCss(samplePaperColor(image));
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(image, rect.dx, rect.dy);
+
+  // M31 §0h: see snapshotDebug.ts — the other of the two log points, paired
+  // with pageSnapshot.rasterize's. `rect` is `cardCompositeRect`'s output,
+  // the leading suspect per 0g: it recovers scale as a ratio
+  // (bitmapWidth / layout.contentWidth), which is silently wrong the moment
+  // either side was measured off a viewport that isn't the visible one.
+  if (import.meta.env.DEV) {
+    console.debug("[marginalia] cardSnapshot.composeCardSnapshot", {
+      "image.naturalWidth": image.naturalWidth,
+      "image.naturalHeight": image.naturalHeight,
+      layout,
+      rect,
+    });
+    recordSnapshotDebug({ composedDataUrl: canvas.toDataURL("image/png") });
+  }
   return canvas;
 }
