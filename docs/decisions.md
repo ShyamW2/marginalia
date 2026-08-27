@@ -3,6 +3,415 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-26 — A turning page is in front of the screen, and two different things were holding it back (M27)
+
+Operator feedback on the wired hinge, in two asks: **(1)** the curled page should be in
+front of the page it is curling onto; **(2)** the reader's own chrome — the nav pebble's
+icons were named — should be *covered* by the page during the turn, "like the page is
+coming out of the screen/above all other UI elements".
+
+Both were real, both were reproduced live (Playwright, real drags against East of Eden,
+spread mode, windowed **and** immersive), and they turned out to have **two different
+causes** — which matters, because fixing only the one everybody sees first leaves immersive
+mode exactly as broken as it was.
+
+**Ruling: a turning page outranks the room's chrome; a dialog still outranks the page.**
+The sheet has left the leaf, so everything it passes over goes under it. The number that
+encodes this is `960` — above `NavCluster`'s `950`, below the `1000` Settings and the
+casting modal claim.
+
+**Cause 1, the ordinary reader: the seam's own layering contract.** Settled decision 14c
+says the one canvas is a fixed `z-index: 0` layer that surfaces raise their foreground DOM
+above. Every consumer so far has been *scenery behind a room* — the Desk's books under its
+hover card and notepad — and for those the contract is right. The fold is the first
+consumer that is not scenery, and at `z-index: 0` it lost to everything: `FarLeafCover`
+(`5`), the turn-zone vignette and grab surface (`6`), the strip, `NavCluster` (`950`). Live
+symptom: the sheet's tail **vanished the moment it crossed the gutter**, because the far
+leaf's cover paints over it — which is precisely ask (1), the far leaf being "the page we're
+curling on to".
+
+The fix is `useScene3DElevated`, a ref-counted request that lifts the *whole* canvas for as
+long as a caller is mounted, and `PageFold3D` is its one consumer. **The contract is not
+repealed**, and the hook's docstring says so: ask for this because the thing you are drawing
+is physically off the page, never because a surface looks better on top.
+
+**Cause 2, immersive mode: the browser's top layer, where z-index does not reach.**
+`useFullscreenChrome` called `requestFullscreen()` on the *reader's own wrapper*. A real
+fullscreen element is promoted into the **top layer**, and nothing outside that element
+renders at all — no z-index escapes it, because the top layer sits above the entire stacking
+order by construction. So in immersive mode the shared canvas was not merely behind the
+reader, it was **not drawn at all**: the page curl was invisible for the length of every
+immersive turn, and elevating the canvas could not fix it, because the problem was never
+depth. Fullscreen now targets `document.documentElement`, which contains the shell, the
+canvas layer and every other root-level fixed layer — the browser's own chrome removal was
+the only thing that call was ever for.
+
+**A note for whoever adds the next fixed layer.** `.wrapperFullscreen` is *also* a
+`z-index: 50` fixed element and therefore a stacking context around the whole reader, so
+even with the fullscreen target fixed it would have hidden the fold on its own. Elevating
+to `960` clears it; a future layer that wants to be over the reader has to clear it too.
+
+Verified live after the change, both modes and both directions: the sheet covers the far
+leaf, the strip and the nav pebble mid-drag; a committed turn and a spring-back both release
+the elevation (`[data-elevated]` gone, canvas back at `z-index: 0`); the Desk is untouched,
+its notepad and action card still over its books.
+
+## 2026-08-26 — The hinge is wired into the reader, with a dynamic arc found by tuning rather than derived (M27)
+
+Everything the two entries below this one said the reader owed is now built:
+`ReaderView`/`usePageTurnAnimation` mount `PageFold3D` where `PageCurl` used to be, the
+grab site and release path are `anchorForPinch`/`hingeRelease`/`hingeSettlePointer`/
+`settleArc`, the far leaf is covered by a new `FarLeafCover` (independent of the mesh, per
+its own acceptance), the ladder falls to the slide on a lost or absent WebGL context
+(`useScene3DAvailable`), and the WebGL renderer's own draw cost feeds the same p90 guard as
+the 2D painter's, through the same `handleDrawCost`. `drawPageFold`/`PageCurl.tsx` are not
+retired yet — correctly: that is the milestone after this one, once the operator has signed
+off on real hardware.
+
+**Two things surfaced while driving the harness that were not in the original scope, and
+both changed a number the wiring ships with rather than a line of geometry.**
+
+**1. "The sheet swings away from the spine mid-drag" resolved to a look call, not a bug
+fix.** `pageFold.ts` gained an `ArcRadiusMode`: `"anchor"` (shipped 2026-08-25 — the roll's
+physical size is realized at the grabbed point) vs. `"farthest"` (a candidate that realizes
+it at the leaf's own farthest point from the apex instead, capping the worst-case flap at
+the flat model's tuned size). Both are real and both were tried, live, on the same drag, via
+`harness/pageCone.html`'s new control panel. **`"anchor"` is what shipped** — the operator's
+own choice, made after also getting the dynamic arc curve below, at which point the
+farthest-corner cap stopped being needed to make the sheet read as hugging the spine.
+`ArcRadiusMode` stays in `pageFold.ts` as a real, tested option rather than being deleted;
+just not the one wired in.
+
+**2. "The bigger the arc, the less of the turn a drag can actually reach" was a real bug,
+and a constant arc could not fix it.** `computeConeFold`'s roll cannot claim more angle than
+the drag has swept (`arcAngle ≤ sweep / (1 - ROLL_END.o)`) — a bound sheet's own physics, not
+a bug in the clamp — and that cap is tightest in the *middle* of a turn. A single
+`arcTarget` big enough to look dramatic early in a drag therefore fights its own cap hardest
+exactly where the operator felt the drag stall. The fix is `HINGE_ARC_CURVE`
+(`usePageTurnAnimation.ts`): the roll's target is no longer a constant but a
+piecewise-linear function of the turn's own angular progress (`HingeRelease.progress`, 0 at
+rest, 1 fully turned) — big early, easing down through the middle, easing further down
+late. `hingeRelease` needs no `arcTarget` to compute `.progress` (it only reads the cone's
+solved apex), so this has no circularity even though the curve feeds the very arc that will
+be handed back to `computeConeFold`.
+
+**Neither the curve's shape nor the commit threshold was derived — both were found by
+feel**, which is why the harness grew a live control panel (radio + three sliders,
+`?arcMode=`/`?dynamicArc=`/`?arcStart=`/`?arcMid=`/`?arcEnd=`/`?commit=`/`?settle=` all
+round-tripped into the URL) rather than the operator being handed a reload-and-guess loop.
+**What shipped, and it is worth recording exactly because none of it is derivable from the
+geometry alone:**
+
+| constant | value | was |
+|---|---|---|
+| `ARC_RADIUS_MODE` | `"anchor"` | (candidate `"farthest"` tried, not shipped) |
+| `HINGE_ARC_CURVE` | start `2.2`, mid `1.44`, end `0.4` | (a flat `1.0` in the harness's own defaults) |
+| `HINGE_COMMIT_AT` | `0.271` (`HingeRelease.progress`, angular) | derived estimate was `0.157` |
+| `HINGE_SETTLE_SCALE` | `1.7×` | (`1×` = the derived estimate's timing) |
+
+The `0.157` estimate two entries below (drag distance over `0.9 * leafWidth`, restated in
+the hinge's angular coordinate) was the right *method* — converting a felt distance between
+coordinates rather than copying `0.35` across — but the *number* it lands on is still an
+estimate of where a commit feels right, not a measurement of it, and `0.271` is what
+measuring against a real gesture actually gave.
+
+**Verified by automation, not yet by the operator**: driven live against East of Eden
+(both spread and single-page, both a deep committed drag and a shallow spring-back) with
+Playwright — the spine invariant holds, a spring-back's CFI-based step-back lands the
+reader on byte-identical text to where the drag began, the far-leaf cover shows no
+pre-flipped content mid-drag, and no console or WebGL errors on either path. What
+automation cannot judge — the stutter, the look of the real back-of-sheet material, whether
+`2.2/1.44/0.4` still feels right on a trackpad rather than a scripted mouse — is exactly
+what TASKS.md's Verify entry is for and remains unchecked.
+
+## 2026-08-26 — A turn is a gesture: the pinch is where you grabbed, the release is a swing, and the far leaf waits (M27)
+
+Operator feedback on `harness/pageCone.html`, after the mesh first rendered. Three asks,
+and all three turned out to be the same shape of thing — the harness had only ever tracked
+*hover*, so it could show a fold **held at a pose** and nothing that only exists in a
+gesture. It now runs a real one (press, drag, release, land) and the three are settled as
+follows. Only the harness is wired; each carries what the reader owes when the M27 wiring
+lands.
+
+**1. The `EdgePinch` retires the other two anchors.** `anchorForGrab` snapped a grab to
+either the nearest corner or the *middle* of the edge, and the middle case was then pinned
+flat by `constrainFoldPointer` so its crease stayed parallel to the spine. Both existed
+because the flat model needed them: a flat crease cannot converge, so a mid-edge grab had
+no way to tilt. A cone's rulings fan, and the cone is solved from an anchor *point* and its
+distance to the two gutter corners — nothing in that construction asks whether the point is
+a corner. So the anchor is simply **where the paper was grabbed** (`anchorForPinch`), the
+corners are `t = 0` and `t = 1` of the same continuum, and the band, the snap and the
+pinning all go. Measured: every invariant the cone already owed — the spine edge unmoved,
+the leaf covered by progress 1, the fold moving no faster than its pointer — holds for the
+new kind with **no change to the cone code at all**, which is the evidence that this is a
+generalisation rather than a fourth case.
+*The anchor's `x` stays on the outer edge and only its height comes from the grab*: a hand
+under the sheet is under its edge however far inboard the press landed, which is also what
+lets the reader's grab band be 30% of the page wide without the anchor wandering onto the
+paper. Grabbing the page's *interior* is a different feature and was not asked for.
+⚠️ Worth expecting before it is called a bug: pulling a mid-edge pinch up and across is
+**not monotonic** in which corner lifts most. Lift is `r * arcAngle * profile`, so the
+corner further from the apex has the longer arc while the corner at the larger fan angle is
+further past the crease, and the two trade places as the drag steepens. A hard pull up ends
+as a diagonal fold hinged on the *bottom* gutter corner with the top corner left lying
+flat. That is what paper does.
+
+**2. A release is a swing about the frozen apex, not a lerp toward a target.** A drag
+**cannot** reach the end of a bound sheet's turn — `constrainToSpineHinge` runs out of
+paper first (2026-08-26, above) — so the sheet has to finish it, and the question is along
+what path. Not a pointer lerp: it drags a phantom finger across the page and straightens
+into the far field on the way, so the fan the milestone exists for is gone by the time you
+can see it. Instead `hingeRelease` freezes the apex the release left and rotates the anchor
+about it, which is the one motion inextensibility permits. Three things fall out, all
+proven rather than hoped: the fan stays open, the whole path is inside the lens so nothing
+is ever clamped mid-flight, and it lands exactly, because the fully-turned pose is on the
+same circle.
+This answers the "left open deliberately" from the same day — *which path a click turn
+takes* — for the release at least, and it answers it with the coverage proof attached
+rather than as a look preference.
+
+**3. The arc has to relax as the sheet lands, or it never lands** (`settleArc`). This was
+not asked for and is not a flourish; it is what the first two exposed. Hold the roll at
+`curlArcLength` through the settle and two things go wrong at once, because they are the
+same thing — the roll is a fixed physical arc and does not know the turn is ending. It
+leaves the sheet floating its own roll-diameter (~80px at a normal leaf) above the page it
+came to rest on, so unmounting the fold there *pops*; and it eats the end of the turn,
+because the crease must clear `arcAngle * (1 + ROLL_END.o) / 2` before the anchor can reach
+the mirror, so `creaseAngle` **saturates at the binding with the anchor still ~120px short**
+and the sheet stops moving while the animation runs on. Relaxing to nothing fixes both and
+is what paper does. Measured: the sheet then lands 0.01px from the mirror at zero lift —
+pixel-identical to the page underneath, hence an invisible unmount.
+⚠️ The floor is not decoration. `computeConeFold`'s `arcAngle <= 0` branch means "no roll,
+sheet undisturbed", not "sharp fold", so an arc driven to exactly zero *un-turns* the sheet
+rather than laying it down. Approached from above, the same limit is the sharp fold wanted.
+
+**4. The far leaf must not pre-flip, and this one is a live bug in the shipped reader.**
+The drag advances the rendition at grab time (M20 step 2, "the drag reveals the next page"),
+and in **spread mode** that hands the stage the whole destination spread — so page 66 lies
+flat on the left half from the first frame while the sheet turning over it also carries 66
+on its back. The same page twice, one of them where a book would never put it. The advance
+stays: the turn genuinely needs both the page revealed under the leaf and the leaf's own
+back. Only the **near** half of it is under the sheet, so the far half keeps the page that
+was already there until something lands on it — 64 | 67, with 65 on the sheet and 66 on its
+back, becoming 66 | 67 only once the sheet is down.
+⚠️ It takes **three** underlays, not two, and the third is the one that is easy to miss: a
+fold at rest draws nothing (`computeConeFold` answers an unmoved drag with `null`), so
+64|67 is right only while something is covering the near half. The frame a spring-back
+finishes, page 67 shows where 65 should be. Seen here as a spring-back that ended on the
+wrong page. Phases are `before` (64|65) / `turning` (64|67) / `after` (66|67), and the
+transitions are gesture boundaries, never per-frame.
+
+**What the reader owes when the wiring lands**, since none of the above is wired to it:
+the far-leaf cover (4) — which is a **fix to the shipped 2D curl too**, and can go in
+without the mesh; the pinch anchor replacing `anchorForGrab` at the grab site (1); and a
+release path built on `hingeRelease`/`settleArc` rather than the flat model's pointer lerp
+(2, 3). One number does **not** carry over: the reader's `0.35` commit threshold is
+measured on drag distance over `0.9 * leafWidth`, while `HingeRelease.progress` is an
+angular fraction of a turn spanning **two** leaf widths — the same ~120px of travel is
+`0.157` there. Copying `0.35` across gives a page that refuses to turn until it has been
+dragged more than half a leaf further than the shipped one asks for.
+
+**And one thing only pressing on it could have found**, kept because it will happen again:
+an `<img>` is draggable by default, so a press on the page's own underlay starts a native
+image drag and Chromium answers a fresh `setPointerCapture` with `pointercancel` on the
+next frame. The sheet springs back the instant it is grabbed, which reads exactly like a
+broken fold. `draggable={false}` plus `user-select: none` on the grab surface. The reader's
+own grab surface is a bare div over live DOM and has never hit it; anything that puts an
+image under a drag will.
+
+## 2026-08-26 — The fold's WebGL renderer is a consumer of the one seam, and one of its acceptance criteria has expired (M27)
+
+M27's "over the spine" was designed on 2026-08-03, when the fold's WebGL renderer would
+have been the app's *first* WebGL. M23 has since built the one 3D seam, so the task's
+"stage-wide canvas" now has an obvious owner and settled decision 14 is explicit that the
+two "must not become two ad-hoc call sites". Recording the consequences, because two of
+them change what the milestone was written to do.
+
+**Decided: `PageFold3D` registers a Scene3D layer; it never mounts a canvas.** Everything
+the fold would otherwise have built for itself already exists there — one canvas for the
+app, one world unit to one CSS pixel, and a lost context flipping every consumer to its 2D
+presentation. That last one is exactly what M27 asks for ("a lost context degrades to the
+slide through the gesture's *existing* one exit"), so the fold gets it by not writing it.
+
+**Decided: the fold borrows the Desk's camera rather than bringing a fourth one.**
+`deskViewFrame` hangs a real perspective camera such that the plane `y = 0` maps to the
+viewport 1:1 — world `(x, 0, z)` *is* screen pixel `(x, z)`. A page lying on a page needs
+precisely that: the leaf sits at `y = 0` and lines up with its own DOM rect, and only what
+lifts off it splays. Decision 14a's "consumers bring their own camera, never their own
+units" is satisfied in the letter that matters — the fold is not inventing a framing, it is
+reusing a construction whose whole purpose is the 1:1 plane. The Desk and the reader are
+mutually exclusive surfaces, so nothing has to reconcile the two.
+
+**⚠️ One of the task's acceptance criteria has expired and is restated rather than quietly
+failed.** M27 asks that `pageTransition: "slide"` hold as a ceiling, tested as
+`document.querySelectorAll("canvas").length === 0` sampled every frame through a turn.
+That was written before M23. `Scene3DProvider` latches `everRegistered`, so **any session
+that has shown the Desk, the shelf or the opening keeps a canvas mounted for the app's
+life** — the count is already non-zero before the reader is reached, whatever the fold
+does. The criterion's *intent* is intact and is what the test will assert instead: **under
+"slide", the fold registers no Scene3D layer and mounts no grab surface.** That is the
+thing that was actually being protected — that the ladder cannot climb *up* to the curl on
+a machine or a setting that asked for the slide.
+
+**Decided: the mesh is a fan of wedges between rulings, not a grid, and the deformation
+runs on the CPU.** Both fall out of the cone rather than being tuned: the surface is
+*linear along a ruling* (position and lift are both linear in radius), so two vertices per
+ruling are exact and a grid spends its entire budget subdividing a straight line; and all
+the curvature is in the roll, which can be a ten-millionth of the leaf's angular span in
+the far field, where a uniform grid fine enough to catch it would need tens of thousands of
+vertices. The fan needs 127–169. The deformation stays on the CPU in float64 because the
+apex is held up to a million leaf-diagonals away and **float32 cannot hold a leaf
+coordinate measured from there** — a vertex shader would quantise the page to tens of
+pixels. It is affordable exactly because the fan is small.
+
+**Decided: the sheet is unlit, and shades from the model that was tuned.** `sheetShadingAt`
+and `backOfSheetPaper` are now exported from `pageFold.ts` and read per *vertex* where
+`drawPageFold` read them per *band*. Those constants were judged against real pages in
+three reading themes (2026-08-25); handing the sheet to `SceneLights` instead would be a
+second look, decided by a rig sized for the Desk. Textures are declared `NoColorSpace` and
+the fragment shader writes `gl_FragColor` with no colour-space include, so the card
+bitmap's bytes reach the screen exactly as canvas 2D delivered them — anything else shifts
+the reading surface's paper colour on the frame a turn starts.
+
+**Left open, and owed a real compositor:** the shadow's *softness*. `drawPageFold` throws
+two constant-alpha shadows and blurs them with `shadowBlur`, which has no cheap WebGL
+equivalent. The mesh renderer proposes a contact falloff instead — darkest where the sheet
+nearly touches the page, opening as it rises — which is at least physical rather than
+invented, but it is a look and this machine composites in software. It goes to the harness
+on the operator's Mac with the rest of M27's Verify.
+
+## 2026-08-26 — The binding is a limit on the drag, not only on the sheet (M27)
+
+M27's "the sheet hinges at the spine" asks for one thing — *the gutter-side corners cannot
+curl away, at every drag depth and from every anchor* — and getting it forced the question
+the 2026-08-25 apex note left open for a design session. Recording the resolution because
+it changes what `computeConeFold` promises, and because the reasoning is a proof rather
+than a preference.
+
+**The apex cannot sit on the binding.** A cone's rulings fan from its apex; if the apex is
+partway along the spine, the two halves of the spine edge lie on *opposite* rays from it
+and there is no single fixed binding — a sheet cannot fan around a point in the middle of
+its own binding without tearing. So the apex has to be off the leaf's own span.
+
+**That constraint on the apex is exactly a constraint on the drag**, and a physical one.
+`apexY = 0` is precisely the locus `|P − S0| = |C − S0|` and `apexY = height` the same
+about the other gutter corner, so the two circles through the anchor bound the legal
+region and the lens between them is where **both distances from the anchor to the gutter
+corners have shrunk**. For a corner pinch the first radius *is* the leaf's width, so the
+rule reads: *the grabbed corner can never get further from its own gutter corner than the
+page is wide, nor further from the other one than the page is diagonal* — which is only
+"the bottom edge is that much paper and no more". This is the clamp physical page-turn
+implementations have always carried; here it falls out of the geometry instead of being a
+fudge factor. Checked as well as argued: 965k pointers across six anchors, no apex on the
+binding, and the clamp is the identity on the 6.5% of them that are reachable drags.
+
+**Decided:** a pointer outside the lens is *followed as far as the paper goes* — the anchor
+travels along the drag's own direction and stops where that ray leaves the lens. Two
+circles through the anchor make a convex lens with the anchor on its boundary, so the exit
+point is unique and closed-form. **Not** the nearest point of the lens, which reads more
+obviously and is wrong: a lens is a sliver, its nearest point flips end for end partway
+through a diagonal sweep, and the sheet snaps ~750px in one frame (measured, twice, on two
+variants of that idea). Pulling *outward* now yields no fold at all, which is correct.
+
+The cost is a promise, downgraded deliberately: "the grabbed anchor lands exactly under the
+pointer" becomes "**under the pointer the hinge can honour**". It is the identity for every
+ordinary peel, and where it is not, the alternative was stretching paper.
+
+**Second, the crease cannot run past the binding either.** There is no more sheet to roll
+once it reaches the spine, and a crease at a negative angle puts the spine edge itself on
+the rolled side and lifts it off the book. `creaseAngle` is floored at zero, so a drag that
+asks for more has simply finished the turn and the fold saturates there. Visible
+consequence at the end of a full turn: the anchor stops ~170px short of the mirror position
+because the roll is still eating `arc * (1 + rollEndO)` of the sheet. That is the same arc
+the flat model pays for by overshooting the pointer — an overshoot a bound sheet cannot
+make.
+
+**Third, and overturning one day of `computeConeFold`'s own history: there is no far-field
+hand-off any more.** As written on 2026-08-25 it returned `null` for a drag square out from
+the edge — the apex genuinely is at infinity there — and the caller used `computeFold`.
+That is elegant and unusable: it hands the spine back to the one model that lets it move,
+at the *most* ordinary drag there is. The apex is now **held** a million diagonals down the
+spine instead, and the cone answers every drag. The distance is pinned between two measured
+errors — a nearer apex leaves a visible seam where the held apex swaps ends (1.16px at a
+thousand diagonals, 1.2e-3px at a million), a further one loses leaf coordinates to
+cancellation against the apex's own magnitude (1e-4px at 1e12). Residue against the flat
+model at a square pull: 2.9e-4 px.
+
+**Not touched, and this is the deliberate part:** `computeFold` and `drawPageFold`. Giving
+the flat model the same clamp is a two-line change and it would **stall the shipped page
+turn** — its synthetic sweep runs 2.2x diagonally past the opposite corner, which is a path
+no bound sheet can take, so the clamp would hold it a third of the way through every click
+turn. The flat painter therefore keeps sliding its tail past the gutter until it retires at
+the end of M27, which is invisible today only because the fold canvas is clipped to the
+leaf. The corollary for the renderer that replaces it: **`syntheticFoldPointer`'s overshoot
+is an artefact of the flat crease and dies with it.** `syntheticHingePointer` — the anchor
+to its own mirror across the spine — is the path with a coverage proof attached (leaf
+covered but for the spine edge, versus two thirds of it still lying flat under the flat
+sweep). Whether a *click* turn should instead take a fanned path, the way a thumb does, is
+a look question and deliberately still open: a straight pull square across is the far
+field, so a turn animated along it never shows the fan the cone exists for.
+
+## 2026-08-25 — The paper wash belongs to the fake back, and the dark themes needed the lift back (M27)
+
+Implementing the 2026-08-03 "sign-off" ruling turned up one thing that entry could not have
+known, because it only becomes visible once real content is on the back of the sheet.
+
+**`SHOW_THROUGH`'s wash is not a property of the back of a sheet — it is part of *faking*
+one.** It exists to turn the front's mirrored print into something that reads as the other
+side: knock the text down to a ghost, take the surface to the page's background colour. A
+real back capture already *is* the other side; it carries its own paper and its own print.
+Washing it ghosts the very text the second capture was taken to fetch — the right page at
+20%, which is the old look with better provenance and none of the benefit. So the wash now
+applies only when the back is the front standing in for it (`SheetFaces.back === null`).
+
+**But the wash was doing a second job nobody had separated out, and dropping it broke the
+dark themes.** `backOfSheet`'s lift scales with `1 - lum`, so in `ink` it was carrying most
+of the "this is a lifted object" cue rather than merely hiding text. With no fill at all the
+tail became a near-black triangle with the page's own light text on it, which reads as a
+*hole in the page*, not as paper. Hence a second constant, `BACK_LIFT` — how far a real back
+goes toward the sheet's lit paper colour — swept in the harness at 0.00/0.20/0.34/0.50
+against real back-page prose, with `ink` the deciding theme. **0.34.** Below it the sheet
+stops reading as an object; above it the back's own text starts losing contrast against its
+own surface, which is the original mistake in a milder form.
+
+The general shape of this, worth keeping: **a constant that was tuned to fake something will
+usually be doing two jobs, and only one of them survives the thing becoming real.** The
+2026-08-03 ⚠️ predicted a retune; what it actually needed was a split.
+
+*Not decided here, and deliberately left to the operator's Verify:* whether the real back
+reads better than the mirror did, and what to do about **single-page mode's doubling** — one
+turn advances one page, so there the leaf's back and the page revealed beneath it are the
+same page. That falls straight out of the ruling as stated ("the whole card in single-page
+mode"), so it is a consequence to look at rather than an implementation bug; the harness
+shows it honestly.
+
+## 2026-08-25 — The p90 guard was ruled in August and never built (M27)
+
+Recorded because the failure mode is documentary rather than technical, and it is the kind
+that repeats. PAGE_CURL.md §7 has read **"the guard now takes the p90 of drawn frames"**
+since the 2026-08-03 step 4 session. Nothing implemented it. The doc stated the ruling in the
+present tense, the shipped guard went on taking the median for three weeks, and the operator's
+"stutter is less bad" report — the second independent reason the ruling existed — stayed
+unaddressed the whole time.
+
+The change itself is what was ruled: p90 of drawn frames, ≥12-sample floor and 33ms threshold
+unchanged, so the threshold now means "one frame in ten eats a whole 30fps frame" instead of
+"the typical frame does".
+
+Two things worth keeping from doing it:
+
+- **The statistic got its own module** (`drawCost.ts`) rather than staying inline in
+  `PageCurl`'s cleanup. It has now been wrong twice — the mean frame interval that was reading
+  vsync, then the median that reads the fold's own dead tail — and both times the measuring
+  was fine and the *choice of statistic* was the bug. A number that decides a one-way switch
+  should be testable without mounting a canvas.
+- **Its tests are the recorded traces**, not invented ones: the 25-frame keyboard turn whose
+  median is 0.9ms and whose peak is 27.8ms, and the 104-frame held drag. That keeps the
+  reasoning in the step 4 entry executable instead of only readable.
+
+*A ruling that has not been implemented should not be written in the present tense.* Where a
+doc describes intent, it now says so and names the milestone that owes it.
+
 ## 2026-08-25 — M26 lead-in: an in-app "Sign in" for Codex/Claude
 
 Operator call, raised when M26 ("Codex CLI as a fourth provider") turned out to be

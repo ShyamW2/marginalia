@@ -6766,6 +6766,74 @@ particular the shadow, which trades `drawPageFold`'s `shadowBlur` for a contact 
 because WebGL has no cheap equivalent — is unjudged. It goes to the harness on the
 operator's Mac with the rest of M27's Verify.
 
+## M27 — what a gesture found that a pose could not — 2026-08-26
+
+`pageCone.html` tracked *hover*: no press, no release, so the only thing it could ever show
+was a fold held at a pose. Operator feedback was three asks, every one of them about
+something that only exists in a gesture. Ruling in decisions.md 2026-08-26 "A turn is a
+gesture"; these are the numbers and the two dead ends.
+
+**The generalisation cost nothing, which is the evidence it was right.** `EdgePinch` (the
+anchor is where the paper was grabbed) was added to `pageFold.ts`'s anchor helpers and to
+`pageCone.test.ts`'s shared `ANCHORS` set — and every invariant the cone already owed passed
+for it with **no change to `computeConeFold`, `sampleConeAt` or `foldMesh.ts` at all**: the
+spine edge unmoved at every drag depth, the leaf covered by progress 1, the fold moving no
+faster than its pointer. A fourth special case would have needed code; a generalisation
+needed only a call site.
+
+**Landing measurements** (leaf 600x800, `curlArcLength` = 156px, every anchor, four depths,
+both synthetic paths):
+
+| settle | crease at the end | anchor lands | max lift |
+|---|---|---|---|
+| arc held at 156px | **0.00°, saturated** | ~119px short of the mirror | 26-105px |
+| arc relaxed (`1 - t^2`) | 0.00°, not saturated | **0.01px** from the mirror | **0.0px** |
+
+So a fixed arc does not merely look wrong at the end, it *stops the turn early*: the crease
+has to clear `arcAngle * (1 + ROLL_END.o) / 2` before the anchor can reach the mirror, so it
+runs out of angle against the binding while the animation is still playing. Both columns are
+the same cause.
+
+**Two dead ends worth not repeating.**
+
+*The apex is not "held still" in the sense a first test asserts.* Freezing it and rotating
+the anchor about it does hold it — to the last bit, measured, at every step — but only where
+the apex was **solved**. A release in the far field has no apex to hold: it is held at
+`FAR_APEX_DIAGONALS` off one end or the other depending on which side of square-on the
+pointer passed, and the swing can cross that. The two differ by ~1e-3 px of geometry, which
+is exactly what that constant was sized for. The invariant that covers both is continuity of
+the *paper*, not identity of the apex.
+
+*And the fully-turned pose has no apex at all.* At the mirror every point of the spine is
+equidistant from anchor and pointer, so `bisectorApexY` is undetermined there and the
+re-solved apex lands on rounding — 1200, -400, whatever. It does not matter, and the reason
+is worth writing down rather than rediscovering: it is also the pose where `creaseAngle`
+reaches zero, so the crease *is* the spine and the sheet reflects across the binding
+whatever apex the arithmetic picked. Measured: the final step of the settle moves the paper
+9.68px at 240 steps, against a worst mid-swing step of 9.69px — i.e. the landing step is the
+same size as every other one. Halve the steps and both double. It is smooth motion, not a
+bound that happens to hold.
+
+**The threshold does not carry across, and the number is not close.** The reader commits
+past `0.35` of drag distance over `0.9 * leafWidth` — ~120px on a 380px leaf. A hinge's turn
+spans the anchor to its mirror, **two** leaf widths of travel, so the same 120px is `0.157`
+of `HingeRelease.progress`. Copying 0.35 across was the first thing tried and it reads as a
+page that will not turn: 266px of drag on a 380px leaf before it commits.
+
+**An `<img>` is draggable by default.** The first press on the new grab surface sprang the
+sheet back instantly, every time, and looked exactly like a broken fold. The underlay is an
+`<img>`; pressing it starts a native image drag, and Chromium answers the fresh
+`setPointerCapture` with `pointercancel` on the very next frame — `gotpointercapture`
+immediately followed by `pointercancel`, with no `pointermove` in between. `draggable={false}`
+plus `user-select: none`. Cost about twenty minutes of suspecting the layer registration,
+because the symptom (mesh present at rest, gone the instant you touch it) points straight at
+the thing that *did* change.
+
+**And one about driving it.** Hiding the header for a clean screenshot moves the stage
+without the fold hearing about it — the leaf's viewport origin is cached per frame and only
+`resize`/`scroll` refresh it — so the mesh renders offscreen and looks like it stopped
+drawing. This is the second time that cache has produced a convincing false symptom.
+
 ## M27 — three things only looking at it could have found — 2026-08-26
 
 `pageCone.html`: the shipped flat painter and the hinged mesh side by side, driven by one
@@ -6812,3 +6880,47 @@ pointer a bound sheet turns *much* further than a free one, and a shallow corner
 the leaf's **whole outer edge** rather than dog-earing the corner. Both are correct — a page
 bound at the gutter pivots about it — and both are large visible changes from the shipped
 fold. They are the first thing to look at on the operator's Mac.
+
+## M27 — the fold was losing two different fights at once — 2026-08-26
+
+The operator sent two asks about the newly wired hinge, plus two screenshots: the curled
+page should be *in front of* the page it curls onto, and the reader's chrome should be
+covered by it. Reading it as one z-index problem would have shipped a fix that leaves half
+of it broken, so this is the part worth writing down.
+
+**Reproducing it first was the whole difference.** The screenshots were ambiguous — squinting
+at them, the sheet looked like it was already on top in places — and two readings of ask (1)
+were live: "the sheet is behind the far leaf" and "the sheet is behind the near leaf's live
+text". Driving a real drag (Playwright, real mouse, spread mode) settled it in one frame:
+drag far enough that the sheet crosses the gutter and **its tail simply stops existing**.
+`FarLeafCover` is `z-index: 5`, the shared canvas is `z-index: 0`, and both sit in the root
+stacking context. Nothing subtle. The screenshots had not been dragged far enough to show it,
+which is exactly why they were ambiguous.
+
+**Then immersive mode, which was a different bug wearing the same clothes.** The same drag
+with `f` pressed first drew *no fold at all* — and after the elevation was in and the DOM
+said `data-elevated="true"`, `z-index: 960`, still no fold. That is the tell: the canvas was
+not losing on depth, because it was not being composited at all. `document.fullscreenElement`
+came back as the reader's own `.wrapper`. A real fullscreen element goes into the browser's
+**top layer**, and the top layer is not a z-index — it is above the entire stacking order,
+and nothing outside the fullscreen element renders. `requestFullscreen()` now targets
+`document.documentElement`, which contains the shell *and* the seam's canvas.
+
+**What I would have got wrong without the second check:** the fix for (1) was verified
+working in the windowed reader, both asks visibly satisfied, and it would have been very easy
+to stop there and report the milestone item done. Immersive mode is the operator's actual
+reading mode in one of the two screenshots.
+
+**Two smaller things worth keeping.**
+- Headless Chromium honours `requestFullscreen()` off a synthetic keypress, so the top-layer
+  bug is reproducible in automation. It would not have been from a screenshot.
+- `.wrapperFullscreen` is `z-index: 50` **and** `position: fixed`, so it is a stacking
+  context around the whole reader. Even with the fullscreen target fixed, a `z-index: 0`
+  canvas is under all of it — the two causes overlap in immersive mode and each is
+  sufficient. Fixing either one alone leaves it broken.
+
+**Live checks that passed after the change** (both page modes, both drag directions): the
+sheet covers the far leaf's cover, the strip, the title block and the nav pebble mid-drag;
+the immersive pebble too; a committed turn and a spring-back both release the elevation
+(`[data-elevated]` gone); the Desk's notepad and action card still sit over its books, which
+is the contract this deliberately did not repeal.

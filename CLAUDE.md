@@ -145,6 +145,18 @@ doc), never by drift.
    code-split, so it is fetched by the gesture that *precedes* the click
    (`reader/preload.ts`), or the first frame is a blank one however continuous every frame
    after it is.
+   *Amended 2026-08-26 (M27), the contract's one exception:* a 3D object that is **in front
+   of the page rather than behind it** may raise the whole canvas above the room's chrome, via
+   `useScene3DElevated` — the turning page is the only such object, and the test is physical,
+   not aesthetic: the sheet has left the leaf, so the far leaf's cover, the reader strip and the
+   nav pebble all belong under it. It sits at `z-index: 960` — above `NavCluster`, below the
+   `1000` a modal claims, so a dialog still outranks a turning page — and the elevation is
+   ref-counted and scoped to the gesture's own mount. **This does not repeal (c)**: every other
+   consumer stays scenery behind its room's DOM, which is what the Desk's action card, notepad
+   and listening tool are built on. *And it is not the whole of the problem:* a real
+   `requestFullscreen()` promotes its element into the browser's **top layer**, where no
+   z-index reaches it at all — so the app fullscreens `document.documentElement`, never a room's
+   own wrapper, or every root-level fixed layer (the seam's canvas included) stops rendering.
 15. **The list view is the library's accessibility floor** (2026-08-12, restating
    DESIGN.md:67-68 as an invariant because a milestone came close to overturning it by
    accident). `LibraryGrid` is the keyboard/screen-reader path for the Desk. New library

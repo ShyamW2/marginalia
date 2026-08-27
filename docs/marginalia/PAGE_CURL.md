@@ -6,14 +6,17 @@ and the fold was seen carrying a real page for the first time, and again later t
 when the sheet became the paper card and the peel started opening onto the next page.
 §9 was added 2026-08-03, when the operator reported the curl getting stuck; §2d, §3, §4 and
 §7 were revised later the same day, when the measurement gate ran on real GPU hardware and
-the over-the-spine fork resolved. Binding rulings live in `docs/decisions.md` (2026-07-20,
-amended 2026-08-01, twice on 2026-08-02, and four times on 2026-08-03); this document is the
-working detail behind them.*
+the over-the-spine fork resolved. §5b was added 2026-08-26, when the wired hinge turned out
+to be rendering behind the page it curls onto — and, in immersive mode, not rendering at all.
+Binding rulings live in `docs/decisions.md` (2026-07-20, amended 2026-08-01, twice on
+2026-08-02, four times on 2026-08-03, and again on 2026-08-26); this document is the working
+detail behind them.*
 
 Read with: `docs/decisions.md` 2026-08-03, 2026-08-02 and 2026-08-01 (the rulings),
 `NOTES.md` "M20 revisited", "M20 — the capture", "M20 — the card, the reveal, and the edge
 peel" and "M20 — the stuck curl" (the friction logs), `TASKS.md` M20 (what is checked
-off). **If you are here to fix the stuck curl, start at §9.**
+off). **If you are here to fix the stuck curl, start at §9; if you are here because the fold
+is behind something, start at §5b.**
 
 ---
 
@@ -434,16 +437,50 @@ and wrong:
 not load from inside an SVG image, and a fallback font re-breaks every line, which makes
 the snapshot disagree with the page at the exact moment the fold starts.
 
-### The harness is still the place to judge the look
+### ⚠️ A fifth failure, open as of 2026-08-27: wrong on iPad
 
-`web/harness/pageFold.html` imports `pageFold.ts` straight from source, paints a synthetic
-book page, and renders every fold state across all three reading themes — same code path,
-real bitmap, screenshot-able, iterating in seconds instead of through a page turn. **Every
-visual constant in the file was chosen there**, and that is still true. What is no longer
-needed is the stand-in-bitmap `addInitScript`: the live app now captures real pixels, so
-the app itself is a valid place to verify.
+## 5b. Where the fold sits in the page's stack — and why it is the seam's one exception
 
----
+*Added 2026-08-26, after the operator reported the curled page rendering behind the page it
+curls onto and behind the nav pebble. Ruling in `docs/decisions.md`, "A turning page is in
+front of the screen".*
+
+The fold draws on the shared 3D canvas (`scene3d/Scene3D.tsx`), and that canvas is a
+**fixed, full-viewport layer** — settled decision 14c's layering contract. The contract's
+default is `z-index: 0`, which every other consumer wants: they are *scenery behind a room*,
+and their room's own foreground DOM (the Desk's hover card, notepad, listening tool) claims
+`z-index: 1` to sit over them.
+
+**A turning page is the opposite kind of object.** It has lifted off the leaf, so everything
+it passes over belongs under it. Two separate mechanisms were stopping that, and knowing
+both apart matters — the obvious one does not fix the worse one.
+
+**1. Depth, in the ordinary reader.** At `z-index: 0` the fold lost to every positioned
+thing in the reader: `FarLeafCover` (`5`), `.turnGrabSurface` / `.turnZoneVignette` /
+`.immersiveVignette` (`6`), `ThreadPanel` (`10`), `NavCluster` (`950`). The visible symptom
+was ask (1) exactly: **the sheet's tail disappeared the moment it crossed the gutter**,
+because the far leaf's cover paints over it. `useScene3DElevated` raises the whole canvas to
+`960` while a fold is mounted — above `NavCluster`, below the `1000` Settings and the casting
+modal claim. It is ref-counted and tied to `PageFold3D`'s mount, so the elevation cannot
+outlive the gesture.
+
+**2. The top layer, in immersive mode — and z-index cannot reach it.** `useFullscreenChrome`
+used to call `requestFullscreen()` on the reader's own wrapper. A real fullscreen element is
+promoted into the browser's **top layer**, and *nothing outside that element renders at all*,
+at any depth, because the top layer sits above the whole stacking order by construction. The
+fold was therefore not drawn during any immersive turn — not hidden, not behind: absent.
+Fullscreen now targets `document.documentElement`, which contains the shell **and** the
+canvas layer.
+
+⚠️ **Two traps for whoever touches this next.**
+- `.wrapperFullscreen` (`ReaderView.module.css`) is a `z-index: 50` **fixed** element and
+  therefore a stacking context around the entire reader. Even with fullscreen targeting the
+  document element, a canvas at `z-index: 0` is below all of it. `960` clears that too; any
+  future layer meant to sit over the reader has to clear it as well.
+- Do not reach for `useScene3DElevated` to make some *other* 3D surface read better. The
+  contract it excepts is load-bearing — the Desk lost its action card, its notepad and its
+  listening tool the last time something painted over the page (see `Scene3D.module.css`).
+  The argument here is that the sheet is physically off the page, and it does not generalise.
 
 ## 6. Dead ends and bugs already dealt with — do not redo
 
@@ -573,11 +610,15 @@ open 'http://localhost:5173/harness/pageFold.html?arc=1.6'   # exaggerate the ro
 open 'http://localhost:5173/harness/pageFold.html?back=mirror'  # M27: the pre-M27 back, to compare
 
 # The hinge (M27), beside the fold it replaces — both stages take the same drag.
+# It is a *gesture*: press on the paper, drag, release. Where you press is where the
+# sheet is held, and a release finishes the turn (or falls back) on its own.
 open http://localhost:5173/harness/pageCone.html
 open 'http://localhost:5173/harness/pageCone.html?state=peel-20'     # same state names as above
 open 'http://localhost:5173/harness/pageCone.html?model=cone&t=0.62' # past the spine
 open 'http://localhost:5173/harness/pageCone.html?fixture=letters'   # orientation, unambiguously
 open 'http://localhost:5173/harness/pageCone.html?mode=single&debug=1'
+open 'http://localhost:5173/harness/pageCone.html?settle=12'         # the landing, in slow motion
+open 'http://localhost:5173/harness/pageCone.html?commit=0.4'        # a stickier commit threshold
 
 # Tests and typecheck.
 cd projects/marginalia/web && npx vitest run src/reader/pageFold.test.ts
@@ -590,6 +631,21 @@ does the job. The full binary (not the headless shell) is at
 `~/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome`; launch with
 `args: ["--headless=new"]` and `PLAYWRIGHT_BROWSERS_PATH=~/.cache/ms-playwright`. Wait on
 `window.__foldHarnessReady`, not a timeout.
+
+**Driving `pageCone.html`'s gesture under automation**, which has three traps in it and all
+three cost time once:
+
+- `window.__fold` exposes the live `anchor`, `pointer`, `arc` and `settling`, so a run can
+  say *which pose a screenshot caught* and assert on the fold rather than on pixels. Use
+  it — a settle at the shipped 160ms routinely finishes inside the time a screenshot takes,
+  so a frame you believe is mid-landing is usually the landing. `?settle=12` is the fix.
+- **Re-read the origin after changing anything above the stage.** The leaf's viewport
+  origin is cached per frame (a `getBoundingClientRect` at 60fps is not free), and only
+  `resize`/`scroll` refresh it — so hiding the header to get a clean shot silently moves
+  the stage out from under the mesh and the sheet renders offscreen. Dispatch a `resize`.
+  It looks exactly like "the mesh stopped drawing".
+- Drive it with real `mouse.down`/`move`/`up`. `mouse.move` alone does nothing now: the
+  page tracks a *drag*, not the pointer.
 
 **Checking the snapshot** (paste into the page context on a live `/read/:id`). Measure
 *ink*, not just alpha: the failure modes in §5 all produce a perfectly opaque bitmap with
