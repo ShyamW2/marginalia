@@ -6571,6 +6571,86 @@ frame that really happened, which makes the dev line comparable to a profiler's.
 and a real keyboard turn of the same fold. That needs the app driven by hand on the
 operator's machine — see the blocker note below on the two M27 measurements.
 
+## M26 — `codex exec --json`'s real event shape, and three things `--help` didn't say — 2026-08-25
+
+The auth blocker cleared (this machine's `codex login` succeeded via the new in-app flow),
+so this is the "run one real call and read the actual JSONL" step the M26 task and the
+2026-07-30 decisions entry both required before writing `codexCli.ts`. Verified against
+`codex-cli 0.114.0` on this Linux machine, a ChatGPT-plan account.
+
+**The event shape** (`codex exec --json -m gpt-5.4 "..."`, no tool use):
+```
+{"type":"thread.started","thread_id":"<uuid>"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"..."}}
+{"type":"turn.completed","usage":{"input_tokens":N,"cached_input_tokens":N,"output_tokens":N}}
+```
+Failure shape: `{"type":"error","message":"..."}` followed by
+`{"type":"turn.failed","error":{"message":"..."}}` — both fire; `turn.failed` is the one
+worth surfacing, `error` duplicates its message. No `cost_usd` anywhere — matches the
+task's "estimated if the CLI reports no tokens" acceptance line, except it's the reverse:
+tokens *are* reported, cost is not. Ledger should treat this the way `claude-agent`'s
+`reportedCostUsd` gap is already treated (`pricing.ts`) — tokens `reported`, cost `none`/
+`notional` depending on how the ledger's basis enum wants a subscription CLI represented.
+
+**Finding 1 — no streaming.** `--json` is JSONL-per-completed-item, not token deltas.
+A 150-word answer arrived as a single `item.completed` with the full text already assembled
+— nothing between `turn.started` and that one event. `stream()` on this provider cannot
+stream in the token sense the other three providers do; it can only yield once, at the end.
+The seam's `AsyncIterable<{text}>` still works (one yield instead of many), but the UI's
+per-token reveal will not animate on this provider — worth a settings-UI note the way the
+"response length is a request, not a ceiling" caveat already gets one for `claude-agent`.
+
+**Finding 2 — multiple `agent_message` items in one turn, and which one is the answer.**
+Asked to run a shell command (to test the read-only cage, below), the turn emitted *two*
+`item.completed` events: a narration ("Running the requested shell command now…") and then
+the actual answer ("Failed"). A plain question-answering prompt with no tool attempt always
+produced exactly one. The CLI's own `-o/--output-last-message <FILE>` flag resolves the
+ambiguity by naming its own convention: **the last `agent_message` before `turn.completed`
+is the answer.** `codexCli.ts` should track the last one seen, not concatenate or take the
+first — concatenating would prepend tool-use narration to real answers on any turn where the
+model even attempts something the sandbox then blocks.
+
+**Finding 3 — `-C <dir>` (and `--output-schema <file>`) fail on a tmpfs path, full stop.**
+`codex exec -C /tmp/whatever` → `Error: No such file or directory (os error 2)`, every time,
+regardless of `--sandbox`/`--ephemeral`/`--skip-git-repo-check`, on an otherwise-real,
+freshly-created, world-readable directory. Same error for `--output-schema` pointed at a
+file under `/tmp`. The same directory under `/home/shyamw` (ext4) works immediately. `stat
+-f` confirms it: this machine's `/tmp` is `tmpfs`, `/home` is `ext4`. Root cause not chased
+further (not this project's bug to fix), but the behavior is 100% reproducible here — this
+is not a one-off flake. **Consequence for the cage:** the "dedicated empty scratch
+directory" the 2026-07-30 decision calls for cannot be `os.tmpdir()` on this machine — that
+resolves to `/tmp` and every real call would fail before the model ever runs. `codexCli.ts`
+must use a fixed non-tmpfs location instead (not the repo, not `data/`, per that decision) —
+e.g. under `os.homedir()`. Whether this reproduces on the operator's Mac (a case-insensitive
+APFS volume, not tmpfs) is unverified; the workaround costs nothing there either way, so it
+isn't worth gating on finding out.
+
+**Finding 4 — `exec` has no `-a/--ask-for-approval`.** That flag exists on the root `codex`
+(interactive) command; `codex exec --help` doesn't list it, and passing it errors with
+"unexpected argument". The 2026-07-30 decision's cage list ("approvals never") was written
+from a `--help` read that conflated the two subcommands' flag sets — exactly the trap that
+decision's own warning called out, just on a different flag than expected (the event shape
+was fine; the approvals flag was not). `exec` mode has nothing to approve *to* (there's no
+human on the other end of a non-interactive spawn) — omit the flag entirely rather than
+pass one that doesn't parse.
+
+**Sandbox proof, done live:** asked the CLI (under `--sandbox read-only`, no `-a` flag, cwd
+outside `/tmp`) to write a file inside its own `-C` root. It attempted the shell command,
+reported "Failed", and the file never appeared. Read-only holds.
+
+Not yet run: killing the child process mid-turn (the "designed `LLMError`, not a crash"
+acceptance line) — that's `codexCli.ts`'s own code to write and test, not a CLI behavior to
+discover, so it's covered by that file's tests instead of a live probe here.
+
+**Harmless noise, worth knowing before it looks like a bug:** every call on this account
+logs one `ERROR codex_core::models_manager::manager: failed to refresh available models:
+… unknown variant \`max\`, expected one of \`none\`, \`minimal\`, \`low\`, \`medium\`,
+\`high\`, \`xhigh\`…` line — a version-skew issue between this CLI build and the models
+endpoint, unrelated to anything this project does. It lands on **stderr**, never stdout, so
+it never pollutes the JSONL parse; `codexCli.ts`'s stderr-tail capture will pick it up on a
+real failure's tail even though it didn't cause one — don't chase it.
+
 ## M27 — the apex cannot be both given and consistent — 2026-08-25
 
 Building "the geometry grows an apex" turned up a contradiction in the task as written, and
@@ -6617,6 +6697,120 @@ would show it does not exist yet. The pure model is the honest place to stop.
 
 Not touched, deliberately: `computeFold`, `drawPageFold` and the shipped ladder. The cone is
 additive and nothing calls it yet — "the renderer still swapped underneath it".
+
+## M26 — the scratch dir's real constraint wasn't tmpfs, it was the leading dot — 2026-08-25
+
+Addendum to the entry above, found running `codexCli.ts`'s own `extract()` end to end
+(not just the raw CLI) for the first time: `~/.marginalia/codex-scratch` — the fix the
+tmpfs finding above led to — itself failed, `--output-schema <file>` inside it throwing
+`Permission denied (os error 13)`, not `ENOENT`. Different error, different cause.
+
+`codex` on this machine is a **snap package** (`/snap/bin/codex`; `snap connections codex`
+shows a confined `home` plug). Isolated it by testing three directories with the same
+`--output-schema` call: `/home/shyamw/marginalia-codex-scratch-test` (no dot) worked
+immediately; `/home/shyamw/.hidden-test-dir` (dot, otherwise identical) reproduced the
+exact same `Permission denied` on the first try. **Snap's `home` interface denies access to
+dot-directories under `$HOME` by policy** — a known snap confinement behavior, not a codex
+bug. The tmpfs finding above still holds (that's a separate, also-reproduced failure mode,
+`ENOENT` not `EPERM`) — the two just needed to both be worked around, and the second one
+wasn't visible until a call that actually *reads a file* from inside the scratch dir was
+tried (plain `stream()` calls only ever pass `-C` and never trip it, which is why the first
+pass here read as clean).
+
+`scratchDir()` now returns `~/marginalia-codex-scratch` — no dot anywhere in the path,
+still not `os.tmpdir()`, still not the repo or `data/`. Re-verified after the fix: `stream()`,
+`extract()` (a real structured JSON answer came back, schema-valid, first try), the
+read-only sandbox proof, and a mid-stream `AbortSignal` kill (`LLMError`, no orphaned
+process) all pass against the corrected path.
+
+Also resolved in the same pass, not a `toDraft7JsonSchema` bug: an *earlier* manual CLI
+probe of `--output-schema` (done to chase the permission error) failed with "'additionalProperties'
+is required to be supplied and to be false" — but that was a hand-written probe schema
+that omitted the field, not `codexCli.ts`'s real conversion path. `z.toJSONSchema` already
+emits `additionalProperties: false` on a plain `z.object()` by default (checked directly);
+the live `extract()` re-run above confirms the actual code path was never affected.
+
+## M26 — the sign-in was never lost; we were reading the wrong stream — 2026-08-26
+
+Two operator reports at M26 sign-off, from two machines. Recorded together because they
+arrived together and were then found to share nothing.
+
+### The "Codex forgets my login on every rebuild" report
+
+Not what was happening. Reproduced against the running dev server before touching
+anything:
+
+```
+$ curl -s localhost:5175/api/provider-auth/codex/status
+{"provider":"codex","loggedIn":false,"detail":null}     # 0.15s — not a timeout
+
+$ codex login status
+Logged in using ChatGPT
+$ echo $?
+0
+```
+
+Both true at the same instant. Running the same command with piped stdio (which is how
+the server always runs it) separates the streams:
+
+```
+rc= 0
+stdout= ''
+stderr= 'Logged in using ChatGPT\n'
+```
+
+`codex` 0.114.0 answers `login status` on **stderr** when stdout isn't a TTY. Under a pty
+it looks like ordinary terminal output, which is why the 2026-08-25 session never caught
+it. `checkAuthStatus` collected stdout only, so `text` was `""` — and its
+`code === 0 && text.length > 0` guard turned that silence into `loggedIn: false`.
+
+The credentials were fine the whole time and in the place they were expected:
+
+```
+$ ls -l ~/snap/codex/current/auth.json
+-rw------- 1 shyamw shyamw 3892 Aug 26 09:03 auth.json    # refreshed today
+```
+
+So the badge was wrong, but the *damage* was the operator re-running device auth on every
+app load, on a machine that had never been logged out. Fixed by reading both streams and
+dropping the emptiness clause; `interpretCodexStatus` now holds the live shapes as
+fixtures. After the fix, same endpoint, same server:
+
+```
+{"provider":"codex","loggedIn":true,"detail":"Logged in using ChatGPT"}
+```
+
+**Also found while looking, worth knowing:** this rig has *two* independent codex
+credential stores. `/snap/bin/codex` (what Marginalia spawns) uses
+`~/snap/codex/current/auth.json`; the VS Code ChatGPT extension ships its own codex
+binary at `~/.vscode-server/extensions/openai.chatgpt-*/bin/linux-x86_64/codex`, isn't on
+`PATH`, and uses `~/.codex/auth.json`. The dev server's environment also carries
+`CODEX_HOME=/home/shyamw/.codex`, inherited from that extension. Signing in through one
+does not sign in the other. Not the cause of anything here, but it is a trap: `~/.codex/`
+looking freshly written is no evidence about the binary we actually spawn.
+
+### The Mac's `spawn codex ENOENT`
+
+`spawn` searches `process.env.PATH` and nothing else. A server not started from a login
+shell gets the bare launchd default. Reproduced on this Linux rig by forcing exactly that
+PATH, which turns the Mac's error into a local one:
+
+```
+$ env -i HOME=$HOME PATH=/usr/bin:/bin:/usr/sbin:/sbin tsx sim.mts
+PATH = /usr/bin:/bin:/usr/sbin:/sbin
+  bare spawn('codex'): spawn codex ENOENT          # the operator's Mac, verbatim
+findCliBin('codex') = /snap/bin/codex
+  resolved spawn: codex-cli 0.114.0
+```
+
+`SHELL` was unset in that run, so the recovery came from the installer-directory table
+alone — strategy 2 of `cliPath.ts` — without the login-shell fallback firing. On a Mac
+the same table entry is `/opt/homebrew/bin` rather than `/snap/bin`.
+
+`which -a codex` on the operator's Mac is the one datum that would confirm which
+installer they used; the resolver covers Homebrew, npm-global, volta, bun, deno, yarn,
+cargo, `~/.local/bin` and every nvm node version, then asks the login shell, so it should
+not matter. `MARGINALIA_CODEX_BIN` ends the question outright if it does.
 
 ## M27 — the hinge, and the four things it took to make the spine unmovable — 2026-08-26
 
@@ -6924,3 +7118,197 @@ sheet covers the far leaf's cover, the strip, the title block and the nav pebble
 the immersive pebble too; a committed turn and a spring-back both release the elevation
 (`[data-elevated]` gone); the Desk's notepad and action card still sit over its books, which
 is the contract this deliberately did not repeal.
+
+## M30 C/D — the token cap was the bug, and the dictionary was the easy half — 2026-08-26
+
+Define and the glossary. The glossary was as small as M30 D predicted; Define found two
+things worth writing down, both of which would have shipped as "no definition found" and
+looked like a designed empty state doing its job.
+
+**1. A small output-token ceiling on a reasoning model buys silence, not brevity.** M30 C
+says "a <100 output token cap", and the obvious reading is to pass it to the provider.
+Measured against the operator's own configured query provider (`qwen3.5-hermes` on local
+Ollama), same prompt and the same ~1,100-token context every time:
+
+| output ceiling | tokens used | visible answer |
+|---|---|---|
+| 90 | 90 | *(empty)* |
+| 1,024 | 1,024 | *(empty)* |
+| **2,000 — the operator's actual query-role setting** | 2,000 | *(empty)* in **6 of 6** repeat trials |
+| 4,000 | 3,524 | a correct one-sentence definition |
+| 8,192 | 1,487 | a correct one-sentence definition |
+
+The model spends the budget on thinking tokens, which arrive in `reasoning_content` — a
+field `openaiCompat.ts` does not read — and never reaches the visible answer. Instruction
+wording made no difference: three long-prompt and three short-prompt trials at 2,000 all
+returned empty. It is not a prompt problem, it is a budget problem.
+
+**The consequence is sharper than it first looks: the reader's own configured response
+ceiling can silently disable a feature.** `max_response_tokens` exists to bound *the answer
+a reader reads*; on a reasoning model it bounds thinking instead, and the reader never sees
+why. Define now asks for a floor of 8,192 provider tokens and is permitted to, uniquely,
+**because it caps the reader-visible answer itself** (<100 tokens, enforced twice: the
+stream stops on visible text, then `clampToTokenBudget` trims to a sentence boundary). That
+rule is written onto `getProvider`'s override: no caller whose output goes straight to the
+reader may use it. ⚠️ The general version of this — every other role and operation is still
+exposed to it — is **not** fixed here and is worth a look when reasoning models are next
+touched.
+
+**2. The digest rung is the right rung and was the wrong context.** Define originally
+reused `buildDigestContext` wholesale. On East of Eden that produced a **107,105-character**
+context, of which **96,811** was the three whole surrounding *sections* the rung ships so a
+thread can answer "what does this passage mean". Against a 32k-token model the request came
+back empty. A definition does not want the pages around the highlight; it wants **the places
+the word is actually used**, which `findAllOccurrences` already finds. Same rung (book
+digest + chapter digests), different passage component: **107k chars → ~1.1k input tokens**,
+and that is where Define is actually made cheap.
+
+**What the fallback costs, stated plainly.** With the headroom floor it answers correctly —
+3 of 3 repeat trials on "timshel", each a clean one-sentence definition well inside the
+100-token cap — but a reasoning model spends **100–140 seconds** getting there, and the
+headroom is *why*: more budget means more thinking before the answer. The reader is not
+blocked (the card mounts immediately in its own looking-up state and the page never moves),
+but "instant" is the dictionary path only. That asymmetry is the design working as
+intended, and it is the strongest argument for why M30 C put the dictionary first.
+
+**The dictionary was the easy half, and the format is why.** WordNet's `index.POS` files are
+ASCII-sorted, so a **binary search over the file on disk** answers an exact-headword lookup
+in ~20 reads with no in-memory index — 27MB of dataset at zero resident cost. What
+`wordnet-db` does *not* ship is the exception lists (`noun.exc`, `verb.exc`), so irregular
+inflections ("mice", "went", "geese") miss. That is survivable because a miss is not a
+failure — it is the normal path into the fallback — and three extra regular rules
+(`ier`/`iest`/`ied` → `y`) recover "happier", "easiest" and "carried", which Morphy itself
+only gets from those same missing files.
+
+## M31 A/B — the surface that had to be there and could not be there — 2026-08-27
+
+The bug was one sentence ("you cannot start a highlight near either edge of the page") and
+the fix is a contradiction resolved rather than a boundary moved. `.turnGrabSurface` **must**
+be a parent-document element — it needs `setPointerCapture`, capture needs a real
+parent-document `pointerdown`, and an uncaptured drag crossing the sandboxed epub.js iframe
+is a reproduced tab crash (NOTES.md M10). But **nothing in the parent document may hold
+pointer events over ink**, because the iframe does not merely receive the press awkwardly —
+it never hears it at all. M20 split the difference by making the surface narrow. That is
+what put a grab band on top of the first character of every line, and no redivision of the
+page fixes it: the surface has to be everywhere the gesture is, and nowhere the text is.
+
+So it steps aside instead, live, on every pointer move. What that took:
+
+**1. `caretRangeAt` answers the wrong question, and answers it confidently.** It snaps to
+the nearest caret and never returns null in a margin — a probe 200px out in the outer margin
+still resolves to the end of the nearest line. The ink test is one step further (take that
+caret, extend one character, `getClientRects()`, is the point inside the box), and it is now
+`pointIsOverInk` beside its sibling in `pageTextEdge.ts`.
+
+⚠️ **Probe both directions, not just forward.** A point in the space *between two words* can
+snap to the caret **after** the space, whose forward character is the next word's first
+glyph — a rect that begins to the right of the point. Forward-only probing calls the
+inter-word gap "paper" and turns the page under a reader trying to select in it. The
+backward probe is the space's own rect, which contains the point. Both probes are in
+`pageTextEdge.test.ts` as separate cases, because only one of them is obvious.
+
+**2. The bound on the ink test is load-bearing, and it is not the iframe.** epub.js lays a
+section out in one enormous multi-column iframe and reveals the current page by shifting
+that iframe inside an overflow-clipped container. Measured live on East of Eden at a 1400px
+window: the iframe's own rect is **17910px wide, starting at x = −3501**. So a point out in
+the reader's left margin maps cleanly onto a real glyph in a column nobody can see, and
+without clamping the test to `.epubContainer`'s box the single most important piece of paper
+on the page reports ink. The clamp is in `pointerOverInkAt`; it is the same trick the audio
+auto-turn's visibility check already had to learn.
+
+**3. The surface blocks the mousemove that decides whether it should block.** Armed, it
+covers the iframe, so epub.js's forwarded `mousemove` stops arriving and the answer can
+never change back. Two handlers, then: the forwarded one for when the surface is standing
+aside, and `.stage`'s own `onPointerMove` for when it is not — plus the outer margin, which
+is not inside the iframe at all and which neither would cover alone. Neither handler is
+redundant.
+
+**4. The answer is frozen for the life of a press,** from either side. A drag-selection held
+out past the last word on the page is *over paper*; re-arming a parent-document element
+under a live native selection drag is not a thing to discover in the field. M19.6's own
+`isPointerDownInContentRef` turns out to be exactly the right guard, unchanged.
+
+### The pinch had to be re-derived, not re-pointed
+
+M31 A5 makes the drag say the direction, so the grab can land anywhere on the paper while
+the sheet that peels is always the near leaf for the *declared* direction. Two consequences
+that are not obvious from the task text:
+
+- The grab's **x is no longer an input at all** — in leaf coordinates it is frequently
+  outside the leaf and sometimes negative (grab the left page's outer margin, drag left, and
+  the turning edge is the right leaf's right edge). Only the grab's *height* survives, as
+  `anchorForPinch`'s `t`.
+- The fold pointer had to stop being the raw grab point. It was fine while the surface hugged
+  the turning edge, where the grab already sat on the anchor and the fold's `dist` started
+  near zero; a mid-page grab would have started the fold half-turned. It is now
+  *anchor + travel* — the pinched corner starts at rest and moves by the pointer's own
+  delta. "The sheet follows the finger", literally. For a grab on the edge the two are the
+  same point, so nothing about the old case changes.
+
+### Two things this landed that the task did not ask for, and why
+
+- **Reduced motion still turns the page by drag.** The grab surface used to be suppressed
+  entirely under `prefers-reduced-motion` (there is no peel to drag) and click-to-turn was
+  what those readers actually used. Retiring the click without noticing that would have left
+  them the `‹ ›` buttons and the arrow keys and *nothing on the page itself* — the pointer
+  contract quietly not applying to them. The gesture is now the same for everyone; only the
+  animation drops, which is what `resolveRenderer`'s "instant" already means. Verified live
+  under emulated reduced motion: a leftward drag on paper turned 2 → 3, a click did not.
+- **The pane-resize handle and the roaming panels moved with the scale.** B1 asked for a
+  layer order in one place; leaving four of the numbers outside it would have reproduced the
+  exact failure it exists to prevent.
+
+### ⚠️ What this costs touch, until M31 C
+
+The grab surface is `pointer-events: none` by default and JS arms it **only for a mouse or
+pen**. Touch has no hover moves to arm it with, so arming for a finger would mean the
+surface is armed *by default* — every touch anywhere on the page landing on a
+parent-document overlay instead of the text, which is invariant 1 broken for touch exactly
+as it was for the mouse.
+
+The concrete loss: on the iPad, a touch-drag on M20's edge ellipse used to start a curl, and
+now does nothing. That is a real regression **today** and it is deliberate — the touch table
+says a drag *anywhere* turns the page, so the edge ellipse was the wrong affordance for
+touch in the first place, and **C1 replaces it with the right one** (24px of horizontal
+travel, anywhere on the page). Until C lands, touch page turns are the `‹ ›` buttons.
+
+### Verified live, and what was not
+
+Driven against the running dev server on East of Eden (real drags through CDP mouse events,
+real spread mode, a real book — not a mock), on **Linux/Chromium**:
+
+- **The reported bug, at the tightest setting.** With `readerMargin: narrow` the leftmost ink
+  on the left page sits at x = 74 — 33px from the container edge, 58px from the stage edge,
+  deep inside M20's old ellipse. A drag begun on that character stepped the surface aside
+  (`pointer-events: none`) and selected text; the page did not turn. Same at the far edge
+  (rightmost ink at x = 1282, dragging *leftward*, i.e. straight through what used to be the
+  "next" grab strip).
+- **The ink/paper test on a real page**, probed at eight points: mid-line, first character of
+  a line, right page near the outer edge → surface aside, no glow. Outer margins, spine
+  gutter, below the last line → surface armed, both vignettes at 0.1.
+- **Direction from the drag.** From the *same* grab point in the spine gutter: left → 4 → 5,
+  right → 5 → 4, straight down → no change.
+- **A click never turns**, over ink, over either outer margin, and in the gutter.
+- **A live selection disarms the grab** — press-and-drag on the outer margin while holding a
+  selection: page unchanged, selection byte-identical afterwards.
+- **The M19.6 dwell survives untouched** (invariant 4): a selection dragged from mid-page out
+  to the bottom-right corner raised the ring, turned 1 → 2 on the hold, and kept the
+  selection.
+- **B1, under the adverse condition.** With the surface *actively armed* (`pointer-events:
+  auto`, z 7) and the pill at z 8, all seven of the pill's dots hit-test to their own button;
+  clicking "key quote" created a real honey highlight on the first attempt (deleted
+  afterwards — the book is back to its original 7).
+- **B2's premise was correct, not void.** `AskPill` renders as a direct child of `.stage`, so
+  `.stage` is its containing block; the numbers were being measured against `.epubContainer`,
+  which is inset from it by `.marginWrapper`'s padding. Measured: at `generous` that inset is
+  **97px**, so the pill was being drawn 97px up and to the left of the selection, and the
+  drift tracked the margin setting exactly as the task's diagnostic predicted. After the fix,
+  measured at two different margin settings, the pill's centre sits within **1px** of the
+  selection's centre (the stage's own border) with the same 7px gap at both.
+- Both renderers exercised mid-drag from a gutter grab — the slide's departing sheet and the
+  curl's hinge at the grab's own height — with no console errors and a fold draw cost of
+  p90 0.3ms.
+
+**Not verified:** anything on the iPad, and anything in Safari. All of the above is Chromium
+on Linux. §0 and C are where the device work lives, and the honest position is that A and B
+are *pointer* work verified on a pointer machine.

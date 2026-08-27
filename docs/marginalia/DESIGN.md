@@ -341,8 +341,16 @@ Signature transitions ("doorways"):
   **band materialisation survives** inside the popup as it slides in from its control;
   the lights-changing, chrome-receding half does not. Recorded as a real loss, not a
   neutral substitution: this was named here as *the* transition that sells the building.
-- **Scan/Book → Desk: the put-down.** The view shrinks back into the book's cover
-  landing on the desk where it lives.
+- **Book → Desk: the put-down.** The literal reversal of the opening, sequenced 2026-08-27:
+  the Desk button or `Esc` starts it → the reading pane zooms out while its UI fades → by
+  the time the book is fully out (still open) the Desk background has faded in → the book
+  closes onto its cover → the cover travels to its place on the desk. ⚠️ **That order is
+  load-bearing, not just aesthetic**: the reader cannot know where the book lands (it
+  depends on `shelf_state`, on which of desk/list/shelf was last used — already persisted by
+  `persistDeskViewMode` — and on that room's parallax), so the Desk must be mounted and
+  reporting a rect *before* the cover starts travelling. ⚠️ **Two different Escapes**: `Esc`
+  *during an opening* still cancels by unmounting immediately (there is nothing coherent to
+  reverse mid-flight, `BookOpening.tsx`); `Esc` *while reading* is this sequence.
 - **Scroll-to-open (crown feel).** On the desk, scrolling while hovering a book
   "pushes into" it — scale grows through a threshold, then commits to the opening
   transition. Like winding an Apple Watch crown. Escape backs out at any point.
@@ -362,6 +370,170 @@ collapses all of the above to crossfades (M7 already requires this).
   cursor rests. Never in the reader.
 - Cursor is an accent, not a mascot: default sizes, always visibly a pointer, honors
   reduced-motion (trails off).
+
+## The pointer contract (M31 — binding for the reader)
+
+*Written before the touch layer was built, per M31 A. Swipe-to-turn and drag-to-select
+are one pointer stream; a rule invented per-feature produces a book that is neither
+annotatable nor pageable, which is worse than no touch support at all. Reasoning and the
+retirement of click-to-turn: decisions.md 2026-08-27.*
+
+**The law: where a press lands never decides what it means on its own. Two questions
+decide it together.**
+
+1. **Ink or paper?** *Ink* = a glyph is under the point. *Paper* = the outer margin, the
+   spine gutter, the space below the last line, a blank verso. This is a real hit-test
+   against line boxes, not a region of the page — see "How ink is detected" below.
+2. **Did the pointer travel?** Under the threshold it is a press; over it, along the
+   dominant axis, it is a drag.
+
+### Pointer (mouse, trackpad, pen)
+
+| Press lands on | Press, no travel | Press then horizontal drag |
+|---|---|---|
+| ink | nothing (dismisses a pending pill) | **select text** |
+| a highlight mark | open its thread | select text |
+| paper | nothing | **turn the page**, in the drag's direction |
+
+- **A click never turns a page.** Page turns come from `←`/`→` (`SHORTCUT_KEYS`), the
+  foot's `‹ ›`, and drag-on-paper. Retired deliberately at M31: a click-to-turn band wide
+  enough to hit is a band wide enough to swallow the start of a highlight, and no
+  redivision of the page fixes that — the two gestures overlap by nature, not by layout.
+- **Direction comes from the drag, not the grab point.** The gutter and the foot of a
+  short page belong to both directions; only the drag says which. Dragging **left** turns
+  **forward**; dragging **right** turns **back** — the sheet follows the finger.
+- **Vertical drags on paper do nothing.** No dominant horizontal axis, no turn.
+- Thresholds: **6px** separates a press from a drag; the fold's own commit thresholds
+  (`HINGE_COMMIT_AT`, the slide's `0.35`) are unchanged and stay downstream of this.
+- **A gesture here is not an animation.** `prefers-reduced-motion` drops the peel and keeps
+  the drag — the same gesture, committing an instant turn. Retiring click-to-turn without
+  this would have left reduced-motion readers no way to turn a page on the page itself
+  (M31 A5; decisions.md 2026-08-27 later still).
+
+### Touch
+
+| Touch lands on | Tap | Drag | Hold, then drag |
+|---|---|---|---|
+| ink | dismisses a pending pill | **turn the page** | **select text** (the platform's own long-press) |
+| a highlight mark | open its thread | turn the page | select text |
+| paper | nothing | turn the page | turn the page |
+
+- **A tap never turns a page.** Same law as the pointer, same reason.
+- **A long downward swipe leaves the book** — the one room-changing gesture, specified under
+  "Gestures outside the reader" below. Horizontal turns, vertical departs, and nothing else
+  vertical does anything.
+- **The platform owns the hold.** Long-press-to-select is built into every touch browser,
+  with draggable endpoint handles readers already know. We do not run a timer, do not pick
+  a duration, and do not build handles. Our only jobs are to not steal the touch before
+  the platform has decided, and to turn the page when the platform decides it was a pan.
+- Consequently **the ink/paper test is not needed on touch** — "does a selection exist?"
+  is the whole discriminator, because the platform only ever selects over ink. It cannot
+  disagree with the platform the way a test of our own could. The hold-on-paper row above
+  therefore needs no code: no selection appears, the swipe stays armed, the drag turns.
+- Thresholds: **24px** of horizontal travel commits a page turn; a departure needs **≥⅓ of
+  the page** travelled downward within **±20°** of vertical (±5° was proposed and is too tight
+  to perform reliably on glass — decisions.md). Both only while `touches.length
+  === 1`. A second finger landing cancels an uncommitted swipe outright (it is the start
+  of some other gesture, not a page turn).
+
+### The invariants
+
+These are the lines that stop the next feature from quietly undoing this.
+
+1. **Nothing in the parent document may hold pointer events over ink.** An overlay above
+   the epub iframe does not merely make selection awkward there — the iframe never hears
+   the press at all. First recorded at M11, broken at M20 by the grab surface, fixed at
+   M31 by making the grab surface's `pointer-events` follow the live ink/paper answer.
+2. **The grab surface must still be a parent-document element.** It needs
+   `setPointerCapture`, capture needs a real parent-document `pointerdown`, and an
+   uncaptured drag crossing the sandboxed iframe is a reproduced tab crash (NOTES.md M10).
+   The fix is to make it step aside, never to delete it.
+3. **A live selection disarms every turn gesture** — pointer and touch alike. The one
+   exception is the M19.6 dwell, which is an explicit, ringed, held gesture whose entire
+   purpose is to turn *without* dropping the selection.
+4. **The dwell's region is not a click target.** `turnZoneForVisibleX` survives M31 as the
+   region the dwell listens in, not as a place a click turns the page. Deleting it
+   silently removes highlighting across a page boundary.
+5. **An affordance may not outlive its gesture.** The turn-zone vignette and the
+   directional `w-resize`/`e-resize` cursor advertise click-to-turn; once clicking does not
+   turn, they are lying. Over paper the reader gets a grab cursor; over ink, nothing.
+   *Settled at M31 A6 (decisions.md 2026-08-27 later still):* the vignette survives, but
+   **both edges light together**, and only over grabbable paper. A one-sided glow would be
+   advertising a direction the page does not have until the drag gives it one. A directional
+   affordance, if ever wanted, belongs to the drag and not to the hover.
+6. **A gesture may mean different things in different rooms, never two things in one
+   room.** Long-press pins a cluster panel in the reader and opens a book's action card on
+   the Desk; that is fine. Two meanings on one surface is not.
+
+### How ink is detected
+
+`caretRangeAt` (`reader/pageTextEdge.ts`) already asks the layout engine where a caret
+would land, and is the shared primitive — reuse it, do not write a second one. ⚠️ **It
+snaps to the nearest caret and never returns null in a margin**, so on its own it answers
+"where would a caret go", not "is there ink here". The test is one step further: take that
+caret, extend it one character, `getClientRects()`, and check the point falls inside a
+line box. That belongs beside `caretRangeAt`, in the same file.
+
+### Gestures outside the reader
+
+A gesture may mean different things in different rooms (invariant 6); it may not mean two
+things in one room. The full set, so a new one can be checked against it:
+
+| Gesture | Desk / shelf | Book | Scan |
+|---|---|---|---|
+| tap | open the book | per the tables above; **in immersive mode also reveals the pebble** | select a band |
+| drag | move the book | turn the page | move along the timeline |
+| long-press (still) | **the book's action card** | select text (platform-owned) | — |
+| pinch | — | **text size** (below) | zoom the timeline |
+| swipe down (long, one finger) | — | **home, via the put-down** | — |
+
+- **One gesture changes room, and only one: swipe down goes home.** ⚠️ Amended 2026-08-27
+  (later still) — this rule previously read "no gesture changes room", written when
+  pinch-to-close was dropped. The operator brought back a downward swipe for it, and the
+  amendment is real rather than a reversal: what made pinch-to-close wrong was that pinch is
+  *cheap* — two fingers, any distance, and it is worth more as text size. The rule that
+  survives is about **deliberateness, not about room changes being forbidden**:
+
+  > A gesture that changes room must be expensive to perform by accident: a long throw
+  > (≥ ⅓ of the page), a tight axis, one finger, and disarmed while anything is selected,
+  > being edited, or mid-turn.
+
+  Swipe down from the Book returns to whichever of desk/list/shelf was last used, **running
+  the put-down** (Motion language, above) — it is the same departure as the Desk button and
+  `Esc`, not a third way out. ⚠️ **It is gated on M31 §0**: until Safari's pull-to-refresh is
+  overridden, a downward swipe reloads the page, and shipping this before that is shipping a
+  gesture that destroys the reader's place. ⚠️ It also makes the touch table's "vertical
+  drags do nothing" false — the table above is the authority; this is its one exception.
+- **The Desk's long-press is one rule, not three.** The action card appears after **1s of
+  stillness**, at any point during a touch; *any* movement dismisses it and re-arms the
+  timer, so a book that stops moving under a resting finger brings it back after another
+  second. "Hold briefly then drag" needs no clause of its own — it is movement before the
+  second is up. ⚠️ A 1s dwell with no feedback reads as a broken app: reuse the reader's
+  `DwellRing` (already parameterised by `durationMs`) so the wait is visible. ⚠️ Book covers
+  are images, so iOS raises its own "Save Image" callout mid-hold — `-webkit-touch-callout:
+  none` on the cover, without disturbing selection anywhere else.
+- **The immersive tap is the one exception to "a tap never turns/does nothing."** It reveals
+  the pebble and nothing else; whatever the pointer table says for that spot still happens.
+  It is the touch equivalent of the proximity reveal, which has no touch counterpart.
+
+### Pinch to resize is an instrument, not a setting
+
+Same shape as the `%` scrub dial (M12): a live readout that commits on release.
+
+- The **text-size slider appears 100px above the pinch's centre point**, with a sample
+  string at the live size so the size can be judged without reading the page. Pinching in
+  drives the slider left, out drives it right.
+- ⚠️ **The page does not reflow during the pinch.** A font-scale change re-paginates the
+  whole spine section in epub.js; doing that per frame is not affordable. The slider and its
+  sample follow the fingers live; the page reflows **once, on release**. This is *why* the
+  page is blurred and lightened while the instrument is up — it is honest about not being
+  able to follow, not decoration. Blur the page, never the sample.
+- ⚠️ **Clamp, do not reject.** A pinch centred too near the top of the page must slide the
+  slider down into view, not refuse the gesture — refusing on position is indistinguishable
+  from a bug, and `handleSelected` already sets the precedent by clamping the pill into the
+  page rather than suppressing it.
+- Discoverable from **Settings**, beside the text-size control, and only on a touch device
+  (`matchMedia("(any-pointer: coarse)")`).
 
 ## Technical foundations & honesty
 

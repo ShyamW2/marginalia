@@ -53,12 +53,21 @@ Listening panel: ⏮ ▶ ⏭ · read-from-here · speed · cast target.
 
 ## 3. Responsive
 
-Breakpoint on the **pane** width via container query, not the viewport.
+Measured on the **pane**, not the viewport — `useReaderStripLayout.ts` (2026-08-24,
+decisions.md; was a `600px` then `720px` `@container` query, both replaced: a fixed
+pane-width number can't know how much room a title needs, nor how much two sibling zones
+leave each other, which is what a real overlap bug traced to live). Compares `.topRow`'s
+own width against `.topRowLeft`'s/`.topRowRight`'s real rendered widths (never compressed —
+they hold controls) and switches once what's left for the identity block drops under
+~140px (first estimate, expect tuning).
 
-- `> 600px`: single line as above.
-- `<= 600px`: two rows. Row 1 = cover + title + nav pebble (theme collapses to a
-  single cycling icon). Row 2 = annotations · ‹ chapter › (label takes the slack,
-  centred) · digest · listening · fullscreen. Foot shows `1 / 11` + `%` only.
+- **Wide**: single line as above. The identity block (cover + title/author, title stacked
+  over author) shows the full text with even breathing room when there's room, and a
+  ping-pong marquee (`useMarqueeOverflow.ts`, gated off under `prefers-reduced-motion`) for
+  a line that genuinely overflows.
+- **Stacked**: two rows. Row 1 = cover + title/author + nav pebble (theme collapses to a
+  single cycling icon). Row 2 = annotations · ‹ chapter › (label takes the slack, centred) ·
+  digest · listening · fullscreen. Foot shows `1 / 11` + `%` only.
 
 ## 4. Annotation editor
 

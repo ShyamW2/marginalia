@@ -439,6 +439,34 @@ the snapshot disagree with the page at the exact moment the fold starts.
 
 ### ⚠️ A fifth failure, open as of 2026-08-27: wrong on iPad
 
+Reported live on an iPad (Safari over Tailscale): curl, slide and book-opening all render the
+departing page **at roughly 2x, cropped to a band, with gaps above and below** — black gaps
+in the opening's case. **Tracked as TASKS.md M31 §0f–0h. Read that before touching this
+file**, because two things are already established and re-deriving them wastes the pass:
+
+1. **Serialization is not implicated.** The snapshot's line breaks match the live page's
+   character for character, so the section CSS, the columns, the measure and the inlined
+   `@font-face` files are all correct. The four failure modes catalogued above are not this.
+2. **Black, not paper, in the gaps** means the region is outside the bitmap entirely — the
+   consumer is painting a rect larger than the bitmap it holds. That is an *extent* fault,
+   not an offset one, and it points at `cardCompositeRect`'s ratio-derived scale or at the
+   `CaptureViewport` it is measured against.
+
+Not yet root-caused. ⚠️ Do not guess it in the fix; M31 §0h carries the instrumentation plan
+and the known-good fallback. When it is solved, this section becomes the fifth entry in the
+list above.
+
+### The harness is still the place to judge the look
+
+`web/harness/pageFold.html` imports `pageFold.ts` straight from source, paints a synthetic
+book page, and renders every fold state across all three reading themes — same code path,
+real bitmap, screenshot-able, iterating in seconds instead of through a page turn. **Every
+visual constant in the file was chosen there**, and that is still true. What is no longer
+needed is the stand-in-bitmap `addInitScript`: the live app now captures real pixels, so
+the app itself is a valid place to verify.
+
+---
+
 ## 5b. Where the fold sits in the page's stack — and why it is the seam's one exception
 
 *Added 2026-08-26, after the operator reported the curled page rendering behind the page it

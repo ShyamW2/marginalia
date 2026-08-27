@@ -3,6 +3,286 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-27 (later still) — M31 A/B: three calls the pointer contract left open
+
+Implementing the contract (DESIGN.md, "The pointer contract") turned up three questions it
+does not answer. None of them reopens the rule; all three are recorded so they are not
+re-litigated in C.
+
+**1. Over paper, the glow lights on both edges at once.** M31 A6 says the turn-zone vignette
+must stop advertising click-to-turn, and that "the glow follows the grabbable paper" — but
+paper is now the whole page outside the ink, and the direction is no longer a property of
+*where* you press. Lighting one side would be advertising a direction the page does not have
+until the drag says so. Both ellipses now light together, and only while the pointer is on
+grabbable paper. The statement is "the sheet can be taken here", not "this side goes
+forward". ⚠️ If a directional affordance is ever wanted again it belongs to the *drag*, not
+the hover — a hint that appears once the axis has declared.
+
+**2. Reduced motion keeps drag-to-turn.** The grab surface used to be suppressed entirely
+under `prefers-reduced-motion` — reasonable while there was a click-turn to fall back on,
+and a silent removal the moment M31 A1 retired the click. Those readers would have been left
+with the `‹ ›` buttons and the arrow keys and nothing on the page itself. The gesture is now
+identical for everyone; the drag commits an instant turn instead of a peel, which is what
+`resolveRenderer`'s "instant" already meant. **The rule this sets: a gesture in the pointer
+contract is not an animation, so reduced motion may drop the animation and never the
+gesture.**
+
+**3. Touch is not armed until M31 C, and the cost is accepted.** The grab surface's
+`pointer-events` follow a live ink/paper hit-test driven by pointer *moves*. Touch has no
+hover moves, so arming for a finger means arming by default — every touch anywhere on the
+page landing on a parent-document overlay instead of the text, which is invariant 1 broken
+for touch exactly as it was for the mouse. The surface is therefore armed for mouse and pen
+only. ⚠️ **This removes something that works on the iPad today**: a touch-drag on M20's edge
+ellipse used to start a curl. It is deliberate — the touch table says a drag *anywhere*
+turns the page, so the ellipse was the wrong affordance for touch in the first place — and
+**C1 is its replacement**, not a nice-to-have after it. Until C lands, touch page turns are
+the `‹ ›` buttons. Recorded here because it is a live regression on the operator's own
+device, not a theoretical one.
+
+⚠️ **Two premises the task asked to be checked before building were checked, and both held.**
+B2's was real, not void: `AskPill` renders as a direct child of `.stage`, so `.stage` is its
+containing block, and the pill's `left`/`top` were being measured against `.epubContainer` —
+inset from it by the reader's *margin setting*. Measured live at `generous`, that inset is
+97px, and the pill was drawn 97px up and to the left of the selection, drifting further the
+more generous the margin. B1's was real too: `.stage`, `.pageClip` and `.readerRow` are all
+positioned without a `z-index`, so the pill's 5 and the grab surface's 6 compared directly
+across two files that had never been read together. The order now lives as a documented
+scale at the head of `ReaderView.module.css`, with the fold's 960 and a modal's 1000 named
+in it as fixed points.
+
+## 2026-08-27 (later) — The iPad gate was stale; the touch gesture set is closed
+
+Two rounds of operator gesture proposals, and one sentence buried at the end that
+invalidates a gate three documents repeat.
+
+### ⚠️ The gate is gone: there *is* an iPad, and it is already being used
+
+TASKS.md M31 D, the "Future arcs" note (2026-07-27) and this file all state that iOS
+behaviour cannot be settled because **there is no iPad to test on until the Private rung
+lands** — the server binds to loopback by the M6 security decision. The operator's own
+report ends: *"we currently test this on the iPad as a browser app."*
+
+So the gate is lifted, and it was probably never quite what it claimed: this project has
+reached the dev server over an **SSH tunnel** before (the "15–20 second settings load" that
+measured 0.5ms server-side, 2026-08-12, was 104 dev-mode module requests over exactly such
+a tunnel). Loopback binding was never the same thing as "unreachable from another device".
+
+**The mechanism, confirmed by the operator:** **Tailscale**, with Tailscale SSH. All
+rendering and processing happens on the **Mac**; the iPad is a browser pointed at it over
+the tailnet. So the loopback bind is untouched and the M6 security decision is not weakened
+— the tailnet is doing what the SHIPPING.md "Private" rung was expected to do, without
+being that rung. ⚠️ **This means the iPad is a view of the Mac's dev server, not a second
+install** — nothing about the two-machine setup (Mac on Node 20/pnpm 9, Linux on Node
+24/pnpm 10) changes, and iPad testing is only available while the Mac is the machine
+running `pnpm dev`.
+
+**Consequence:** M31's touch work is verified on the device, not emulated, and D's honest
+"not verified, here's why" shrinks to whatever the iPad genuinely cannot show.
+
+### The iPad's two reported faults are one missing manifest and one `100vh`
+
+Both were reported as Safari being uncooperative. Only half of that is true.
+
+**"The page renders taller than the visible region."** Not a Safari quirk to be worked
+around — a real bug in our CSS. `ReaderView.module.css:11` sets `height: 100vh` and
+`ReaderPage.module.css:6` sets `min-height: 100vh`. On iOS Safari `100vh` is the **large**
+viewport — the height the page *would* have if the toolbars were retracted — so with the
+toolbars showing, the app is always taller than the window by exactly the toolbar height,
+and the foot sits below the fold. `100dvh` (with a `100vh` fallback) is the fix, plus
+`overscroll-behavior: none` to stop the rubber-band and the pull-to-refresh, plus
+`viewport-fit=cover` and `env(safe-area-inset-*)`.
+
+**"Pinch zooms the webpage."** ⚠️ `user-scalable=no` will not fix this and must not be
+attempted: iOS Safari has deliberately ignored it since iOS 10, for accessibility. Two
+things that do work: preventing WebKit's proprietary `gesturestart`/`gesturechange`, and —
+better — **shipping a web app manifest and adding the app to the Home Screen**. Standalone
+mode removes Safari's own page zoom, its pull-to-refresh, and its toolbars in one move,
+which also makes the `100vh`/`100dvh` gap disappear rather than merely be handled. There is
+no manifest and no `apple-mobile-web-app` meta in `index.html` today.
+
+This lands as **M31 §0**, before anything else in the milestone: every other touch judgement
+is being made on that device, and until the app fills the window and stops zooming, none of
+those judgements are about our gestures.
+
+### The gesture set, closed
+
+Proposed and **dropped**: two-finger swipe down to leave fullscreen; swipe down to open
+search; pinch to close the book. Reasons, so they are not re-proposed:
+
+- **Two gestures on one axis separated only by finger count** is the least discoverable
+  pairing available, and multi-finger gestures are contested on iPad (VoiceOver reserves
+  several). Fullscreen already has an exit affordance.
+- **Pinch is worth more as text size** — it is what every reader on the platform means by
+  pinch — and pinch is *cheap*: two fingers, any distance, no commitment.
+
+⚠️ **Amended within the same day, before any of it was built:** "no gesture changes room"
+was too strong, and the operator brought a downward swipe back for exactly that job. The
+rule that actually survives is about **cost of accident, not about room changes**: *a
+gesture that changes room must be expensive to perform by accident — a long throw (≥⅓ page),
+a tight axis, one finger, disarmed while anything is selected or being edited.* A long
+deliberate swipe clears that bar; a pinch never did. Swipe-down runs the **put-down**, so it
+is the same departure as the Desk button and `Esc`, not a third one. It is **gated on M31
+§0**: until Safari's pull-to-refresh is overridden, a downward swipe reloads the page — and
+shipping the gesture before the fix ships a gesture that throws away the reader's place.
+Recorded as an amendment rather than a quiet edit because the superseded rule was written
+down first, and someone will find it.
+
+Kept, and specified in DESIGN.md rather than here: the Desk's long-press action card, the
+pinch-to-resize instrument, the Scan's pinch-zoom/swipe-scrub, the immersive tap that
+reveals the pebble, and the put-down.
+
+**Three places the operator's own spec was tightened, each recorded because the change is
+mine and they may want it back:**
+
+1. **The Desk long-press is one rule, not three.** "Long-press 1s → menu; drag → menu goes;
+   still 1s → menu returns; hold 0.3s then drag → no menu" collapses to *the card appears
+   after 1s of stillness, any movement dismisses it and re-arms the timer*. The 0.3s clause
+   is already implied — it is movement before the second is up — and a second named
+   threshold is a second thing to get wrong.
+2. **±5° is too tight for a swipe.** A deliberate human swipe on glass rarely lands inside
+   ±5° of vertical; combined with a one-third-of-the-page distance it would read as a
+   gesture that does not work. **±20°** is a normal dominant-axis cone. Recommended, not
+   yet accepted.
+3. **Clamp the pinch slider, do not reject the pinch.** Refusing a gesture because it
+   started too near the top of the page is indistinguishable from a bug. `handleSelected`
+   already clamps the ask pill into the page rather than suppressing it; same rule.
+
+And one thing the operator's sequencing got right that was not obviously deliberate: the
+put-down's order — Desk fades in *before* the cover starts travelling — is what makes the
+destination rect knowable at all. Recorded in DESIGN.md as load-bearing so a later
+"optimisation" does not reorder it.
+
+
+## 2026-08-27 — Click-to-turn is retired; the pointer contract is written (M31 A)
+
+Operator report: *"I can only start a highlight when the cursor is between 'something to
+eat' on the left page and 'They walked into the kitchen he' on the right page — everything
+further left or right initiates a page turn."* Plus: the highlight pill, when it lands near
+an edge, cannot be clicked; the click turns the page instead.
+
+**Both are true, and the premise that they are one bug is false.** There are two turn
+surfaces stacked on the page, built four milestones apart, and they fail differently.
+
+- `.turnGrabSurface` (M20, `ReaderView.module.css`) is a **real parent-document div** with
+  `pointer-events: auto`, `z-index: 6`, `width: 20%` clipped to `ellipse(75% 60%)` — the
+  outer ~15% of the stage at vertical middle. It eats the `pointerdown` itself. Selection
+  there is not difficult, it is **impossible**: the iframe never hears the press.
+- `turnZoneForVisibleX` (M11, `readerGeometry.ts:63`) is the outer **30% of
+  `containerRect.width`**, inside the iframe. A drag there does select (`handleContentClick`
+  early-returns on a non-empty selection); a click that produced no selection turns.
+
+**The spread-mode multiplier is what the operator actually saw.** The 30% is measured
+against the container, and in spread mode the container is *both leaves*. At a 1000px
+stage, normal margin: single-page caps the measure at ~520px so text runs 240→760 against a
+zone ending at 316 — an overlap of the first ~76px of every line. **Spread** uses the fixed
+64px gutter instead, so text fills 40→468 and 532→960 while the zones still run to 316 and
+from 684: **the outer ~65% of each page**. The grab ellipse overlaps live text there too,
+so on the outer quarter of a spread page there is currently nowhere a selection can start.
+M11's 30% predates M12's spread and was never revisited.
+
+**The pill is a plain layering fault.** `.pillPosition` is `z-index: 5`; `.turnGrabSurface`
+is `6`; `.stage`, `.pageClip` and `.readerRow` are all positioned without a `z-index`, so
+none opens a stacking context and the two numbers compare directly. The grab surface paints
+and hit-tests above the pill.
+
+⚠️ **M11 predicted this exactly** (2026-07-20, this file): *"a parent-document overlay
+cannot own this, because anything with `pointer-events` over the iframe kills text
+selection."* M20's grab surface was built as precisely that overlay. The rule was right; it
+was regressed, not overturned. It is restated as invariant 1 of the pointer contract rather
+than rediscovered a third time.
+
+### The ruling
+
+**Operator's call, taken in full: a click never turns a page.** Not on a word, not on
+paper, nowhere. Turns come from `←`/`→`, the foot's `‹ ›`, and drag-on-paper.
+
+The reasoning, recorded because "add it back, it's the e-reader convention" will be
+proposed: a click-to-turn band wide enough to hit is a band wide enough to swallow the
+start of a highlight. That is not a layout problem with a better division of the page — the
+two gestures overlap by nature. Retiring one of them is what makes the other reliable, and
+the reader already has three other ways to turn a page, two of which are always on screen.
+
+**I argued for keeping it**, narrowed to the outer band of the outer leaf and gated on "no
+selection produced, pointer moved <6px", on the grounds that click-the-right-side is the
+dominant e-reader idiom. The operator overruled it: on a laptop people use the arrow keys,
+and the touch rule (below) already says a tap never turns, so keeping it on one input only
+splits the contract in two. Recorded as considered, not overlooked.
+
+The full rule — the ink/paper test, the two tables, the six invariants — lives in
+**DESIGN.md, "The pointer contract"**, not here. This entry is why.
+
+### Three second-order effects, decided here so they are not discovered
+
+- **Direction now comes from the drag, not the grab point.** With all paper grabbable, the
+  gutter and the foot of a short page belong to both directions. Today the code knows the
+  direction at `pointerdown` (left surface = prev, right = next) and uses it immediately —
+  it advances the rendition under the covers so the peeling sheet has a real page behind
+  it, then steps back by CFI on spring-back. That advance must now be **deferred until the
+  drag has declared an axis**. This is the milestone's real implementation cost, and it
+  pays for itself: the wasted advance-and-step-back on a stray press disappears.
+- **`turnZoneForVisibleX` survives as the dwell's region, not as a click target.** M19.6's
+  highlight-across-a-page-boundary dwell is keyed off that geometry. The natural cleanup —
+  deleting the zones along with click-to-turn — silently removes it.
+- **The vignette and the directional cursor start lying.** Both advertise click-to-turn.
+  Over paper the reader gets a grab cursor and the glow follows the grabbable paper; over
+  ink, neither appears.
+
+### Known cost, accepted
+
+In spread mode the grabbable paper is thin — the ~40px outer margins, the 64px gutter, and
+whatever lies below the last line. Drag-to-turn becomes the pleasant gesture; the arrow
+keys and `‹ ›` carry the load. Accepted on the operator's own reasoning above. ⚠️ One gap
+worth knowing: **the `‹ ›` buttons do not exist in immersive mode** — that branch renders
+the floating pebble (digest / listen / search / exit) instead. On a desktop the keyboard
+covers it; on a tablet in immersive mode, swipe becomes the only way to turn a page. That
+is consistent with the touch rule, but if a belt-and-braces fallback is wanted, arrows on
+the immersive pebble are a two-line change.
+
+
+## 2026-08-27 — Define's digest fallback becomes the reader's call, not the miss's (M30 E feedback)
+
+Operator feedback on the shipped M30 C: **"Define: a dictionary first, the digest as
+fallback — capped"** (2026-08-24, below) built the fallback to fire automatically on a
+dictionary miss. Driving it live already knew the cost — the digest rung takes
+100–140s on a reasoning model (M30 C's own Verify entry) — but shipped the *decision* to
+pay it to the miss, not the reader. The operator asked for the decision back: **ask before
+searching deeper, don't just do it.**
+
+**Ruling: `dictionary_miss` is now a fourth `Definition.reason`, distinct from `not_found`.**
+`defineHighlight` (`dictionary/define.ts`) stops at the dictionary and returns
+`dictionary_miss` whenever a query-role provider *is* configured (still `no_provider` when
+one isn't — nothing to offer deepening with). The digest-rung call itself moved to a new
+`deepenDefinition` async generator, run only from an explicit "Look deeper" the reader
+clicks on `DefinitionCard`. `not_found` is now reserved for what a *deepen* attempt itself
+comes back empty on — the same designed-failure shape M30 C always had, just reached one
+step later.
+
+Two smaller asks landed in the same pass, because they touch the same card and the same
+delete affordance M30 E already owned:
+
+- **Transparency, from real steps, never a fabricated chain-of-thought.** `deepenDefinition`
+  yields a `step` event per actual stage it performs — searching the text for the term,
+  reading context around what it found, asking the model — before the answer streams in as
+  `text` chunks. Settled decision 2's "the model proposes, code disposes" is exactly why
+  this is safe to narrate: every line is deterministic code the route was always going to
+  run, in the order it always ran it, just surfaced instead of hidden behind a spinner.
+- **A model choice, from the roles that already exist.** Rather than a new per-call model
+  catalog, the reader picks between the two roles Settings already configures ("Query" /
+  "Digest"), read live via the existing `useProviderRoles` hook — no new provider-selection
+  surface, no new server concept.
+- **The definition card is now draggable**, same mechanics as `ThreadPanel`'s M14 "movable
+  sticky notes" (`dragControls`/`dragConstraints={appBoundsRef}`, armed from the header's
+  own pointerdown) — not persisted, since a fresh Define always re-anchors at the new
+  selection and remembering a stale offset from an unrelated word would be the wrong
+  default.
+- **`MarginRail`'s delete `×` had a live hover-dead-zone bug**, found on the same pass: the
+  button sat a `margin-left` gap outside its wrapper's own (dot-sized) hover box, so a
+  cursor moving toward it crossed dead space, dropped `:hover`, and the button vanished
+  before the cursor arrived. Fixed with an out-of-flow bridge sized to exactly that gap.
+
+See TASKS.md M30 E for the delete-confirmation work (`messageCount` on `ThreadSummary`,
+`DeleteConfirmDialog`) this landed alongside.
+
 ## 2026-08-26 — A turning page is in front of the screen, and two different things were holding it back (M27)
 
 Operator feedback on the wired hinge, in two asks: **(1)** the curled page should be in
@@ -351,6 +631,162 @@ sweep). Whether a *click* turn should instead take a fanned path, the way a thum
 a look question and deliberately still open: a straight pull square across is the far
 field, so a turn animated along it never shows the fan the cone exists for.
 
+## 2026-08-26 — Two ways a CLI provider fails that have nothing to do with the model
+
+Both reported by the operator at M26 sign-off, from two machines, and they looked like
+one problem ("Codex won't connect") but share no cause. Both were reproduced before
+anything was changed. Neither was a credential problem, which matters because the first
+instinct — "store the login ourselves, the way we store the library" — would have been
+building a credential store to work around a bug in *reading* one.
+
+### 1. `codex login status` answers on **stderr**, and we only read stdout
+
+Symptom: Settings showed "Not signed in" for Codex on every load of an app that had
+signed in successfully many times. The operator's reading was that a rebuild forgot the
+login; the real cost was that they then re-ran device auth each time, minting a fresh
+token on a machine whose credentials had never moved.
+
+Reproduced against the running dev server: `/api/provider-auth/codex/status` returned
+`loggedIn: false` at the same moment `codex login status` in a terminal exited 0 saying
+"Logged in using ChatGPT". Under piped stdio — which is how a server always runs it —
+0.114.0 puts that sentence on **stderr** and leaves stdout empty. `checkAuthStatus`
+collected stdout only, and its `text.length > 0` clause then read the resulting silence
+as proof of being logged out.
+
+**Decided:** the status read takes both streams, and silence is no longer evidence.
+`code === 0` from a CLI whose entire job is to answer this question is the signal;
+`runToCompletion` still fails closed to `code: null` when it genuinely can't tell.
+`interpretCodexStatus` is now a pure function with the live stdout/stderr shapes as
+fixtures, because this is a class of bug that returns whenever a CLI is upgraded.
+
+**The general rule this earns:** *never assume which stream a CLI answers a question on,
+and never treat an empty answer as a negative one.* Applied here to `--version` in
+`describeCli` as well. The 2026-08-25 note that `codex exec --json`'s events arrive
+cleanly on stdout stays true — that's a different subcommand, and it was verified.
+
+**No credential storage.** Considered and rejected in the same breath as diagnosing it:
+the CLI already persists its own login (`~/.codex/auth.json`, or
+`~/snap/codex/current/auth.json` for the snap build), that persistence was working the
+whole time, and copying credentials into our SQLite would have added a second secret
+store to secure while making sign-ins *more* frequent, not fewer. The operator's own
+constraint — minimise the number of sign-ins, a rapid series of them looks like abuse —
+is satisfied by fixing the read. The M26 lead-in's premise holds: we shell out to the
+real CLI precisely so there is nothing here to secure.
+
+### 2. `spawn` searches the server's `PATH`, which on macOS is not the shell's
+
+Symptom, on the operator's Mac: ``Couldn't start `codex`: spawn codex ENOENT`` from an
+app whose machine runs `codex` fine in a terminal.
+
+`spawn("codex", …)` resolves against `process.env.PATH` only. A process started outside a
+login shell — a GUI/launchd launch, and any Desktop-rung packaging (SHIPPING.md) by
+construction — inherits the bare `/usr/bin:/bin:/usr/sbin:/sbin`, in which Homebrew,
+npm-global, volta, bun and nvm installs are all invisible. Reproduced on the Linux rig by
+running the same spawn under that exact PATH: `spawn codex ENOENT`, verbatim.
+
+**Decided:** one resolver, `llm/cliPath.ts`, used by every CLI spawn in the app
+(`authFlows.ts` and `codexCli.ts`). Three strategies, first hit wins:
+
+1. `MARGINALIA_CODEX_BIN` / `MARGINALIA_CLAUDE_BIN` — the escape hatch that ends any
+   argument about where the binary is.
+2. `PATH` (the operator's own always wins) then a table of the directories these CLIs
+   actually install into, nvm's versioned `bin`s included.
+3. The **login shell**, asked directly (`$SHELL -lc "command -v codex"`, then `-ic`).
+   This is the strategy that matches "but it works in my terminal", and it is worth the
+   ~200ms because it is paid once per binary per server run.
+
+Cached per process, with `clearCliBinCache()` so installing the CLI while the app is open
+doesn't need a restart. When nothing is found we still spawn the bare name, so the
+failure stays the OS's familiar `ENOENT` rather than a path we invented — and the error
+message now names the cause and both fixes instead of echoing `ENOENT` at the reader.
+
+*This is a Desktop-rung prerequisite discovered early.* SHIPPING.md's Desktop rung means
+a GUI launch, which is exactly the bare-PATH case; a packaged Marginalia would have hit
+this on the first run on every machine.
+
+### 3. A subscription provider owes a setup guide, because it can't be fixed by a field
+
+`anthropic` and `openai-compatible` fail one way and are fixed one way: the key or the
+URL is wrong, in a field the user is already looking at. `codex-cli` and `claude-agent`
+have **three** preconditions — a subscription, a CLI installed on the *server's* machine,
+and a sign-in that completes outside the browser — none visible from the UI, each failing
+with a different symptom, and one of them (#2 above) producing an error that actively
+misleads by implying the CLI isn't installed when it is.
+
+**Decided:** each Accounts row carries a "How to connect, and what to check if it won't"
+disclosure, and it reports **this machine's** answer rather than linking to prose:
+where the executable was found and what version it is, or — when it wasn't — the
+searched directories, the install command, and the override env var. It opens itself
+only when you're likely to need it (a failed flow, or a not-connected row) and stays a
+quiet paper-register inset otherwise: help, not chrome. A new `GET
+/api/provider-auth/:provider/diagnostics` backs it, read-only, credentials never in
+scope, and it shells out only when the guide is actually opened.
+
+The static half of the same content lives in README.md's "Configuring a model" — the two
+must stay in step, and the in-app copy is the one a stranger will actually read.
+
+## 2026-08-25 — Codex CLI provider shipped (M26), and two corrections to the 2026-07-30 cage
+
+The auth blocker cleared (this machine's `codex login` succeeded via the M26 lead-in
+sign-in flow), so this is the "run one real call and read the actual JSONL" step both the
+2026-07-30 decision and TASKS.md's M26 task required before writing `codexCli.ts`. Full
+findings in NOTES.md ("M26 — `codex exec --json`'s real event shape"); this entry records
+what changed in the cage itself as a result, since the 2026-07-30 decision's flag list is
+now wrong in two places and this file is the one that's supposed to say so rather than
+leaving the drift silent.
+
+**`-a never` ("approvals never") is dropped — that flag doesn't exist on `codex exec`.**
+It belongs to the interactive `codex` command only; passing it to `exec` errors with
+"unexpected argument" (confirmed live). `exec` is non-interactive by construction — there
+is no human on the other end of a spawned process to approve anything *to* — so there was
+never anything for the flag to do here. The 2026-07-30 decision listed it from a `--help`
+read that didn't distinguish the two subcommands' flag sets, which is exactly the trap
+that same decision's own warning called out, just tripped on a different flag than the one
+it was warning about (the event shape).
+
+**The scratch directory cannot be `os.tmpdir()`, and it cannot be a dot-directory
+either — both verified live, both 100% reproducible, and both traced to `codex` being
+installed here as a **snap package** (`/snap/bin/codex`).** `codex exec -C <dir>` (and
+`--output-schema <file>`) fail `ENOENT` for any path backed by tmpfs — this machine's
+`/tmp` is tmpfs (`stat -f` confirms it, `/home` is ext4) — because a strict snap gets its
+own private `/tmp` namespace, so a path created in the real `/tmp` doesn't exist from
+inside it. Separately, `--output-schema <file>` fails `Permission denied` for *any* file
+under a dot-directory anywhere in `$HOME` — snap's `home` interface denies dotfiles by
+policy, isolated by testing an otherwise-identical hidden vs. non-hidden directory
+(NOTES.md "M26" addendum). `codexCli.ts` uses `~/marginalia-codex-scratch` — no dot, not
+`/tmp`, still not the repo or `data/` per the 2026-07-30 bound. Whether either constraint
+reproduces on the operator's Mac (APFS, not tmpfs; presumably the standalone install, not
+a snap, since snap is Linux-only) is unverified; the fix costs nothing there regardless.
+
+Everything else in the 2026-07-30 cage held exactly as specified and was proven live, not
+assumed: `--sandbox read-only` genuinely blocks a write (asked the CLI to write a file
+inside its own `-C` root; it attempted the command, reported "Failed", the file never
+appeared); `--ephemeral` and `--skip-git-repo-check` needed no adjustment.
+
+**One more real bug, caught by driving the actual app rather than trusting the schema
+change:** `settings/providers.ts`'s `isProfileConfigured()` had no branch for `codex-cli`,
+so it fell through to the `openai-compatible` check and read a fully-configured Codex
+profile as unconfigured — the reader would have seen the "configure a provider" nudge
+over a provider that was actually working. Fixed alongside (one line, same shape as the
+existing `claude-agent` branch: a subscription CLI is configured by definition, no key to
+check).
+
+**Verified end-to-end against the real dev server and real data** (not just the new
+tests): created a profile, ran `/api/provider-profiles/:id/test`, then pointed the `query`
+role at it and asked a real question from a real highlight in *Kafka on the Shore* — a
+correct, on-topic answer came back over SSE, the usage ledger recorded real reported
+token counts with `costBasis: "notional"` (same treatment as `claude-agent` — a
+subscription call, never billed per-token, and this CLI never reports a `cost_usd` figure
+to price from), and a mid-stream `AbortSignal` killed the child cleanly (`LLMError`, not a
+crash or an orphaned process). `extract()` was verified separately, directly against
+`CodexCliProvider` (a real schema-valid JSON answer, first try) — that pass is what
+surfaced the dot-directory constraint above; it was invisible to the thread test because
+`stream()` never touches `--output-schema`. The `query` role was restored to the
+operator's prior profile afterward; the test thread and test profile were left in place
+rather than reached into the database to remove — cheap for the operator to delete by
+hand if unwanted, and this file's own standing caution against unnecessary destructive
+operations on `data/` argues against a script doing it instead.
+
 ## 2026-08-25 — The paper wash belongs to the fake back, and the dark themes needed the lift back (M27)
 
 Implementing the 2026-08-03 "sign-off" ruling turned up one thing that entry could not have
@@ -466,6 +902,252 @@ opaque blob is partially masked. Both the device code (10 chars) and the verific
 (broken into short pieces by `.`/`/`) sit well clear of that shape and were confirmed live
 to still come through — the fix doesn't cost the feature its one legitimate secret-shaped
 line.
+
+## 2026-08-24 — M25 parked, M29 moved ahead of it
+
+Operator call. M25 (web search) is parked in place — same treatment as M27: nothing in it
+is undecided or blocking, kept whole so it can be picked up cold, settled decision 10
+unaffected. M29 (digest reliability) is physically moved ahead of M25–M28 in TASKS.md —
+its own number is unchanged, only its position in the file is, per the standing "reorder
+only for a real dependency" rule. The dependency: M25 is now parked, M26 is gated on a
+Codex login that hasn't happened on this machine, M27 is already parked, and M28 is
+explicitly "not scheduled" — so M29, whose four tasks already landed with only its live
+Verify open, is the actual next milestone in working order.
+
+## 2026-08-24 — M24.7 §C's chrome-strip overlap: three attempts, the third one measured
+live and correct; identity block redesigned (title over author, marquee, JS-measured stacking)
+
+The saga, kept in full because the first two attempts were plausible-looking and both wrong
+in ways worth not repeating.
+
+1. **Operator report 1**: at the spec'd `600px` `@container` breakpoint, the strip stayed
+   single-row past the point the left zone's controls plus the nav pebble stop fitting —
+   buttons/text overlapped instead of wrapping to two rows. Raised the threshold to `720px`
+   across the four files that shared it. Genuinely correct as far as it went, but —
+2. **Operator report 2**: overlap still happened in single-row mode, with a long title
+   ("East of Eden (Steinbeck \"Essentials\")"). Diagnosed (wrongly, not yet measured live) as
+   `.stripGrid`'s centre column: a bare `auto` track sizes to the title's full max-content
+   width with no cap, which *should* squeeze the left/right `minmax(0, 1fr)` tracks below
+   their own min-content. Fixed the centre track to `minmax(0, auto)`, then — when that
+   didn't visibly help — an explicit `max-width` on `.topRowCenter`. Both were real, correct
+   changes to that element. Neither fixed the report, because —
+3. **Playwright, finally, instead of reasoning from the CSS**: installed a fallback
+   Chromium build (`npx playwright install chromium` — no sudo, so `--with-deps` failed and
+   was skipped) and drove the actual dev server against the real book
+   (`East of Eden (Steinbeck "Essentials")`, resource id `8306c69a…`). Measured rects at
+   800px: `.topRowLeft` (Annotations + chapter nav) rendered at 348px inside a track resolved
+   to 234px — **the left zone was the thing overflowing, not the centre**. `.topRowCenter`
+   obeyed its new `max-width: 300px` exactly and the overlap still happened regardless,
+   because bug 1's "fix" and bug 2's two fixes were all correct changes to elements that
+   weren't the problem.
+
+The actual fix inverts which zones concede space: `.topRowLeft`/`.topRowRight` hold
+*functional controls* (never safe to clip) and became bare `auto` grid tracks — sized to
+their own content, full stop, never compressed. `.topRowCenter` (the book's identity, the one
+thing here safe to truncate) is the sole flexible track (`minmax(0, 1fr)`), with no
+`max-width` of its own — a grid item's default `justify-self: stretch` plus its own
+`justify-content: center` gives "full text with even breathing room" at comfortable widths
+and "shrink to whatever's left" at tight ones, for free, with one rule instead of two
+competing ones.
+
+Folded into the same pass, at the operator's request once the real bug was visible:
+
+- **Title stacked over author** (`.identityText`, column flex) instead of side by side — a
+  column needs the *wider* line, not their combined width.
+- **A ping-pong marquee** (`useMarqueeOverflow.ts`, `.scrolling`/`@keyframes
+  readerTitleMarquee`) instead of a hard ellipsis when a line's `scrollWidth` genuinely
+  exceeds its box — measured live: a 22px overflow animates over 3s (a floor — distance is
+  scaled at ~34px/s above it), holds at each end, reverses. Gated off under
+  `prefers-reduced-motion: reduce` (falls back to plain ellipsis, verified live).
+- **The two-row switch stopped being a `@container` query at all** (`useReaderStripLayout.ts`)
+  — replacing both the `600px` and `720px` static thresholds outright. A fixed pane-width
+  number structurally can't know how much of that width a title needs (bug 2's whole
+  premise), and can't know how much room is actually left after two sibling zones claim
+  theirs — no single container query can see three elements' widths at once. Measures
+  `.topRow` against `.topRowLeft`'s/`.topRowRight`'s real rendered widths (stable now that
+  they're never compressed) and toggles a plain global marker class
+  (`readerStripStacked`) once what's left for the identity block drops under 140px (first
+  estimate, named in the hook as expected to need live tuning same as its predecessors) —
+  applied to both `.topRow` and `.footer` so they stay in lockstep by construction. Verified
+  live across a continuous resize: crosses to stacked at 936px narrowing, back at 938px
+  widening — no oscillation. `PageNumberDisplay`/`ChapterNav`/`NavCluster`'s own narrow-mode
+  rules moved from `@container reader-strip` to `:global(.readerStripStacked)` selectors,
+  same mechanism, same shared marker.
+- **A real `column-gap`** on `.stripGrid` (was 0). Found live at a 420px pane: the grid math
+  was already correct there (zones genuinely adjacent, not overlapping in any measured rect)
+  but "adjacent at 0px" still reads as the cover thumbnail touching the nav pill in a
+  screenshot. Cheap insurance the flexible track's own slack already made unnecessary at
+  comfortable widths.
+
+Verified live (Playwright) at 1200/950/900/800/600/500/420px, plus `prefers-reduced-motion:
+reduce`, plus a continuous resize through the stacking boundary in both directions — not yet
+the operator's own sign-off. M24.7's Verify checkbox stays open until that happens.
+
+## 2026-08-24 — Six asks, triaged: three already exist; Define is a dictionary, not a prompt
+
+The operator brought six items (highlight-kind config, a Define button + per-book glossary,
+touch, deleting highlights, Deep Reading mode, and a far-future "what kind of reader are
+you" graphic). Read against the code, **three of the six substantially already exist**, and
+saying so is most of the value of this session — two of them would otherwise have been
+rebuilt.
+
+### What already existed (verified by reading, not assumed)
+
+- **The four kinds already carry the operator's four semantic slots.**
+  `web/src/reader/highlightKinds.ts:6` — `sage` = "Definition", `slate` = "Question",
+  `rose` = "Revisit", `honey` = "Quote". The proposed defaults (Define/Green,
+  Thematic Question/Purple, Regular annotation/Pink, Key quote/Yellow) are the same four
+  slots, three of them already in the right hue family. **The ask is a rename plus one hue
+  move, not a new taxonomy.**
+- **Deleting highlights ships today**, end to end: `DELETE /api/highlights/:id`
+  (`server/src/routes/highlights.ts:42`), a cascading `deleteHighlight`
+  (`server/src/annotations/highlights.ts:202`), and two UI call sites — the margin rail
+  (`MarginRail.tsx:71`) and the annotations overview (`AnnotationsOverview.tsx:101`).
+- **Deep Reading mode is roughly 70% built.** `digest/thematicBuild.ts` already generates
+  2–3 questions per chapter, each with a verbatim grounding quote (decision 11); clicking
+  one creates a real anchored highlight and pre-fills the thread draft
+  (`routes/digest.ts:476`, `ThreadPanel.initialDraft`). There is a per-book **reading
+  brief**. Questions are already **spoiler-gated on reading position**
+  (`routes/digest.ts:375`): `spineIndex > bookmarkSpineIndex`. That gate *is* the operator's
+  "when a chapter is concluded" — it exists, nothing surfaces it at that moment.
+
+### Kind colours: labels are configurable, hues are not
+
+**Ruling: labels become a setting; the five reference hues stay code.**
+
+The hues are not arbitrary and cannot be handed to a colour picker without deleting a
+guarantee. `theme.css:63-75` records that the eight theme-ramp hues were *solved* for the
+maximum minimum pairwise separation **against the four kind hues** (~28°, where naive 45°
+spacing reached ~10°), and `scan/scanPalette.ts` is a second, hand-authored
+paper-tint→phosphor translation with its own separation solve against the scan's near-black
+panel. A free picker makes hue collision the reader's problem on two surfaces that were
+deliberately engineered so it isn't.
+
+The operator did not ask for a picker — they asked for configurable *labels*. Labels carry
+no such coupling, so they move to settings and the hues stay put.
+
+**One hue does move:** `slate` blue → purple, as asked. ⚠️ That is not a one-line edit —
+`--kind-slate`, `PHOSPHOR_RGB.slate`, and the theme-ramp separation solve all key off it.
+See M30.
+
+**No fifth kind** (operator's call, offered three ways and chosen). The four slots already
+say what the operator wanted to say; a fifth costs the zod enum, `theme.css`,
+`PHOSPHOR_RGB`, `KIND_ORDER`, `heatField`, `ThemeFilterKey`, *and* re-solving hue separation
+across thirteen hues instead of twelve. Revisit only when a fifth slot can be named.
+
+**The rule this settles, for cases nobody has raised yet:** *a highlight kind's identity is
+its slot, not its presentation.* The stored enum value (`rose|sage|honey|slate`) is
+permanent and is what the DB, the scan, the filters and the vault key off. Label and hue are
+renderings of it. Renaming a kind must never migrate a row, and must never be able to make
+two kinds indistinguishable on the reader or the scan.
+
+### Define: a dictionary first, the digest as fallback — capped
+
+The operator refined the recommendation and was right to. The trigger case is *"a word I
+don't know"* — vocabulary expansion — not *"a term this book has developed"*. So:
+**dictionary first; if that fails, a digest-grounded query capped under 100 tokens.**
+
+Two consequences worth stating, because both are load-bearing:
+
+1. **"Dictionary" means a real local dictionary, not an LLM told to act like one.** A
+   dictionary API would be a *third* named cloud exception under settled decision 10, for a
+   lookup that is offline, instant and free when bundled. This follows the TTS precedent
+   exactly (decision 9: local Kokoro, no cloud, behind a seam). A bundled dataset is the
+   boring choice and it makes Define work with no provider configured at all — which
+   matters, because the reader reaching for Define is mid-sentence, not mid-research.
+2. **The fallback is the digest rung, not the whole book** — consistent with decision 8's
+   M17 amendment. With a <100-token cap it is a cheap call, and the cap is a *product*
+   constraint, not a budget one: a definition that runs long stops being a definition and
+   starts being a thread, which the reader can already open by asking.
+
+**Define is the first canned-prompt button in the app**, and that is the thing to be
+deliberate about. "The highlight is the prompt" (CLAUDE.md, product discipline) survives
+intact — Define still starts from a selection. What is new is that the *question* is
+supplied by the app rather than typed. That is permitted, and bounded: **a canned button is
+legitimate only where the question is fully determined by the selection itself.** "Define
+this word" is. "Summarise this chapter" is not — it needs a scope the selection doesn't
+carry, and would be a second, different feature.
+
+**The glossary needs no new table.** It is a filtered view: sage-kind highlights in this
+book that have a definition. Building a `glossary` table would create a second source of
+truth for something the highlights table already holds, and would rot the moment a
+definition highlight is deleted.
+
+### Touch: two projects, one of them blocked on a rung
+
+The operator's phrasing — *"swipe is for page traversal"* — describes an intent, not the
+app. **There is no touch handling in the reader at all**: no `touchstart`, no
+`-webkit-touch-callout`, no `contextmenu` handler. Page turns today are a click in a
+semicircular turn zone (`readerGeometry.ts:63`, `ReaderView.tsx:1966`) plus keyboard. This
+matters because the ask reads as "fix touch" and is actually "build touch".
+
+Splitting it the way the 2026-08-06 measurement implies, but with the gate stated more
+sharply than that entry did:
+
+- **Buildable today** — the gesture layer: swipe-to-turn and long-press-to-select, verified
+  on any touch-capable machine. That entry's measurement holds (7 mouse-specific handler
+  sites; both large gestures already on pointer events).
+- **Blocked on hardware** — iOS's native selection callout. The lever exists and is known:
+  `rendition.themes` CSS *does* reach iframe content, unlike marks, which live in a
+  parent-document SVG pane and are why `highlightKinds.ts` exists at all. But whether
+  suppression is survivable cannot be settled by reading code, and **there is no iPad to
+  test on until the Private rung lands** — the server binds to loopback by the M6 security
+  decision. This is the same gate as iPad drawing (2026-07-27 "Future arcs"), and it should
+  be counted once, not discovered separately by each feature that hits it.
+
+⚠️ **The actual design work is disambiguation, not gestures.** Swipe-to-turn and
+drag-to-select are the same pointer stream until a rule separates them, and tap-to-turn
+already competes with tap-to-dismiss-the-pill. Whoever builds this decides that rule first
+and writes it down; getting it wrong makes the book impossible to annotate *and*
+impossible to page, which is worse than no touch support.
+
+### Delete: the hazard is more urgent than the feature
+
+The ask was "the ability to delete existing highlights", which exists. The real gaps, in
+priority order:
+
+1. **Delete has no confirmation and cascades irreversibly.** `deleteHighlight`
+   (`annotations/highlights.ts:202`) drops the highlight, its thread, *every message in
+   that thread*, and its `publishes` ledger rows, in one transaction. The margin rail
+   exposes this as a small `×` sitting next to the navigate target
+   (`MarginRail.tsx:71-82`). One misclick destroys a whole conversation with no undo. This
+   is a **bug to fix before adding more delete affordances**, not a polish item.
+2. **You cannot delete from where you are** — not from the thread panel, not from the mark.
+   Only from the rail and the overview, both of which are instruments you have to open.
+
+Recorded because it will come up: the fix is a confirm step *or* an undo window, not both,
+and the choice is made in M30 rather than left to the implementer.
+
+### Deep Reading: build the trigger, not the engine
+
+Given how much exists, the milestone is small and precise:
+
+- **The trigger.** Nothing surfaces a chapter's questions at the moment the chapter ends.
+  The signal exists on both sides (`currentSpineIndexRef` via `handleRelocated` client-side;
+  the bookmark gate server-side). **It is a quiet affordance, never a modal** — decided
+  here, not left open, because CLAUDE.md's "reading comes first / never let the AI layer
+  degrade the reading experience" already settles it. An interstitial between chapters is
+  exactly the layout-blocking interruption that rule forbids.
+- **Your own questions.** Per-highlight `note` already gives answer-space, autosaved. The
+  one genuinely new storage need in the whole list is a **chapter-level question with no
+  passage anchor** — every highlight today requires an anchor, and a question about a
+  chapter as a whole has nothing to anchor to.
+
+⚠️ Sequenced after M29's live **Verify**, which is still unchecked. M29's code is done, but
+Deep Reading puts the thematic layer in the *reading* path, where a stall is felt
+immediately rather than on a digest page the reader chose to open. Verify first.
+
+### Reader-type graphic
+
+Far future, unscheduled, and left that way. Noted only so it isn't foreclosed: its inputs
+are the kind distribution and the reader's own question corpus — exactly what M30 and M31
+produce. Nothing to build now.
+
+### Sequencing
+
+Operator's call: **touch and the highlight rework first, then Deep Reading.** Recorded as
+M30 (highlights), M31 (touch), M32 (Deep Reading) — appended, not inserted, so nothing
+renumbers.
 
 ## 2026-08-23 — The shipping rungs are named, not numbered; Private is next
 

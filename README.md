@@ -157,11 +157,66 @@ Open **Settings** and create a provider profile. Three kinds exist:
 |---|---|---|
 | `anthropic` | An Anthropic API key | The straightforward path. You pay per token. |
 | `openai-compatible` | A base URL and model name | Anything speaking the OpenAI chat-completions API — LM Studio, Ollama's compatible endpoint, vLLM, OpenRouter. Works fully offline against a local model. |
-| `claude-agent` | A working Claude Code login on this machine | Uses your existing subscription instead of an API key. See the caveats below. |
+| `claude-agent` | A Claude Pro or Max subscription, and the `claude` CLI installed | Uses your existing subscription instead of an API key. See "Subscription providers" below. |
+| `codex-cli` | A ChatGPT paid plan, and the `codex` CLI installed | Same idea for OpenAI. Runs caged: read-only sandbox, ephemeral, in a scratch directory. See below. |
 
 Profiles are assigned to **roles** — `query` (answering while you read) and `digest`
 (batch analysis) — so a cheap local model can do bulk work while a stronger one answers
 questions.
+
+### Subscription providers (`claude-agent`, `codex-cli`)
+
+These two are the finicky ones, and they are finicky for a reason that has nothing to do
+with the model: they are not configured by pasting a key into a field. They have **three
+preconditions**, and each one fails with a different symptom.
+
+| | `codex-cli` | `claude-agent` |
+|---|---|---|
+| **1. Subscription** | ChatGPT Plus, Pro, Business, Edu or Enterprise | Claude Pro or Max |
+| **2. CLI installed** | `npm install -g @openai/codex` | `npm install -g @anthropic-ai/claude-code` |
+| **3. Signed in** | **Settings → LLM → Accounts → Sign in** | same |
+| Where the login is kept | `~/.codex/auth.json` (or `~/snap/codex/current/auth.json` for the snap build) | `~/.claude/` |
+
+Precondition 2 is about **the machine running the server**, not the machine running the
+browser. If you reach Marginalia over your LAN from a laptop, the CLI has to be installed
+on the box running `pnpm dev`.
+
+Marginalia never stores, copies or caches these credentials. It shells out to the CLI you
+already have and asks it, every time — which is the whole reason there is no second
+secret store here to worry about, unlike the API keys above.
+
+**Signing in.** Use the Accounts panel rather than a terminal. Codex prints a short code
+and a verification URL; open that URL on any device — phone included — and the panel
+switches to Connected on its own. Nothing listens on a callback port, so the browser and
+the server do not have to be on the same machine.
+
+**You should only ever do this once per machine.** The sign-in survives restarts,
+rebuilds and reboots. If Marginalia keeps asking you to sign in again, that is a bug in
+Marginalia, not an expired login — open an issue rather than re-authenticating, because
+a rapid series of sign-ins on one account is exactly the pattern that looks like abuse.
+(One such bug was fixed on 2026-08-26: `codex login status` prints its answer on stderr,
+and the status check was reading stdout only.)
+
+#### `spawn codex ENOENT`, or `spawn claude ENOENT`
+
+This almost never means the CLI is missing. It means Marginalia's server can't see it.
+
+`spawn` searches only the `PATH` of whatever launched the server, and on macOS a process
+not started from a login shell gets the bare `/usr/bin:/bin:/usr/sbin:/sbin` — in which
+Homebrew, npm-global, nvm, volta and bun installs are all invisible. So `codex` works
+perfectly in your terminal and is nowhere to be found from the app.
+
+Marginalia searches `PATH`, then the directories these CLIs actually install into, then
+asks your login shell directly. If all three miss, override it:
+
+```bash
+which codex                                   # in your normal terminal
+MARGINALIA_CODEX_BIN=/opt/homebrew/bin/codex pnpm dev
+```
+
+`MARGINALIA_CLAUDE_BIN` does the same for Claude Code. **Settings → LLM → Accounts →
+"How to connect"** shows you which of these applies on your machine — the resolved path
+and version when it worked, or every directory searched when it didn't.
 
 **API keys are stored in plaintext** in the SQLite database. That is a deliberate
 trade-off for a single-user app running on loopback on your own disk, and it is
