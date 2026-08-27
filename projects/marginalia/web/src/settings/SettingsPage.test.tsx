@@ -38,6 +38,7 @@ const DEFAULT_PROFILE: ProviderProfile = {
   anthropicModel: "claude-opus-4-8",
   anthropicApiKey: "",
   claudeAgentModel: "claude-sonnet-5",
+  codexModel: "",
   openaiBaseUrl: "",
   openaiModel: "",
   openaiApiKey: "",

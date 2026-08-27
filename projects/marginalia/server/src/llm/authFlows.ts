@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
-import type { ProviderAuthFlowState, ProviderAuthProvider, ProviderAuthStatus } from "@marginalia/shared";
+import type {
+  ProviderAuthFlowState,
+  ProviderAuthProvider,
+  ProviderAuthStatus,
+  ProviderCliDiagnostics,
+} from "@marginalia/shared";
+import { findCliBin, resolveCliBin, searchDirs } from "./cliPath.js";
 
 /**
  * M26 lead-in (decisions.md 2026-08-25): an in-app "Sign in" flow spawns the
@@ -23,8 +29,26 @@ import type { ProviderAuthFlowState, ProviderAuthProvider, ProviderAuthStatus } 
  */
 
 const CLI = {
-  codex: { bin: "codex", loginArgs: ["login", "--device-auth"], statusArgs: ["login", "status"], logoutArgs: ["logout"] },
-  claude: { bin: "claude", loginArgs: ["auth", "login"], statusArgs: ["auth", "status"], logoutArgs: ["auth", "logout"] },
+  codex: {
+    bin: "codex",
+    loginArgs: ["login", "--device-auth"],
+    statusArgs: ["login", "status"],
+    logoutArgs: ["logout"],
+    versionArgs: ["--version"],
+    installCommand: "npm install -g @openai/codex",
+    installUrl: "https://developers.openai.com/codex/cli",
+    requires: "A ChatGPT Plus, Pro, Business, Edu or Enterprise plan.",
+  },
+  claude: {
+    bin: "claude",
+    loginArgs: ["auth", "login"],
+    statusArgs: ["auth", "status"],
+    logoutArgs: ["auth", "logout"],
+    versionArgs: ["--version"],
+    installCommand: "npm install -g @anthropic-ai/claude-code",
+    installUrl: "https://claude.com/product/claude-code",
+    requires: "A Claude Pro or Max subscription (an API key works too, but is billed per token).",
+  },
 } as const;
 
 // Codex's own device code expires in 15 minutes (verified live); give a
@@ -148,7 +172,7 @@ export function startAuthFlow(provider: ProviderAuthProvider): ProviderAuthFlowS
   }
 
   const cmd = CLI[provider];
-  const child = spawn(cmd.bin, cmd.loginArgs);
+  const child = spawn(resolveCliBin(cmd.bin), cmd.loginArgs);
   const flow: Flow = {
     id: randomUUID(),
     provider,
@@ -179,7 +203,7 @@ export function startAuthFlow(provider: ProviderAuthProvider): ProviderAuthFlowS
   });
 
   child.on("error", (err) => {
-    finish(flow, "error", `Couldn't start \`${cmd.bin}\`: ${err.message}`);
+    finish(flow, "error", notFoundMessage(cmd.bin, err));
   });
 
   child.on("exit", (code) => {
@@ -225,24 +249,28 @@ function runToCompletion(
   bin: string,
   args: readonly string[],
   timeoutMs: number,
-): Promise<{ code: number | null; stdout: string }> {
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(bin, args);
+    const child = spawn(resolveCliBin(bin), args);
     let stdout = "";
+    let stderr = "";
     const timeout = setTimeout(() => {
       child.kill();
-      resolve({ code: null, stdout });
+      resolve({ code: null, stdout, stderr });
     }, timeoutMs);
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
     });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
     child.on("error", () => {
       clearTimeout(timeout);
-      resolve({ code: null, stdout });
+      resolve({ code: null, stdout, stderr });
     });
     child.on("exit", (code) => {
       clearTimeout(timeout);
-      resolve({ code, stdout });
+      resolve({ code, stdout, stderr });
     });
   });
 }
@@ -252,7 +280,7 @@ function runToCompletion(
  * this layer: an auth check that can't complete is not proof of anything. */
 export async function checkAuthStatus(provider: ProviderAuthProvider): Promise<ProviderAuthStatus> {
   const cmd = CLI[provider];
-  const { code, stdout } = await runToCompletion(cmd.bin, cmd.statusArgs, STATUS_CHECK_TIMEOUT_MS);
+  const { code, stdout, stderr } = await runToCompletion(cmd.bin, cmd.statusArgs, STATUS_CHECK_TIMEOUT_MS);
   const text = stripAnsi(stdout).trim();
 
   if (provider === "claude") {
@@ -273,14 +301,96 @@ export async function checkAuthStatus(provider: ProviderAuthProvider): Promise<P
     }
   }
 
-  // codex: no --json on `login status` (checked --help, 0.114.0) — plain
-  // text, "Not logged in" being the one shape confirmed live.
-  const loggedIn = code === 0 && text.length > 0 && !/not logged in/i.test(text);
-  const firstLine = text.split("\n")[0]?.trim();
-  return { provider, loggedIn, detail: loggedIn && firstLine ? firstLine : null };
+  return { provider, ...interpretCodexStatus(code, stdout, stderr) };
+}
+
+/**
+ * Exported for tests. `codex login status` has no `--json` (re-checked
+ * `--help`, 0.114.0) — plain text, "Not logged in" being the one negative
+ * shape confirmed live.
+ *
+ * **It prints that text on stderr, not stdout, whenever stdout is a pipe**
+ * (decisions.md 2026-08-26). Reading stdout alone — which this did until then
+ * — leaves the text empty for a perfectly signed-in machine, and the old
+ * `text.length > 0` clause turned that emptiness into `loggedIn: false`.
+ *
+ * The visible cost was not a wrong badge but a wrong *action*: Settings showed
+ * "Not signed in" on every load, so the operator re-ran device auth and minted
+ * a fresh token each time, on a machine whose credentials had never gone
+ * anywhere. That is why the fix belongs to the read, not to some new
+ * credential store — there was never anything to store. Reproduced against the
+ * running dev server and fixed on 2026-08-26.
+ *
+ * So: both streams, and the emptiness clause is gone. `code === 0` from a CLI
+ * whose whole job is to answer this question is the signal; silence is not
+ * evidence of being logged out. `runToCompletion` still fails closed to
+ * `code: null` when it genuinely can't tell, which reads as false here.
+ */
+export function interpretCodexStatus(
+  code: number | null,
+  stdout: string,
+  stderr: string,
+): { loggedIn: boolean; detail: string | null } {
+  const combined = `${stripAnsi(stdout).trim()}\n${stripAnsi(stderr).trim()}`.trim();
+  const loggedIn = code === 0 && !/not logged in/i.test(combined);
+  const firstLine = combined.split("\n")[0]?.trim();
+  return { loggedIn, detail: loggedIn && firstLine ? firstLine : null };
 }
 
 export async function logout(provider: ProviderAuthProvider): Promise<void> {
   const cmd = CLI[provider];
   await runToCompletion(cmd.bin, cmd.logoutArgs, STATUS_CHECK_TIMEOUT_MS);
+}
+
+/**
+ * The message a `spawn` failure deserves (decisions.md 2026-08-26). The raw
+ * one — "Couldn't start `codex`: spawn codex ENOENT" — is what the operator's
+ * Mac showed while `codex` worked perfectly in their terminal, and it names
+ * neither the cause (this server's `PATH` isn't the shell's) nor the fix.
+ */
+function notFoundMessage(bin: string, err: Error): string {
+  if (!/ENOENT/.test(err.message)) return `Couldn't start \`${bin}\`: ${err.message}`;
+  const cmd = bin === "codex" ? CLI.codex : CLI.claude;
+  return (
+    `Couldn't find the \`${bin}\` command. It may well be installed — Marginalia's server ` +
+    `only sees the PATH of whatever launched it, which on macOS is often not your shell's. ` +
+    `Install it with \`${cmd.installCommand}\`, or point Marginalia at it directly by ` +
+    `starting the server with MARGINALIA_${bin.toUpperCase()}_BIN=/full/path/to/${bin}. ` +
+    `Open "How to connect" below for the full checklist.`
+  );
+}
+
+/**
+ * Everything the Settings guide needs to explain *this machine's* state
+ * (decisions.md 2026-08-26) — where the CLI was found, what it reports for
+ * `--version`, and, when it wasn't found, where we looked. This is the answer
+ * to "it's installed though": either we print the path we're about to spawn,
+ * or we print the search and the override that ends the argument.
+ *
+ * Read-only and side-effect-free — it never touches credentials.
+ */
+export async function describeCli(provider: ProviderAuthProvider): Promise<ProviderCliDiagnostics> {
+  const cmd = CLI[provider];
+  const path = findCliBin(cmd.bin);
+  let version: string | null = null;
+  if (path) {
+    const { code, stdout, stderr } = await runToCompletion(cmd.bin, cmd.versionArgs, STATUS_CHECK_TIMEOUT_MS);
+    // Same stderr lesson as `checkAuthStatus` — don't assume which stream a
+    // CLI answers a question on.
+    const text = stripAnsi(`${stdout}\n${stderr}`).trim();
+    if (code === 0 && text.length > 0) version = text.split("\n")[0]?.trim() ?? null;
+  }
+  return {
+    provider,
+    bin: cmd.bin,
+    path,
+    version,
+    // Only meaningful when nothing was found; kept short so the UI can list it.
+    searchedDirs: path ? [] : searchDirs(),
+    overrideEnvVar: `MARGINALIA_${cmd.bin.toUpperCase()}_BIN`,
+    overrideActive: Boolean(process.env[`MARGINALIA_${cmd.bin.toUpperCase()}_BIN`]),
+    installCommand: cmd.installCommand,
+    installUrl: cmd.installUrl,
+    requires: cmd.requires,
+  };
 }

@@ -615,6 +615,16 @@ export const MIGRATIONS: Migration[] = [
     `,
   },
   {
+    // M26 "Codex CLI as a fourth provider" (decisions.md 2026-08-25): the
+    // fourth provider needs its own model field on the profile, same shape
+    // as `claude_agent_model` above — a subscription CLI provider names a
+    // model but never a key, so there's no paired `_api_key` column here.
+    version: 25,
+    sql: `
+      ALTER TABLE provider_profiles ADD COLUMN codex_model TEXT NOT NULL DEFAULT '';
+    `,
+  },
+  {
     // M30 C "the Define button": a definition rides on the highlight it was
     // looked up for, as two columns rather than a table of its own.
     //

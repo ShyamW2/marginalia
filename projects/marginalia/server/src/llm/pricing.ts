@@ -63,14 +63,19 @@ export function priceAnthropicCall(
  * done (never populates `costUsd`).
  */
 export function priceCall(
-  providerId: "anthropic" | "openai-compatible" | "claude-agent",
+  providerId: "anthropic" | "openai-compatible" | "claude-agent" | "codex-cli",
   model: string,
   inputTokens: number,
   outputTokens: number,
   cacheReadTokens: number,
   reportedCostUsd: number | null,
 ): { costUsd: number | null; costBasis: Exclude<UsageCostBasis, "mixed"> } {
-  if (providerId === "claude-agent") {
+  if (providerId === "claude-agent" || providerId === "codex-cli") {
+    // codex-cli never reports a dollar figure (verified live, NOTES.md
+    // "M26") — reportedCostUsd is always null for it, same as claude-agent
+    // on an SDK build that omits total_cost_usd. `notional` still applies:
+    // a ChatGPT-subscription call is never billed per-token regardless of
+    // whether the CLI can name a number for it.
     return { costUsd: reportedCostUsd, costBasis: "notional" };
   }
   if (providerId === "anthropic") {

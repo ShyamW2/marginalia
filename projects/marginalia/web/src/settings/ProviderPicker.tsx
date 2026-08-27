@@ -66,6 +66,7 @@ function blankDraft(name: string): Draft {
     anthropicModel: "claude-opus-4-8",
     anthropicApiKey: "",
     claudeAgentModel: "claude-sonnet-5",
+    codexModel: "gpt-5.4",
     openaiBaseUrl: "",
     openaiModel: "",
     openaiApiKey: "",
@@ -83,11 +84,11 @@ function draftFromProfile(profile: ProviderProfile): Draft {
 // how it's billed — with the concrete provider one step in. Two of the
 // three billing categories fan out to the *same* `openai-compatible` seam
 // under the hood (a base-URL preset, nothing more); "Local" isn't a fourth
-// seam, just that seam pointed at localhost. `codex-cli` doesn't exist yet
-// (M26, blocked on capturing a real event shape — see NOTES.md) — its two
-// tiles are shown so the taxonomy reads as the target shape, not a partial
-// one, but disabled rather than half-wired: selecting one can't write a
-// `provider` value `getProvider()` (llm/provider.ts) has no case for.
+// seam, just that seam pointed at localhost. `codex-cli` (M26) landed the
+// same day — its subscription tile is live. Its "Codex" tile under Hosted
+// stays disabled: that would be OpenAI's pay-per-token API through the
+// `openai-compatible` seam, a different (unbuilt) profile shape, not this
+// provider pointed somewhere else.
 const OPENAI_HOSTED_URL = "https://api.openai.com/v1";
 const GEMINI_HOSTED_URL = "https://generativelanguage.googleapis.com/v1beta/openai";
 const OPENROUTER_URL = "https://openrouter.ai/api/v1";
@@ -160,7 +161,12 @@ const PROVIDER_OPTIONS: Record<BillingCategory, ProviderOption[]> = {
       patch: { provider: "claude-agent" },
       active: (draft) => draft.provider === "claude-agent",
     },
-    { key: "codex-subscription", label: "OpenAI — Codex", ...CODEX_COMING_SOON },
+    {
+      key: "codex-cli",
+      label: "OpenAI — Codex",
+      patch: { provider: "codex-cli" },
+      active: (draft) => draft.provider === "codex-cli",
+    },
   ],
   hosted: [
     {
@@ -199,7 +205,7 @@ const PROVIDER_OPTIONS: Record<BillingCategory, ProviderOption[]> = {
 };
 
 function categoryFromDraft(draft: Draft): BillingCategory {
-  if (draft.provider === "claude-agent") return "subscription";
+  if (draft.provider === "claude-agent" || draft.provider === "codex-cli") return "subscription";
   if (draft.provider === "anthropic") return "hosted";
   return LOCAL_PRESET_URLS.has(draft.openaiBaseUrl ?? "") ? "local" : "hosted";
 }
@@ -306,6 +312,27 @@ function ProviderFields({ draft, onChange, idPrefix }: ProviderFieldsProps) {
           />
           <p className={styles.hint}>
             Uses the machine's Claude Code login — no API key, no per-token billing.
+          </p>
+        </div>
+      )}
+
+      {draft.provider === "codex-cli" && (
+        <div className={styles.field}>
+          <label className={styles.label} htmlFor={`${idPrefix}-codex-model`}>
+            Model
+          </label>
+          <input
+            id={`${idPrefix}-codex-model`}
+            className={styles.input}
+            type="text"
+            value={draft.codexModel ?? ""}
+            placeholder="gpt-5.4"
+            onChange={(e) => set("codexModel", e.target.value)}
+          />
+          <p className={styles.hint}>
+            Uses the machine's <code>codex login</code> (ChatGPT subscription) — no API key,
+            no per-token billing. Runs caged: read-only sandbox, its own scratch directory,
+            never this book's files.
           </p>
         </div>
       )}

@@ -1,6 +1,13 @@
 import { Router } from "express";
 import { ProviderAuthProviderSchema } from "@marginalia/shared";
-import { cancelAuthFlow, checkAuthStatus, getAuthFlow, logout, startAuthFlow } from "../llm/authFlows.js";
+import {
+  cancelAuthFlow,
+  checkAuthStatus,
+  describeCli,
+  getAuthFlow,
+  logout,
+  startAuthFlow,
+} from "../llm/authFlows.js";
 
 export const providerAuthRouter: Router = Router();
 
@@ -17,6 +24,14 @@ providerAuthRouter.get("/:provider/status", async (req, res) => {
   const provider = parseProvider(req, res);
   if (!provider) return;
   res.json(await checkAuthStatus(provider));
+});
+
+/** Read-only machine diagnostics behind the Settings setup guide — where the
+ * CLI is, or where we looked for it. Never returns credentials. */
+providerAuthRouter.get("/:provider/diagnostics", async (req, res) => {
+  const provider = parseProvider(req, res);
+  if (!provider) return;
+  res.json(await describeCli(provider));
 });
 
 providerAuthRouter.post("/:provider/login", (req, res) => {

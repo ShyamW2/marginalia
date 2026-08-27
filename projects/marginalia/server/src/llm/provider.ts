@@ -10,6 +10,7 @@ import type { ProviderRole } from "@marginalia/shared";
 import { getRoleMaxResponseTokens, getRoleProfileRaw } from "../settings/providers.js";
 import { AnthropicProvider } from "./anthropic.js";
 import { ClaudeAgentProvider } from "./claudeAgent.js";
+import { CodexCliProvider } from "./codexCli.js";
 import { OpenAICompatProvider } from "./openaiCompat.js";
 import { withUsageLedger, type LLMOperation, type UsageLedgerRow } from "./usage.js";
 
@@ -79,7 +80,7 @@ export interface PlanLimits {
 }
 
 export interface LLMProvider {
-  readonly id: "anthropic" | "openai-compatible" | "claude-agent";
+  readonly id: "anthropic" | "openai-compatible" | "claude-agent" | "codex-cli";
   capabilities(): { contextTokens: number; supportsCaching: boolean };
   stream(req: LLMStreamRequest): AsyncIterable<{ text: string }>;
   extract<T>(req: LLMExtractRequest<T>): Promise<T>;
@@ -155,6 +156,16 @@ export function getProvider(
     return wrap(
       new ClaudeAgentProvider(profile.claudeAgentModel, maxResponseTokens),
       profile.claudeAgentModel,
+    );
+  }
+
+  if (profile.provider === "codex-cli") {
+    // No key needed — the CLI uses the machine's `codex login` (ChatGPT
+    // subscription). A missing/expired login surfaces as an LLMError("auth")
+    // at call time, same convention as claude-agent above.
+    return wrap(
+      new CodexCliProvider(profile.codexModel, maxResponseTokens),
+      profile.codexModel,
     );
   }
 

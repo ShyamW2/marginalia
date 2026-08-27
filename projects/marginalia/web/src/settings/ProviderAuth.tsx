@@ -8,6 +8,7 @@ import {
   logoutProvider,
   startLogin,
 } from "./providerAuthApi.js";
+import { ProviderSetupGuide } from "./ProviderSetupGuide.js";
 import styles from "./ProviderAuth.module.css";
 
 const PROVIDERS: { id: ProviderAuthProvider; label: string; hint: string }[] = [
@@ -120,7 +121,9 @@ export function ProviderAuth() {
       <h3 className={styles.title}>Accounts</h3>
       <p className={styles.hint}>
         Sign in once per machine — the codex-cli and claude-agent providers above use
-        whichever account is signed in here.
+        whichever account is signed in here. These two need a subscription and their own
+        CLI installed on the machine running the server; each row's guide says what to
+        check when a sign-in won't take.
       </p>
       {PROVIDERS.map(({ id, label, hint }) => {
         const row = rows[id];
@@ -204,6 +207,13 @@ export function ProviderAuth() {
                 )}
               </div>
             )}
+            <ProviderSetupGuide
+              provider={id}
+              // Opened for you exactly when you're likely to need it: a
+              // failed flow, or a machine that isn't connected yet. Never
+              // opened on a working row — the guide is help, not chrome.
+              defaultOpen={row.flow?.status === "error" || (!row.loadingStatus && row.status?.loggedIn === false)}
+            />
           </div>
         );
       })}

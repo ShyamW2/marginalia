@@ -20,6 +20,7 @@ import {
 } from "../settings/providers.js";
 import { AnthropicProvider } from "../llm/anthropic.js";
 import { ClaudeAgentProvider } from "../llm/claudeAgent.js";
+import { CodexCliProvider } from "../llm/codexCli.js";
 import { OpenAICompatProvider } from "../llm/openaiCompat.js";
 import { LLMError, type LLMProvider } from "../llm/provider.js";
 
@@ -81,6 +82,7 @@ providerProfilesRouter.post("/:id/test", async (req, res) => {
     anthropicModel?: string;
     anthropicApiKey?: string;
     claudeAgentModel?: string;
+    codexModel?: string;
     openaiBaseUrl?: string;
     openaiModel?: string;
     openaiApiKey?: string;
@@ -102,6 +104,8 @@ providerProfilesRouter.post("/:id/test", async (req, res) => {
     provider = new AnthropicProvider(candidate.anthropicApiKey, candidate.anthropicModel ?? "");
   } else if (candidate.provider === "claude-agent") {
     provider = new ClaudeAgentProvider(candidate.claudeAgentModel ?? "");
+  } else if (candidate.provider === "codex-cli") {
+    provider = new CodexCliProvider(candidate.codexModel ?? "");
   } else if (candidate.provider === "openai-compatible") {
     if (!candidate.openaiBaseUrl || !candidate.openaiModel) {
       res.json({ ok: false, error: "Base URL and model are required." });

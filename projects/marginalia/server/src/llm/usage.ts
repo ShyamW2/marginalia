@@ -151,6 +151,7 @@ export function buildMessageProvenance(
 export function endpointHostFor(provider: string, openaiBaseUrl: string | null): string | null {
   if (provider === "anthropic") return "api.anthropic.com";
   if (provider === "claude-agent") return "Claude Code (subscription)";
+  if (provider === "codex-cli") return "Codex CLI (subscription)";
   if (provider === "openai-compatible") {
     if (!openaiBaseUrl) return null;
     try {

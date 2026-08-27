@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { extractVerification, linesFrom, redactSecrets, stripAnsi } from "./authFlows.js";
+import {
+  extractVerification,
+  interpretCodexStatus,
+  linesFrom,
+  redactSecrets,
+  stripAnsi,
+} from "./authFlows.js";
 
 // Built via fromCharCode rather than typed inline — a literal escape
 // character embedded directly in source is easy to mangle by accident.
@@ -117,5 +123,49 @@ describe("extractVerification", () => {
 
   it("doesn't mistake an ordinary word for a code", () => {
     expect(extractVerification(["Not logged in"])).toEqual({ verificationUrl: null, code: null });
+  });
+});
+
+describe("interpretCodexStatus", () => {
+  // The regression this file exists to hold down (decisions.md 2026-08-26).
+  // Captured verbatim from `codex login status` (0.114.0) run with piped
+  // stdio, which is how the server always runs it: rc 0, stdout empty, the
+  // answer on stderr. The pre-fix code read stdout only and reported a
+  // signed-in machine as signed out on every Settings load.
+  it("reads a logged-in answer that the CLI printed on stderr, not stdout", () => {
+    expect(interpretCodexStatus(0, "", "Logged in using ChatGPT\n")).toEqual({
+      loggedIn: true,
+      detail: "Logged in using ChatGPT",
+    });
+  });
+
+  it("still reads it off stdout, for a CLI version that moves it back", () => {
+    expect(interpretCodexStatus(0, "Logged in using ChatGPT\n", "")).toEqual({
+      loggedIn: true,
+      detail: "Logged in using ChatGPT",
+    });
+  });
+
+  it("believes an explicit 'Not logged in' on either stream", () => {
+    expect(interpretCodexStatus(0, "", "Not logged in\n").loggedIn).toBe(false);
+    expect(interpretCodexStatus(0, "Not logged in\n", "").loggedIn).toBe(false);
+  });
+
+  it("treats a non-zero exit as not logged in", () => {
+    expect(interpretCodexStatus(1, "", "").loggedIn).toBe(false);
+  });
+
+  // `runToCompletion` reports `code: null` for a spawn failure or a timeout —
+  // "couldn't tell", which must never read as "signed in".
+  it("fails closed when the check couldn't complete at all", () => {
+    expect(interpretCodexStatus(null, "", "").loggedIn).toBe(false);
+  });
+
+  it("strips colour codes before deciding, and before showing the detail", () => {
+    const coloured = `${String.fromCharCode(27)}[32mLogged in using ChatGPT${String.fromCharCode(27)}[0m`;
+    expect(interpretCodexStatus(0, "", coloured)).toEqual({
+      loggedIn: true,
+      detail: "Logged in using ChatGPT",
+    });
   });
 });

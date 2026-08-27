@@ -19,6 +19,7 @@ interface ProfileRow {
   anthropic_model: string;
   anthropic_api_key: string;
   claude_agent_model: string;
+  codex_model: string;
   openai_base_url: string;
   openai_model: string;
   openai_api_key: string;
@@ -35,6 +36,7 @@ function rowToProfile(row: ProfileRow): ProviderProfile {
     anthropicModel: row.anthropic_model,
     anthropicApiKey: row.anthropic_api_key,
     claudeAgentModel: row.claude_agent_model,
+    codexModel: row.codex_model,
     openaiBaseUrl: row.openai_base_url,
     openaiModel: row.openai_model,
     openaiApiKey: row.openai_api_key,
@@ -90,6 +92,7 @@ export function createProviderProfile(
     anthropic_model: body.anthropicModel ?? "",
     anthropic_api_key: body.anthropicApiKey ?? "",
     claude_agent_model: body.claudeAgentModel ?? "",
+    codex_model: body.codexModel ?? "",
     openai_base_url: body.openaiBaseUrl ?? "",
     openai_model: body.openaiModel ?? "",
     openai_api_key: body.openaiApiKey ?? "",
@@ -99,11 +102,11 @@ export function createProviderProfile(
   };
   db.prepare(
     `INSERT INTO provider_profiles
-       (id, name, provider, anthropic_model, anthropic_api_key, claude_agent_model,
+       (id, name, provider, anthropic_model, anthropic_api_key, claude_agent_model, codex_model,
         openai_base_url, openai_model, openai_api_key, openai_context_tokens,
         created_at, updated_at)
      VALUES
-       (@id, @name, @provider, @anthropic_model, @anthropic_api_key, @claude_agent_model,
+       (@id, @name, @provider, @anthropic_model, @anthropic_api_key, @claude_agent_model, @codex_model,
         @openai_base_url, @openai_model, @openai_api_key, @openai_context_tokens,
         @created_at, @updated_at)`,
   ).run(row);
@@ -116,6 +119,7 @@ const UPDATE_FIELD_TO_COLUMN: Record<keyof UpdateProviderProfileBody, string> = 
   anthropicModel: "anthropic_model",
   anthropicApiKey: "anthropic_api_key",
   claudeAgentModel: "claude_agent_model",
+  codexModel: "codex_model",
   openaiBaseUrl: "openai_base_url",
   openaiModel: "openai_model",
   openaiApiKey: "openai_api_key",
@@ -216,6 +220,7 @@ function isProfileConfigured(profile: ProviderProfile | null): boolean {
   if (!profile) return false;
   if (profile.provider === "anthropic") return Boolean(profile.anthropicApiKey);
   if (profile.provider === "claude-agent") return true; // uses local Claude Code login
+  if (profile.provider === "codex-cli") return true; // uses local `codex login`
   return Boolean(profile.openaiBaseUrl && profile.openaiModel);
 }
 
