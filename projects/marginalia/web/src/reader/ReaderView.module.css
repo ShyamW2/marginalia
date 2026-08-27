@@ -9,7 +9,13 @@
   flex-direction: column;
   align-items: center;
   height: 100vh;
-  padding: 0.75rem 1rem 1rem;
+  height: 100dvh;
+  /* M31 §0c: `env()` falls back to 0 on devices with no safe area, so this
+     is additive padding, not a replacement for the base values. */
+  padding: calc(0.75rem + env(safe-area-inset-top, 0px))
+    calc(1rem + env(safe-area-inset-right, 0px))
+    calc(1rem + env(safe-area-inset-bottom, 0px))
+    calc(1rem + env(safe-area-inset-left, 0px));
   gap: 0.5rem;
 }
 
@@ -514,6 +520,7 @@
   inset: 0;
   z-index: 50;
   height: 100vh;
+  height: 100dvh;
   background: var(--color-bg);
 }
 
@@ -544,7 +551,10 @@
  * same pill shape/position the old .footerFloating used, since it replaces
  * the foot as much as the strip. */
 .immersivePebble {
-  bottom: 0.75rem;
+  /* M31 §0c: the one fullscreen control anchored near an edge — the
+     bottom-centre pebble replaces the foot, so it needs the home-indicator
+     clearance a real foot would have gotten from body flow. */
+  bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
   left: 50%;
   transform: translateX(-50%);
   display: flex;

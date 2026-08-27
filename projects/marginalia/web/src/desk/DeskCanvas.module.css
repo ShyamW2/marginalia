@@ -7,10 +7,16 @@
    takes over once enough books are arranged to need more room than the
    viewport gives — books are absolutely positioned, so without this the
    surface would silently clip rows under `overflow: hidden` rather than
-   grow and let the page scroll. */
+   grow and let the page scroll.
+   M31 §0a audit: same iOS bug as the reader — `100vh` is the *large*
+   viewport, taller than what's visible with the toolbars showing, so this
+   min-height over-reserves by the toolbar height and the shelf reads as
+   needing a scroll to reach tiles that are already the bottom row.
+   `100dvh` line second so it overrides in browsers that support it. */
 .surface {
   position: relative;
   min-height: max(calc(100vh - 200px), var(--desk-content-height, 640px));
+  min-height: max(calc(100dvh - 200px), var(--desk-content-height, 640px));
   border-radius: 16px;
   /* M20.7 "per-room cursors" (DESIGN.md "Cursor system"): the desk's own
      identity cursor, ambient over the whole surface — a book's own more
@@ -83,4 +89,5 @@
   position: relative;
   width: 100%;
   min-height: max(calc(100vh - 200px), var(--desk-content-height, 640px));
+  min-height: max(calc(100dvh - 200px), var(--desk-content-height, 640px));
 }

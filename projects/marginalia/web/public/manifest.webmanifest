@@ -1,0 +1,15 @@
+{
+  "name": "Marginalia",
+  "short_name": "Marginalia",
+  "display": "standalone",
+  "start_url": "/",
+  "background_color": "#faf7f0",
+  "theme_color": "#8a5a3b",
+  "icons": [
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    }
+  ]
+}

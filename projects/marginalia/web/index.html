@@ -2,8 +2,26 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- M31 §0c: viewport-fit=cover opts into the safe-area-inset-* env()
+         vars (paired with the padding in theme.css); user-scalable is
+         deliberately left alone — iOS Safari has ignored it since iOS 10
+         (decisions.md 2026-08-27), the real fix for page-zoom is §0d plus
+         this manifest. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#8a5a3b" />
+    <!-- Added to the Home Screen, standalone mode removes Safari's page
+         zoom, pull-to-refresh and toolbars in one move (decisions.md
+         2026-08-27, "The iPad gate was stale") — belt-and-braces on top of
+         §0a/§0b/§0d, not their replacement. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Marginalia" />
     <title>Marginalia</title>
   </head>
   <body>

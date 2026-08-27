@@ -8,6 +8,7 @@ import { ServerStatusBanner } from "./ServerStatusBanner.js";
 import { ChromeSlotProvider } from "./chromeSlot.js";
 import { useAccent } from "./useAccent.js";
 import { usePaperTint } from "./usePaperTint.js";
+import { useBlockPageZoom } from "./useBlockPageZoom.js";
 import { JobsProvider } from "../jobs/JobsContext.js";
 import { JobToastStack } from "../jobs/JobToastStack.js";
 import { Scene3DProvider } from "../scene3d/Scene3D.js";
@@ -113,6 +114,10 @@ export function App() {
   // each hook that edits the same stored value, not this app-wide one.
   useAccent();
   usePaperTint();
+  // M31 §0d: blocks WebKit's page-zoom gesture app-wide, not per-room — the
+  // Scan's own pinch (M31 B) and the reader's pinch-to-resize (M31 C6) both
+  // depend on the browser never claiming the gesture first.
+  useBlockPageZoom();
 
   // "Background location" pattern (M11: settings is an overlay, not a
   // route): when settings is opened from within another room, that room's

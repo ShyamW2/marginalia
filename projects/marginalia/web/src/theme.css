@@ -156,6 +156,15 @@ body,
   height: 100%;
 }
 
+html,
+body {
+  /* M31 §0b: kills the iOS rubber-band and the pull-to-refresh that
+     currently reloads the page on a downward swipe — both read as the app
+     breaking, and the latter would eat the M31 swipe-down-to-put-down
+     gesture the moment it ships. */
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   background: var(--color-bg);
