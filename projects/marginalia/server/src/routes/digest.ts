@@ -458,11 +458,26 @@ function buildThematicStatus(
     const pastBookmark = s.spineIndex > bookmarkSpineIndex;
     const revealed = isChapterVisible(s.spineIndex, { bookmarkSpineIndex, revealedSpineIndices, noMask });
     const showContent = Boolean(t) && revealed;
+    // M35 §F2: normalize each theme's quotes to the *located* exact substring
+    // of this chapter's own text before they ever reach the client — the
+    // same reasoning as §E6's `startQuote` (decisions.md 2026-09-01 later):
+    // the stored quote is the model's raw text, which can differ from the
+    // book's own typography (curly quotes, an em dash) in exactly the cases
+    // `locateQuoteAnchor`'s tiered fold already forgives. A quote reaching
+    // here already passed §C3's evidence filter, so this always locates —
+    // the `?? quote` fallback exists only so a schema change here can never
+    // crash the route, not because it's expected to trigger.
+    const themes = showContent
+      ? (t?.themes ?? []).map((theme) => ({
+          ...theme,
+          quotes: theme.quotes.map((quote) => locateQuoteAnchor(s.text, quote)?.exact ?? quote),
+        }))
+      : [];
     return {
       spineIndex: s.spineIndex,
       analyzed: Boolean(t),
       analysis: showContent ? (t?.analysis ?? null) : null,
-      themes: showContent ? (t?.themes ?? []) : [],
+      themes,
       questions: showContent ? (t?.questions ?? []) : [],
       briefText: showContent ? (t?.briefText ?? null) : null,
       stale: t ? isThematicStale(t, currentBriefHash) : false,

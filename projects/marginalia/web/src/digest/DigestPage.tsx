@@ -8,7 +8,9 @@ import type {
   ThematicStatus,
 } from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
+import { IconButton } from "../controls/IconButton.js";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
+import { stepFindCursor } from "../search/findCursor.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { useJobs } from "../jobs/JobsContext.js";
@@ -128,6 +130,12 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const [deletingSpine, setDeletingSpine] = useState<number | null>(null);
   const [deletingAllAudio, setDeletingAllAudio] = useState(false);
   const { registerStarted, jobs } = useJobs();
+  // M35 §F1: the chapter currently showing its themes' quotes — one at a
+  // time, stepped with `< >` across every analyzed-and-revealed chapter
+  // (§F3), the same "expand" scope decisions.md's own analysis/questions
+  // block never had before this milestone.
+  const [expandedSpineIndex, setExpandedSpineIndex] = useState<number | null>(null);
+  const chapterRefs = useRef<Map<number, HTMLElement>>(new Map());
 
   function load() {
     if (!id) return;
@@ -167,6 +175,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     setAudioSections(null);
     setBookThemes([]);
     setChapterQuestions([]);
+    setExpandedSpineIndex(null);
     load();
     loadAudio();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -328,6 +337,39 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     if (result.chapterQuestion) handleChapterQuestionCreated(result.chapterQuestion);
   }
 
+  /**
+   * M35 §F2: "same jump path as E6" — the reader's find bar, with the
+   * server-located exact substring (`routes/digest.ts`'s `buildThematicStatus`
+   * already normalizes each theme's quotes the same way `themeZones.ts` does
+   * for the Scan), never the chapter-anchor route: a theme's evidence quote
+   * isn't a highlight and this click shouldn't create one.
+   */
+  function handleOpenThemeQuote(quote: string) {
+    if (!id) return;
+    navigate(`/read/${id}`, {
+      state: { jumpToFindQuery: quote, jumpToFindHitIndex: 0, jumpToFindMatchMode: "substring" },
+    });
+  }
+
+  function handleToggleExpand(spineIndex: number) {
+    setExpandedSpineIndex((prev) => (prev === spineIndex ? null : spineIndex));
+  }
+
+  // M35 §F1: "`< >` traversal across chapters" — steps `expandedSpineIndex`
+  // across every chapter that currently qualifies (analyzed *and* revealed,
+  // §F3's spoiler gate), reusing `stepFindCursor` rather than a second
+  // stepping rule (same precedent ThreadPanel's own `< >` anchor traversal
+  // already set for §D4). Scrolls the newly-expanded card into view — a
+  // stepper that moves state nobody can see isn't really a stepper.
+  function handleStepExpanded(analyzedSpineIndices: number[], direction: "next" | "prev") {
+    if (analyzedSpineIndices.length === 0) return;
+    const currentIndex = expandedSpineIndex === null ? -1 : analyzedSpineIndices.indexOf(expandedSpineIndex);
+    const nextIndex = stepFindCursor(currentIndex, analyzedSpineIndices.length, direction);
+    const nextSpineIndex = analyzedSpineIndices[nextIndex];
+    setExpandedSpineIndex(nextSpineIndex);
+    chapterRefs.current.get(nextSpineIndex)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   // M20.5 "the Digest becomes a popup too": swaps to the Scan instrument
   // over the *same* background room rather than stacking Digest-over-Scan
   // — Scan and Digest are peer instruments, not nested ones. Reuses the
@@ -342,6 +384,12 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const thematicByIndex = new Map((thematic?.chapters ?? []).map((c) => [c.spineIndex, c]));
   const audioByIndex = new Map((audioSections?.sections ?? []).map((s) => [s.spineIndex, s]));
   const chapterQuestionByIndex = new Map(chapterQuestions.map((q) => [q.spineIndex, q]));
+  // M35 §F1/§F3: the only chapters `< >` can land on — analyzed *and*
+  // revealed, in spine order, matching exactly which cards render a
+  // thematic block at all below.
+  const analyzedSpineIndices = (status?.chapters ?? [])
+    .filter((c) => (thematicByIndex.get(c.spineIndex)?.analyzed ?? false) && c.revealed)
+    .map((c) => c.spineIndex);
 
   function handleChapterQuestionCreated(created: ChapterQuestion) {
     setChapterQuestions((prev) => [...prev.filter((q) => q.spineIndex !== created.spineIndex), created]);
@@ -475,7 +523,14 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
               // have a real chapter name.
               const displayTitle = c.title ?? c.tocTitle;
               return (
-                <article key={c.spineIndex} className={styles.chapterCard}>
+                <article
+                  key={c.spineIndex}
+                  className={styles.chapterCard}
+                  ref={(el) => {
+                    if (el) chapterRefs.current.set(c.spineIndex, el);
+                    else chapterRefs.current.delete(c.spineIndex);
+                  }}
+                >
                   <h3 className={styles.chapterTitle}>
                     {displayTitle ?? chapterLabel}
                     {displayTitle && <span className={styles.chapterMeta}> — {chapterLabel}</span>}
@@ -521,6 +576,16 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                       <div className={styles.thematicHeader}>
                         <span className={styles.thematicLabel}>Thematic reading</span>
                         {t.stale && <span className={styles.staleBadge}>Stale — brief has changed</span>}
+                        {t.themes.length > 0 && (
+                          <button
+                            type="button"
+                            className={styles.expandThemesButton}
+                            aria-expanded={expandedSpineIndex === c.spineIndex}
+                            onClick={() => handleToggleExpand(c.spineIndex)}
+                          >
+                            {expandedSpineIndex === c.spineIndex ? "Hide quotes ▾" : "Show quotes ▸"}
+                          </button>
+                        )}
                       </div>
                       {t.briefText && (
                         <p className={styles.briefInForce}>Read through: "{t.briefText}"</p>
@@ -537,6 +602,51 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                             >
                               {q.text}
                             </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* M35 §F1/§F2: the quotes behind "Show quotes" — one
+                          theme at a time, each quote clicking through to the
+                          reader via the same jump path §E6 uses for a Scan
+                          zone. */}
+                      {expandedSpineIndex === c.spineIndex && t.themes.length > 0 && (
+                        <div className={styles.themeQuotesSection}>
+                          {analyzedSpineIndices.length > 1 && (
+                            <div className={styles.anchorStepper}>
+                              <IconButton
+                                icon="‹"
+                                label="Previous analyzed chapter"
+                                size="sm"
+                                onClick={() => handleStepExpanded(analyzedSpineIndices, "prev")}
+                              />
+                              <span className={styles.anchorCount}>
+                                {analyzedSpineIndices.indexOf(c.spineIndex) + 1} of {analyzedSpineIndices.length}
+                              </span>
+                              <IconButton
+                                icon="›"
+                                label="Next analyzed chapter"
+                                size="sm"
+                                onClick={() => handleStepExpanded(analyzedSpineIndices, "next")}
+                              />
+                            </div>
+                          )}
+                          {t.themes.map((theme) => (
+                            <div key={theme.name} className={styles.themeQuoteGroup}>
+                              <span className={styles.themeQuoteName}>{theme.name}</span>
+                              <div className={styles.questionRow}>
+                                {theme.quotes.map((quote, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    className={styles.questionChip}
+                                    onClick={() => handleOpenThemeQuote(quote)}
+                                  >
+                                    &ldquo;{quote}&rdquo;
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
                           ))}
                         </div>
                       )}

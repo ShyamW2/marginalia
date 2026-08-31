@@ -301,3 +301,57 @@
   background: var(--color-accent);
   color: var(--color-bg);
 }
+
+/* M35 §F1: the "Show quotes" toggle — sits in .thematicHeader's row, same
+   register as .staleBadge next to it, not a new visual language. */
+.expandThemesButton {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-left: auto;
+}
+
+.expandThemesButton:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+.themeQuotesSection {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--color-border);
+}
+
+.themeQuoteGroup {
+  margin-bottom: 0.5rem;
+}
+
+.themeQuoteGroup:last-child {
+  margin-bottom: 0;
+}
+
+.themeQuoteName {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  margin-bottom: 0.25rem;
+}
+
+/* Same shape as ThreadPanel.module.css's §D4 anchor stepper — one control
+   reused rather than a second one designed for the same "‹ N of M ›" idea. */
+.anchorStepper {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.anchorCount {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
