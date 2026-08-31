@@ -3,6 +3,65 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-31 (evening) — A/B on one model swap: what a weak digest model actually costs
+
+Ran the same six East of Eden chapters through **GPT 5.6 Luna** (codex-cli, 272K context →
+238,000-char map budget, so **nothing splits**) and compared against the Qwen3.5 rows from
+earlier the same day. Same chapters, same text, same prompt, same schema; only the model
+changed. The Qwen rows were exported before being cleared and both datasets are kept.
+
+| | quotes raw | + folding | themes | analysis | per chapter |
+|---|---|---|---|---|---|
+| **Qwen3.5** (local, 4 of 6 split) | 5/17 (29%) | 12/17 (71%) | 8.0 | 746 ch | ~150s |
+| **GPT 5.6 Luna** (0 split) | **17/18 (94%)** | 17/18 (94%) | 8.0 | 1083 ch | **~16s** |
+
+### B1b and C3b are weak-model compensations, not universal hardening
+
+⚠️ **Folding gains Luna exactly nothing — raw and folded are both 17/18.** Luna reproduces
+curly typography byte-for-byte; Qwen tidies it. The same reclassification applies to theme
+naming: Luna returns clean 2–4 word noun phrases ("Secrecy and revelation", "Mercy versus
+justice") with no prompt change, while Qwen was *inconsistent across books* — long theses on
+Kafka, bare single words ("Secrets", "Guilt") on East of Eden.
+
+**How to apply:** keep both fixes, but stop describing them as provider-agnostic robustness.
+They are what makes the **cheap local digest role viable**, which is the thing provider roles
+exist for — so they are worth building, and they are the *first* things to re-measure after
+any digest-role change. `measure` is the tool for that.
+
+### Model quality dominates the merge, and the merge is a local-path problem only
+
+Isolating the merge on the two chapters Qwen did **not** split (25, 46 — no merge on either
+side): Qwen 2/6 raw and 5/6 folded, Luna 6/6 raw. So Qwen trails even with the merge removed
+entirely. Ordering of causes, largest first: **model quality → the merge → the matcher.**
+M35 §B3 stands, with its scope narrowed: a 272K-context model never splits anything in this
+library, so B3 is a fix for the local path exclusively.
+
+### §C0 is mandatory, and this is the evidence
+
+Cross-chapter theme overlap over six chapters, per model:
+
+| | unique themes | exact repeats | mean pairwise Jaccard |
+|---|---|---|---|
+| Luna | 48 of 48 | **0** | **0.000** |
+| Qwen | 48 of 48 | **0** | **0.000** |
+
+⚠️ **Raw theme strings never repeat across chapters — now confirmed on two books and two
+models, one of them frontier-class.** This is not a weak-model artifact; it is inherent to
+asking for per-chapter theme names in independent calls. So M34 §C's ranking signal without
+distillation is not "weak", it is **exactly zero**, and §C0 (chaining
+`runThemeDistillation` onto a thematic run) is a precondition rather than an improvement.
+
+### A caveat this run puts on the "counts are constants" finding
+
+Luna independently returned **8 themes on all six** EoE chapters — the ceiling — as Qwen did.
+Two very different models converging on the cap, while Qwen sat at 7 (below cap) for every
+Kafka chapter, is better explained by **the cap binding on this book** than by "the model is
+not measuring the chapter". ⚠️ The earlier entry's reasoning is therefore weakened for East
+of Eden, though its *conclusion* for M35 §C3 is not: a length-scaled ceiling still buys
+nothing, because whatever varies is not varying with length. **The settling test is one line
+— raise `MAX_THEMES` to 12 and re-run one chapter of each book.** Do that before writing any
+more prose about what the counts mean.
+
 ## 2026-08-31 (later still) — The merge measured: it does corrupt quotes, and half the damage was our own matcher
 
 Ran the live pass the entry below asked for: four of East of Eden's sixteen splitting

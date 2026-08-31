@@ -5,6 +5,22 @@ Append; don't rewrite history.
 
 ## Spec gaps
 
+- **2026-08-31, a thematic re-run under the same brief is a silent no-op — which makes
+  model A/B testing awkward.** `runThematicDigest` skips any chapter already covered under
+  the current `briefHash`, so pointing the digest role at a different model and re-running
+  the same range **does nothing at all**; there is no "regenerate" path short of editing the
+  brief (which changes the prompt, confounding the comparison) or deleting the rows. ⚠️ The
+  A/B on 2026-08-31 had to export `thematic_digests` to JSON, delete the six rows, and re-run
+  — reversible, but entirely manual and easy to get wrong on a real library. If model
+  comparison becomes routine, the missing affordance is a **force/regenerate flag on the
+  thematic endpoint**, not a documented delete ritual.
+
+- **2026-08-31, the codex-cli provider is ~9× faster than the local model on this workload
+  and never splits.** Six East of Eden chapters (24K–46K chars): GPT 5.6 Luna ~16s each
+  against Qwen3.5's ~150s, and its reported 272,000-token window gives a 238,000-char map
+  budget, so `splitIntoChunks` is inert for every book in this library. Worth knowing before
+  optimising the split/merge path for a role that may not be running a small model.
+
 - **2026-08-31 (M35 §B1b), `locateQuoteAnchor` matches punctuation it should be folding.**
   Its two tiers are exact substring, then whitespace-normalized. Neither touches
   **typography**, and every book in this library is typeset with curly quotes exclusively

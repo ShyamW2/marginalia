@@ -1521,8 +1521,13 @@ The digest page and Scan are unchanged._
 
 #### C. Selective thematic inclusion
 
-- [ ] **C0.** ⚠️ **Chain `runThemeDistillation` onto the end of a thematic run** — this
-      section has no input without it. The precedent is one layer over: `runDigest` ends with
+- [ ] **C0.** ⚠️ **Chain `runThemeDistillation` onto the end of a thematic run — a
+      precondition, not an improvement.** Measured 2026-08-31 across six chapters on each of
+      **two books and two models** (Qwen3.5 and GPT 5.6 Luna): 48 of 48 theme strings unique,
+      **zero exact repeats, mean pairwise Jaccard 0.000** in every case. Raw theme strings do
+      not repeat across chapters even on a frontier model — it is inherent to asking for
+      per-chapter names in independent calls. So without distillation this section's ranking
+      signal is not weak, it is **exactly zero**. This section has no input without it. The precedent is one layer over: `runDigest` ends with
       `reduceBookDigest` inside the same job, and the thematic layer simply never grew its
       equivalent. Best-effort, exactly like `maybeRefreshBookDigestSnapshot`: chapters are
       already committed, so a failed distillation logs and leaves the run `completed` rather
@@ -1655,12 +1660,16 @@ listed and still marked unanchored._
 - [x] **B1a.** The context bump is still worth doing and still sidesteps this for most books
       (declared 32,768 → 65,536 removes 20 of 21 splits library-wide), but it is **no longer
       the alternative to B3** — it narrows the blast radius; it does not fix the mechanism.
-- [ ] **B1b. ⚠️ NEW, and now the highest-value item in this milestone: `locateQuoteAnchor`
-      has no typographic normalization.** Most failures are not paraphrase — the model
-      transcribed faithfully and tidied the punctuation, and neither of the two existing tiers
-      (exact substring, then whitespace-tolerant) folds a curly quote. Measured across all 26
-      stored quotes it takes **unsplit chapters from 73% to 100%** and merged ones from 27%
-      to 64%.
+- [ ] **B1b. ⚠️ `locateQuoteAnchor` has no typographic normalization** — the model
+      transcribed faithfully and tidied the punctuation, and neither existing tier (exact
+      substring, then whitespace-tolerant) folds a curly quote. Measured across all 26 stored
+      quotes it takes **unsplit chapters from 73% to 100%** and merged ones from 27% to 64%.
+      _⚠️ **Reclassified 2026-08-31 by the model A/B: this is a weak-model compensation, not
+      universal hardening.** On GPT 5.6 Luna, folding gains **nothing** — raw and folded are
+      both 17/18, because Luna reproduces curly typography byte-for-byte. Still build it: it
+      is what makes the cheap local digest role viable, which is what provider roles exist
+      for. But it is the **first** thing to re-measure after any digest-role change, and it
+      should not be described as provider-agnostic robustness._
       ⚠️ **Implement it offset-safe.** The anchor must still resolve to a range in the
       *original* text, so use transformations that preserve length and position:
       **(a)** a same-length fold (`’‘‛→'`, `“”→"`, `—–→-`) applied to both sides, and
@@ -1671,9 +1680,14 @@ listed and still marked unanchored._
       ⚠️ Do **not** reach for "strip all quote characters from both sides" — it scores one
       better (15/15) but changes string length, so offsets no longer map back and you owe an
       index map. Only pay that if the last case proves to matter.
-- [ ] **B3.** ⚠️ **Confirmed necessary — promoted from "only if measured".** Normalization
-      cannot reach the other four failures, which are genuine rewriting, verified against the
-      book text:
+- [ ] **B3.** ⚠️ **Confirmed necessary — promoted from "only if measured" — but scoped to
+      the local path.** A 272K-context model (codex-cli reports 272,000 → a 238,000-char map
+      budget) splits **nothing** in this library, so B3 only ever runs for a small-context
+      digest role. The 2026-08-31 A/B also put the merge in its place: isolating it on the
+      two chapters Qwen did *not* split, Qwen was 5/6 folded against Luna's 6/6 raw — so the
+      order of causes is **model quality → the merge → the matcher**, and B3 addresses the
+      middle one. Normalization cannot reach the four failures below, which are genuine
+      rewriting, verified against the book text:
 
       | model returned | book actually says | error |
       |---|---|---|
@@ -1709,24 +1723,29 @@ appears as a chapter question, and no highlight is created at the chapter's open
       length.** M34 §0b measured it: across chapters of 6,903 / 12,367 / 12,529 chars the
       model returned **7, 7, 7 themes and 3, 3, 3 questions**. Themes never touched their
       ceiling of 8; questions sat on their ceiling of 3. **Both are constants with zero
-      variance across a 1.8× length spread** — the model is not measuring the chapter, so a
-      length-scaled ceiling would only replace one constant with a different constant that
-      code picked.
-      _⚠️ **Re-measured 2026-08-31 across six East of Eden chapters, four merged and two
-      unsplit: themes came back 8 every single time**, against Kafka's 7, 7, 7. It is not a
-      merge artifact (the unsplit ones are 8 too) and it is not within-book length sensitivity
-      (EoE spans 24K–46K at a flat 8; Kafka 6.9K–12.5K at a flat 7). **It is a per-book
-      constant**, and separating "long book" from "this book" needs a ~25K Kafka chapter.
-      Same correction for analysis length: EoE runs 643–832 chars split *and* unsplit against
-      Kafka's 1,504–1,971 — the book, not the merge. **What this item depends on is
-      unaffected: zero within-book variance across a 1.8×–1.9× length spread, so a
-      length-scaled ceiling still buys nothing.**_ That is code deciding, and it should not be dressed as the model
-      responding to content.
+      variance across a 1.8× length spread**, so a length-scaled ceiling would only replace
+      one constant with a different constant that code picked. That is code deciding, and it
+      should not be dressed as the model responding to content.
       **The lever that does vary with content is already in C1: require a locatable verbatim
       quote per theme, and let code drop the ones that fail.** A thin chapter cannot evidence
       seven themes; a dense one can. Settled decision 2 applied to counts — the model
       proposes N, code disposes of the unevidenced ones, and the surviving count is a
       property of the chapter rather than of the prompt.
+      _⚠️ **Re-measured 2026-08-31 across six East of Eden chapters, four merged and two
+      unsplit: themes came back 8 every single time**, against Kafka's 7, 7, 7. Not a merge
+      artifact (the unsplit ones are 8 too) and not within-book length sensitivity (EoE spans
+      24K–46K at a flat 8; Kafka 6.9K–12.5K at a flat 7) — **a per-book constant**, and
+      separating "long book" from "this book" needs a ~25K Kafka chapter. Same correction for
+      analysis length: EoE runs 643–832 chars split *and* unsplit against Kafka's
+      1,504–1,971 — the book, not the merge._
+      _⚠️ **And one caveat from the model A/B, with the one-line test that settles it.** GPT
+      5.6 Luna independently returned **8 on all six** EoE chapters — the ceiling — exactly as
+      Qwen did, while Qwen sat at 7 (below the ceiling) on every Kafka chapter. Two very
+      different models converging on the cap is better explained by **the cap binding on this
+      book** than by "the model is not measuring the chapter", which weakens the reasoning
+      above without changing this item's conclusion: whatever varies, it is not varying with
+      length. **Before writing more prose about what the counts mean, raise `MAX_THEMES` to 12
+      and re-run one chapter of each book.**_
 - [ ] **C3a.** ⚠️ **Do not vary the theme count deliberately for the index use.** Themes feed
       the Scan, the vocabulary, distillation and M34 §C's ranking. If long chapters get more
       themes they overlap with everything more often, so **length becomes a confound in the
@@ -1735,7 +1754,11 @@ appears as a chapter question, and no highlight is created at the chapter's open
       them (`ChapterEndPrompt`), so a padded third question is a visible cost, and there the
       evidence filter should be allowed to leave a thin chapter showing one.
 - [ ] **C3b.** ⚠️ **Fix what a theme *is* — the prompt is asking for names and getting
-      theses.** `thematicInstructions` says "short theme or motif names, at most 8" and the
+      theses.** _(Also a weak-model fix: GPT 5.6 Luna already returns clean 2–4 word noun
+      phrases — "Secrecy and revelation", "Mercy versus justice" — with no prompt change,
+      while Qwen was inconsistent **across books**, emitting long theses on Kafka and bare
+      single words ("Secrets", "Guilt") on East of Eden. ⚠️ Note this does **not** rescue
+      §C0: even Luna's well-formed names repeat across chapters exactly zero times.)_ `thematicInstructions` says "short theme or motif names, at most 8" and the
       model returns "Self as split into protective/hardened alter-ego (Crow) and vulnerable
       self (Kafka)". Ask for a 2–4 word noun phrase with an explicit contrast example
       ("Fate versus free will", not a sentence), and cap it in the schema. This is a
