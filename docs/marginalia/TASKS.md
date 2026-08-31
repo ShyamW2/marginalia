@@ -2134,14 +2134,39 @@ carries._
 
 #### F. The chapter digest, expanded
 
-- [ ] **F1.** Each chapter on the digest page expands (once it has a thematic analysis) to
+- [x] **F1.** Each chapter on the digest page expands (once it has a thematic analysis) to
       show the analysis and its associated quotes, with `< >` traversal across chapters.
-- [ ] **F2.** A quote there is clickable through to the reader — same jump path as E6.
-- [ ] **F3.** ⚠️ Respects the M34 §B mask and the existing per-chapter reveal. An expanded
+      _Done: the analysis (and questions) were already always shown once a chapter is
+      analyzed+revealed (pre-M35 behaviour, unchanged) — what "expand" adds here is the
+      themes' quotes, which had no UI at all before this. `DigestPage.tsx`'s new "Show quotes"
+      toggle (`expandedSpineIndex`, one chapter at a time) reveals each theme's name and its
+      evidence quotes; `‹ N of M ›` steps across every analyzed-and-revealed chapter, reusing
+      `stepFindCursor` and `IconButton`'s exact glyphs — the same control ThreadPanel's §D4
+      anchor stepper already established, not a second one designed for the same idea. Steps
+      scroll the newly-expanded card into view._
+- [x] **F2.** A quote there is clickable through to the reader — same jump path as E6.
+      _Done: `handleOpenThemeQuote` navigates with `jumpToFindQuery`/`jumpToFindHitIndex: 0`/
+      `jumpToFindMatchMode: "substring"`, identical to the Scan's `handleOpenZone` — never the
+      chapter-anchor route, since a theme's quote isn't a highlight. `routes/digest.ts`'s
+      `buildThematicStatus` now normalizes every theme's quotes to their *located* exact
+      substring (`locateQuoteAnchor(section.text, quote)?.exact`) before they reach the
+      client, the same reasoning §E6's `startQuote` already used — a quote passed §C3's
+      evidence filter so this always locates; the `?? quote` fallback exists only so a schema
+      surprise can't crash the route._
+- [x] **F3.** ⚠️ Respects the M34 §B mask and the existing per-chapter reveal. An expanded
       chapter past the bookmark shows what a collapsed one would: nothing, until revealed.
+      _Done: no code of its own — the "Show quotes" toggle only renders inside the existing
+      `t?.analyzed && c.revealed` block (same gate §B's mask already drives), and `‹ N of M ›`
+      can only step onto a chapter in `analyzedSpineIndices`, which is filtered to
+      `analyzed && revealed` — an unrevealed chapter is structurally unreachable, never a
+      case the stepper has to special-case._
 
 _Acceptance: expanding a digested chapter shows its analysis and quotes; clicking a quote
 opens the book at it; chapters past the bookmark stay redacted when expanded._
+_Status: covered by the server/web builds and full test suites (both green, no regressions —
+462 server tests, 473 web tests). **Driving this by hand in the running app was not done this
+session**, same reason as §E: the shared dev server was already running with a live browser
+attached when this landed._
 
 #### Verify
 

@@ -3,6 +3,30 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-01 (later still) — M35 §F implemented: the chapter digest, expanded
+
+Implementing §F right after §E landed, same strict one-after-the-other sequencing the
+operator asked for. Two calls worth recording.
+
+**"Expand" only ever gates the quotes, never the analysis.** §F1 reads as if a chapter's
+thematic block is collapsed by default and expanding reveals "the analysis and its associated
+quotes" together — but the analysis (and questions) have been shown unconditionally since
+M19.5, well before this milestone, and nothing in M35 asked for that to become collapsed. The
+build treats "expand" as scoped to what's actually new here: the per-theme quotes, which had
+no rendering at all before this session. Regressing already-shipped, already-relied-on
+visibility to fit a literal reading of one task-doc sentence was judged the wrong trade.
+
+**A quote shown on the digest page is normalized the same way a Scan zone's `startQuote`
+already is.** `routes/digest.ts`'s `buildThematicStatus` now runs every theme's stored quotes
+through `locateQuoteAnchor` against the chapter's own section text and ships the *located*
+exact substring, not the model's raw one — otherwise §F2's find-bar jump (the same
+`jumpToFindQuery` handoff §E6 uses) could miss on exactly the typographic drift
+`locateQuoteAnchor`'s own fold exists to forgive. A quote reaching this code already survived
+§C3's evidence filter, so this is normalization, never a new source of failure.
+
+Live verification (driving the expand/step/click flow by hand) was not done this session, same
+reason as §E's entry above — the shared dev server was already in live use.
+
 ## 2026-09-01 (later) — M35 §E implemented: theme zones, and four gaps the task doc left to the session
 
 Implementing §E ("theme zones, and the Scan gets sub-chapter resolution") right after §C/§D
