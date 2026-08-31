@@ -24,8 +24,10 @@ import { delimiter, join } from "node:path";
  *      matches "but it works in my terminal", so it is worth the ~200ms — and
  *      it is only ever paid once per binary per server run.
  *
- * Results are cached per process. `clearCliBinCache()` exists so a user who
- * installs the CLI while the app is open can be re-checked without a restart.
+ * A found path is cached per process (an install doesn't move once made); a
+ * miss is never cached, so a user who installs the CLI while the app is open
+ * gets picked up on the next check — no restart needed. `clearCliBinCache()`
+ * exists for tests, which reuse binary names across differing fake `PATH`s.
  */
 
 /** Overridable, and deliberately not a config-file setting: this is machine
@@ -145,7 +147,10 @@ export function findCliBin(name: string): string | null {
     found ??= askLoginShell(name);
   }
 
-  cache.set(name, found);
+  // Only a hit is cached. Caching a miss would mean an install done while the
+  // server keeps running is invisible until restart — exactly what this
+  // function's cache exists to avoid (see `clearCliBinCache`'s doc comment).
+  if (found) cache.set(name, found);
   return found;
 }
 

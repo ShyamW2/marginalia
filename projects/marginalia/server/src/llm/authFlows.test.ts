@@ -98,6 +98,26 @@ describe("redactSecrets", () => {
       "OpenAI's command-line coding agent",
     );
   });
+
+  it("leaves a Claude OAuth URL's client_id, code_challenge and state untouched (found live 2026-08-31)", () => {
+    // Real shape of `claude auth login`'s fallback line, minus the actual
+    // credentials involved. client_id is a bare UUID and code_challenge/state
+    // are 40+ char opaque strings — exactly the shape SECRET_BLOB_RE targets,
+    // and it was redacting all three mid-URL, handing the sign-in flow a link
+    // with a mutilated (invalid) client_id.
+    const line =
+      "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true" +
+      "&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code" +
+      "&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback" +
+      "&code_challenge=IV5vgV_59goN2M714X2ZmX0zUDJkIs5he4T7UZGmW2s&code_challenge_method=S256" +
+      "&state=_dljUnG14GPRwpN7x4TH0N7bWm2Z1kSrDchIUHNmyo4";
+    expect(redactSecrets(line)).toBe(line);
+  });
+
+  it("still redacts a long opaque blob sitting outside a URL on the same line", () => {
+    const line = "found abcdef1234567890abcdef1234567890xyz see https://example.com/ok";
+    expect(redactSecrets(line)).toBe("found abcd…[redacted] see https://example.com/ok");
+  });
 });
 
 describe("extractVerification", () => {

@@ -70,6 +70,16 @@ describe("findCliBin", () => {
     process.env.PATH = "/nonexistent";
     expect(findCliBin("ls")).toBe(first);
   });
+
+  it("does not cache a miss, so a CLI installed after the first check is found without a restart", () => {
+    process.env.PATH = "/nonexistent-for-this-test";
+    process.env.SHELL = "";
+    clearCliBinCache();
+    expect(findCliBin("ls")).toBeNull();
+    // The "install" — PATH now names a directory that actually has it.
+    process.env.PATH = "/usr/bin:/bin";
+    expect(findCliBin("ls")).toMatch(/\/ls$/);
+  });
 });
 
 describe("resolveCliBin", () => {

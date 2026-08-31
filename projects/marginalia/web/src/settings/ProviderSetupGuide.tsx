@@ -118,7 +118,7 @@ export function ProviderSetupGuide({
                   <code className={styles.code}>{diagnostics.bin}</code>. This is the{" "}
                   <code className={styles.code}>spawn {diagnostics.bin} ENOENT</code> error, and it does{" "}
                   <em>not</em> mean the CLI is missing — the server only sees the PATH of whatever
-                  launched it, which on macOS is often not your shell's.
+                  launched it, which is often not your shell's.
                 </p>
                 <p className={styles.line}>Two fixes, either one is enough:</p>
                 <ul className={styles.fixes}>

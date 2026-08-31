@@ -75,15 +75,32 @@ const CODE_RE = /\b[A-Z0-9]{4,}-[A-Z0-9]{4,}\b/;
 // obviously-labelled secret ("access_token: ...") that redacts the whole
 // line since the label alone is already worth hiding, and a shape-based one
 // for a long opaque blob that survived the first pass. The device code
-// (10 chars, e.g. "B5D1-XQI8F") and the URL (broken up by `.`/`/`) are both
-// well clear of the length/shape this targets.
+// (10 chars, e.g. "B5D1-XQI8F") and Codex's URL (short, broken up by `.`/`/`)
+// are both well clear of the length/shape this targets.
+//
+// **`claude auth login`'s URL is not** (found live 2026-08-31, `wijay-rig`,
+// once it was finally smoke-tested): it's a full OAuth authorize link whose
+// query string carries `client_id` (a bare UUID — 36 characters of exactly
+// this shape), plus a PKCE `code_challenge` and `state`, each 40+ opaque
+// characters. The blob pass was redacting all three mid-URL — e.g.
+// `client_id=9d1c…[redacted]` — before `extractVerification` ever saw the
+// line, so the sign-in flow handed the user a link with a mutilated
+// `client_id` that Anthropic's OAuth endpoint correctly rejected as not a
+// UUID. A URL is exactly what this flow exists to show the user, not a
+// leaked secret, so it's exempted here: blob-redact everything on the line
+// *outside* any URL, leave a matched URL itself untouched.
 const SECRET_KEY_RE = /\b(access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|client[_-]?secret|secret|password|bearer)\b/i;
 const SECRET_BLOB_RE = /[A-Za-z0-9_-]{24,}/g;
 
 /** Exported for tests. */
 export function redactSecrets(line: string): string {
   if (SECRET_KEY_RE.test(line)) return "[redacted — line mentioned a credential]";
-  return line.replace(SECRET_BLOB_RE, (match) => `${match.slice(0, 4)}…[redacted]`);
+  const blobRedact = (text: string) => text.replace(SECRET_BLOB_RE, (match) => `${match.slice(0, 4)}…[redacted]`);
+  const url = line.match(URL_RE);
+  if (!url || url.index === undefined) return blobRedact(line);
+  const start = url.index;
+  const end = start + url[0].length;
+  return blobRedact(line.slice(0, start)) + line.slice(start, end) + blobRedact(line.slice(end));
 }
 
 /** Exported for tests — a device-code CLI's stdout arrives with ANSI colour
@@ -347,13 +364,17 @@ export async function logout(provider: ProviderAuthProvider): Promise<void> {
  * one — "Couldn't start `codex`: spawn codex ENOENT" — is what the operator's
  * Mac showed while `codex` worked perfectly in their terminal, and it names
  * neither the cause (this server's `PATH` isn't the shell's) nor the fix.
+ *
+ * Not a Mac-only symptom, even though that is where it was first diagnosed:
+ * confirmed live on the Linux dev machine too (2026-08-31, `wijay-rig`), so
+ * the message doesn't name an OS.
  */
 function notFoundMessage(bin: string, err: Error): string {
   if (!/ENOENT/.test(err.message)) return `Couldn't start \`${bin}\`: ${err.message}`;
   const cmd = bin === "codex" ? CLI.codex : CLI.claude;
   return (
     `Couldn't find the \`${bin}\` command. It may well be installed — Marginalia's server ` +
-    `only sees the PATH of whatever launched it, which on macOS is often not your shell's. ` +
+    `only sees the PATH of whatever launched it, which is often not your shell's. ` +
     `Install it with \`${cmd.installCommand}\`, or point Marginalia at it directly by ` +
     `starting the server with MARGINALIA_${bin.toUpperCase()}_BIN=/full/path/to/${bin}. ` +
     `Open "How to connect" below for the full checklist.`
