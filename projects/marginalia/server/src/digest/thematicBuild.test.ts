@@ -45,10 +45,13 @@ function seedSections(
   for (const s of sections) insert.run(resourceId, s.spineIndex, s.href, s.text);
 }
 
-function makeProvider(scriptedExtract: (req: LLMExtractRequest<unknown>) => unknown): LLMProvider {
+function makeProvider(
+  scriptedExtract: (req: LLMExtractRequest<unknown>) => unknown,
+  contextTokens = 100_000,
+): LLMProvider {
   return {
     id: "openai-compatible",
-    capabilities: () => ({ contextTokens: 100_000, supportsCaching: false }),
+    capabilities: () => ({ contextTokens, supportsCaching: false }),
     async *stream() {
       yield { text: "" };
     },
@@ -247,6 +250,128 @@ describe("runThematicDigest", () => {
     expect(run.lastError).toBe("Cancelled");
     expect(getThematicDigest(db, resource.id, 0)).toBeDefined();
     expect(getThematicDigest(db, resource.id, 1)).toBeUndefined();
+    db.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M34 §0b — the shape log
+//
+// These assert on the log line because the log line *is* the deliverable:
+// §0b stores nothing and renders nothing. What §0c has to be able to read off
+// a real run is (a) did the chapter split, and (b) did the questions' quotes
+// locate — together, because the hypothesis is that the second fails when the
+// first is true.
+// ---------------------------------------------------------------------------
+
+function captureShapeLog(): { lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const spy = vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    const line = args.map(String).join(" ");
+    if (line.startsWith("[thematic:shape]")) lines.push(line);
+  });
+  return { lines, restore: () => spy.mockRestore() };
+}
+
+describe("runThematicDigest — M34 0b shape log", () => {
+  it("logs one line per chapter with its length, counts against their ceilings, and quote hits", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "The cat sat on the mat, and the world went on without comment." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => ({
+      analysis: "Ten chars.",
+      themes: ["indifference", "domesticity"],
+      questions: [
+        // Verbatim — locates.
+        { text: "Whose world?", quote: "the world went on" },
+        // Paraphrased — the failure §0a records on click and §0b counts here.
+        { text: "Why a cat?", quote: "a cat was sitting upon a mat" },
+      ],
+    }));
+
+    const log = captureShapeLog();
+    try {
+      await runThematicDigest(db, provider, resource, sections, 0, 0);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.lines).toHaveLength(1);
+    const line = log.lines[0];
+    expect(line).toContain("spine=0");
+    expect(line).toContain(`chars=${sections[0].text.length}`);
+    expect(line).toContain("parts=1");
+    expect(line).toContain("themes=2/8");
+    expect(line).toContain("questions=2/3");
+    expect(line).toContain("quotes_located=1/2");
+    db.close();
+  });
+
+  it("reports parts>1 when the chapter split, which is what makes a quote miss diagnosable", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    // Two paragraphs, each comfortably over the tiny map budget below, so
+    // splitIntoChunks produces more than one chunk and mergeThematicParts runs.
+    const paragraph = "Sentence about the sea. ".repeat(40);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 3, href: "a", text: `${paragraph}\n\n${paragraph}` },
+    ];
+    seedSections(db, resource.id, sections);
+
+    // 1000 tokens * 0.25 * 3.5 = 875 chars of map budget.
+    const provider = makeProvider(
+      () => ({
+        analysis: "Merged.",
+        themes: ["the sea"],
+        // The merge step never sees the chapter text, so its quote is whatever
+        // the parts handed it — here, one that no longer matches.
+        questions: [{ text: "Why the sea?", quote: "a sentence that was never written" }],
+      }),
+      1000,
+    );
+
+    const log = captureShapeLog();
+    try {
+      await runThematicDigest(db, provider, resource, sections, 3, 3);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.lines).toHaveLength(1);
+    expect(log.lines[0]).toContain("spine=3");
+    expect(log.lines[0]).toMatch(/parts=(?!1\b)\d+/);
+    expect(log.lines[0]).toContain("quotes_located=0/1");
+    db.close();
+  });
+
+  it("logs a too_large line rather than nothing when a chapter never fits", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => {
+      throw new LLMError("context_too_large", "too big");
+    });
+
+    const log = captureShapeLog();
+    try {
+      await runThematicDigest(db, provider, resource, sections, 0, 0);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.lines).toHaveLength(1);
+    expect(log.lines[0]).toContain("result=too_large");
     db.close();
   });
 });

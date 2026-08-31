@@ -44,7 +44,7 @@ import {
   resolveContextLadderDepth,
   setContextLadderDepth,
 } from "../digest/ladder.js";
-import { createHighlight, findHighlightByExact } from "../annotations/highlights.js";
+import { createHighlight, findHighlightByExact, type AnchorSource } from "../annotations/highlights.js";
 import {
   getChapterQuestion,
   listChapterQuestions,
@@ -507,7 +507,14 @@ digestRouter.post("/:id/chapter-anchor", (req, res) => {
     return;
   }
 
-  const anchor = locateQuoteAnchor(section.text, quote) ?? chapterStartAnchor(section.text);
+  // M34 §0a: record *which* of these two paths fired. The fallback is
+  // invisible after the fact — a chapter-start anchor is a perfectly valid
+  // highlight — so without this column "how often does a posed question's
+  // quote fail to locate?" is unanswerable, and M35 §B is sized by argument
+  // instead of by data.
+  const located = locateQuoteAnchor(section.text, quote);
+  const anchor = located ?? chapterStartAnchor(section.text);
+  const anchorSource: AnchorSource = located ? "quote" : "chapter_start";
   const existing = findHighlightByExact(db, resource.id, spineIndex, anchor.exact);
   if (existing) {
     res.json(existing);
@@ -527,6 +534,7 @@ digestRouter.post("/:id/chapter-anchor", (req, res) => {
     cfi: UNRESOLVABLE_CHAPTER_ANCHOR_CFI,
     spineIndex,
     kind: "slate", // "a question about the text" — the existing kind Ask defaults to
+    anchorSource,
   });
   res.status(201).json(highlight);
 });

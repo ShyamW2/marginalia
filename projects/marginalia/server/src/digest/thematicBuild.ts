@@ -6,6 +6,7 @@ import { LLMError, type LLMProvider } from "../llm/provider.js";
 import { sectionLabel } from "../llm/context.js";
 import type { ResourceTextSection } from "../library/store.js";
 import { splitIntoChunks, withNetworkRetry } from "./build.js";
+import { locateQuoteAnchor } from "./chapterAnchor.js";
 import {
   getBrief,
   getThematicRun,
@@ -31,10 +32,16 @@ const ThematicQuestionSchema = z.object({
   text: z.string(),
   quote: z.string(),
 });
+// Named rather than inline because M34 §0b's log reports each count against
+// its ceiling: "does the model ever come in under the maximum it's given?"
+// is one of the two questions decisions.md 2026-08-31 left to measurement,
+// and a bare "themes=8" doesn't answer it.
+const MAX_THEMES = 8;
+const MAX_QUESTIONS = 3;
 const ThematicPartSchema = z.object({
   analysis: z.string(),
-  themes: z.array(z.string()).max(8),
-  questions: z.array(ThematicQuestionSchema).max(3),
+  themes: z.array(z.string()).max(MAX_THEMES),
+  questions: z.array(ThematicQuestionSchema).max(MAX_QUESTIONS),
 });
 type ThematicPart = z.infer<typeof ThematicPartSchema>;
 
@@ -124,11 +131,23 @@ async function mergeThematicParts(
   });
 }
 
+/** One chapter's thematic result plus the one fact about *how* it was
+ * produced that M34 §0c needs: whether the chapter fit in a single call.
+ * A chapter that split had its questions rewritten by `mergeThematicParts`,
+ * which is handed the parts' text and never the chapter's — the suspected
+ * cause of a quote that doesn't locate, and the thing that makes the failure
+ * rate provider-dependent rather than model-quality-dependent. */
+interface ThematicChapterResult {
+  part: ThematicPart | null;
+  /** Chunks the final successful attempt used. 1 = no split, no merge. */
+  partCount: number;
+}
+
 /** Thematic analysis of one chapter, operating on the raw chapter text —
  * deliberately not on the plot layer's summary, so the two passes stay
  * fully independent calls (decisions.md: "do not build them as one call").
- * Returns null, never throws, when the chapter still won't fit after one
- * re-split, mirroring build.ts's digestChapter. */
+ * Returns a null `part`, never throws, when the chapter still won't fit
+ * after one re-split, mirroring build.ts's digestChapter. */
 async function digestChapterThematic(
   provider: LLMProvider,
   contextTokens: number,
@@ -138,11 +157,13 @@ async function digestChapterThematic(
   chapterLabel: string,
   text: string,
   signal?: AbortSignal,
-): Promise<ThematicPart | null> {
+): Promise<ThematicChapterResult> {
   const budgetChars = contextTokens * MAP_BUDGET_FRACTION * CHARS_PER_TOKEN;
+  let partCount = 0;
 
   async function attempt(maxChars: number): Promise<ThematicPart> {
     const chunks = splitIntoChunks(text, maxChars);
+    partCount = chunks.length;
     const parts: ThematicPart[] = [];
     for (let i = 0; i < chunks.length; i++) {
       parts.push(
@@ -163,16 +184,53 @@ async function digestChapterThematic(
   }
 
   try {
-    return await attempt(budgetChars);
+    return { part: await attempt(budgetChars), partCount };
   } catch (err) {
     if (!(err instanceof LLMError) || err.code !== "context_too_large") throw err;
     try {
-      return await attempt(budgetChars / 2);
+      return { part: await attempt(budgetChars / 2), partCount };
     } catch (err2) {
-      if (err2 instanceof LLMError && err2.code === "context_too_large") return null;
+      if (err2 instanceof LLMError && err2.code === "context_too_large") return { part: null, partCount };
       throw err2;
     }
   }
+}
+
+/**
+ * M34 §0b: one line per chapter to the server log, no storage and no UI.
+ *
+ * It answers three questions that were being argued rather than measured
+ * (decisions.md 2026-08-31): does a chapter split on this operator's digest
+ * role; does the model ever come in under the theme/question ceiling it is
+ * given; and how often does a question's verbatim quote actually locate in
+ * the chapter text. The third is the one M35 §B is sized by — and it is read
+ * *together with* `parts`, because the hypothesis is that a quote fails when
+ * it has passed through a merge that never saw the chapter.
+ *
+ * Deliberately cheap: `locateQuoteAnchor` is the same function the
+ * chapter-anchor route runs on click, so this measures the real path rather
+ * than a proxy for it.
+ */
+function logThematicShape(
+  chapterLabel: string,
+  spineIndex: number,
+  text: string,
+  result: ThematicChapterResult,
+): void {
+  const head = `[thematic:shape] spine=${spineIndex} chars=${text.length} parts=${result.partCount}`;
+  if (!result.part) {
+    // eslint-disable-next-line no-console
+    console.log(`${head} result=too_large ${JSON.stringify(chapterLabel)}`);
+    return;
+  }
+  const { themes, questions } = result.part;
+  const located = questions.filter((q) => locateQuoteAnchor(text, q.quote) !== null).length;
+  // eslint-disable-next-line no-console
+  console.log(
+    `${head} analysis=${result.part.analysis.length} themes=${themes.length}/${MAX_THEMES} ` +
+      `questions=${questions.length}/${MAX_QUESTIONS} quotes_located=${located}/${questions.length} ` +
+      JSON.stringify(chapterLabel),
+  );
 }
 
 /**
@@ -241,7 +299,7 @@ export async function runThematicDigest(
 
     const chapterLabel = sectionLabel(section.spineIndex, resource.metadata.chapterTitles);
     try {
-      const part = await withNetworkRetry(
+      const result = await withNetworkRetry(
         () =>
           digestChapterThematic(
             provider,
@@ -255,6 +313,8 @@ export async function runThematicDigest(
           ),
         signal,
       );
+      logThematicShape(chapterLabel, section.spineIndex, section.text, result);
+      const part = result.part;
       if (part === null) {
         failedSpineIndices.add(section.spineIndex);
         current++;

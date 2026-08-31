@@ -207,4 +207,39 @@ describe("highlights store", () => {
     expect(updated?.panelDy).toBe(-17.5);
     db.close();
   });
+
+  // M34 §0a — instrumentation, so the assertion is on the column, not on
+  // anything the API returns. A reader-made highlight must stay '' or the
+  // "how did machine-made anchors land?" query counts every highlight in
+  // the book.
+  it("M34 0a: records anchor_source, defaulting to '' for reader-made highlights", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    const base = {
+      resourceId,
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose" as const,
+    };
+    const reader = createHighlight(db, { ...base, exact: "reader-made" });
+    const located = createHighlight(db, { ...base, exact: "located", anchorSource: "quote" });
+    const fallback = createHighlight(db, {
+      ...base,
+      exact: "fell back",
+      anchorSource: "chapter_start",
+    });
+
+    const sourceOf = (id: string) =>
+      (db.prepare("SELECT anchor_source FROM highlights WHERE id = ?").get(id) as {
+        anchor_source: string;
+      }).anchor_source;
+
+    expect(sourceOf(reader.id)).toBe("");
+    expect(sourceOf(located.id)).toBe("quote");
+    expect(sourceOf(fallback.id)).toBe("chapter_start");
+    db.close();
+  });
 });

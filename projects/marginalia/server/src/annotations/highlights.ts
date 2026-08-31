@@ -25,6 +25,7 @@ interface HighlightRow {
   panel_height: number | null;
   definition: string;
   definition_source: string;
+  anchor_source: string;
   created_at: string;
 }
 
@@ -50,6 +51,14 @@ function rowToHighlight(row: HighlightRow): Highlight {
   };
 }
 
+/**
+ * How a machine-made anchor was placed (M34 §0a, migration 28). Pure
+ * instrumentation: nothing renders it, and `""` — every reader-made
+ * highlight — is the default the column carries on its own, so only the
+ * chapter-anchor route ever passes one.
+ */
+export type AnchorSource = "" | "quote" | "chapter_start";
+
 export function createHighlight(
   db: Database.Database,
   input: {
@@ -60,6 +69,7 @@ export function createHighlight(
     cfi: string;
     spineIndex: number;
     kind: HighlightKind;
+    anchorSource?: AnchorSource;
   },
 ): Highlight {
   const highlight: Highlight = {
@@ -83,9 +93,9 @@ export function createHighlight(
   };
 
   db.prepare(
-    `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, kind, created_at)
-     VALUES (@id, @resourceId, @exact, @prefix, @suffix, @cfi, @spineIndex, @kind, @createdAt)`,
-  ).run(highlight);
+    `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, kind, anchor_source, created_at)
+     VALUES (@id, @resourceId, @exact, @prefix, @suffix, @cfi, @spineIndex, @kind, @anchorSource, @createdAt)`,
+  ).run({ ...highlight, anchorSource: input.anchorSource ?? "" });
 
   return highlight;
 }

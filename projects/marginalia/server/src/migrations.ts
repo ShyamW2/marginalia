@@ -670,4 +670,26 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M34 §0a "measurements first" (decisions.md 2026-08-31, TASKS.md M34):
+    // instrumentation, not a feature — nothing renders this column yet.
+    //
+    // `routes/digest.ts`'s chapter-anchor route is a bare
+    // `locateQuoteAnchor(...) ?? chapterStartAnchor(...)`, so a posed
+    // question whose quote the model paraphrased silently anchors at the
+    // chapter's opening line instead — indistinguishable, after the fact,
+    // from one that located exactly. M35 §B is sized by how often that
+    // happens, and that number is not knowable by argument. This column is
+    // where it accrues while M34 §A–§D are built.
+    //
+    // 'quote' = the model's verbatim quote was found in the chapter text;
+    // 'chapter_start' = it wasn't, and the anchor fell back to the opening.
+    // '' is every reader-made highlight — never NULL, matching
+    // `definition_source`'s shape (migration 26) so a future filter over
+    // machine-made anchors stays one predicate.
+    version: 28,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN anchor_source TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
