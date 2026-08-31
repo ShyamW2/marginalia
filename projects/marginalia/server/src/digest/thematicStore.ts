@@ -47,6 +47,17 @@ export interface ThematicQuestion {
    * the model returns text, code locates it (see routes/digest.ts's
    * chapter-anchor endpoint). */
   quote: string;
+  /** M35 §C2: names the theme (by `ThematicTheme.name`) this question is
+   * evidence for, or null when it isn't about a listed theme — validated in
+   * `thematicBuild.ts`'s `validateQuestionThemes`, never trusted as-is. */
+  theme?: string | null;
+}
+
+/** M35 §C1: a theme carries its own evidence — 1-3 verbatim quotes, dropped
+ * by `thematicBuild.ts`'s `evidenceFilterThemes` when none locate. */
+export interface ThematicTheme {
+  name: string;
+  quotes: string[];
 }
 
 export interface ThematicDigest {
@@ -55,7 +66,7 @@ export interface ThematicDigest {
   briefHash: string;
   briefText: string;
   analysis: string;
-  themes: string[];
+  themes: ThematicTheme[];
   questions: ThematicQuestion[];
   generatedAt: string;
 }
@@ -140,17 +151,19 @@ export function isThematicStale(digest: Pick<ThematicDigest, "briefHash">, curre
   return digest.briefHash !== currentBriefHash;
 }
 
-/** Every distinct theme across this resource's thematic layer — the one
- * vocabulary the scan's Book layer and the Mine-layer tagging pass
+/** Every distinct theme *name* across this resource's thematic layer — the
+ * one vocabulary the scan's Book layer and the Mine-layer tagging pass
  * (themeTagging.ts) both draw from (decisions.md 2026-07-29 later: "one
  * theme vocabulary across both, so filtering by a theme lights both
  * layers"). Draws from every chapter's thematic row regardless of which
  * brief produced it — a stale row's themes are still real book themes, even
- * if the analysis text around them is due for a re-run. */
+ * if the analysis text around them is due for a re-run. M35 §C1: themes
+ * carry quotes now, but the vocabulary stays name-only — quotes are
+ * per-occurrence evidence, not part of a theme's identity as a filter term. */
 export function listThemeVocabulary(db: Database.Database, resourceId: string): string[] {
   const rows = listThematicDigests(db, resourceId);
   const vocabulary = new Set<string>();
-  for (const row of rows) for (const theme of row.themes) vocabulary.add(theme);
+  for (const row of rows) for (const theme of row.themes) vocabulary.add(theme.name);
   return [...vocabulary].sort();
 }
 

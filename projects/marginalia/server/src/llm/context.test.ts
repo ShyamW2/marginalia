@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { buildContext, buildDigestContext, buildOffContext, sectionRangeUiLabel, sectionUiLabel } from "./context.js";
 import type { ResourceTextSection } from "../library/store.js";
+import type { ContextBlock } from "./provider.js";
+
+/** M34 §A: bookContext is now a list of blocks — tests read it joined,
+ * same as every non-Anthropic provider does. */
+function contextText(blocks: ContextBlock[]): string {
+  return blocks.map((b) => b.text).join("\n\n");
+}
 
 function makeSections(count: number, charsPerSection: number): ResourceTextSection[] {
   return Array.from({ length: count }, (_, i) => ({
@@ -24,7 +31,7 @@ describe("buildContext", () => {
     });
 
     for (const section of sections) {
-      expect(result.bookContext).toContain(`--- [section ${section.spineIndex}] ---`);
+      expect(contextText(result.bookContext)).toContain(`--- [section ${section.spineIndex}] ---`);
     }
   });
 
@@ -39,7 +46,7 @@ describe("buildContext", () => {
     };
     const first = buildContext(input);
     const second = buildContext({ ...input, sections: [...sections] });
-    expect(first.bookContext).toBe(second.bookContext);
+    expect(contextText(first.bookContext)).toBe(contextText(second.bookContext));
     expect(first.instructions).toBe(second.instructions);
   });
 
@@ -55,7 +62,7 @@ describe("buildContext", () => {
 
     // Should not include every section — windowing kicked in.
     const includedSections = sections.filter((s) =>
-      result.bookContext.includes(`--- [section ${s.spineIndex}] ---`),
+      contextText(result.bookContext).includes(`--- [section ${s.spineIndex}] ---`),
     );
     expect(includedSections.length).toBeLessThan(sections.length);
     expect(includedSections.length).toBeGreaterThan(0);
@@ -91,10 +98,10 @@ describe("buildContext", () => {
       contextTokens: 1000,
     });
 
-    expect(result.bookContext).toContain("--- [section 5] ---");
+    expect(contextText(result.bookContext)).toContain("--- [section 5] ---");
 
     const includedIndices = sections
-      .filter((s) => result.bookContext.includes(`--- [section ${s.spineIndex}] ---`))
+      .filter((s) => contextText(result.bookContext).includes(`--- [section ${s.spineIndex}] ---`))
       .map((s) => s.spineIndex);
     const min = Math.min(...includedIndices);
     const max = Math.max(...includedIndices);
@@ -115,9 +122,9 @@ describe("buildContext", () => {
       chapterTitles: { "0": "Chapter One", "2": "Chapter Three" },
     });
 
-    expect(result.bookContext).toContain("--- [section 0: Chapter One] ---");
-    expect(result.bookContext).toContain("--- [section 1] ---");
-    expect(result.bookContext).toContain("--- [section 2: Chapter Three] ---");
+    expect(contextText(result.bookContext)).toContain("--- [section 0: Chapter One] ---");
+    expect(contextText(result.bookContext)).toContain("--- [section 1] ---");
+    expect(contextText(result.bookContext)).toContain("--- [section 2: Chapter Three] ---");
   });
 
   it("includes the reader's current position in the user message, not the cached blocks", () => {
@@ -135,7 +142,7 @@ describe("buildContext", () => {
     expect(message).toContain("Reader's current position: 42% through the book");
     expect(message).toContain("around section 2: Chapter Three");
     // Volatile position data must never leak into the cacheable blocks.
-    expect(result.bookContext).not.toContain("current position");
+    expect(contextText(result.bookContext)).not.toContain("current position");
     expect(result.instructions).not.toContain("42");
   });
 
@@ -174,13 +181,44 @@ describe("buildOffContext", () => {
       sections,
       highlight,
     });
-    expect(result.bookContext).toContain("--- [section 5] ---");
-    expect(result.bookContext).toContain("--- [section 4] ---");
-    expect(result.bookContext).toContain("--- [section 6] ---");
-    expect(result.bookContext).not.toContain("--- [section 0] ---");
-    expect(result.bookContext).not.toContain("--- [section 9] ---");
+    expect(contextText(result.bookContext)).toContain("--- [section 5] ---");
+    expect(contextText(result.bookContext)).toContain("--- [section 4] ---");
+    expect(contextText(result.bookContext)).toContain("--- [section 6] ---");
+    expect(contextText(result.bookContext)).not.toContain("--- [section 0] ---");
+    expect(contextText(result.bookContext)).not.toContain("--- [section 9] ---");
     expect(result.chaptersUsed).toEqual([]);
     expect(result.highlightChapterCovered).toBe(false);
+    // M34 §A: tiny and re-centered on every highlight — never worth a cache
+    // breakpoint.
+    expect(result.bookContext.every((b) => !b.cache)).toBe(true);
+  });
+});
+
+describe("buildContext caching (M34 §A5)", () => {
+  it("marks the single block for caching when the book fits whole", () => {
+    const result = buildContext({
+      title: "Test Book",
+      author: null,
+      sections: makeSections(10, 100),
+      highlight,
+      contextTokens: 100_000,
+    });
+    expect(result.windowed).toBe(false);
+    expect(result.bookContext).toHaveLength(1);
+    expect(result.bookContext[0].cache).toBe(true);
+  });
+
+  it("leaves the block unmarked when windowing fired — it will never be read back", () => {
+    const result = buildContext({
+      title: "Big Book",
+      author: null,
+      sections: makeSections(50, 1000),
+      highlight,
+      contextTokens: 1000,
+    });
+    expect(result.windowed).toBe(true);
+    expect(result.bookContext).toHaveLength(1);
+    expect(result.bookContext[0].cache).toBe(false);
   });
 });
 
@@ -210,14 +248,21 @@ describe("buildDigestContext", () => {
       contextTokens: 1_000_000, // large enough that Full sends everything
     });
 
-    expect(digestResult.bookContext.length).toBeLessThan(fullResult.bookContext.length);
+    expect(contextText(digestResult.bookContext).length).toBeLessThan(contextText(fullResult.bookContext).length);
     // A far chapter contributes its summary, never its full text.
-    expect(digestResult.bookContext).toContain("Summary of chapter 40.");
-    expect(digestResult.bookContext).not.toContain("--- [section 40 — full text] ---");
+    expect(contextText(digestResult.bookContext)).toContain("Summary of chapter 40.");
+    expect(contextText(digestResult.bookContext)).not.toContain("--- [section 40 — full text] ---");
     // Only the highlight's own neighborhood gets full text.
-    expect(digestResult.bookContext).toContain("--- [section 5 — full text] ---");
+    expect(contextText(digestResult.bookContext)).toContain("--- [section 5 — full text] ---");
     expect(digestResult.chaptersUsed).toHaveLength(50);
     expect(digestResult.highlightChapterCovered).toBe(true);
+    // M34 §A4: stable material (digest + summaries + thematic) cached first,
+    // the highlight-varying pages unmarked and last.
+    expect(digestResult.bookContext).toHaveLength(2);
+    expect(digestResult.bookContext[0].cache).toBe(true);
+    expect(digestResult.bookContext[0].text).toContain("CHAPTER SUMMARIES");
+    expect(digestResult.bookContext[1].cache).toBe(false);
+    expect(digestResult.bookContext[1].text).toContain("FULL TEXT AROUND THE HIGHLIGHT");
   });
 
   it("reports the highlight's chapter as uncovered when it has no digest row", () => {
@@ -231,7 +276,7 @@ describe("buildDigestContext", () => {
       chapterDigests: [{ spineIndex: 0, summary: "s", themes: [], characters: [] }],
     });
     expect(result.highlightChapterCovered).toBe(false);
-    expect(result.bookContext).toContain("No book-level digest available yet.");
+    expect(contextText(result.bookContext)).toContain("No book-level digest available yet.");
   });
 
   it("includes the thematic layer alongside the plot digest when provided, and omits the section when absent", () => {
@@ -247,8 +292,11 @@ describe("buildDigestContext", () => {
       chapterDigests,
       thematicChapters: [{ spineIndex: 0, analysis: "This chapter is about autonomy.", themes: ["autonomy"] }],
     });
-    expect(withThematic.bookContext).toContain("THEMATIC READING");
-    expect(withThematic.bookContext).toContain("This chapter is about autonomy.");
+    expect(contextText(withThematic.bookContext)).toContain("THEMATIC READING");
+    expect(contextText(withThematic.bookContext)).toContain("This chapter is about autonomy.");
+    // M34 §D: the thematic chapters actually included are reported
+    // separately from chaptersUsed's plot-digest chapters.
+    expect(withThematic.thematicChaptersUsed).toEqual([0]);
 
     const withoutThematic = buildDigestContext({
       title: "Test Book",
@@ -258,7 +306,8 @@ describe("buildDigestContext", () => {
       bookDigest: null,
       chapterDigests,
     });
-    expect(withoutThematic.bookContext).not.toContain("THEMATIC READING");
+    expect(contextText(withoutThematic.bookContext)).not.toContain("THEMATIC READING");
+    expect(withoutThematic.thematicChaptersUsed).toEqual([]);
   });
 });
 

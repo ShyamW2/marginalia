@@ -8,6 +8,7 @@ import type {
   HighlightKind,
   Message,
   MessageProvenance,
+  ThreadAnchor,
   ThreadSummary,
   ThreadWithMessages,
 } from "@marginalia/shared";
@@ -32,6 +33,8 @@ import {
 import { clampPanelOffset, panelTiltDeg } from "./panelGeometry.js";
 import { renderMarkdown } from "./markdown.js";
 import { streamThread } from "./streamThread.js";
+import { fetchThreadAnchors } from "./threadAnchorsApi.js";
+import { stepFindCursor } from "../search/findCursor.js";
 import styles from "./ThreadPanel.module.css";
 
 // The first message in a thread is stored with the SPEC-templated framing
@@ -102,6 +105,11 @@ interface ThreadPanelProps {
    * reader is reading it — routes to the same `handleDeleteHighlight` the
    * margin rail and annotations overview already use, guard and all. */
   onDelete: () => void;
+  /** M35 §D4: moves the reader to another of this thread's anchors without
+   * closing/remounting the panel — `< >` traversal calls this with the
+   * anchor's own highlight id, which the caller resolves to a CFI the same
+   * way a margin-rail click already does (`handleNavigateToHighlight`). */
+  onJumpToAnchor?: (highlightId: string) => void;
   onThreadChange: (highlightId: string, thread: ThreadSummary) => void;
   onImportanceChange: (highlightId: string, importance: HighlightImportance) => void;
   onNoteChange: (highlightId: string, note: string) => void;
@@ -133,6 +141,7 @@ export function ThreadPanel({
   appBoundsRef,
   onClose,
   onDelete,
+  onJumpToAnchor,
   onThreadChange,
   onImportanceChange,
   onNoteChange,
@@ -173,6 +182,43 @@ export function ThreadPanel({
   // "no persistence needed" call as ReaderView's own expandedThread/
   // focusMode state.
   const [quoteExpanded, setQuoteExpanded] = useState(false);
+
+  // M35 §D4: this thread's anchors, reading order, fetched once a real
+  // thread exists (a brand-new highlight with no question asked yet has
+  // none). Empty until the fetch resolves — the traversal UI simply doesn't
+  // render for that first paint, same as it never renders for a genuinely
+  // single-anchor thread.
+  const [anchors, setAnchors] = useState<ThreadAnchor[]>([]);
+  const threadId = thread?.id ?? null;
+  useEffect(() => {
+    if (!threadId) {
+      setAnchors([]);
+      return;
+    }
+    let cancelled = false;
+    fetchThreadAnchors(threadId).then((result) => {
+      if (!cancelled && result) setAnchors(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId]);
+
+  // Which anchor the reader is currently looking at — defaults to wherever
+  // `highlightId` (the primary, this panel's own identity) sits in the
+  // fetched list, falling back to the first entry until anchors have loaded.
+  const currentAnchorIndex = Math.max(
+    anchors.findIndex((a) => a.highlightId === highlightId),
+    0,
+  );
+  const currentAnchor = anchors[currentAnchorIndex];
+
+  function handleStepAnchor(direction: "next" | "prev") {
+    if (anchors.length < 2) return;
+    const nextIndex = stepFindCursor(currentAnchorIndex, anchors.length, direction);
+    const nextAnchor = anchors[nextIndex];
+    if (nextAnchor) onJumpToAnchor?.(nextAnchor.highlightId);
+  }
 
   // Shared by mount (below) and the quote-expand toggle further down: a
   // dx/dy that fit the panel's *previous* box can overflow its bounds once
@@ -512,6 +558,8 @@ export function ThreadPanel({
         contextNote: null,
         contextDepth: null,
         contextChapters: [],
+        contextThematicChapters: [],
+        contextMasked: null,
         createdAt: new Date().toISOString(),
         provenance: null,
       };
@@ -532,7 +580,17 @@ export function ThreadPanel({
           streamingTextRef.current += text;
           setStreamingText(streamingTextRef.current);
         },
-        onDone: (messageId, threadId, contextNote, contextUsage, contextDepth, contextChapters, provenance) => {
+        onDone: (
+          messageId,
+          threadId,
+          contextNote,
+          contextUsage,
+          contextDepth,
+          contextChapters,
+          contextThematicChapters,
+          contextMasked,
+          provenance,
+        ) => {
           // M30 E1: the delete-confirmation count elsewhere (margin rail,
           // annotations overview) needs the real total, not a guess through
           // the optimistic-append/retry branching above — read it back off
@@ -549,6 +607,8 @@ export function ThreadPanel({
                 contextNote,
                 contextDepth,
                 contextChapters,
+                contextThematicChapters,
+                contextMasked,
                 createdAt: new Date().toISOString(),
                 provenance,
               },
@@ -677,8 +737,29 @@ export function ThreadPanel({
           onPointerDown={handleQuotePointerDown}
           onClick={handleQuoteClick}
         >
-          &ldquo;{highlightExact}&rdquo;
+          &ldquo;{currentAnchor?.exact ?? highlightExact}&rdquo;
         </button>
+        {/* M35 §D4: only a thread with more than one anchor gets a stepper —
+            the common single-quote case looks exactly as it did before. */}
+        {anchors.length > 1 && (
+          <span className={styles.anchorStepper} aria-live="polite">
+            <IconButton
+              icon="‹"
+              label="Previous passage"
+              size="sm"
+              onClick={() => handleStepAnchor("prev")}
+            />
+            <span className={styles.anchorCount}>
+              {currentAnchorIndex + 1} of {anchors.length}
+            </span>
+            <IconButton
+              icon="›"
+              label="Next passage"
+              size="sm"
+              onClick={() => handleStepAnchor("next")}
+            />
+          </span>
+        )}
         <IconButton icon="×" label="Collapse thread" size="sm" className={styles.closeButton} onClick={onClose} />
       </div>
 
@@ -741,8 +822,14 @@ export function ThreadPanel({
                       message.contextChapters.length > 0
                         ? ` (chapters ${message.contextChapters.join(", ")})`
                         : " (no chapters digested yet)"
+                    }${
+                      message.contextThematicChapters.length > 0
+                        ? ` · thematic ${message.contextThematicChapters.join(", ")}`
+                        : ""
                     }`
                   : `context: ${message.contextDepth}`}
+                {message.contextMasked !== null &&
+                  ` · Lookahead ${message.contextMasked ? "off" : "on"}`}
               </div>
             )}
             {message.role === "assistant" && message.provenance && (

@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type { ScanBookChapter, ScanChapter, ScanData, ScanHighlight } from "@marginalia/shared";
 import { getReadingPosition, getResourceById, getResourceTextSections } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "./highlights.js";
+import { isReaderOrigin } from "./highlightOrigin.js";
 import { listMessagesForThread } from "./threads.js";
 import { listTagsByHighlightId } from "./tags.js";
 import { listThemesByHighlightId } from "./highlightThemes.js";
@@ -9,6 +10,9 @@ import { buildSectionOffsetIndex, locateAnchor } from "./sectionOffsets.js";
 import { listChapterDigests } from "../digest/store.js";
 import { listThematicDigests } from "../digest/thematicStore.js";
 import { listBookThemes } from "../digest/canonicalThemes.js";
+import { getLookahead } from "../digest/lookahead.js";
+import { getShowThematicQuotes } from "../digest/thematicQuoteVisibility.js";
+import { isChapterVisible } from "../digest/visibility.js";
 
 function firstLine(text: string, maxLength = 140): string {
   const line = text.split("\n").find((l) => l.trim().length > 0) ?? "";
@@ -51,7 +55,15 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
     cursor += section.text.length;
   });
 
-  const highlightRows = listHighlightsWithThreadsForResource(db, resourceId);
+  const allHighlightRows = listHighlightsWithThreadsForResource(db, resourceId);
+  // M35 §C6/§C7: two different filters over the same rows, on purpose. The
+  // reader-only set is what "how many highlights" ever means (§C6,
+  // unconditional); the rendered set additionally includes thematic-origin
+  // rows only when the reader has opted in (§C7's toggle, off by default) —
+  // "only my own marks" is the reasonable expectation until then.
+  const readerHighlightRows = allHighlightRows.filter(isReaderOrigin);
+  const showThematicQuotes = getShowThematicQuotes(db, resourceId);
+  const highlightRows = showThematicQuotes ? allHighlightRows : readerHighlightRows;
   const tagsByHighlight = listTagsByHighlightId(db, resourceId);
   const themesByHighlight = listThemesByHighlightId(db, resourceId);
 
@@ -94,16 +106,19 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
   // resolution, gated by the same bookmark signal as the digest page's
   // chapter entries (a theme label past the bookmark is a spoiler too).
   const bookmarkSpineIndex = readingPosition?.spineIndex ?? -1;
+  const noMask = getLookahead(db, resourceId);
   const hasDigest = listChapterDigests(db, resourceId).length > 0;
   const thematicByIndex = new Map(listThematicDigests(db, resourceId).map((t) => [t.spineIndex, t]));
   const bookChapters: ScanBookChapter[] = chapters.map((c) => {
     const t = thematicByIndex.get(c.spineIndex);
-    const revealed = c.spineIndex <= bookmarkSpineIndex;
+    const revealed = isChapterVisible(c.spineIndex, { bookmarkSpineIndex, noMask });
     const hasThematic = Boolean(t) && revealed;
     return {
       spineIndex: c.spineIndex,
       hasThematic,
-      themes: hasThematic ? (t?.themes ?? []) : [],
+      // M35 §C1: the Scan's Book layer still filters/legends by theme name
+      // only — quotes are §E's job (sub-chapter zones), not this layer's.
+      themes: hasThematic ? (t?.themes.map((theme) => theme.name) ?? []) : [],
     };
   });
   // Vocabulary only draws from what's actually shown here — a theme that
@@ -122,7 +137,9 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
 
   return {
     resource,
-    totalHighlights: highlights.length,
+    // §C6: always the reader-only count, independent of whether thematic
+    // rows are currently being painted into `highlights` below.
+    totalHighlights: readerHighlightRows.length,
     lastReadAt: readingPosition?.updatedAt ?? null,
     chapters,
     highlights,

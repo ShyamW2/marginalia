@@ -127,7 +127,10 @@ export class ClaudeAgentProvider implements LLMProvider {
           // *requested* here as a system-prompt instruction, never enforced
           // the way the token-metered providers enforce it. The Settings UI
           // must say so next to the field rather than implying a guarantee.
-          systemPrompt: `${req.instructions}${lengthInstruction(this.maxResponseTokens)}\n\n${req.bookContext}`,
+          systemPrompt: [
+            `${req.instructions}${lengthInstruction(this.maxResponseTokens)}`,
+            ...req.bookContext.map((b) => b.text),
+          ].join("\n\n"),
           maxTurns: 1,
           includePartialMessages: true,
         },

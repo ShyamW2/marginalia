@@ -30,6 +30,14 @@
   font-size: 0.7rem;
 }
 
+/* M34 §B6: an active toggle, not a "coming later" pill — solid border,
+   matching .button/.webSearchPill's compact sizing. */
+.lookaheadPill {
+  min-height: 0;
+  padding: 0.2rem 0.5rem;
+  font-size: 0.7rem;
+}
+
 /* M24.7 §F: the narrow variants — a native `<select>` standing in for the
    segmented group, a plain globe icon standing in for the labelled pill.
    Both narrow controls are in the DOM at every width and hidden by default;
@@ -51,6 +59,10 @@
   display: none;
 }
 
+.lookaheadIcon {
+  display: none;
+}
+
 /* M24.7 §F: measured live, not eyeballed from READER_REDESIGN.md's own
    "~300px" figure — the wide markup (segmented ladder, labelled web pill,
    full-name model dropdown, Send) actually needs ~450px of composer-
@@ -65,10 +77,16 @@
   .webSearchPill {
     display: none;
   }
+  .lookaheadPill {
+    display: none;
+  }
   .ladderSelect {
     display: block;
   }
   .webSearchIcon {
+    display: inline-flex;
+  }
+  .lookaheadIcon {
     display: inline-flex;
   }
 }

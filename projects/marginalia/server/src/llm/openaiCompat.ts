@@ -172,8 +172,10 @@ export class OpenAICompatProvider implements LLMProvider {
 
   async *stream(req: LLMStreamRequest): AsyncIterable<{ text: string }> {
     // No cache API for arbitrary OpenAI-compatible servers — book context
-    // rides in the system message, after the stable instructions.
-    const systemMessage = `${req.instructions}\n\n${req.bookContext}`;
+    // blocks are joined in order after the stable instructions. `cache` is
+    // ignored (M34 §A3), but the ordering itself still helps a
+    // llama.cpp-backed server reuse its own KV cache.
+    const systemMessage = [req.instructions, ...req.bookContext.map((b) => b.text)].join("\n\n");
 
     let response: Response;
     try {

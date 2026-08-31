@@ -285,11 +285,15 @@ export function ScanPage({
       const res = await fetch(`/api/resources/${id}/chapter-anchor`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ spineIndex, quote: "" }),
+        // An empty quote always takes the chapter-start path server-side
+        // (never M35 §B2's chapter-question fallback, which only applies to
+        // a *real* quote that failed to locate) — `text` is unused there.
+        body: JSON.stringify({ spineIndex, quote: "", text: "" }),
       });
       if (!res.ok) return;
-      const highlight = (await res.json()) as { id: string };
-      navigate(`/read/${id}`, { state: { jumpToHighlightId: highlight.id } });
+      const result = (await res.json()) as { highlight: { id: string } | null };
+      if (!result.highlight) return;
+      navigate(`/read/${id}`, { state: { jumpToHighlightId: result.highlight.id } });
     } catch {
       // best-effort — a failed anchor just means the click does nothing
     }

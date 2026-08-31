@@ -6,7 +6,7 @@ import {
 } from "@marginalia/shared";
 import type { ContextLadderDepth, ContextUsage, Highlight, Resource } from "@marginalia/shared";
 import { getDb } from "../db.js";
-import { getHighlightById } from "../annotations/highlights.js";
+import { getHighlightById, listHighlightsForThread } from "../annotations/highlights.js";
 import {
   getReadingPosition,
   getResourceById,
@@ -19,12 +19,15 @@ import {
   getThreadWithMessages,
   listMessagesForThread,
 } from "../annotations/threads.js";
-import { getProvider, LLMError, type LLMErrorCode, type LLMProvider } from "../llm/provider.js";
+import { getProvider, LLMError, type ContextBlock, type LLMErrorCode, type LLMProvider } from "../llm/provider.js";
 import { buildContext, buildDigestContext, buildOffContext, WINDOWED_CONTEXT_NOTE } from "../llm/context.js";
 import { buildMessageProvenance, computeContextUsage, linkUsageToMessage, type UsageLedgerRow } from "../llm/usage.js";
-import { getBookDigest, listChapterDigests } from "../digest/store.js";
+import { getBookDigest } from "../digest/store.js";
 import { resolveContextLadderDepth } from "../digest/ladder.js";
-import { getBrief, hashBrief, listThematicDigests } from "../digest/thematicStore.js";
+import { getBrief, hashBrief } from "../digest/thematicStore.js";
+import { getLookahead } from "../digest/lookahead.js";
+import { isChapterVisible, visibleChapterDigests, visibleThematicDigests } from "../digest/visibility.js";
+import { selectThematicChapters } from "../digest/thematicSelection.js";
 
 export const threadsRouter: Router = Router();
 
@@ -33,13 +36,18 @@ const DIGEST_CHAPTER_UNCOVERED_NOTE =
   "in the rest of the book's digest and the pages around your highlight, not " +
   "a summary of this specific chapter.";
 
-interface ResolvedContext {
+export interface ResolvedContext {
   instructions: string;
-  bookContext: string;
+  bookContext: ContextBlock[];
   userMessage: (question: string) => string;
   contextNote: string | null;
   contextDepth: ContextLadderDepth;
   contextChapters: number[];
+  /** M34 §D: the thematic chapters (§C's ranked selection) that fed this
+   * answer, alongside contextChapters' plot-digest chapters. */
+  contextThematicChapters: number[];
+  /** M34 §D: whether §B5's lookahead mask was applied for this answer. */
+  contextMasked: boolean;
 }
 
 /**
@@ -48,7 +56,7 @@ interface ResolvedContext {
  * shape so the caller (streamThreadReply / the two routes below) doesn't
  * need to know which one ran — only the "answer transparency" record does.
  */
-function resolveContext(
+export function resolveContext(
   db: Database.Database,
   provider: LLMProvider,
   resource: Resource,
@@ -59,6 +67,19 @@ function resolveContext(
   const readingPosition = getReadingPosition(db, resource.id) ?? null;
   const bookDigest = getBookDigest(db, resource.id);
   const depth = resolveContextLadderDepth(db, resource.id, Boolean(bookDigest));
+
+  // M34 §B: the mask, applied at every rung that reads it. The highlight's
+  // own chapter is always visible regardless of the bookmark — the reader
+  // is actively asking about it, and a stale/lagging bookmark must never
+  // make that chapter read as masked (it would show as "not digested yet"
+  // instead, a different and misleading designed state).
+  const bookmarkSpineIndex = readingPosition?.spineIndex ?? -1;
+  const noMask = getLookahead(db, resource.id);
+  const visibilityOpts = {
+    bookmarkSpineIndex,
+    revealedSpineIndices: new Set([highlight.spineIndex]),
+    noMask,
+  };
 
   if (depth === "off") {
     const built = buildOffContext({
@@ -76,15 +97,29 @@ function resolveContext(
       contextNote: null,
       contextDepth: "off",
       contextChapters: [],
+      contextThematicChapters: [],
+      contextMasked: !noMask,
     };
   }
 
   if (depth === "digest") {
-    const chapterDigests = listChapterDigests(db, resource.id);
+    // §B2: stops shipping every chapter's summary and analysis — only what
+    // the mask allows through.
+    const chapterDigests = visibleChapterDigests(db, resource.id, visibilityOpts);
     const currentBriefHash = hashBrief(getBrief(db, resource.id).text);
-    const thematicChapters = listThematicDigests(db, resource.id)
+    const thematicCandidates = visibleThematicDigests(db, resource.id, visibilityOpts)
       .filter((t) => t.briefHash === currentBriefHash)
-      .map((t) => ({ spineIndex: t.spineIndex, analysis: t.analysis, themes: t.themes }));
+      // M35 §C1: the context ladder's thematic block only ever names themes
+      // (context.ts's DigestThematicSummary), never quotes them.
+      .map((t) => ({ spineIndex: t.spineIndex, analysis: t.analysis, themes: t.themes.map((theme) => theme.name) }));
+    // M34 §C: narrowed from "every visible, briefed chapter" to the
+    // highlight's own chapter, the previous one, and a ranked few more.
+    const thematicChapters = selectThematicChapters(
+      db,
+      resource.id,
+      thematicCandidates,
+      highlight.spineIndex,
+    );
     const built = buildDigestContext({
       title: resource.title,
       author: resource.author,
@@ -105,13 +140,18 @@ function resolveContext(
       contextNote: built.highlightChapterCovered ? null : DIGEST_CHAPTER_UNCOVERED_NOTE,
       contextDepth: "digest",
       contextChapters: built.chaptersUsed,
+      contextThematicChapters: built.thematicChaptersUsed,
+      contextMasked: !noMask,
     };
   }
 
+  // §B4: Full is masked as well — it used to ship the literal text of
+  // unread chapters, stopped only by a sentence in the instructions.
+  const visibleSections = sections.filter((s) => isChapterVisible(s.spineIndex, visibilityOpts));
   const built = buildContext({
     title: resource.title,
     author: resource.author,
-    sections,
+    sections: visibleSections,
     highlight,
     contextTokens: provider.capabilities().contextTokens,
     chapterTitles,
@@ -124,6 +164,8 @@ function resolveContext(
     contextNote: built.windowed ? WINDOWED_CONTEXT_NOTE : null,
     contextDepth: "full",
     contextChapters: [],
+    contextThematicChapters: [],
+    contextMasked: !noMask,
   };
 }
 
@@ -155,7 +197,13 @@ function persistExchange(
   threadId: string,
   userContent: string,
   assistantContent: string,
-  transparency: { contextNote: string | null; contextDepth: ContextLadderDepth; contextChapters: number[] },
+  transparency: {
+    contextNote: string | null;
+    contextDepth: ContextLadderDepth;
+    contextChapters: number[];
+    contextThematicChapters: number[];
+    contextMasked: boolean;
+  },
 ) {
   const run = db.transaction(() => {
     createMessage(db, threadId, "user", userContent);
@@ -176,10 +224,16 @@ async function streamThreadReply(
   threadId: string,
   provider: LLMProvider,
   instructions: string,
-  bookContext: string,
+  bookContext: ContextBlock[],
   messages: { role: "user" | "assistant"; content: string }[],
   userContent: string,
-  transparency: { contextNote: string | null; contextDepth: ContextLadderDepth; contextChapters: number[] },
+  transparency: {
+    contextNote: string | null;
+    contextDepth: ContextLadderDepth;
+    contextChapters: number[];
+    contextThematicChapters: number[];
+    contextMasked: boolean;
+  },
   /** M17 "context-window readout": populated by the usage-ledger wrapper's
    * onLogged callback once the call completes — read here rather than
    * re-querying the ledger, which would race concurrent requests. Also the
@@ -216,6 +270,11 @@ async function streamThreadReply(
       instructions,
       bookContext,
       messages,
+      // M34 §A6: the query role's cache breakpoints live an hour, not the
+      // 5-minute default — a reader who reads for a while before asking
+      // should still land on a warm cache. Ignored by every non-Anthropic
+      // provider and by any block that isn't itself marked `cache`.
+      cacheTtl: "1h",
       signal: controller.signal,
     })) {
       if (disconnected) break;
@@ -240,6 +299,8 @@ async function streamThreadReply(
           contextUsage,
           contextDepth: transparency.contextDepth,
           contextChapters: transparency.contextChapters,
+          contextThematicChapters: transparency.contextThematicChapters,
+          contextMasked: transparency.contextMasked,
           provenance: buildMessageProvenance(db, usageRowRef.current),
         })}\n\n`,
       );
@@ -291,8 +352,16 @@ threadsRouter.post("/", async (req, res) => {
   const thread = getOrCreateThread(db, highlightId);
   const priorMessages = listMessagesForThread(db, thread.id);
 
-  const { instructions, bookContext, userMessage, contextNote, contextDepth, contextChapters } =
-    resolveContext(db, provider, resource, highlight);
+  const {
+    instructions,
+    bookContext,
+    userMessage,
+    contextNote,
+    contextDepth,
+    contextChapters,
+    contextThematicChapters,
+    contextMasked,
+  } = resolveContext(db, provider, resource, highlight);
 
   // The highlight-quote framing only belongs on the thread's first question —
   // repeating it on every follow-up would waste tokens and read oddly.
@@ -312,7 +381,7 @@ threadsRouter.post("/", async (req, res) => {
     bookContext,
     providerMessages,
     userContent,
-    { contextNote, contextDepth, contextChapters },
+    { contextNote, contextDepth, contextChapters, contextThematicChapters, contextMasked },
     usageRowRef,
     provider.capabilities().contextTokens,
   );
@@ -355,12 +424,15 @@ threadsRouter.post("/:id/messages", async (req, res) => {
   }
 
   const priorMessages = listMessagesForThread(db, thread.id);
-  const { instructions, bookContext, contextNote, contextDepth, contextChapters } = resolveContext(
-    db,
-    provider,
-    resource,
-    highlight,
-  );
+  const {
+    instructions,
+    bookContext,
+    contextNote,
+    contextDepth,
+    contextChapters,
+    contextThematicChapters,
+    contextMasked,
+  } = resolveContext(db, provider, resource, highlight);
 
   const providerMessages = [
     ...priorMessages.map((m) => ({ role: m.role, content: m.content })),
@@ -376,7 +448,7 @@ threadsRouter.post("/:id/messages", async (req, res) => {
     bookContext,
     providerMessages,
     question,
-    { contextNote, contextDepth, contextChapters },
+    { contextNote, contextDepth, contextChapters, contextThematicChapters, contextMasked },
     usageRowRef,
     provider.capabilities().contextTokens,
   );
@@ -389,4 +461,33 @@ threadsRouter.get("/:id", (req, res) => {
     return;
   }
   res.json(thread);
+});
+
+/**
+ * M35 §D4: every anchor of a thread, reading-order — the client's `< >`
+ * traversal fetches this once per opened panel rather than getting anchors
+ * bundled onto every highlight in the resource's own list (which would grow
+ * that response for a feature only a multi-anchor thread ever uses).
+ */
+threadsRouter.get("/:id/anchors", (req, res) => {
+  const db = getDb();
+  const thread = getThreadById(db, req.params.id);
+  if (!thread) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  let sources = listHighlightsForThread(db, thread.id);
+  // Falls back to the primary alone if thread_anchors somehow has nothing —
+  // shouldn't happen (createThread and migration 34 both guarantee
+  // coverage), but a thread must never report zero anchors of its own.
+  if (sources.length === 0) {
+    const primary = getHighlightById(db, thread.highlightId);
+    if (primary) sources = [primary];
+  }
+  const anchors = sources.map((h) => ({
+    highlightId: h.id,
+    exact: h.exact,
+    spineIndex: h.spineIndex,
+  }));
+  res.json({ anchors });
 });

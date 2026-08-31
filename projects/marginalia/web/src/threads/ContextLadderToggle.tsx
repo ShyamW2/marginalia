@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ContextLadderDepth } from "@marginalia/shared";
 import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
-import { GlobeIcon } from "../controls/icons.js";
+import { EyeIcon, GlobeIcon } from "../controls/icons.js";
 import styles from "./ContextLadderToggle.module.css";
 
 const DEPTHS: { value: ContextLadderDepth; label: string; title: string }[] = [
@@ -32,6 +32,52 @@ async function putDepth(resourceId: string, depth: ContextLadderDepth): Promise<
   });
 }
 
+// M34 §B5/§B6: the lookahead/spoilers toggle — independent of depth above,
+// same fetch/put shape.
+async function fetchLookahead(resourceId: string): Promise<boolean | null> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/lookahead`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { enabled: boolean };
+    return body.enabled;
+  } catch {
+    return null;
+  }
+}
+
+async function putLookahead(resourceId: string, enabled: boolean): Promise<void> {
+  await fetch(`/api/resources/${resourceId}/lookahead`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  }).catch(() => {
+    // best-effort, same as putDepth above
+  });
+}
+
+// M35 §C7: the thematic-quotes show/hide toggle — same fetch/put shape as
+// lookahead above, its own independent setting.
+async function fetchShowThematicQuotes(resourceId: string): Promise<boolean | null> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/show-thematic-quotes`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { enabled: boolean };
+    return body.enabled;
+  } catch {
+    return null;
+  }
+}
+
+async function putShowThematicQuotes(resourceId: string, enabled: boolean): Promise<void> {
+  await fetch(`/api/resources/${resourceId}/show-thematic-quotes`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  }).catch(() => {
+    // best-effort, same as putDepth above
+  });
+}
+
 /**
  * M17 "the context ladder (the brain button)": Off / Digest / Full,
  * remembered per book (decisions.md 2026-07-28 later). Lives in the
@@ -42,11 +88,19 @@ async function putDepth(resourceId: string, depth: ContextLadderDepth): Promise<
  */
 export function ContextLadderToggle({ resourceId }: { resourceId: string }) {
   const [depth, setDepth] = useState<ContextLadderDepth | null>(null);
+  const [lookahead, setLookahead] = useState<boolean | null>(null);
+  const [showThematicQuotes, setShowThematicQuotes] = useState<boolean | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     fetchDepth(resourceId).then((d) => {
       if (!cancelled) setDepth(d);
+    });
+    fetchLookahead(resourceId).then((enabled) => {
+      if (!cancelled) setLookahead(enabled);
+    });
+    fetchShowThematicQuotes(resourceId).then((enabled) => {
+      if (!cancelled) setShowThematicQuotes(enabled);
     });
     return () => {
       cancelled = true;
@@ -58,7 +112,27 @@ export function ContextLadderToggle({ resourceId }: { resourceId: string }) {
     void putDepth(resourceId, next);
   }
 
+  function handleToggleLookahead() {
+    setLookahead((prev) => {
+      const next = !prev;
+      void putLookahead(resourceId, next);
+      return next;
+    });
+  }
+
+  function handleToggleShowThematicQuotes() {
+    setShowThematicQuotes((prev) => {
+      const next = !prev;
+      void putShowThematicQuotes(resourceId, next);
+      return next;
+    });
+  }
+
   if (depth === null) return null;
+
+  const lookaheadTitle = lookahead
+    ? "Lookahead is on — no chapter is masked as a spoiler"
+    : "Lookahead is off — chapters past your bookmark are masked as spoilers";
 
   return (
     <div className={styles.row}>
@@ -112,6 +186,33 @@ export function ContextLadderToggle({ resourceId }: { resourceId: string }) {
       >
         Web search
       </Button>
+      {/* M34 §B6: same register as the ladder above, its own control — a
+          word, not a sentence ("Lookahead"), with the sentence in the
+          title. Wide/narrow dual-render matches the web-search pill/icon
+          pair this sits beside. */}
+      {lookahead !== null && (
+        <>
+          <Button
+            variant="outline"
+            size="sm"
+            className={styles.lookaheadPill}
+            pressed={lookahead}
+            title={lookaheadTitle}
+            onClick={handleToggleLookahead}
+          >
+            Lookahead
+          </Button>
+          <IconButton
+            icon={<EyeIcon size={16} />}
+            label={lookaheadTitle}
+            variant="outline"
+            size="sm"
+            className={styles.lookaheadIcon}
+            pressed={lookahead}
+            onClick={handleToggleLookahead}
+          />
+        </>
+      )}
       <IconButton
         icon={<GlobeIcon size={16} />}
         label="Web search — coming in a later milestone"
@@ -120,6 +221,39 @@ export function ContextLadderToggle({ resourceId }: { resourceId: string }) {
         className={styles.webSearchIcon}
         disabled
       />
+      {/* M35 §C7: "only my own marks" is the reasonable default — off unless
+          the reader opts in. Same wide/narrow dual-render as lookahead. */}
+      {showThematicQuotes !== null && (
+        <>
+          <Button
+            variant="outline"
+            size="sm"
+            className={styles.lookaheadPill}
+            pressed={showThematicQuotes}
+            title={
+              showThematicQuotes
+                ? "Showing the thematic pass's proposed quotes in the text"
+                : "Thematic quotes are hidden — only your own marks show"
+            }
+            onClick={handleToggleShowThematicQuotes}
+          >
+            Thematic quotes
+          </Button>
+          <IconButton
+            icon="“"
+            label={
+              showThematicQuotes
+                ? "Showing the thematic pass's proposed quotes in the text"
+                : "Thematic quotes are hidden — only your own marks show"
+            }
+            variant="outline"
+            size="sm"
+            className={styles.lookaheadIcon}
+            pressed={showThematicQuotes}
+            onClick={handleToggleShowThematicQuotes}
+          />
+        </>
+      )}
     </div>
   );
 }

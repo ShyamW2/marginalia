@@ -1,4 +1,5 @@
 import type { ResourceTextSection } from "../library/store.js";
+import type { ContextBlock } from "./provider.js";
 
 // M19.5 "let thematic questions be thematic" (decisions.md 2026-07-29
 // later): the old instructions treated anything outside the book as a
@@ -72,7 +73,10 @@ export interface ContextBuildInput {
 
 export interface BuiltContext {
   instructions: string;
-  bookContext: string;
+  /** M34 §A: an ordered list of blocks, stable material first, each
+   * optionally marked for provider-side caching — never a single joined
+   * string (see provider.ts's ContextBlock). */
+  bookContext: ContextBlock[];
   userMessage: (question: string) => string;
   /** M17 "surface silent windowing": true when `selectWindow` dropped
    * distant sections to fit the budget — the book was too long to send
@@ -212,7 +216,7 @@ export function buildContext(input: ContextBuildInput): BuiltContext {
     ? selectWindow(sorted, input.highlight.spineIndex, budget)
     : sorted;
 
-  const bookContext = renderBookContext(
+  const text = renderBookContext(
     input.title,
     input.author,
     sections,
@@ -223,7 +227,11 @@ export function buildContext(input: ContextBuildInput): BuiltContext {
 
   return {
     instructions: READING_COMPANION_INSTRUCTIONS,
-    bookContext,
+    // M34 §A5: a single block, marked for caching — except when windowing
+    // fired. A windowed Full context is highlight-dependent (the window is
+    // centered on the highlight's section), so there is no stable prefix to
+    // cache; marking it would create a cache entry that is never read back.
+    bookContext: [{ text, cache: !windowed }],
     userMessage: (question: string) => standardUserMessage(input.highlight, positionLine, question),
     windowed,
   };
@@ -283,6 +291,11 @@ export interface BuiltLadderContext extends BuiltContext {
   /** Spine indices of chapter digests actually included (Digest rung only —
    * always [] for Off). Used for the "answer transparency" record. */
   chaptersUsed: number[];
+  /** M34 §D: spine indices of chapters whose *thematic* essay (§C's
+   * narrower, ranked selection) actually made it into the block — distinct
+   * from chaptersUsed's plot-digest chapters. Always [] for Off, and for
+   * Digest whenever no thematic layer rides along. */
+  thematicChaptersUsed: number[];
   /** False when the highlight's own chapter has no digest row — decisions.md:
    * "the UI says so rather than silently answering from less." */
   highlightChapterCovered: boolean;
@@ -292,14 +305,17 @@ export interface BuiltLadderContext extends BuiltContext {
  * neighbors, no digest, no whole book. */
 export function buildOffContext(input: LadderContextInput): BuiltLadderContext {
   const pages = surroundingSections(input.sections, input.highlight.spineIndex);
-  const bookContext = renderBookContext(input.title, input.author, pages, input.chapterTitles);
+  const text = renderBookContext(input.title, input.author, pages, input.chapterTitles);
   const positionLine = renderPositionLine(input.readingPosition, input.chapterTitles);
   return {
     instructions: READING_COMPANION_INSTRUCTIONS,
-    bookContext,
+    // Highlight-dependent (recentered every question) and tiny — no stable
+    // prefix worth a cache breakpoint, same reasoning as A5's windowed Full.
+    bookContext: [{ text, cache: false }],
     userMessage: (question) => standardUserMessage(input.highlight, positionLine, question),
     windowed: false,
     chaptersUsed: [],
+    thematicChaptersUsed: [],
     highlightChapterCovered: false,
   };
 }
@@ -380,12 +396,23 @@ export function buildDigestContext(input: DigestContextInput): BuiltLadderContex
     })
     .join("\n\n");
 
-  const bookContext =
-    `${header}\n\n` +
-    `BOOK DIGEST\n${bookPart}\n\n` +
-    `CHAPTER SUMMARIES\n${chapterDigestText || "(no chapters digested yet)"}\n\n` +
-    (thematicText ? `THEMATIC READING (the reader's own angle on these chapters)\n${thematicText}\n\n` : "") +
-    `FULL TEXT AROUND THE HIGHLIGHT\n${pagesText}`;
+  // M34 §A4: stable material first, marked for caching — the highlight's
+  // surrounding pages are the *only* thing that varies per question, so
+  // they ride in a second, unmarked block. A block that varies placed ahead
+  // of the marker would make the marker worthless. Joined with "\n\n" (never
+  // embedded as a trailing separator) so every non-Anthropic provider's own
+  // "\n\n"-join of the two blocks reproduces the pre-§A single string byte
+  // for byte, whether or not the thematic section is present.
+  const stableParts = [
+    header,
+    `BOOK DIGEST\n${bookPart}`,
+    `CHAPTER SUMMARIES\n${chapterDigestText || "(no chapters digested yet)"}`,
+  ];
+  if (thematicText) {
+    stableParts.push(`THEMATIC READING (the reader's own angle on these chapters)\n${thematicText}`);
+  }
+  const stableText = stableParts.join("\n\n");
+  const varyingText = `FULL TEXT AROUND THE HIGHLIGHT\n${pagesText}`;
 
   const positionLine = renderPositionLine(input.readingPosition, input.chapterTitles);
   const highlightChapterCovered = sortedDigests.some(
@@ -394,10 +421,14 @@ export function buildDigestContext(input: DigestContextInput): BuiltLadderContex
 
   return {
     instructions: READING_COMPANION_INSTRUCTIONS,
-    bookContext,
+    bookContext: [
+      { text: stableText, cache: true },
+      { text: varyingText, cache: false },
+    ],
     userMessage: (question) => standardUserMessage(input.highlight, positionLine, question),
     windowed: false,
     chaptersUsed: sortedDigests.map((c) => c.spineIndex),
+    thematicChaptersUsed: sortedThematic.map((t) => t.spineIndex),
     highlightChapterCovered,
   };
 }

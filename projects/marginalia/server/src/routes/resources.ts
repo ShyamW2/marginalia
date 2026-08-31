@@ -20,8 +20,10 @@ import {
   setShelfState,
 } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
+import { isReaderOrigin } from "../annotations/highlightOrigin.js";
 import { buildScanData } from "../annotations/scan.js";
 import { searchResource } from "../annotations/search.js";
+import { getShowThematicQuotes } from "../digest/thematicQuoteVisibility.js";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -171,12 +173,20 @@ resourcesRouter.put("/:id/shelf", (req, res) => {
 });
 
 resourcesRouter.get("/:id/highlights", (req, res) => {
-  const resource = getResourceById(getDb(), req.params.id);
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
   if (!resource) {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  res.json(listHighlightsWithThreadsForResource(getDb(), req.params.id));
+  const all = listHighlightsWithThreadsForResource(db, req.params.id);
+  // M35 §C7: off by default — a thematic-origin highlight (§C5) never
+  // reaches the client (so it never paints inline, never appears in the
+  // margin rail) until the reader opts in. §C6's own unconditional
+  // exclusion from the count/Annotations list/vault is separate and applies
+  // even when this toggle is on; the client re-filters for that itself.
+  const highlights = getShowThematicQuotes(db, req.params.id) ? all : all.filter(isReaderOrigin);
+  res.json(highlights);
 });
 
 resourcesRouter.get("/:id/scan", (req, res) => {

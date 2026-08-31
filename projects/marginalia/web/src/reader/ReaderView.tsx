@@ -90,6 +90,8 @@ import { DwellRing } from "./DwellRing.js";
 import { AskPill } from "./AskPill.js";
 import { MarginRail } from "./MarginRail.js";
 import { ThreadPanel } from "../threads/ThreadPanel.js";
+import { resolveOpenHighlightId } from "../threads/resolvePrimaryAnchor.js";
+import { isReaderOrigin } from "../highlights/highlightOrigin.js";
 import { AnnotationsOverview } from "./AnnotationsOverview.js";
 import { DefinitionCard, type DefinitionCardState } from "./DefinitionCard.js";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog.js";
@@ -999,6 +1001,13 @@ export function ReaderView({
   // live — the previewed (not yet committed) whole-book percent.
   const [scrubPreviewPercent, setScrubPreviewPercent] = useState<number | null>(null);
   const [highlights, setHighlights] = useState<HighlightWithThread[]>([]);
+  // M35 §C6: the count badge and the Annotations list are "the reader's own
+  // marks" unconditionally — never inflated by a thematic-origin highlight
+  // (§C5) even when §C7's toggle has let one into `highlights` above so it
+  // can render inline. Every other consumer of `highlights` (marks, margin
+  // rail) is deliberately left unfiltered — that's where the toggle's own
+  // effect is supposed to show.
+  const readerHighlights = useMemo(() => highlights.filter(isReaderOrigin), [highlights]);
   const [unanchoredIds, setUnanchoredIds] = useState<Set<string>>(new Set());
   const [pendingSelection, setPendingSelection] =
     useState<PendingSelection | null>(null);
@@ -2652,8 +2661,11 @@ export function ReaderView({
       // A click on a highlight mark also fires as a content 'click' below —
       // handleContentClick's own mark hit-test (M19.6) is what keeps that
       // from also turning the page. Clicking a highlight expands its thread.
+      // M35 §D3: a click on a non-primary anchor resolves to the thread's
+      // primary — the one annotation, not a second one on this passage.
       if (data.highlightId) {
-        setExpandedThread({ highlightId: data.highlightId, top: DEFAULT_THREAD_PANEL_TOP });
+        const highlightId = resolveOpenHighlightId(highlightsRef.current, data.highlightId);
+        setExpandedThread({ highlightId, top: DEFAULT_THREAD_PANEL_TOP });
       }
     }
     rendition.on("markClicked", handleMarkClicked);
@@ -2978,6 +2990,10 @@ export function ReaderView({
         highlightsRef.current = resourceHighlights;
         setHighlights(resourceHighlights);
 
+        // M35 §D3: navigate to the *clicked* passage (a secondary anchor's
+        // own location, if that's what was clicked — the whole point of
+        // clicking a specific dot in the Scan), but open the panel on the
+        // thread's primary, so it's the one real annotation that appears.
         const jumpTarget = initialHighlightId
           ? resourceHighlights.find((h) => h.id === initialHighlightId)
           : undefined;
@@ -2996,7 +3012,7 @@ export function ReaderView({
         onReady?.();
         if (jumpTarget) {
           setExpandedThread({
-            highlightId: jumpTarget.id,
+            highlightId: resolveOpenHighlightId(resourceHighlights, jumpTarget.id),
             top: DEFAULT_THREAD_PANEL_TOP,
             initialDraft: initialQuestion,
           });
@@ -3449,8 +3465,24 @@ export function ReaderView({
     renditionRef.current?.display(highlight.cfi);
   }
 
+  /** M35 §D4: `< >` traversal inside an open ThreadPanel — moves the reader
+   * to another of the *same* thread's anchors without touching
+   * `expandedThread` (which would remount the panel by its `key` and lose
+   * the traversal position and any in-progress editing). */
+  function handleJumpToAnchor(highlightId: string) {
+    const anchor = highlightsRef.current.find((h) => h.id === highlightId);
+    if (anchor) handleNavigateToHighlight(anchor);
+  }
+
+  /** M35 §D3: resolves to the thread's primary when `highlight` is itself a
+   * non-primary anchor — the caller (margin rail dot, annotations overview
+   * row, glossary entry) navigates to `highlight`'s own passage separately,
+   * so only the panel's identity needs resolving here. */
   function handleOpenThread(highlight: HighlightWithThread) {
-    setExpandedThread({ highlightId: highlight.id, top: DEFAULT_THREAD_PANEL_TOP });
+    setExpandedThread({
+      highlightId: highlight.primaryHighlightId ?? highlight.id,
+      top: DEFAULT_THREAD_PANEL_TOP,
+    });
   }
 
   /**
@@ -3476,11 +3508,19 @@ export function ReaderView({
    * anchored highlight (the same seam the digest page's own question chips
    * use — decision 11: the model returns text, code locates it) and opens a
    * thread on it, pre-filled, without navigating away from wherever the
-   * reader currently is. */
+   * reader currently is.
+   *
+   * M35 §B2: a quote that can't be located no longer produces a
+   * mis-anchored highlight here — it's seeded as a chapter-level question
+   * instead (visible on the Digest page's own box for that chapter). There's
+   * no highlight to open a thread on in that case, so this deliberately
+   * degrades to no-op rather than opening a thread on the wrong passage.
+   */
   async function handleChapterEndAsk(spineIndex: number, question: ThematicQuestion) {
     setChapterEndPrompt(null);
-    const created = await createChapterAnchor(resourceId, spineIndex, question.quote);
-    if (!created) return;
+    const result = await createChapterAnchor(resourceId, spineIndex, question.quote, question.text);
+    if (!result?.highlight) return;
+    const created = result.highlight;
     setHighlights(await fetchHighlights(resourceId));
     setExpandedThread({
       highlightId: created.id,
@@ -3799,7 +3839,7 @@ export function ReaderView({
               aria-label={focusMode ? "Notes hidden — press N to show" : undefined}
               title={focusMode ? "Notes hidden — press N to show" : undefined}
             >
-              Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
+              Annotations{readerHighlights.length > 0 ? ` (${readerHighlights.length})` : ""}
               {unanchoredIds.size > 0 && (
                 <span className={styles.unanchoredBadge} title="Some highlights couldn't be relocated">
                   {unanchoredIds.size}
@@ -4144,6 +4184,7 @@ export function ReaderView({
                 appBoundsRef={appBoundsRef}
                 onClose={() => setExpandedThread(null)}
                 onDelete={() => handleDeleteHighlight(expandedHighlight)}
+                onJumpToAnchor={handleJumpToAnchor}
                 onThreadChange={handleThreadChange}
                 onImportanceChange={handleImportanceChange}
                 onNoteChange={handleNoteChange}
@@ -4196,7 +4237,7 @@ export function ReaderView({
             {showAnnotations && (
               <AnnotationsOverview
                 key="annotations-overview"
-                highlights={highlights}
+                highlights={readerHighlights}
                 unanchoredIds={unanchoredIds}
                 onJumpTo={handleJumpToHighlight}
                 onDelete={handleDeleteHighlight}

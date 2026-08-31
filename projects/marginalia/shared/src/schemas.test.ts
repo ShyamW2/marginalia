@@ -48,6 +48,8 @@ describe("schemas smoke test", () => {
         contextUsage: null,
         contextDepth: "full",
         contextChapters: [],
+        contextThematicChapters: [],
+        contextMasked: false,
         // M22.5 H: the byline the reader shows without a second round trip.
         // Nullable, but required — a done event that omits it is a bug.
         provenance: {
@@ -67,6 +69,8 @@ describe("schemas smoke test", () => {
         contextUsage: null,
         contextDepth: "full",
         contextChapters: [],
+        contextThematicChapters: [],
+        contextMasked: false,
         provenance: null,
       }).success,
     ).toBe(true);

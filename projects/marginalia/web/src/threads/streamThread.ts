@@ -14,6 +14,8 @@ export interface ThreadStreamHandlers {
     contextUsage: ContextUsage | null,
     contextDepth: ContextLadderDepth,
     contextChapters: number[],
+    contextThematicChapters: number[],
+    contextMasked: boolean,
     provenance: MessageProvenance | null,
   ) => void;
   onError: (message: string) => void;
@@ -109,6 +111,8 @@ function dispatchEvent(rawEvent: string, handlers: ThreadStreamHandlers): void {
       event.data.contextUsage,
       event.data.contextDepth,
       event.data.contextChapters,
+      event.data.contextThematicChapters,
+      event.data.contextMasked,
       event.data.provenance,
     );
   } else if ("error" in event.data) handlers.onError(event.data.error);

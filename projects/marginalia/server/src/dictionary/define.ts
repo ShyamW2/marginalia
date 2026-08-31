@@ -4,8 +4,10 @@ import { findAllOccurrences, isDefinableTerm, normalizeDefineTerm } from "@margi
 import { sectionLabel } from "../llm/context.js";
 import { getProvider, LLMError } from "../llm/provider.js";
 import { getRoleProfileRaw } from "../settings/providers.js";
-import { getBookDigest, listChapterDigests } from "../digest/store.js";
-import { getResourceTextSections } from "../library/store.js";
+import { getBookDigest, getBookDigestSnapshot } from "../digest/store.js";
+import { getLookahead } from "../digest/lookahead.js";
+import { isChapterVisible, visibleChapterDigests } from "../digest/visibility.js";
+import { getReadingPosition, getResourceTextSections } from "../library/store.js";
 import { getDictionary } from "./wordnet.js";
 
 /**
@@ -186,10 +188,13 @@ const MAX_OCCURRENCES = 6;
 
 /**
  * Every place the term is used in the book, as short quoted windows in
- * reading order, within a fixed character budget. Deliberately unaware of
- * the reader's position: a definition is not spoiler-gated the way a
- * thematic question is (routes/digest.ts:375) — the reader is holding the
- * word in front of them, so where else it appears is not a reveal.
+ * reading order, within a fixed character budget. The term itself isn't a
+ * spoiler — the reader is holding it in front of them — but the ~640
+ * characters of surrounding prose around an occurrence in an unread chapter
+ * can be (M34 §B3: "Define is currently the app's widest spoiler surface").
+ * The caller masks `sections` before calling this; this function stays
+ * unaware of the reader's position, same as it was before §B3 — it just
+ * never sees an occurrence it shouldn't.
  */
 export function occurrenceWindows(
   sections: { spineIndex: number; text: string }[],
@@ -221,7 +226,7 @@ export function occurrenceWindows(
  * for the one caller that asks about a word would make every reader of it
  * check which kind it was looking at.
  */
-function buildDefineContext(
+export function buildDefineContext(
   db: Database.Database,
   resource: Resource,
   highlight: Highlight,
@@ -230,7 +235,20 @@ function buildDefineContext(
   const chapterTitles = resource.metadata.chapterTitles;
   const header = resource.author ? `${resource.title} by ${resource.author}` : resource.title;
 
-  const digest = getBookDigest(db, resource.id);
+  // M34 §B3: Define was the app's widest spoiler surface — full synopsis,
+  // full cast, and every occurrence of the term anywhere in the book, none
+  // of it gated by the reader's position. Routed through the same mask
+  // every other reader-facing consumer uses, with the highlight's own
+  // chapter always visible (the reader is looking at it right now).
+  const bookmarkSpineIndex = getReadingPosition(db, resource.id)?.spineIndex ?? -1;
+  const noMask = getLookahead(db, resource.id);
+  const visibilityOpts = {
+    bookmarkSpineIndex,
+    revealedSpineIndices: new Set([highlight.spineIndex]),
+    noMask,
+  };
+
+  const digest = noMask ? getBookDigest(db, resource.id) : getBookDigestSnapshot(db, resource.id);
   const bookPart = digest
     ? `Synopsis: ${digest.synopsis}\n\n` +
       `Cast: ${digest.cast.map((c) => `${c.name} (${c.description})`).join("; ") || "none listed"}\n\n` +
@@ -239,7 +257,7 @@ function buildDefineContext(
 
   // The term's own chapter first, then outward — a budget that ran out
   // should spend what it had on the chapter the reader is in.
-  const chapters = [...listChapterDigests(db, resource.id)].sort(
+  const chapters = [...visibleChapterDigests(db, resource.id, visibilityOpts)].sort(
     (a, b) =>
       Math.abs(a.spineIndex - highlight.spineIndex) -
       Math.abs(b.spineIndex - highlight.spineIndex),
@@ -256,7 +274,9 @@ function buildDefineContext(
     .map((c) => `--- [${sectionLabel(c.spineIndex, chapterTitles)} digest] ---\n${c.summary}`)
     .join("\n\n");
 
-  const sections = getResourceTextSections(db, resource.id);
+  const sections = getResourceTextSections(db, resource.id).filter((s) =>
+    isChapterVisible(s.spineIndex, visibilityOpts),
+  );
   const windows = occurrenceWindows(sections, term, chapterTitles);
 
   return (
@@ -369,7 +389,18 @@ export async function* deepenDefinition(
 
   try {
     yield stepEvent(`Searching "${resource.title}" for "${term}"…`);
-    const sections = getResourceTextSections(db, resource.id);
+    // M34 §B3: mask here too, matching buildDefineContext's own filter —
+    // otherwise the narration's occurrence count could name a chapter the
+    // grounding below doesn't actually include.
+    const bookmarkSpineIndex = getReadingPosition(db, resource.id)?.spineIndex ?? -1;
+    const noMask = getLookahead(db, resource.id);
+    const sections = getResourceTextSections(db, resource.id).filter((s) =>
+      isChapterVisible(s.spineIndex, {
+        bookmarkSpineIndex,
+        revealedSpineIndices: new Set([highlight.spineIndex]),
+        noMask,
+      }),
+    );
     const windows = occurrenceWindows(sections, term, resource.metadata.chapterTitles);
     yield stepEvent(
       windows.length > 0
@@ -382,7 +413,9 @@ export async function* deepenDefinition(
     let answer = "";
     for await (const chunk of provider.stream({
       instructions: DEFINE_INSTRUCTIONS,
-      bookContext,
+      // A one-shot lookup, never repeated for the same term — no cache
+      // breakpoint would ever be read back.
+      bookContext: [{ text: bookContext, cache: false }],
       messages: [{ role: "user", content: `Define this term as it is used here: "${term}"` }],
     })) {
       answer += chunk.text;

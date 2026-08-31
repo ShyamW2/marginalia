@@ -38,6 +38,7 @@ describe("tagHighlightThemes", () => {
       cfi: "epubcfi(/6/4!/4/2)",
       spineIndex: 0,
       kind: "rose" as const,
+      origin: "reader" as const,
       importance: 0 as const,
       note: "",
       panelDx: 0,
@@ -67,6 +68,7 @@ describe("tagHighlightThemes", () => {
       cfi: "epubcfi(/6/4!/4/2)",
       spineIndex: 0,
       kind: "rose" as const,
+      origin: "reader" as const,
       importance: 0 as const,
       note: "",
       panelDx: 0,
@@ -93,7 +95,7 @@ describe("runThemeTagging", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["autonomy", "consequence"],
+      themes: [{ name: "autonomy", quotes: ["q"] }, { name: "consequence", quotes: ["q"] }],
       questions: [],
     });
     const highlight = createHighlight(db, {
@@ -122,7 +124,7 @@ describe("runThemeTagging", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["autonomy"],
+      themes: [{ name: "autonomy", quotes: ["q"] }],
       questions: [],
     });
     createHighlight(db, {
@@ -180,7 +182,7 @@ describe("runThemeTagging", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["autonomy"],
+      themes: [{ name: "autonomy", quotes: ["q"] }],
       questions: [],
     });
     const first = createHighlight(db, {

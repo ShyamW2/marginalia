@@ -3,6 +3,7 @@ import { createDb } from "../db.js";
 import {
   getChapterQuestion,
   listChapterQuestions,
+  seedChapterQuestionIfAbsent,
   setChapterQuestionNote,
   upsertChapterQuestion,
 } from "./chapterQuestions.js";
@@ -73,5 +74,28 @@ describe("chapterQuestions", () => {
     const list = listChapterQuestions(db, "r1");
     expect(list.map((q) => q.spineIndex)).toEqual([0, 1]);
     db.close();
+  });
+
+  // M35 §B2: an unlocatable posed quote seeds a chapter question rather than
+  // a mis-anchored highlight — but must never clobber one the reader wrote.
+  describe("seedChapterQuestionIfAbsent", () => {
+    it("fills an empty slot", () => {
+      const db = createDb(":memory:");
+      seedResource(db, "r1");
+      const seeded = seedChapterQuestionIfAbsent(db, "r1", 3, "What does the sea mean here?");
+      expect(seeded.question).toBe("What does the sea mean here?");
+      expect(getChapterQuestion(db, "r1", 3)?.question).toBe("What does the sea mean here?");
+      db.close();
+    });
+
+    it("never overwrites a question the reader already wrote", () => {
+      const db = createDb(":memory:");
+      seedResource(db, "r1");
+      upsertChapterQuestion(db, "r1", 3, "The reader's own question");
+      const result = seedChapterQuestionIfAbsent(db, "r1", 3, "A posed question's fallback text");
+      expect(result.question).toBe("The reader's own question");
+      expect(getChapterQuestion(db, "r1", 3)?.question).toBe("The reader's own question");
+      db.close();
+    });
   });
 });

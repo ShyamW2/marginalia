@@ -66,6 +66,7 @@ const BASE_ROW = {
   resourceId: null,
   messageId: null,
   profileId: null,
+  cacheCreationTokens: null,
 };
 
 describe("recordUsage / getUsageTotalsSince", () => {
@@ -285,7 +286,7 @@ describe("withUsageLedger", () => {
     const wrapped = withUsageLedger(provider, db, "claude-opus-4-8", "thread", "query", null, null);
 
     const text = await drain(
-      wrapped.stream({ instructions: "i", bookContext: "b", messages: [] }),
+      wrapped.stream({ instructions: "i", bookContext: [{ text: "b" }], messages: [] }),
     );
     expect(text).toBe("hello world");
 
@@ -311,12 +312,32 @@ describe("withUsageLedger", () => {
     db.close();
   });
 
+  it("M34 §A7: records cache creation tokens separately from cache reads", async () => {
+    const db = createDb(":memory:");
+    const usage: ReportedUsage = {
+      inputTokens: 1000,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 800,
+    };
+    const provider = makeFakeProvider({ id: "anthropic", reportedUsage: () => usage });
+    const wrapped = withUsageLedger(provider, db, "claude-opus-4-8", "thread", "query", null, null);
+    await drain(wrapped.stream({ instructions: "i", bookContext: [{ text: "b" }], messages: [] }));
+
+    const row = db
+      .prepare("SELECT cache_read_tokens, cache_creation_tokens FROM llm_usage")
+      .get() as { cache_read_tokens: number; cache_creation_tokens: number };
+    expect(row.cache_read_tokens).toBe(0);
+    expect(row.cache_creation_tokens).toBe(800);
+    db.close();
+  });
+
   it("prices a claude-agent call as notional, never billed", async () => {
     const db = createDb(":memory:");
     const usage: ReportedUsage = { inputTokens: 10, outputTokens: 2, costUsd: 0.42 };
     const provider = makeFakeProvider({ id: "claude-agent", reportedUsage: () => usage });
     const wrapped = withUsageLedger(provider, db, "claude-sonnet-5", "thread", "query", null, null);
-    await drain(wrapped.stream({ instructions: "i", bookContext: "b", messages: [] }));
+    await drain(wrapped.stream({ instructions: "i", bookContext: [{ text: "b" }], messages: [] }));
 
     const row = db.prepare("SELECT cost_basis, cost_usd FROM llm_usage").get() as {
       cost_basis: string;
@@ -337,7 +358,7 @@ describe("withUsageLedger", () => {
     const usage: ReportedUsage = { inputTokens: 10, outputTokens: 2 };
     const provider = makeFakeProvider({ id: "anthropic", reportedUsage: () => usage });
     const wrapped = withUsageLedger(provider, db, "claude-some-future-model", "thread", "query", null, null);
-    await drain(wrapped.stream({ instructions: "i", bookContext: "b", messages: [] }));
+    await drain(wrapped.stream({ instructions: "i", bookContext: [{ text: "b" }], messages: [] }));
 
     const row = db.prepare("SELECT cost_basis, cost_usd FROM llm_usage").get() as {
       cost_basis: string;
@@ -356,7 +377,7 @@ describe("withUsageLedger", () => {
       reportedModel: () => "actually-a-different-model",
     });
     const wrapped = withUsageLedger(provider, db, "configured-model-name", "thread", "query", null, null);
-    await drain(wrapped.stream({ instructions: "i", bookContext: "b", messages: [] }));
+    await drain(wrapped.stream({ instructions: "i", bookContext: [{ text: "b" }], messages: [] }));
 
     const row = db.prepare("SELECT model, model_source FROM llm_usage").get() as {
       model: string;
@@ -371,7 +392,7 @@ describe("withUsageLedger", () => {
     const db = createDb(":memory:");
     const provider = makeFakeProvider({ reportedUsage: () => ({ inputTokens: 10, outputTokens: 2 }) });
     const wrapped = withUsageLedger(provider, db, "configured-model-name", "thread", "query", null, null);
-    await drain(wrapped.stream({ instructions: "i", bookContext: "b", messages: [] }));
+    await drain(wrapped.stream({ instructions: "i", bookContext: [{ text: "b" }], messages: [] }));
 
     const row = db.prepare("SELECT model, model_source FROM llm_usage").get() as {
       model: string;
@@ -387,7 +408,7 @@ describe("withUsageLedger", () => {
     seedProfile(db, "profile-xyz");
     const provider = makeFakeProvider({ reportedUsage: () => ({ inputTokens: 10, outputTokens: 2 }) });
     const wrapped = withUsageLedger(provider, db, "m", "thread", "query", null, "profile-xyz");
-    await drain(wrapped.stream({ instructions: "i", bookContext: "b", messages: [] }));
+    await drain(wrapped.stream({ instructions: "i", bookContext: [{ text: "b" }], messages: [] }));
 
     const row = db.prepare("SELECT profile_id FROM llm_usage").get() as { profile_id: string };
     expect(row.profile_id).toBe("profile-xyz");
@@ -423,7 +444,7 @@ describe("withUsageLedger", () => {
     const wrapped = withUsageLedger(provider, db, "test-model", "thread", "query", null, null);
 
     await expect(
-      drain(wrapped.stream({ instructions: "i", bookContext: "b", messages: [] })),
+      drain(wrapped.stream({ instructions: "i", bookContext: [{ text: "b" }], messages: [] })),
     ).rejects.toThrow("boom");
 
     const totals = getUsageTotalsSince(db, "2000-01-01T00:00:00.000Z");

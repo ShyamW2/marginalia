@@ -2,7 +2,16 @@ import { describe, expect, it } from "vitest";
 import { createDb } from "../db.js";
 import { createHighlight, getHighlightById, setHighlightDefinition } from "../annotations/highlights.js";
 import { createProviderProfile, setProviderRole } from "../settings/providers.js";
-import { clampToTokenBudget, defineHighlight, deepenDefinition, renderDictionarySenses } from "./define.js";
+import {
+  buildDefineContext,
+  clampToTokenBudget,
+  defineHighlight,
+  deepenDefinition,
+  renderDictionarySenses,
+} from "./define.js";
+import { setReadingPosition } from "../library/store.js";
+import { putBookDigest, putChapterDigest, putBookDigestSnapshot } from "../digest/store.js";
+import { setLookahead } from "../digest/lookahead.js";
 import type { Resource } from "@marginalia/shared";
 
 function seedBook(db: ReturnType<typeof createDb>) {
@@ -22,17 +31,98 @@ function seedBook(db: ReturnType<typeof createDb>) {
   return resource;
 }
 
-function highlightOn(db: ReturnType<typeof createDb>, resourceId: string, exact: string) {
+function highlightOn(db: ReturnType<typeof createDb>, resourceId: string, exact: string, spineIndex = 0) {
   return createHighlight(db, {
     resourceId,
     exact,
     prefix: "",
     suffix: "",
     cfi: "epubcfi(/6/4!/4/2)",
-    spineIndex: 0,
+    spineIndex,
     kind: "sage",
   });
 }
+
+function seedSectionsWithTerm(db: ReturnType<typeof createDb>, resourceId: string, term: string, count: number) {
+  const insert = db.prepare(
+    "INSERT INTO resource_text (resource_id, spine_index, href, text) VALUES (?, ?, ?, ?)",
+  );
+  for (let i = 0; i < count; i++) {
+    insert.run(resourceId, i, `s${i}.xhtml`, `Chapter ${i} text mentions ${term} once here.`);
+  }
+}
+
+describe("buildDefineContext — M34 §B3 masking", () => {
+  it("omits chapter summaries and occurrence windows past the bookmark", () => {
+    const db = createDb(":memory:");
+    const resource = seedBook(db);
+    seedSectionsWithTerm(db, resource.id, "timshel", 6);
+    for (let i = 0; i < 6; i++) {
+      putChapterDigest(db, {
+        resourceId: resource.id,
+        spineIndex: i,
+        summary: `Summary of chapter ${i}`,
+        themes: [],
+        characters: [],
+        title: null,
+        sourceHash: "h",
+      });
+    }
+    setReadingPosition(db, resource.id, "loc", 2);
+    const highlight = highlightOn(db, resource.id, "timshel", 0);
+
+    const context = buildDefineContext(db, resource, highlight, "timshel");
+    expect(context).toContain("Summary of chapter 2");
+    expect(context).not.toContain("Summary of chapter 3");
+    expect(context).toContain("--- [section 2] ---");
+    expect(context).not.toContain("--- [section 3] ---");
+    db.close();
+  });
+
+  it("uses the spoiler-safe book digest snapshot, not the full one, unless lookahead is on", () => {
+    const db = createDb(":memory:");
+    const resource = seedBook(db);
+    seedSectionsWithTerm(db, resource.id, "timshel", 3);
+    putBookDigest(db, {
+      resourceId: resource.id,
+      synopsis: "The full, spoiling synopsis.",
+      cast: [],
+      narratorGender: "unknown",
+      themes: [],
+    });
+    putBookDigestSnapshot(db, {
+      resourceId: resource.id,
+      upToSpineIndex: 0,
+      synopsis: "The spoiler-safe synopsis.",
+      cast: [],
+      narratorGender: "unknown",
+      themes: [],
+    });
+    setReadingPosition(db, resource.id, "loc", 0);
+    const highlight = highlightOn(db, resource.id, "timshel", 0);
+
+    const masked = buildDefineContext(db, resource, highlight, "timshel");
+    expect(masked).toContain("The spoiler-safe synopsis.");
+    expect(masked).not.toContain("The full, spoiling synopsis.");
+
+    setLookahead(db, resource.id, true);
+    const unmasked = buildDefineContext(db, resource, highlight, "timshel");
+    expect(unmasked).toContain("The full, spoiling synopsis.");
+    db.close();
+  });
+
+  it("always includes the highlight's own chapter, even past a stale bookmark", () => {
+    const db = createDb(":memory:");
+    const resource = seedBook(db);
+    seedSectionsWithTerm(db, resource.id, "timshel", 6);
+    setReadingPosition(db, resource.id, "loc", 1);
+    const highlight = highlightOn(db, resource.id, "timshel", 4);
+
+    const context = buildDefineContext(db, resource, highlight, "timshel");
+    expect(context).toContain("--- [section 4] ---");
+    db.close();
+  });
+});
 
 describe("clampToTokenBudget", () => {
   it("leaves a definition that is already short alone", () => {

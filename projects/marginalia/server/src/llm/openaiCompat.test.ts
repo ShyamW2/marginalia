@@ -181,7 +181,7 @@ describe("OpenAICompatProvider request timeout wiring", () => {
       const controller = new AbortController();
       const iterator = provider.stream({
         instructions: "x",
-        bookContext: "y",
+        bookContext: [{ text: "y" }],
         messages: [],
         signal: controller.signal,
       })[Symbol.asyncIterator]();

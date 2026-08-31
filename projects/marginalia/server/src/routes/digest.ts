@@ -9,6 +9,8 @@ import {
   UpdateBriefBodySchema,
   UpdateContextLadderBodySchema,
   UpdateChapterQuestionNoteBodySchema,
+  UpdateLookaheadBodySchema,
+  UpdateShowThematicQuotesBodySchema,
   UpsertChapterQuestionBodySchema,
   type DigestStatus,
   type ThematicStatus,
@@ -44,10 +46,14 @@ import {
   resolveContextLadderDepth,
   setContextLadderDepth,
 } from "../digest/ladder.js";
+import { getLookahead, setLookahead } from "../digest/lookahead.js";
+import { getShowThematicQuotes, setShowThematicQuotes } from "../digest/thematicQuoteVisibility.js";
+import { isChapterVisible } from "../digest/visibility.js";
 import { createHighlight, findHighlightByExact, type AnchorSource } from "../annotations/highlights.js";
 import {
   getChapterQuestion,
   listChapterQuestions,
+  seedChapterQuestionIfAbsent,
   setChapterQuestionNote,
   upsertChapterQuestion,
 } from "../digest/chapterQuestions.js";
@@ -92,6 +98,9 @@ function buildDigestStatus(
   // book) is treated as "nothing revealed yet" — the conservative default —
   // rather than showing every title up front.
   const bookmarkSpineIndex = getReadingPosition(db, resourceId)?.spineIndex ?? -1;
+  // M34 §B5/§B1: the per-book lookahead toggle bypasses the mask everywhere,
+  // routed through the same helper every other reader-facing consumer uses.
+  const noMask = getLookahead(db, resourceId);
 
   let cursor = 0;
   const chapters = sections.map((s, index) => {
@@ -103,7 +112,7 @@ function buildDigestStatus(
     // M19.5 "chapter entries gate exactly": summary/themes/characters/title
     // are only ever included when not past the bookmark, or explicitly
     // revealed — redacted server-side, never just hidden client-side.
-    const revealed = !pastBookmark || revealedSpineIndices.has(s.spineIndex);
+    const revealed = isChapterVisible(s.spineIndex, { bookmarkSpineIndex, revealedSpineIndices, noMask });
     const showContent = Boolean(digest) && revealed;
     return {
       spineIndex: s.spineIndex,
@@ -144,8 +153,11 @@ function buildDigestStatus(
                   generatedAt: snapshot.generatedAt,
                 }
               : null,
+            // M34 §B5: lookahead on reveals the full book-level digest the
+            // same way an explicit `revealBook` click already does — the
+            // toggle is "no mask at any rung", not "no mask except this one".
             full:
-              revealBook && fullBook
+              (revealBook || noMask) && fullBook
                 ? {
                     synopsis: fullBook.synopsis,
                     cast: fullBook.cast,
@@ -154,7 +166,7 @@ function buildDigestStatus(
                     generatedAt: fullBook.generatedAt,
                   }
                 : null,
-            hasMoreToReveal: chaptersPastBookmarkDigested,
+            hasMoreToReveal: chaptersPastBookmarkDigested && !noMask,
           }
         : null,
     run: run
@@ -337,6 +349,63 @@ digestRouter.put("/:id/context-ladder", (req, res) => {
   res.json({ depth: parsed.data.depth });
 });
 
+// M34 §B5/§B6: the lookahead/spoilers toggle — independent of the depth
+// above (settled decision 8's amendment: "two questions", not folded into
+// ContextLadderDepth).
+digestRouter.get("/:id/lookahead", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  res.json({ enabled: getLookahead(db, resource.id) });
+});
+
+digestRouter.put("/:id/lookahead", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const parsed = UpdateLookaheadBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  setLookahead(db, resource.id, parsed.data.enabled);
+  res.json({ enabled: parsed.data.enabled });
+});
+
+// M35 §C7: the thematic-quotes show/hide toggle — same GET/PUT shape as
+// lookahead above, independent of it and of everything else on this table.
+digestRouter.get("/:id/show-thematic-quotes", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  res.json({ enabled: getShowThematicQuotes(db, resource.id) });
+});
+
+digestRouter.put("/:id/show-thematic-quotes", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "resource_not_found" });
+    return;
+  }
+  const parsed = UpdateShowThematicQuotesBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  setShowThematicQuotes(db, resource.id, parsed.data.enabled);
+  res.json({ enabled: parsed.data.enabled });
+});
+
 // ---------------------------------------------------------------------------
 // M19.5 — reader briefs & the thematic layer
 // ---------------------------------------------------------------------------
@@ -382,11 +451,12 @@ function buildThematicStatus(
   // Same spoiler signal as the plot layer's buildDigestStatus — a thematic
   // reading and the questions it poses are just as spoiler-bearing.
   const bookmarkSpineIndex = getReadingPosition(db, resourceId)?.spineIndex ?? -1;
+  const noMask = getLookahead(db, resourceId);
 
   const chapters = sections.map((s) => {
     const t = byIndex.get(s.spineIndex);
     const pastBookmark = s.spineIndex > bookmarkSpineIndex;
-    const revealed = !pastBookmark || revealedSpineIndices.has(s.spineIndex);
+    const revealed = isChapterVisible(s.spineIndex, { bookmarkSpineIndex, revealedSpineIndices, noMask });
     const showContent = Boolean(t) && revealed;
     return {
       spineIndex: s.spineIndex,
@@ -487,6 +557,21 @@ digestRouter.post("/:id/thematic", async (req, res) => {
  * thread machinery instead of inventing a parallel one. Re-clicking the
  * same question reuses its highlight (dedup by exact text) rather than
  * spawning a duplicate thread.
+ *
+ * M35 §B2: an unlocatable *posed* quote no longer falls back to a highlight
+ * pinned to the chapter's first 120 characters — "a wrong anchor is worse
+ * than no anchor." It becomes a chapter-level question instead (M32 B's
+ * `chapter_questions`), which already has exactly this shape: "a question
+ * about the chapter as a whole, with nothing to anchor to."
+ * `seedChapterQuestionIfAbsent` never overwrites a question the reader
+ * already wrote for that chapter — a posed question that can't be pinned to
+ * a passage still shouldn't clobber the reader's own.
+ *
+ * ⚠️ This is scoped to a *real* quote that failed to locate — an **empty**
+ * quote (the Scan's book-band click-through, ScanPage.tsx's
+ * `handleOpenChapter`) never had a passage to anchor to in the first place,
+ * so it keeps going straight to `chapterStartAnchor` exactly as before.
+ * Conflating the two would break "click a band, land at the chapter start."
  */
 digestRouter.post("/:id/chapter-anchor", (req, res) => {
   const db = getDb();
@@ -500,24 +585,33 @@ digestRouter.post("/:id/chapter-anchor", (req, res) => {
     res.status(400).json({ error: "invalid_body" });
     return;
   }
-  const { spineIndex, quote } = parsed.data;
+  const { spineIndex, quote, text } = parsed.data;
   const section = getResourceTextSections(db, resource.id).find((s) => s.spineIndex === spineIndex);
   if (!section) {
     res.status(404).json({ error: "chapter_not_found" });
     return;
   }
 
-  // M34 §0a: record *which* of these two paths fired. The fallback is
-  // invisible after the fact — a chapter-start anchor is a perfectly valid
-  // highlight — so without this column "how often does a posed question's
-  // quote fail to locate?" is unanswerable, and M35 §B is sized by argument
-  // instead of by data.
-  const located = locateQuoteAnchor(section.text, quote);
+  const hasQuote = quote.trim().length > 0;
+  const located = hasQuote ? locateQuoteAnchor(section.text, quote) : null;
+
+  // M35 §B2: a real quote that didn't locate becomes a chapter question,
+  // not a highlight.
+  if (hasQuote && !located) {
+    const chapterQuestion = seedChapterQuestionIfAbsent(db, resource.id, spineIndex, text);
+    res.status(200).json({ highlight: null, chapterQuestion });
+    return;
+  }
+
+  // M34 §0a: which anchor a highlight got — 'quote' when a real quote
+  // located, 'chapter_start' for the Scan's empty-quote case (never a posed
+  // question anymore, now that §B2 routes those misses to a chapter
+  // question instead).
   const anchor = located ?? chapterStartAnchor(section.text);
   const anchorSource: AnchorSource = located ? "quote" : "chapter_start";
   const existing = findHighlightByExact(db, resource.id, spineIndex, anchor.exact);
   if (existing) {
-    res.json(existing);
+    res.json({ highlight: existing, chapterQuestion: null });
     return;
   }
 
@@ -535,8 +629,10 @@ digestRouter.post("/:id/chapter-anchor", (req, res) => {
     spineIndex,
     kind: "slate", // "a question about the text" — the existing kind Ask defaults to
     anchorSource,
+    offset: anchor.offset,
+    length: anchor.length,
   });
-  res.status(201).json(highlight);
+  res.status(201).json({ highlight, chapterQuestion: null });
 });
 
 // ---------------------------------------------------------------------------

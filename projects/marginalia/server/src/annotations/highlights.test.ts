@@ -5,9 +5,14 @@ import {
   deleteHighlight,
   getHighlightById,
   listHighlightsForResource,
+  listHighlightsForThread,
+  listHighlightsMissingOffset,
+  listHighlightsWithThreadsForResource,
   setHighlightNote,
+  setHighlightOffset,
   setHighlightPanelOffset,
 } from "./highlights.js";
+import { addThreadAnchor, createThread, getThreadById, listThreadAnchors } from "./threads.js";
 
 function seedResource(db: ReturnType<typeof createDb>, id = "res-1") {
   db.prepare(
@@ -164,6 +169,212 @@ describe("highlights store", () => {
     db.close();
   });
 
+  describe("M35 §D5: deleting one of several anchors", () => {
+    it("deleting a non-primary anchor removes only that anchor — the thread and its primary survive", () => {
+      const db = createDb(":memory:");
+      const resourceId = seedResource(db);
+      const primary = createHighlight(db, {
+        resourceId,
+        exact: "primary",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+      });
+      const secondary = createHighlight(db, {
+        resourceId,
+        exact: "secondary",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/8!/4/2)",
+        spineIndex: 2,
+        kind: "rose",
+      });
+      const thread = createThread(db, primary.id);
+      addThreadAnchor(db, thread.id, secondary.id);
+
+      expect(deleteHighlight(db, secondary.id)).toBe(true);
+
+      expect(getHighlightById(db, secondary.id)).toBeUndefined();
+      expect(getHighlightById(db, primary.id)).toBeDefined();
+      expect(getThreadById(db, thread.id)).toBeDefined();
+      expect(getThreadById(db, thread.id)?.highlightId).toBe(primary.id);
+      expect(listThreadAnchors(db, thread.id)).toEqual([
+        { threadId: thread.id, highlightId: primary.id, ordinal: 0 },
+      ]);
+      db.close();
+    });
+
+    it("deleting the primary anchor while another remains promotes the next one — the trap TASKS.md calls out", () => {
+      const db = createDb(":memory:");
+      const resourceId = seedResource(db);
+      const primary = createHighlight(db, {
+        resourceId,
+        exact: "primary",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+      });
+      const secondary = createHighlight(db, {
+        resourceId,
+        exact: "secondary",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/8!/4/2)",
+        spineIndex: 2,
+        kind: "rose",
+      });
+      const third = createHighlight(db, {
+        resourceId,
+        exact: "third",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/12!/4/2)",
+        spineIndex: 4,
+        kind: "rose",
+      });
+      const thread = createThread(db, primary.id);
+      addThreadAnchor(db, thread.id, secondary.id);
+      addThreadAnchor(db, thread.id, third.id);
+
+      expect(deleteHighlight(db, primary.id)).toBe(true);
+
+      expect(getHighlightById(db, primary.id)).toBeUndefined();
+      const survivingThread = getThreadById(db, thread.id);
+      expect(survivingThread).toBeDefined();
+      // Promoted to the next-oldest remaining anchor (by ordinal) — secondary,
+      // not third, even though both survive.
+      expect(survivingThread?.highlightId).toBe(secondary.id);
+      expect(listThreadAnchors(db, thread.id).map((a) => a.highlightId)).toEqual([
+        secondary.id,
+        third.id,
+      ]);
+      db.close();
+    });
+
+    it("deleting the last remaining anchor cascades the thread away, exactly today's one-anchor behavior", () => {
+      const db = createDb(":memory:");
+      const resourceId = seedResource(db);
+      const primary = createHighlight(db, {
+        resourceId,
+        exact: "primary",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+      });
+      const secondary = createHighlight(db, {
+        resourceId,
+        exact: "secondary",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/8!/4/2)",
+        spineIndex: 2,
+        kind: "rose",
+      });
+      const thread = createThread(db, primary.id);
+      addThreadAnchor(db, thread.id, secondary.id);
+
+      expect(deleteHighlight(db, primary.id)).toBe(true);
+      expect(getThreadById(db, thread.id)?.highlightId).toBe(secondary.id);
+
+      // Now the last anchor goes — the thread itself must go too.
+      expect(deleteHighlight(db, secondary.id)).toBe(true);
+      expect(getThreadById(db, thread.id)).toBeUndefined();
+      expect(db.prepare("SELECT COUNT(*) AS n FROM thread_anchors WHERE thread_id = ?").get(thread.id)).toEqual({
+        n: 0,
+      });
+      db.close();
+    });
+
+    it("M35 §D3: listHighlightsWithThreadsForResource sets primaryHighlightId only on a genuine secondary anchor", () => {
+      const db = createDb(":memory:");
+      const resourceId = seedResource(db);
+      const primary = createHighlight(db, {
+        resourceId,
+        exact: "primary",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+      });
+      const secondary = createHighlight(db, {
+        resourceId,
+        exact: "secondary",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/8!/4/2)",
+        spineIndex: 2,
+        kind: "rose",
+      });
+      const ordinary = createHighlight(db, {
+        resourceId,
+        exact: "ordinary, no thread at all",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/12!/4/2)",
+        spineIndex: 4,
+        kind: "rose",
+      });
+      const thread = createThread(db, primary.id);
+      addThreadAnchor(db, thread.id, secondary.id);
+
+      const rows = listHighlightsWithThreadsForResource(db, resourceId);
+      const byId = new Map(rows.map((h) => [h.id, h]));
+
+      // The primary already carries its own `.thread` — primaryHighlightId
+      // would be redundant (and self-referential), so it stays null.
+      expect(byId.get(primary.id)?.thread?.id).toBe(thread.id);
+      expect(byId.get(primary.id)?.primaryHighlightId).toBeNull();
+
+      // The secondary has no `.thread` of its own, but points at the one
+      // it's really a part of.
+      expect(byId.get(secondary.id)?.thread).toBeNull();
+      expect(byId.get(secondary.id)?.primaryHighlightId).toBe(primary.id);
+
+      // An ordinary highlight with no thread at all — neither field fires.
+      expect(byId.get(ordinary.id)?.thread).toBeNull();
+      expect(byId.get(ordinary.id)?.primaryHighlightId).toBeNull();
+      db.close();
+    });
+
+    it("listHighlightsForThread returns every anchor in reading order (spine index, then offset)", () => {
+      const db = createDb(":memory:");
+      const resourceId = seedResource(db);
+      const later = createHighlight(db, {
+        resourceId,
+        exact: "later in the book",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/8!/4/2)",
+        spineIndex: 3,
+        kind: "rose",
+      });
+      const earlier = createHighlight(db, {
+        resourceId,
+        exact: "earlier in the book",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+      });
+      // Created primary-first as "later", with "earlier" added second — the
+      // list must still come back in reading order, not creation order.
+      const thread = createThread(db, later.id);
+      addThreadAnchor(db, thread.id, earlier.id);
+
+      const sources = listHighlightsForThread(db, thread.id);
+      expect(sources.map((h) => h.exact)).toEqual(["earlier in the book", "later in the book"]);
+      db.close();
+    });
+  });
+
   it("creates a highlight with an empty note by default and setHighlightNote updates it", () => {
     const db = createDb(":memory:");
     const resourceId = seedResource(db);
@@ -241,5 +452,79 @@ describe("highlights store", () => {
     expect(sourceOf(located.id)).toBe("quote");
     expect(sourceOf(fallback.id)).toBe("chapter_start");
     db.close();
+  });
+
+  // M35 §A1 — same server-only shape as anchor_source: stored, not returned
+  // on the domain object.
+  describe("M35 §A offset/length", () => {
+    it("stores offset/length when the caller provides them, and null when it doesn't", () => {
+      const db = createDb(":memory:");
+      const resourceId = seedResource(db);
+
+      const located = createHighlight(db, {
+        resourceId,
+        exact: "quote",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+        offset: 42,
+        length: 5,
+      });
+      const unanchored = createHighlight(db, {
+        resourceId,
+        exact: "other",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+      });
+
+      const rowFor = (id: string) =>
+        db.prepare(`SELECT "offset", length FROM highlights WHERE id = ?`).get(id) as {
+          offset: number | null;
+          length: number | null;
+        };
+
+      expect(rowFor(located.id)).toEqual({ offset: 42, length: 5 });
+      expect(rowFor(unanchored.id)).toEqual({ offset: null, length: null });
+      db.close();
+    });
+
+    it("lists only highlights missing an offset, and setHighlightOffset removes them from that list", () => {
+      const db = createDb(":memory:");
+      const resourceId = seedResource(db);
+
+      const withOffset = createHighlight(db, {
+        resourceId,
+        exact: "a",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+        offset: 0,
+        length: 1,
+      });
+      const missing = createHighlight(db, {
+        resourceId,
+        exact: "b",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 1,
+        kind: "rose",
+      });
+
+      const before = listHighlightsMissingOffset(db, resourceId);
+      expect(before.map((h) => h.id)).toEqual([missing.id]);
+      expect(before.map((h) => h.id)).not.toContain(withOffset.id);
+
+      setHighlightOffset(db, missing.id, 7, 3);
+      expect(listHighlightsMissingOffset(db, resourceId)).toHaveLength(0);
+      db.close();
+    });
   });
 });

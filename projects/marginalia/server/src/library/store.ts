@@ -60,10 +60,14 @@ export function listResourceSummaries(
       `SELECT
          r.*,
          rs.updated_at AS last_read_at,
-         (SELECT COUNT(*) FROM highlights h WHERE h.resource_id = r.id) AS highlight_count,
+         -- M35 §C6: a thematic-origin highlight (§C5) is machine-proposed
+         -- evidence, not something the reader made — it must never inflate
+         -- either count, regardless of §C7's show/hide toggle (which only
+         -- governs whether it's *painted*, not whether it's "yours").
+         (SELECT COUNT(*) FROM highlights h WHERE h.resource_id = r.id AND h.origin = 'reader') AS highlight_count,
          (SELECT COUNT(*) FROM highlights h
             JOIN threads t ON t.highlight_id = h.id
-            WHERE h.resource_id = r.id) AS thread_count,
+            WHERE h.resource_id = r.id AND h.origin = 'reader') AS thread_count,
          ss.x AS shelf_x,
          ss.y AS shelf_y,
          ss.rotation AS shelf_rotation,
@@ -142,6 +146,23 @@ export function getResourceTextSections(
     href: row.href,
     text: row.text,
   }));
+}
+
+/** M35 §A1: one section's text, for a caller that only needs to locate an
+ * anchor in a single chapter and shouldn't pay for the whole book's text
+ * the way `getResourceTextSections` does. */
+export function getResourceTextSection(
+  db: Database.Database,
+  resourceId: string,
+  spineIndex: number,
+): ResourceTextSection | undefined {
+  const row = db
+    .prepare(
+      `SELECT spine_index, href, text FROM resource_text
+       WHERE resource_id = ? AND spine_index = ?`,
+    )
+    .get(resourceId, spineIndex) as { spine_index: number; href: string; text: string } | undefined;
+  return row ? { spineIndex: row.spine_index, href: row.href, text: row.text } : undefined;
 }
 
 export function getReadingPosition(

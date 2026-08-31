@@ -49,7 +49,7 @@ describe("runThemeDistillation", () => {
       briefHash: "b",
       briefText: "",
       analysis: "Gregor wakes alone.",
-      themes: ["loneliness", "alienation"],
+      themes: [{ name: "loneliness", quotes: ["q"] }, { name: "alienation", quotes: ["q"] }],
       questions: [],
     });
     putThematicDigest(db, {
@@ -58,7 +58,7 @@ describe("runThemeDistillation", () => {
       briefHash: "b",
       briefText: "",
       analysis: "The family withdraws.",
-      themes: ["shame"],
+      themes: [{ name: "shame", quotes: ["q"] }],
       questions: [],
     });
 
@@ -88,7 +88,7 @@ describe("runThemeDistillation", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["loneliness"],
+      themes: [{ name: "loneliness", quotes: ["q"] }],
       questions: [],
     });
 
@@ -112,7 +112,7 @@ describe("runThemeDistillation", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["loneliness", "solitude"],
+      themes: [{ name: "loneliness", quotes: ["q"] }, { name: "solitude", quotes: ["q"] }],
       questions: [],
     });
 
@@ -155,7 +155,7 @@ describe("runThemeDistillation", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["loneliness"],
+      themes: [{ name: "loneliness", quotes: ["q"] }],
       questions: [],
     });
     putThematicDigest(db, {
@@ -164,7 +164,7 @@ describe("runThemeDistillation", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["solitude"],
+      themes: [{ name: "solitude", quotes: ["q"] }],
       questions: [],
     });
 

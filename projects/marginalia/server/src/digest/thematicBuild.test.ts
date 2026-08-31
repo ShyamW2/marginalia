@@ -4,6 +4,8 @@ import { LLMError, type LLMExtractRequest, type LLMProvider } from "../llm/provi
 import { runDigest } from "./build.js";
 import { runThematicDigest } from "./thematicBuild.js";
 import { getChapterDigest } from "./store.js";
+import { listBookThemes } from "./canonicalThemes.js";
+import { listHighlightsForResource } from "../annotations/highlights.js";
 import {
   getThematicDigest,
   getThematicRun,
@@ -48,6 +50,12 @@ function seedSections(
 function makeProvider(
   scriptedExtract: (req: LLMExtractRequest<unknown>) => unknown,
   contextTokens = 100_000,
+  // M34 §C0: `runThematicDigest` now chains a distillation call onto the end
+  // of a run — every existing test's `scriptedExtract` is written against
+  // the thematic-part shape, not the distillation shape, so route
+  // distillation's own `extract` call away from it by default (no themes to
+  // distil is exactly right for tests that were never about §C0).
+  distillationExtract: (req: LLMExtractRequest<unknown>) => unknown = () => ({ themes: [] }),
 ): LLMProvider {
   return {
     id: "openai-compatible",
@@ -56,6 +64,9 @@ function makeProvider(
       yield { text: "" };
     },
     async extract<T>(req: LLMExtractRequest<T>): Promise<T> {
+      if (req.instructions.startsWith("You are distilling")) {
+        return distillationExtract(req) as T;
+      }
       return scriptedExtract(req) as T;
     },
   };
@@ -75,9 +86,17 @@ describe("runThematicDigest", () => {
 
     const provider = makeProvider((req) => {
       if (req.input.includes("Chapter one")) {
-        return { analysis: "Ch1 is about autonomy.", themes: ["autonomy"], questions: [{ text: "Why does X choose?", quote: "Chapter one text." }] };
+        return {
+          analysis: "Ch1 is about autonomy.",
+          themes: [{ name: "autonomy", quotes: ["Chapter one text."] }],
+          questions: [{ text: "Why does X choose?", quote: "Chapter one text." }],
+        };
       }
-      return { analysis: "Ch2 is about consequence.", themes: ["consequence"], questions: [{ text: "What changed?", quote: "Chapter two text." }] };
+      return {
+        analysis: "Ch2 is about consequence.",
+        themes: [{ name: "consequence", quotes: ["Chapter two text."] }],
+        questions: [{ text: "What changed?", quote: "Chapter two text." }],
+      };
     });
 
     const run = await runThematicDigest(db, provider, resource, sections, 0, 1);
@@ -110,7 +129,11 @@ describe("runThematicDigest", () => {
 
     const thematicProvider = makeProvider((req) => {
       plotCalls.push(req.input); // would show up if the thematic pass ever hit the plot provider by mistake
-      return { analysis: "Ch1 is about hope.", themes: ["hope"], questions: [{ text: "What is hope here?", quote: "Chapter one text." }] };
+      return {
+        analysis: "Ch1 is about hope.",
+        themes: [{ name: "hope", quotes: ["Chapter one text."] }],
+        questions: [{ text: "What is hope here?", quote: "Chapter one text." }],
+      };
     });
     await runThematicDigest(db, thematicProvider, resource, sections, 0, 0);
 
@@ -254,6 +277,98 @@ describe("runThematicDigest", () => {
   });
 });
 
+describe("runThematicDigest — M34 §C0 chains distillation onto the run", () => {
+  it("distils the book-level themes once new chapters are committed", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text." },
+      { spineIndex: 1, href: "b", text: "Chapter two text." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(
+      (req) =>
+        req.input.includes("Chapter one")
+          ? {
+              analysis: "Ch1 is about fate.",
+              themes: [{ name: "fate as pull", quotes: ["Chapter one text."] }],
+              questions: [],
+            }
+          : {
+              analysis: "Ch2 is about fate too.",
+              themes: [{ name: "fate as trap", quotes: ["Chapter two text."] }],
+              questions: [],
+            },
+      100_000,
+      () => ({ themes: [{ name: "Fate", children: ["fate as pull", "fate as trap"] }] }),
+    );
+
+    const run = await runThematicDigest(db, provider, resource, sections, 0, 1);
+    expect(run.status).toBe("completed");
+
+    const bookThemes = listBookThemes(db, resource.id);
+    expect(bookThemes.map((t) => t.name)).toEqual(["Fate"]);
+    expect(bookThemes[0].children).toEqual(["fate as pull", "fate as trap"]);
+    db.close();
+  });
+
+  it("a failed distillation still leaves the thematic run completed", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(
+      () => ({
+        analysis: "Ch1 is about fate.",
+        themes: [{ name: "fate", quotes: ["Chapter one text."] }],
+        questions: [],
+      }),
+      100_000,
+      () => {
+        throw new Error("distillation endpoint down");
+      },
+    );
+
+    const run = await runThematicDigest(db, provider, resource, sections, 0, 0);
+    expect(run.status).toBe("completed");
+    expect(listBookThemes(db, resource.id)).toEqual([]);
+    db.close();
+  });
+
+  it("does not re-run distillation on a no-op re-run (nothing new was committed)", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+    putBrief(db, resource.id, "a brief");
+
+    let distillationCalls = 0;
+    const provider = makeProvider(
+      () => ({
+        analysis: "Ch1 is about fate.",
+        themes: [{ name: "fate", quotes: ["Chapter one text."] }],
+        questions: [],
+      }),
+      100_000,
+      () => {
+        distillationCalls++;
+        return { themes: [{ name: "Fate", children: ["fate"] }] };
+      },
+    );
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0);
+    expect(distillationCalls).toBe(1);
+    await runThematicDigest(db, provider, resource, sections, 0, 0);
+    expect(distillationCalls).toBe(1); // same brief, already covered — thematic pass skipped, so is distillation
+    db.close();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // M34 §0b — the shape log
 //
@@ -285,7 +400,10 @@ describe("runThematicDigest — M34 0b shape log", () => {
 
     const provider = makeProvider(() => ({
       analysis: "Ten chars.",
-      themes: ["indifference", "domesticity"],
+      themes: [
+        { name: "indifference", quotes: ["the world went on without comment"] },
+        { name: "domesticity", quotes: ["The cat sat on the mat"] },
+      ],
       questions: [
         // Verbatim — locates.
         { text: "Whose world?", quote: "the world went on" },
@@ -306,13 +424,13 @@ describe("runThematicDigest — M34 0b shape log", () => {
     expect(line).toContain("spine=0");
     expect(line).toContain(`chars=${sections[0].text.length}`);
     expect(line).toContain("parts=1");
-    expect(line).toContain("themes=2/8");
+    expect(line).toContain("themes=2/12");
     expect(line).toContain("questions=2/3");
     expect(line).toContain("quotes_located=1/2");
     db.close();
   });
 
-  it("reports parts>1 when the chapter split, which is what makes a quote miss diagnosable", async () => {
+  it("carries each part's original quote through the merge untouched (§B3), rather than letting the model re-emit it", async () => {
     const db = createDb(":memory:");
     const resource = makeResource();
     seedResource(db, resource);
@@ -325,16 +443,30 @@ describe("runThematicDigest — M34 0b shape log", () => {
     seedSections(db, resource.id, sections);
 
     // 1000 tokens * 0.25 * 3.5 = 875 chars of map budget.
-    const provider = makeProvider(
-      () => ({
-        analysis: "Merged.",
-        themes: ["the sea"],
-        // The merge step never sees the chapter text, so its quote is whatever
-        // the parts handed it — here, one that no longer matches.
-        questions: [{ text: "Why the sea?", quote: "a sentence that was never written" }],
-      }),
-      1000,
-    );
+    let partCall = 0;
+    const provider = makeProvider((req) => {
+      if (req.instructions.startsWith("You are merging")) {
+        // If mergeThematicParts ever read a `questions` field off this
+        // response instead of assembling it in code, this fabricated quote
+        // would show up as a surviving (and locatable-looking) question —
+        // it doesn't, because the merge schema no longer has that key.
+        return { analysis: "Merged.", themes: ["the sea"], questions: [{ text: "Merge-invented?", quote: "never in the text" }] };
+      }
+      partCall++;
+      return {
+        analysis: `Part ${partCall}`,
+        themes: [{ name: "the sea", quotes: ["the sea"] }],
+        // Part 1's quote is real (it's a sentence in `paragraph`); part 2's
+        // is fabricated, same as before — the point is that the merge no
+        // longer blurs the two together.
+        questions: [
+          {
+            text: `Q${partCall}`,
+            quote: partCall === 1 ? "Sentence about the sea." : "a sentence that was never written",
+          },
+        ],
+      };
+    }, 1000);
 
     const log = captureShapeLog();
     try {
@@ -346,7 +478,8 @@ describe("runThematicDigest — M34 0b shape log", () => {
     expect(log.lines).toHaveLength(1);
     expect(log.lines[0]).toContain("spine=3");
     expect(log.lines[0]).toMatch(/parts=(?!1\b)\d+/);
-    expect(log.lines[0]).toContain("quotes_located=0/1");
+    expect(log.lines[0]).toContain("questions=2/3");
+    expect(log.lines[0]).toContain("quotes_located=1/2");
     db.close();
   });
 
@@ -372,6 +505,154 @@ describe("runThematicDigest — M34 0b shape log", () => {
 
     expect(log.lines).toHaveLength(1);
     expect(log.lines[0]).toContain("result=too_large");
+    db.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M35 §C1/§C2/§C3 — themes carry quotes
+// ---------------------------------------------------------------------------
+
+describe("runThematicDigest — M35 §C1 themes carry quotes", () => {
+  it("stores a theme's verbatim quotes alongside its name, and a question's valid theme reference survives", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => ({
+      analysis: "Ch1 is about autonomy.",
+      themes: [{ name: "autonomy", quotes: ["Chapter one text."] }],
+      questions: [{ text: "Why does X choose?", quote: "Chapter one text.", theme: "autonomy" }],
+    }));
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0);
+    const digest = getThematicDigest(db, resource.id, 0)!;
+    expect(digest.themes).toEqual([{ name: "autonomy", quotes: ["Chapter one text."] }]);
+    expect(digest.questions[0].theme).toBe("autonomy");
+    db.close();
+  });
+
+  it("nulls out a question's theme reference when it doesn't name one of this part's own themes", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => ({
+      analysis: "Ch1 is about autonomy.",
+      themes: [{ name: "autonomy", quotes: ["Chapter one text."] }],
+      // "consequence" was never proposed as a theme for this part — a
+      // hallucinated or stale reference, dropped rather than trusted.
+      questions: [{ text: "What happens next?", quote: "Chapter one text.", theme: "consequence" }],
+    }));
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0);
+    const digest = getThematicDigest(db, resource.id, 0)!;
+    expect(digest.questions[0].theme).toBeNull();
+    db.close();
+  });
+});
+
+describe("runThematicDigest — M35 §C3 evidence-based dropping", () => {
+  it("drops an unlocatable quote from a theme but keeps the theme if another quote of its still locates", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => ({
+      analysis: "Ch1 is about autonomy.",
+      themes: [{ name: "autonomy", quotes: ["Chapter one text.", "a sentence that was never written"] }],
+      questions: [],
+    }));
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0);
+    const digest = getThematicDigest(db, resource.id, 0)!;
+    expect(digest.themes).toEqual([{ name: "autonomy", quotes: ["Chapter one text."] }]);
+    db.close();
+  });
+
+  it("drops a theme entirely once none of its quotes locate — an unevidenced theme never survives", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => ({
+      analysis: "Ch1 is about autonomy.",
+      themes: [
+        { name: "autonomy", quotes: ["Chapter one text."] },
+        { name: "invented", quotes: ["a sentence that was never written"] },
+      ],
+      questions: [],
+    }));
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0);
+    const digest = getThematicDigest(db, resource.id, 0)!;
+    expect(digest.themes.map((t) => t.name)).toEqual(["autonomy"]);
+    db.close();
+  });
+});
+
+describe("runThematicDigest — M35 §C5 wires evidenced themes into real highlights", () => {
+  it("a completed run leaves a thematic-origin, honey-kind highlight for each surviving theme quote", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text about autonomy." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => ({
+      analysis: "Ch1 is about autonomy.",
+      themes: [{ name: "autonomy", quotes: ["Chapter one text about autonomy."] }],
+      questions: [],
+    }));
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0);
+
+    const highlights = listHighlightsForResource(db, resource.id);
+    expect(highlights).toHaveLength(1);
+    expect(highlights[0].origin).toBe("thematic");
+    expect(highlights[0].kind).toBe("honey");
+    expect(highlights[0].exact).toBe("Chapter one text about autonomy.");
+    db.close();
+  });
+});
+
+describe("runThematicDigest — M35 §C1 merge reattaches theme quotes", () => {
+  it("attaches quotes from the originating part to a merged theme name, and drops a merge-invented name no part matches", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const paragraph = "Sentence about the sea. ".repeat(40);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 3, href: "a", text: `${paragraph}\n\n${paragraph}` },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider((req) => {
+      if (req.instructions.startsWith("You are merging")) {
+        // "invented theme" names nothing any part proposed — must not
+        // survive with fabricated quotes just because the merge said so.
+        return { analysis: "Merged.", themes: ["the sea", "invented theme"] };
+      }
+      return {
+        analysis: "Part.",
+        themes: [{ name: "the sea", quotes: ["Sentence about the sea."] }],
+        questions: [],
+      };
+    }, 1000);
+
+    await runThematicDigest(db, provider, resource, sections, 3, 3);
+    const digest = getThematicDigest(db, resource.id, 3)!;
+    expect(digest.themes).toEqual([{ name: "the sea", quotes: ["Sentence about the sea."] }]);
     db.close();
   });
 });

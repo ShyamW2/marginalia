@@ -52,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(28);
+    expect(version).toBe(36);
     db.close();
   });
 
@@ -245,6 +245,65 @@ describe("db migrations", () => {
     db.close();
   });
 
+  it("migration 033 clears thematic_digests/book_themes/theme_parents on upgrade, but never canonical_themes", () => {
+    // M35 §C4: the stored shape of thematic_digests.themes changed (and its
+    // contents are stale under the old naming prompt), so the operator's
+    // decision was drop-and-rerun, not migrate-in-place. Seed a database at
+    // the version just before this one (32), with real rows in all four
+    // theme-adjacent tables, then reopen via createDb — which applies only
+    // the pending migration (33) — and assert the three per-resource tables
+    // are wiped while canonical_themes (library-wide colour memory) survives.
+    const tmpPath = tmpDbPath("theme-drop-rerun");
+    try {
+      const legacy = new BetterSqlite3(tmpPath);
+      for (const m of MIGRATIONS.filter((m) => m.version <= 32).sort((a, b) => a.version - b.version)) {
+        legacy.exec(m.sql);
+      }
+      legacy.pragma("user_version = 32");
+      const now = new Date().toISOString();
+      legacy
+        .prepare(
+          `INSERT INTO resources (id, title, author, format, file_path, metadata, imported_at)
+           VALUES ('res-1', 'Title', NULL, 'epub', '/tmp/x.epub', '{}', @now)`,
+        )
+        .run({ now });
+      legacy
+        .prepare(
+          `INSERT INTO thematic_digests (resource_id, spine_index, brief_hash, brief_text, analysis, themes, questions, generated_at)
+           VALUES ('res-1', 0, 'b', '', 'a', '["old shape"]', '[]', @now)`,
+        )
+        .run({ now });
+      legacy
+        .prepare(
+          `INSERT INTO canonical_themes (id, name, slug, color_index, created_at)
+           VALUES ('ct-1', 'Fate', 'fate', 0, @now)`,
+        )
+        .run({ now });
+      legacy
+        .prepare(
+          `INSERT INTO book_themes (resource_id, canonical_theme_id, generated_at) VALUES ('res-1', 'ct-1', @now)`,
+        )
+        .run({ now });
+      legacy
+        .prepare(
+          `INSERT INTO theme_parents (resource_id, chapter_theme, canonical_theme_id) VALUES ('res-1', 'old theme', 'ct-1')`,
+        )
+        .run();
+      legacy.close();
+
+      const db = createDb(tmpPath);
+      expect(db.pragma("user_version", { simple: true })).toBe(36);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM thematic_digests").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM book_themes").get()).toEqual({ n: 0 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM theme_parents").get()).toEqual({ n: 0 });
+      // Library-wide colour memory — never cleared by a per-resource rerun.
+      expect(db.prepare("SELECT COUNT(*) AS n FROM canonical_themes").get()).toEqual({ n: 1 });
+      db.close();
+    } finally {
+      cleanupDbFile(tmpPath);
+    }
+  });
+
   it("is idempotent — reopening an already-migrated database file is a no-op", () => {
     const tmpPath = tmpDbPath("idempotent");
 
@@ -255,7 +314,7 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(28);
+      expect(second.pragma("user_version", { simple: true })).toBe(36);
       second.close();
     } finally {
       cleanupDbFile(tmpPath);

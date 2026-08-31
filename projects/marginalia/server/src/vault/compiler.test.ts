@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import { createDb } from "../db.js";
 import type { LLMProvider, LLMExtractRequest, LLMStreamRequest } from "../llm/provider.js";
 import { updateNotepadContent } from "../notepad/store.js";
+import { addThreadAnchor, createMessage, createThread } from "../annotations/threads.js";
 import { publishNotepad, publishResource } from "./compiler.js";
 
 type Db = ReturnType<typeof createDb>;
@@ -256,6 +257,83 @@ describe("publishResource", () => {
     );
     expect(note).toContain("[[Cultural-Societal Expectations]]");
     expect(note).not.toContain("[[Cultural/Societal Expectations]]");
+  });
+
+  it("M35 §D5a: a multi-anchor thread publishes one note with every source listed in reading order", async () => {
+    seedResource(db, "res-1", "Metamorphosis", "Franz Kafka");
+    db.prepare(
+      `UPDATE resources SET metadata = ? WHERE id = 'res-1'`,
+    ).run(JSON.stringify({ chapterTitles: { "0": "Part One", "2": "Part Two" } }));
+    seedHighlight(db, "h-1", "res-1", "he found himself transformed", 0);
+    seedHighlight(db, "h-2", "res-1", "a monstrous vermin", 2);
+
+    // Built through the real thread/anchor API, not raw SQL — this is
+    // exactly the "one theme -> one annotation -> N anchors" shape §D6
+    // hands to §C5, and the primary is `h-1` (spine 0), the secondary `h-2`
+    // (spine 2), so reading order must survive into the note.
+    const thread = createThread(db, "h-1");
+    addThreadAnchor(db, thread.id, "h-2");
+    createMessage(db, thread.id, "user", "Their question: why?");
+    createMessage(db, thread.id, "assistant", "Because of themes.");
+
+    const provider = new FakeProvider([
+      {
+        title: "Two Passages",
+        summary: "A note spanning two anchors.",
+        concepts: [],
+      },
+    ]);
+
+    const result = await publishResource(db, provider, "res-1", vaultPath);
+    expect(result).toEqual({ notes: 1, conceptsCreated: 0, conceptsLinked: 0 });
+
+    const note = fs.readFileSync(
+      path.join(vaultPath, "Readings", "Metamorphosis", "01 - two-passages.md"),
+      "utf8",
+    );
+    // Both quotes present, primary (spine 0) before secondary (spine 2).
+    expect(note.indexOf("he found himself transformed")).toBeLessThan(
+      note.indexOf("a monstrous vermin"),
+    );
+    expect(note).toContain("Part One");
+    expect(note).toContain("Part Two");
+
+    // The distillation call itself saw both passages, not just the primary.
+    expect(provider.calls).toBe(1);
+  });
+
+  it("a single-anchor thread's note keeps today's plain blockquote — no chapter label, no list", async () => {
+    seedResource(db, "res-1", "Metamorphosis", "Franz Kafka");
+    seedHighlight(db, "h-1", "res-1", "he found himself transformed", 0);
+    seedAnsweredThread(db, "t-1", "h-1");
+
+    const provider = new FakeProvider([
+      { title: "One Passage", summary: "Summary.", concepts: [] },
+    ]);
+    await publishResource(db, provider, "res-1", vaultPath);
+
+    const note = fs.readFileSync(
+      path.join(vaultPath, "Readings", "Metamorphosis", "01 - one-passage.md"),
+      "utf8",
+    );
+    expect(note).toContain("> he found himself transformed");
+    expect(note).not.toContain("*section 0");
+  });
+
+  it("M35 §C6: a thematic-origin highlight never publishes, even with an answered thread", async () => {
+    seedResource(db, "res-1", "Metamorphosis");
+    db.prepare(
+      `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, kind, origin, created_at)
+       VALUES ('h-1', 'res-1', 'machine evidence', '', '', 'epubcfi(/6/4!/4/2)', 0, 'honey', 'thematic', @createdAt)`,
+    ).run({ createdAt: new Date().toISOString() });
+    seedAnsweredThread(db, "t-1", "h-1");
+
+    const provider = new FakeProvider([]); // extract() must never be called
+    const result = await publishResource(db, provider, "res-1", vaultPath);
+
+    expect(result).toEqual({ notes: 0, conceptsCreated: 0, conceptsLinked: 0 });
+    expect(provider.calls).toBe(0);
+    expect(fs.existsSync(path.join(vaultPath, "Readings"))).toBe(false);
   });
 
   it("re-publishes into a new vault path even though the ledger already has a row", async () => {

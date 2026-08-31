@@ -316,9 +316,16 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
 
   async function handleQuestionClick(spineIndex: number, text: string, quote: string) {
     if (!id) return;
-    const highlight = await createChapterAnchor(id, spineIndex, quote);
-    if (!highlight) return;
-    navigate(`/read/${id}`, { state: { jumpToHighlightId: highlight.id, jumpToQuestion: text } });
+    const result = await createChapterAnchor(id, spineIndex, quote, text);
+    if (!result) return;
+    if (result.highlight) {
+      navigate(`/read/${id}`, { state: { jumpToHighlightId: result.highlight.id, jumpToQuestion: text } });
+      return;
+    }
+    // M35 §B2: the quote didn't locate — it landed as a chapter question
+    // instead of a mis-anchored highlight, so reflect that here rather than
+    // navigating to a highlight that was never created.
+    if (result.chapterQuestion) handleChapterQuestionCreated(result.chapterQuestion);
   }
 
   // M20.5 "the Digest becomes a popup too": swaps to the Scan instrument

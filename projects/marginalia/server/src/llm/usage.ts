@@ -76,6 +76,10 @@ export interface UsageLedgerRow {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number | null;
+  /** M34 §A7: tokens spent writing this call's cache entry, when the
+   * provider reported one — null (not 0) for the same reasons
+   * cacheReadTokens is nullable: most providers never report this at all. */
+  cacheCreationTokens: number | null;
   costUsd: number | null;
   costBasis: RowCostBasis;
   provenance: UsageProvenance;
@@ -107,12 +111,12 @@ export function recordUsage(
   db.prepare(
     `INSERT INTO llm_usage
        (id, provider, model, model_source, operation, role, resource_id, message_id, profile_id,
-        input_tokens, output_tokens, cache_read_tokens, cost_usd, cost_basis, provenance,
-        duration_ms, created_at)
+        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd, cost_basis,
+        provenance, duration_ms, created_at)
      VALUES
        (@id, @provider, @model, @modelSource, @operation, @role, @resourceId, @messageId, @profileId,
-        @inputTokens, @outputTokens, @cacheReadTokens, @costUsd, @costBasis, @provenance,
-        @durationMs, @createdAt)`,
+        @inputTokens, @outputTokens, @cacheReadTokens, @cacheCreationTokens, @costUsd, @costBasis,
+        @provenance, @durationMs, @createdAt)`,
   ).run(full);
   return full;
 }
@@ -238,6 +242,8 @@ export interface UsageBreakdownRow {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
+  /** M34 §A7 — see UsageLedgerRow.cacheCreationTokens. */
+  cacheCreationTokens: number;
   durationMs: number;
   costUsd: number | null;
   costBasis: RowCostBasis | "mixed";
@@ -272,6 +278,7 @@ export function getUsageBreakdownSince(
          COALESCE(SUM(u.input_tokens), 0) AS input_tokens,
          COALESCE(SUM(u.output_tokens), 0) AS output_tokens,
          COALESCE(SUM(u.cache_read_tokens), 0) AS cache_read_tokens,
+         COALESCE(SUM(u.cache_creation_tokens), 0) AS cache_creation_tokens,
          COALESCE(SUM(u.duration_ms), 0) AS duration_ms,
          SUM(u.cost_usd) AS cost_usd,
          COUNT(*) AS call_count,
@@ -296,6 +303,7 @@ export function getUsageBreakdownSince(
     input_tokens: number;
     output_tokens: number;
     cache_read_tokens: number;
+    cache_creation_tokens: number;
     duration_ms: number;
     cost_usd: number | null;
     call_count: number;
@@ -316,6 +324,7 @@ export function getUsageBreakdownSince(
     inputTokens: row.input_tokens,
     outputTokens: row.output_tokens,
     cacheReadTokens: row.cache_read_tokens,
+    cacheCreationTokens: row.cache_creation_tokens,
     durationMs: row.duration_ms,
     costUsd: row.cost_usd,
     costBasis: row.cost_basis_count > 1 ? "mixed" : row.single_cost_basis,
@@ -441,7 +450,7 @@ export function withUsageLedger(
   function inputCharsOf(req: LLMStreamRequest): number {
     return (
       req.instructions.length +
-      req.bookContext.length +
+      req.bookContext.reduce((sum, b) => sum + b.text.length, 0) +
       req.messages.reduce((sum, m) => sum + m.content.length, 0)
     );
   }
@@ -459,6 +468,7 @@ export function withUsageLedger(
     const inputTokens = reported ? reported.inputTokens : estimateTokens(inputChars);
     const outputTokens = reported ? reported.outputTokens : estimateTokens(outputChars);
     const cacheReadTokens = reported?.cacheReadTokens ?? null;
+    const cacheCreationTokens = reported?.cacheCreationTokens ?? null;
     const provenance: UsageProvenance = reported ? "reported" : "estimated";
 
     const priced = priceCall(
@@ -482,6 +492,7 @@ export function withUsageLedger(
       inputTokens,
       outputTokens,
       cacheReadTokens,
+      cacheCreationTokens,
       costUsd: priced.costUsd,
       costBasis: priced.costBasis,
       provenance,

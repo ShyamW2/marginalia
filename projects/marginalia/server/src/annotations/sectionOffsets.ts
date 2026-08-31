@@ -31,6 +31,9 @@ export interface LocatedAnchor {
   spineIndex: number;
   /** Char offset local to its section's own text — the domain `resource_text` stores. */
   offset: number;
+  /** M35 §A3: length of the located match, so a caller storing `offset` can
+   * store the matching `length` (`highlights.length`) without a second pass. */
+  length: number;
   globalOffset: number;
   percent: number;
 }
@@ -54,6 +57,7 @@ export function locateAnchor(
     return {
       spineIndex: section.spineIndex,
       offset: match.start,
+      length: match.end - match.start,
       globalOffset,
       percent: index.totalLength > 0 ? Math.min(1, Math.max(0, globalOffset / index.totalLength)) : 0,
     };

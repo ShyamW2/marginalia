@@ -17,6 +17,7 @@ function highlight(overrides: Partial<HighlightWithThread>): HighlightWithThread
     cfi: "epubcfi(/6/4!/4/2)",
     spineIndex: 0,
     kind: "sage",
+    origin: "reader",
     importance: 0,
     note: "",
     panelDx: 0,
@@ -27,6 +28,7 @@ function highlight(overrides: Partial<HighlightWithThread>): HighlightWithThread
     definitionSource: "",
     createdAt: new Date(2026, 0, seq).toISOString(),
     thread: null,
+    primaryHighlightId: null,
     ...overrides,
   };
 }

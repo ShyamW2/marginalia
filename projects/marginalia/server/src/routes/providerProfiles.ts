@@ -128,7 +128,7 @@ providerProfilesRouter.post("/:id/test", async (req, res) => {
   try {
     for await (const chunk of provider.stream({
       instructions: "Reply with a single word.",
-      bookContext: "(connection test — no book context)",
+      bookContext: [{ text: "(connection test — no book context)" }],
       messages: [{ role: "user", content: "Say hi." }],
       signal: controller.signal,
     })) {

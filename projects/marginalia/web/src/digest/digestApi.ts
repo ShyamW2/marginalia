@@ -1,4 +1,4 @@
-import type { ChapterQuestion, ThematicStatus } from "@marginalia/shared";
+import type { ChapterAnchorResult, ChapterQuestion, ThematicStatus } from "@marginalia/shared";
 
 /** `?reveal=0,3,5` — spine indices explicitly revealed this session, same
  * client-tracked (never persisted) shape the server's `parseRevealedIndices`
@@ -29,20 +29,26 @@ export async function fetchThematicStatus(
  * Digest page's question chips and the reader's own chapter-end affordance
  * (M32 A), both of which just want "open a thread for this question" without
  * caring how the anchor was made.
+ *
+ * M35 §B2: the quote doesn't always win. When it can't be located, the
+ * server seeds a chapter-level question instead of pinning a highlight to
+ * the chapter's opening — `text` (the posed question's own wording, not the
+ * quote) travels along so the server has something to seed it with.
  */
 export async function createChapterAnchor(
   resourceId: string,
   spineIndex: number,
   quote: string,
-): Promise<{ id: string } | null> {
+  text: string,
+): Promise<ChapterAnchorResult | null> {
   try {
     const res = await fetch(`/api/resources/${resourceId}/chapter-anchor`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ spineIndex, quote }),
+      body: JSON.stringify({ spineIndex, quote, text }),
     });
     if (!res.ok) return null;
-    return (await res.json()) as { id: string };
+    return (await res.json()) as ChapterAnchorResult;
   } catch {
     return null;
   }

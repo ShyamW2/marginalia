@@ -3,6 +3,7 @@ import { createDb } from "../db.js";
 import { setReadingPosition } from "../library/store.js";
 import { putChapterDigest } from "../digest/store.js";
 import { putThematicDigest } from "../digest/thematicStore.js";
+import { setShowThematicQuotes } from "../digest/thematicQuoteVisibility.js";
 import { createHighlight } from "./highlights.js";
 import { createThread, createMessage } from "./threads.js";
 import { setTagsForHighlight } from "./tags.js";
@@ -160,7 +161,7 @@ describe("buildScanData", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["autonomy"],
+      themes: [{ name: "autonomy", quotes: ["q"] }],
       questions: [],
     });
     putThematicDigest(db, {
@@ -169,7 +170,7 @@ describe("buildScanData", () => {
       briefHash: "b",
       briefText: "",
       analysis: "a",
-      themes: ["consequence"],
+      themes: [{ name: "consequence", quotes: ["q"] }],
       questions: [],
     });
 
@@ -189,5 +190,66 @@ describe("buildScanData", () => {
     expect(data.book.chapters[0]).toEqual({ spineIndex: 0, hasThematic: true, themes: ["autonomy"] });
     expect(data.book.chapters[1]).toEqual({ spineIndex: 1, hasThematic: false, themes: [] });
     expect(data.book.themeVocabulary).toEqual(["autonomy"]);
+  });
+
+  describe("M35 §C6/§C7: thematic-origin highlights", () => {
+    it("excludes a thematic-origin highlight from totalHighlights and the Mine layer by default", () => {
+      seedResource(db, "res-1");
+      seedSection(db, "res-1", 0, "chapter text");
+      createHighlight(db, {
+        resourceId: "res-1",
+        exact: "reader's own mark",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+      });
+      createHighlight(db, {
+        resourceId: "res-1",
+        exact: "machine-proposed evidence",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/8!/4/2)",
+        spineIndex: 0,
+        kind: "honey",
+        origin: "thematic",
+      });
+
+      const data = buildScanData(db, "res-1")!;
+      expect(data.totalHighlights).toBe(1);
+      expect(data.highlights.map((h) => h.exact)).toEqual(["reader's own mark"]);
+    });
+
+    it("paints the thematic-origin highlight once the toggle is on, but totalHighlights still excludes it", () => {
+      seedResource(db, "res-1");
+      seedSection(db, "res-1", 0, "chapter text");
+      createHighlight(db, {
+        resourceId: "res-1",
+        exact: "reader's own mark",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+      });
+      createHighlight(db, {
+        resourceId: "res-1",
+        exact: "machine-proposed evidence",
+        prefix: "",
+        suffix: "",
+        cfi: "epubcfi(/6/8!/4/2)",
+        spineIndex: 0,
+        kind: "honey",
+        origin: "thematic",
+      });
+      setShowThematicQuotes(db, "res-1", true);
+
+      const data = buildScanData(db, "res-1")!;
+      expect(data.totalHighlights).toBe(1);
+      expect(data.highlights.map((h) => h.exact).sort()).toEqual(
+        ["machine-proposed evidence", "reader's own mark"].sort(),
+      );
+    });
   });
 });

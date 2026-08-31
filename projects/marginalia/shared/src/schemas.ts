@@ -169,10 +169,22 @@ export type HighlightImportance = z.infer<typeof HighlightImportanceSchema>;
 export const DefinitionSourceSchema = z.enum(["", "dictionary", "digest"]);
 export type DefinitionSource = z.infer<typeof DefinitionSourceSchema>;
 
+/**
+ * M35 §C5: who proposed this highlight — the reader themself (clicking to
+ * select text, or a posed question they clicked through), or the thematic
+ * pass proposing evidence for a theme with no reader action at all. Never
+ * inferred from `kind` (settled decision 16: a kind's slot is its identity,
+ * not a proxy for authorship) — this is a second, orthogonal axis, the same
+ * shape `anchor_source` and `definition_source` already are on this row.
+ */
+export const HighlightOriginSchema = z.enum(["reader", "thematic"]);
+export type HighlightOrigin = z.infer<typeof HighlightOriginSchema>;
+
 export const HighlightSchema = AnchorSchema.extend({
   id: z.string(), // uuid v4
   resourceId: z.string(),
   kind: HighlightKindSchema,
+  origin: HighlightOriginSchema,
   importance: HighlightImportanceSchema,
   // M13: the reader's own plain-text note, separate from the LLM thread —
   // never sent to a provider, never distilled into the vault (settled
@@ -295,6 +307,14 @@ export type ThreadSummary = z.infer<typeof ThreadSummarySchema>;
 /** GET /api/resources/:id/highlights response shape (SPEC: "+ their thread summaries"). */
 export const HighlightWithThreadSchema = HighlightSchema.extend({
   thread: ThreadSummarySchema.nullable(),
+  /** M35 §D3: set only when this highlight is a *non-primary* anchor of
+   * someone else's thread (`thread_anchors`, migration 34) — names that
+   * thread's primary highlight, the one `thread` above would be populated
+   * on. Null for an ordinary highlight and for a primary highlight itself
+   * (which already has `thread` for that). The client resolves through this
+   * before opening a panel, so clicking any anchor opens the one real
+   * annotation rather than starting a second, unrelated thread. */
+  primaryHighlightId: z.string().nullable(),
 });
 export type HighlightWithThread = z.infer<typeof HighlightWithThreadSchema>;
 
@@ -344,6 +364,15 @@ export const MessageSchema = z.object({
   // pre-M17 message with no recorded depth.
   contextDepth: ContextLadderDepthSchema.nullable(),
   contextChapters: z.array(z.number().int().nonnegative()),
+  // M34 §D "transparency keeps up": which chapters' *thematic* essays (§C's
+  // narrower, ranked selection) fed this answer — distinct from
+  // contextChapters' plot-digest chapters, since §C made that grounding
+  // narrower and variable. Always [] outside the digest rung.
+  contextThematicChapters: z.array(z.number().int().nonnegative()),
+  // M34 §D: whether the lookahead/spoilers mask (§B5) was on when this
+  // answer was produced. Null means a pre-M34 message with no recorded
+  // state, matching contextDepth's own null-means-unrecorded shape.
+  contextMasked: z.boolean().nullable(),
   createdAt: z.string(),
 });
 export type Message = z.infer<typeof MessageSchema>;
@@ -368,6 +397,24 @@ export const ThreadWithMessagesSchema = ThreadSchema.extend({
   messages: z.array(MessageSchema),
 });
 export type ThreadWithMessages = z.infer<typeof ThreadWithMessagesSchema>;
+
+/** M35 §D1/§D4: one of a thread's (possibly several) anchors, resolved
+ * enough for the reader to see and jump to it — the quote and the chapter
+ * it's in — without a second highlight fetch. Reading order (spine index,
+ * then in-chapter offset), not creation order. */
+export const ThreadAnchorSchema = z.object({
+  highlightId: z.string(),
+  exact: z.string(),
+  spineIndex: z.number().int().nonnegative(),
+});
+export type ThreadAnchor = z.infer<typeof ThreadAnchorSchema>;
+
+/** GET /api/threads/:id/anchors response. Always at least one entry for a
+ * thread that exists — every thread has a primary anchor. */
+export const ThreadAnchorsResponseSchema = z.object({
+  anchors: z.array(ThreadAnchorSchema),
+});
+export type ThreadAnchorsResponse = z.infer<typeof ThreadAnchorsResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // SSE event contract for thread streaming (POST /api/threads, .../messages)
@@ -401,6 +448,9 @@ export const ThreadStreamEventSchema = z.union([
     contextUsage: ContextUsageSchema.nullable(),
     contextDepth: ContextLadderDepthSchema,
     contextChapters: z.array(z.number().int().nonnegative()),
+    // M34 §D: paired with contextChapters above — see MessageSchema.
+    contextThematicChapters: z.array(z.number().int().nonnegative()),
+    contextMasked: z.boolean(),
     // M22.5 H: computed server-side from the same usage-ledger row
     // `contextUsage` reads, so the reader's byline needs no extra round
     // trip — a client-constructed message from `onDone` alone can show it
@@ -805,6 +855,9 @@ export const UsageBreakdownRowSchema = z.object({
   inputTokens: z.number(),
   outputTokens: z.number(),
   cacheReadTokens: z.number(),
+  /** M34 §A7: tokens spent writing this group's cache entries, when the
+   * provider reported them. */
+  cacheCreationTokens: z.number(),
   /** Sum of `duration_ms` across the group — with `outputTokens`, this is
    * what a local model's tokens/sec is computed from (M22.5 H5). */
   durationMs: z.number(),
@@ -1224,14 +1277,25 @@ export const ThematicQuestionSchema = z.object({
    * back to POST /api/resources/:id/chapter-anchor to open a real,
    * text-anchored thread on it. */
   quote: z.string(),
+  /** M35 §C2: names the theme (by `ThematicTheme.name`) this question is
+   * evidence for, or null/absent when it isn't about a listed theme. */
+  theme: z.string().nullable().optional(),
 });
 export type ThematicQuestion = z.infer<typeof ThematicQuestionSchema>;
+
+/** M35 §C1: a theme carries its own verbatim evidence rather than being a
+ * bare name — 1-3 quotes located in the chapter text server-side. */
+export const ThematicThemeSchema = z.object({
+  name: z.string(),
+  quotes: z.array(z.string()),
+});
+export type ThematicTheme = z.infer<typeof ThematicThemeSchema>;
 
 export const ThematicChapterStatusSchema = z.object({
   spineIndex: z.number().int().nonnegative(),
   analyzed: z.boolean(),
   analysis: z.string().nullable(),
-  themes: z.array(z.string()),
+  themes: z.array(ThematicThemeSchema),
   questions: z.array(ThematicQuestionSchema),
   /** The brief text this chapter's analysis was generated under — null
    * when never analyzed. Shown alongside the analysis per decisions.md:
@@ -1266,10 +1330,14 @@ export type StartThematicDigestBody = StartDigestBody;
 
 /** POST /api/resources/:id/chapter-anchor body — turns a posed question's
  * verbatim quote into a real highlight (decision 11: the model returns
- * text, code locates it). Response is a plain Highlight. */
+ * text, code locates it). `text` is the posed question's own text (not the
+ * quote) — M35 §B2 needs it to seed a chapter-level question when the quote
+ * can't be located, so it always travels with the quote now rather than
+ * being dropped at the client. */
 export const CreateChapterAnchorBodySchema = z.object({
   spineIndex: z.number().int().nonnegative(),
   quote: z.string(),
+  text: z.string(),
 });
 export type CreateChapterAnchorBody = z.infer<typeof CreateChapterAnchorBodySchema>;
 
@@ -1297,6 +1365,20 @@ export const UpsertChapterQuestionBodySchema = z.object({
 });
 export type UpsertChapterQuestionBody = z.infer<typeof UpsertChapterQuestionBodySchema>;
 
+/**
+ * POST /api/resources/:id/chapter-anchor response (M35 §B2). A located
+ * quote produces a real highlight, exactly as before; an unlocatable one no
+ * longer produces a mis-anchored highlight at the chapter's opening — it
+ * produces a chapter-level question instead ("the two features resolve each
+ * other"). Exactly one of the two is ever non-null, so the client branches
+ * on which arrived rather than guessing from a status code.
+ */
+export const ChapterAnchorResultSchema = z.object({
+  highlight: HighlightSchema.nullable(),
+  chapterQuestion: ChapterQuestionSchema.nullable(),
+});
+export type ChapterAnchorResult = z.infer<typeof ChapterAnchorResultSchema>;
+
 /** PUT /api/resources/:id/chapter-questions/:spineIndex/note body — same
  * uncapped plain-text shape as UpdateHighlightNoteBodySchema. */
 export const UpdateChapterQuestionNoteBodySchema = z.object({
@@ -1312,6 +1394,19 @@ export const UpdateContextLadderBodySchema = z.object({
   depth: ContextLadderDepthSchema,
 });
 export type UpdateContextLadderBody = z.infer<typeof UpdateContextLadderBodySchema>;
+
+/** M34 §B5: the lookahead/spoilers toggle — independent of the depth above. */
+export const UpdateLookaheadBodySchema = z.object({
+  enabled: z.boolean(),
+});
+export type UpdateLookaheadBody = z.infer<typeof UpdateLookaheadBodySchema>;
+
+/** M35 §C7: the thematic-quotes show/hide toggle — same shape and same
+ * independence from every other per-book setting on `resource_ai_settings`. */
+export const UpdateShowThematicQuotesBodySchema = z.object({
+  enabled: z.boolean(),
+});
+export type UpdateShowThematicQuotesBody = z.infer<typeof UpdateShowThematicQuotesBodySchema>;
 
 // ---------------------------------------------------------------------------
 // M20.6 — the job registry (decisions.md 2026-07-30 "Background work is a

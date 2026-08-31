@@ -68,22 +68,27 @@ export class AnthropicProvider implements LLMProvider {
   }
 
   async *stream(req: LLMStreamRequest): AsyncIterable<{ text: string }> {
+    // M34 §A2: instructions stay a single unmarked block; each bookContext
+    // block marked `cache` gets its own breakpoint, in the order the caller
+    // built them (stable material first — see llm/context.ts). Below the
+    // per-model minimum a marked block silently does not cache (Anthropic's
+    // own behavior), costing nothing extra.
+    const system = [
+      { type: "text" as const, text: req.instructions },
+      ...req.bookContext.map((block) => ({
+        type: "text" as const,
+        text: block.text,
+        ...(block.cache
+          ? { cache_control: { type: "ephemeral" as const, ...(req.cacheTtl ? { ttl: req.cacheTtl } : {}) } }
+          : {}),
+      })),
+    ];
+
     const stream = this.client.messages.stream(
       {
         model: this.model,
         max_tokens: this.maxResponseTokens,
-        // Two-block system: stable instructions, then the large stable
-        // book context with a cache breakpoint — follow-up questions on
-        // the same book hit the cache (~0.1x input price). Never
-        // interpolate anything volatile into either block.
-        system: [
-          { type: "text", text: req.instructions },
-          {
-            type: "text",
-            text: req.bookContext,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
+        system,
         messages: req.messages,
       },
       { signal: req.signal },
@@ -108,6 +113,7 @@ export class AnthropicProvider implements LLMProvider {
         inputTokens: finalMessage.usage.input_tokens,
         outputTokens: finalMessage.usage.output_tokens,
         cacheReadTokens: finalMessage.usage.cache_read_input_tokens ?? undefined,
+        cacheCreationTokens: finalMessage.usage.cache_creation_input_tokens ?? undefined,
       };
       if (finalMessage.stop_reason === "refusal") {
         throw new LLMError("refused", "The model declined to answer.");

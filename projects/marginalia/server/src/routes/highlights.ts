@@ -7,6 +7,7 @@ import {
   UpdateHighlightNoteBodySchema,
   UpdateHighlightPanelOffsetBodySchema,
   UpdateHighlightPanelSizeBodySchema,
+  findAnchorInText,
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import {
@@ -21,7 +22,7 @@ import {
 } from "../annotations/highlights.js";
 import { defineHighlight, deepenDefinition } from "../dictionary/define.js";
 import { listTagsForHighlight, setTagsForHighlight } from "../annotations/tags.js";
-import { getResourceById } from "../library/store.js";
+import { getResourceById, getResourceTextSection } from "../library/store.js";
 
 export const highlightsRouter: Router = Router();
 
@@ -38,7 +39,24 @@ highlightsRouter.post("/", (req, res) => {
     return;
   }
 
-  const highlight = createHighlight(getDb(), parsed.data);
+  // M35 §A1: populate offset/length at creation from the section's own text
+  // — the reader's selection already produced a real exact/prefix/suffix,
+  // so this almost always locates; a miss just leaves it null, same as any
+  // other unanchored highlight.
+  const section = getResourceTextSection(getDb(), parsed.data.resourceId, parsed.data.spineIndex);
+  const match = section
+    ? findAnchorInText(section.text, {
+        exact: parsed.data.exact,
+        prefix: parsed.data.prefix,
+        suffix: parsed.data.suffix,
+      })
+    : null;
+
+  const highlight = createHighlight(getDb(), {
+    ...parsed.data,
+    offset: match ? match.start : null,
+    length: match ? match.end - match.start : null,
+  });
   res.status(201).json(highlight);
 });
 

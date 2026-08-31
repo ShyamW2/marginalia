@@ -80,7 +80,10 @@ export async function runThemeDistillation(
     .map((t) => ({
       label: sectionLabel(t.spineIndex, resource.metadata.chapterTitles),
       analysis: t.analysis,
-      themes: t.themes,
+      // M35 §C1: distillation groups theme *names* only — a chapter theme's
+      // quotes are per-occurrence evidence, not part of the identity this
+      // pass folds into book-level parents.
+      themes: t.themes.map((theme) => theme.name),
     }));
 
   const allChapterThemes = [...new Set(chapters.flatMap((c) => c.themes))];

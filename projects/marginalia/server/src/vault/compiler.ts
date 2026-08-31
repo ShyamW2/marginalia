@@ -7,9 +7,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type Database from "better-sqlite3";
-import type { HighlightWithThread, Message, PublishResult, Resource } from "@marginalia/shared";
-import { listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
+import type { Highlight, HighlightWithThread, Message, PublishResult, Resource } from "@marginalia/shared";
+import { listHighlightsForThread, listHighlightsWithThreadsForResource } from "../annotations/highlights.js";
+import { isReaderOrigin } from "../annotations/highlightOrigin.js";
 import { listMessagesForThread } from "../annotations/threads.js";
+import { sectionLabel } from "../llm/context.js";
 import { getResourceById } from "../library/store.js";
 import { getNotepadForPublish, recordNotepadPublish } from "../notepad/store.js";
 import type { LLMProvider } from "../llm/provider.js";
@@ -64,14 +66,34 @@ function displayableQuestion(content: string): string {
   return match ? match[1] : content;
 }
 
-function buildDistillInput(highlight: HighlightWithThread, messages: Message[]): string {
+/**
+ * M35 §D5a: a thread can now anchor several passages, so the distillation
+ * call sees all of them (reading order, from `listHighlightsForThread`) —
+ * one quote is still the common case and reads exactly as before; more than
+ * one is labelled by chapter so the model doesn't run them together.
+ */
+function passagesBlock(sources: Highlight[], chapterTitles: Record<string, string> | undefined): string {
+  if (sources.length <= 1) {
+    return `Highlighted passage:\n> ${sources[0]?.exact ?? ""}`;
+  }
+  const list = sources
+    .map((s) => `> ${s.exact}\n(${sectionLabel(s.spineIndex, chapterTitles)})`)
+    .join("\n\n");
+  return `Highlighted passages:\n${list}`;
+}
+
+function buildDistillInput(
+  sources: Highlight[],
+  chapterTitles: Record<string, string> | undefined,
+  messages: Message[],
+): string {
   const transcript = messages
     .map((m) => {
       const text = m.role === "user" ? displayableQuestion(m.content) : m.content;
       return `${m.role === "user" ? "Reader" : "Assistant"}: ${text}`;
     })
     .join("\n\n");
-  return `Highlighted passage:\n> ${highlight.exact}\n\nConversation:\n${transcript}`;
+  return `${passagesBlock(sources, chapterTitles)}\n\nConversation:\n${transcript}`;
 }
 
 function yamlString(value: string): string {
@@ -134,9 +156,25 @@ function appendMention(
   writeVaultFile(vaultPath, concept.relPath, updated);
 }
 
+/**
+ * M35 §D5a: "one note with its sources listed in reading order" — a
+ * multi-anchor annotation is one thought about several passages, so
+ * splitting it at publish time (one note per anchor) would undo the feature
+ * in the projection. A single anchor renders exactly as before (a bare
+ * blockquote, no chapter label) — the common case's output doesn't change
+ * shape just because the mechanism now supports more.
+ */
+function quoteBlock(sources: Highlight[], chapterTitles: Record<string, string> | undefined): string {
+  if (sources.length <= 1) return `> ${sources[0]?.exact ?? ""}`;
+  return sources
+    .map((s) => `> ${s.exact}\n> — *${sectionLabel(s.spineIndex, chapterTitles)}*`)
+    .join("\n\n");
+}
+
 function renderReadingNote(
   resource: Resource,
-  highlight: HighlightWithThread,
+  sources: Highlight[],
+  chapterTitles: Record<string, string> | undefined,
   threadId: string,
   distillation: ThreadDistillation,
   conceptNames: string[],
@@ -150,7 +188,7 @@ thread: ${yamlString(threadId)}
 date: ${yamlString(new Date().toISOString())}
 ---
 
-> ${highlight.exact}
+${quoteBlock(sources, chapterTitles)}
 
 ${distillation.summary}
 ${conceptLines ? `\n${conceptLines}\n` : ""}
@@ -220,9 +258,12 @@ export async function publishResource(
     throw new Error("resource_not_found");
   }
 
+  // M35 §C6: unconditional, regardless of §C7's toggle — a thematic-origin
+  // primary highlight (§C5) never reaches the vault, even in the edge case
+  // where a reader started and answered a conversation on one.
   const answeredHighlights = listHighlightsWithThreadsForResource(db, resourceId).filter(
     (h): h is HighlightWithThread & { thread: NonNullable<HighlightWithThread["thread"]> } =>
-      h.thread !== null && h.thread.hasAnswer,
+      h.thread !== null && h.thread.hasAnswer && isReaderOrigin(h),
   );
 
   let notes = 0;
@@ -244,10 +285,16 @@ export async function publishResource(
     if (existingRecord && existsInVault(vaultPath, existingRecord.notePath)) continue;
 
     const nn = String(i + 1).padStart(2, "0");
+    // M35 §D5a: every anchor of this thread, reading-order — falls back to
+    // the primary highlight alone if `thread_anchors` somehow has nothing
+    // (shouldn't happen; createThread/migration 34 both guarantee coverage).
+    const sources = listHighlightsForThread(db, threadId);
+    const effectiveSources = sources.length > 0 ? sources : [highlight];
+    const chapterTitles = resource.metadata.chapterTitles;
     const messages = listMessagesForThread(db, threadId);
     const distillation = await provider.extract({
       instructions: DISTILL_INSTRUCTIONS,
-      input: buildDistillInput(highlight, messages),
+      input: buildDistillInput(effectiveSources, chapterTitles, messages),
       schema: ThreadDistillationSchema,
     });
 
@@ -272,7 +319,14 @@ export async function publishResource(
       }
     }
 
-    const noteContent = renderReadingNote(resource, highlight, threadId, distillation, conceptNames);
+    const noteContent = renderReadingNote(
+      resource,
+      effectiveSources,
+      chapterTitles,
+      threadId,
+      distillation,
+      conceptNames,
+    );
     const contentHash = crypto.createHash("sha256").update(noteContent).digest("hex");
     writeVaultFile(vaultPath, noteRelPath, noteContent);
     recordPublish(db, threadId, noteRelPath, contentHash);

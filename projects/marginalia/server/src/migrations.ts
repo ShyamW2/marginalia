@@ -692,4 +692,181 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE highlights ADD COLUMN anchor_source TEXT NOT NULL DEFAULT '';
     `,
   },
+  {
+    // M34 §A7 ("surface the cache split in the usage ledger"): the ledger
+    // already recorded cache *reads* (cache_read_tokens); a call that writes
+    // a cache entry but is never read back — a book's first question at a
+    // ladder rung — spent real tokens creating it, and until now that cost
+    // was invisible rather than merely small. NULL (not 0), matching
+    // cache_read_tokens' own shape: most providers never report this.
+    version: 29,
+    sql: `
+      ALTER TABLE llm_usage ADD COLUMN cache_creation_tokens INTEGER;
+    `,
+  },
+  {
+    // M34 §B5 "a lookahead / spoilers toggle": independent of the
+    // Off/Digest/Full depth (ContextLadderDepth already lives on this same
+    // table) — someone rereading a finished book wants no mask at any rung,
+    // someone mid-book wants one at every rung, and those are two different
+    // settings. 0/1 rather than TEXT, matching the boolean it is; off by
+    // default (0), same "unset reads as the conservative default" shape
+    // context_ladder_depth's own '' uses.
+    version: 30,
+    sql: `
+      ALTER TABLE resource_ai_settings ADD COLUMN lookahead INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
+  {
+    // M34 §D "transparency keeps up" (TASKS.md): §C made the Digest rung's
+    // grounding narrower and variable (a ranked few thematic essays, not
+    // every chapter) and §B added a mask that can silently withhold chapters
+    // — decisions.md 2026-07-28 (later) already ruled that grounding on a
+    // fraction of the book without saying so "just looks like the model got
+    // worse". `context_chapters` (migration 12) only ever recorded
+    // plot-digest chapters; this pairs it with the thematic selection.
+    //
+    // `context_thematic_chapters` mirrors `context_chapters`' own shape —
+    // TEXT NOT NULL DEFAULT '[]', never NULL, since "no thematic chapters"
+    // is itself meaningful (off/full rungs, or a digest answer with no
+    // thematic layer yet).
+    //
+    // `masked` records whether §B5's lookahead toggle was OFF (i.e. the
+    // mask was applied) at the moment *this* answer was generated — a
+    // per-message fact, not the current value of the resource's own sticky
+    // setting, which can change after the fact. NULL (not 0/1) for every
+    // pre-M34-§D message, matching `context_depth`'s own "unrecorded" shape
+    // — an old answer's mask state was never measured, so it reads as
+    // unknown rather than a guessed "unmasked".
+    version: 31,
+    sql: `
+      ALTER TABLE messages ADD COLUMN context_thematic_chapters TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE messages ADD COLUMN masked INTEGER;
+    `,
+  },
+  {
+    // M35 §A1 "offsets, stored" (TASKS.md, decisions.md 2026-08-31 amendment
+    // to settled decision 11): a character offset into `resource_text`
+    // cannot rot — the resource is immutable on import (decision 5), so only
+    // the *rendered page* repaginates, never the source string.
+    // `chapterAnchor.ts`'s `locateQuoteAnchor` and `sectionOffsets.ts`'s
+    // `locateAnchor` already compute exactly this offset and used to throw
+    // it away; this is where it's kept.
+    //
+    // Nullable, no default: NULL means "never located" (a legacy row from
+    // before this migration, or a highlight whose text genuinely isn't
+    // findable) — the same designed "unanchored" state the reader can
+    // already see, not an error. §A2: this is stored *alongside*, never
+    // instead of, `exact`/`prefix`/`suffix` — the client still paints the
+    // mark from those, because the server's plain-text extraction and the
+    // rendered DOM aren't the same string. Server-only for now, same as
+    // `anchor_source` (migration 28): nothing renders it yet.
+    version: 32,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN "offset" INTEGER;
+      ALTER TABLE highlights ADD COLUMN length INTEGER;
+    `,
+  },
+  {
+    // M35 §C4 "themes carry quotes": `thematic_digests.themes` changes shape
+    // (string[] -> {name, quotes: string[]}[]) *and* its contents are
+    // rewritten by §C3b's naming-prompt fix, so a migrated row would carry
+    // the old prompt's theses in the new shape — the worst of both.
+    // ⚠️ Decided 2026-08-31 by the operator: drop and re-run, do not
+    // migrate. Only 3 thematic rows exist library-wide at the time this was
+    // decided, so the cost is minutes of local inference, paid by the
+    // operator re-running the thematic pass — not by this migration, which
+    // only clears the stale rows.
+    //
+    // `book_themes` and `theme_parents` are cleared too: both are keyed on
+    // the old theme-name strings distillation grouped, so leaving them would
+    // point book-level themes at children that no longer exist once the
+    // thematic pass re-runs under the new prompt. `canonical_themes` is
+    // deliberately untouched — `canonicalThemes.ts`'s own comment on
+    // `replaceBookThemes` is explicit that those rows are library-wide
+    // memory (the colour assignments), not any one resource's to own, and
+    // nothing about this migration invalidates that memory.
+    version: 33,
+    sql: `
+      DELETE FROM thematic_digests;
+      DELETE FROM book_themes;
+      DELETE FROM theme_parents;
+    `,
+  },
+  {
+    // M35 §D1 "an annotation may have many anchors": the W3C Web Annotation
+    // model has one body and one-or-more targets (CLAUDE.md's engineering
+    // discipline already says so) — `thread_anchors` is that, added
+    // *additively*. `threads.highlight_id` stays UNIQUE and stays the
+    // primary anchor, so no existing read path changes; this is only ever
+    // consulted by code that needs the *other* anchors (deleteHighlight's
+    // promote-on-delete, the client's `< >` traversal, §C5's multi-quote
+    // themes).
+    //
+    // Junction-table shape, matching `highlight_tags`/`highlight_themes` in
+    // this file's own neighbourhood: composite primary key, plain
+    // `REFERENCES`, no `ON DELETE` — every cascade in this codebase is
+    // handled by hand in application code (`annotations/highlights.ts`'s
+    // `deleteHighlight`), consistent with `foreign_keys = ON` (db.ts).
+    // Indexed on `highlight_id`, not `thread_id`: the hot path is "which
+    // thread (if any) does this highlight anchor", not "list a thread's
+    // anchors" (which is rare — one thread, a handful of anchors, a table
+    // scan of a few rows is free).
+    //
+    // Backfilled one row per existing thread (`ordinal` 0, the only anchor
+    // it has) — every thread that exists before this migration keeps
+    // exactly the anchor it already had, so `deleteHighlight`'s cascade
+    // behaviour is provably unchanged for all pre-existing data.
+    version: 34,
+    sql: `
+      CREATE TABLE thread_anchors (
+        thread_id     TEXT NOT NULL REFERENCES threads(id),
+        highlight_id  TEXT NOT NULL REFERENCES highlights(id),
+        ordinal       INTEGER NOT NULL,
+        PRIMARY KEY (thread_id, highlight_id)
+      );
+      CREATE INDEX idx_thread_anchors_highlight ON thread_anchors(highlight_id);
+
+      INSERT INTO thread_anchors (thread_id, highlight_id, ordinal)
+      SELECT id, highlight_id, 0 FROM threads;
+    `,
+  },
+  {
+    // M35 §C5 "themes carry quotes -> highlight rows": a machine-proposed
+    // theme quote rides on a highlight row, same precedent as migration 26's
+    // `definition` ("a definition rides on the highlight it was looked up
+    // for, as two columns rather than a table of its own" — see that
+    // migration's own comment). `origin` is the discriminator: 'reader' for
+    // everything a highlight has ever meant until now, 'thematic' for a row
+    // the thematic pass created with no reader action at all.
+    //
+    // Never NULL, defaulting to 'reader' — the overwhelmingly common case,
+    // and every existing row genuinely *is* reader-made, so the backfill a
+    // DEFAULT gives every pre-existing row for free is also the correct
+    // value, not just a safe placeholder.
+    //
+    // ⚠️ Not `kind` (settled decision 16: "a highlight kind's identity is
+    // its slot, not its presentation" — rose/sage/honey/slate are permanent
+    // stored values with reader-facing labels, an orthogonal axis to who
+    // proposed the row). §C6's single exported predicate (one per runtime —
+    // server `annotations/highlightOrigin.ts`, client
+    // `highlights/highlightOrigin.ts`) is what every consumer filters
+    // through, exactly the shape `glossaryEntries` already set for
+    // `definition`.
+    version: 35,
+    sql: `
+      ALTER TABLE highlights ADD COLUMN origin TEXT NOT NULL DEFAULT 'reader';
+    `,
+  },
+  {
+    // M35 §C7 "a reader-facing show/hide toggle for thematic quotes,
+    // defaulting to off": the exact mechanism M34 §B5's `lookahead` column
+    // already established on this same table (migration 30) — a per-book
+    // 0/1, off by default, independent of every other setting here. "Only my
+    // own marks" is the reasonable expectation until the reader opts in.
+    version: 36,
+    sql: `
+      ALTER TABLE resource_ai_settings ADD COLUMN show_thematic_quotes INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];

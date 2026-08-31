@@ -33,12 +33,30 @@ export class LLMError extends Error {
   }
 }
 
+/**
+ * M34 §A ("context is a list of blocks, not one string"): one narrow shape
+ * on the existing seam (settled decision 1) — `cache` is a hint a provider
+ * may act on, never a provider-specific concept. A provider that can't cache
+ * (or a block below its minimum cacheable size) simply treats `cache` as a
+ * no-op rather than an error.
+ */
+export interface ContextBlock {
+  text: string;
+  cache?: boolean;
+}
+
 export interface LLMStreamRequest {
   /** Stable system instructions. */
   instructions: string;
-  /** Large, stable per-book context (cacheable). */
-  bookContext: string;
+  /** Large, stable per-book context, split into cache-markable pieces —
+   * ordered stable material first (see llm/context.ts's builders). */
+  bookContext: ContextBlock[];
   messages: { role: "user" | "assistant"; content: string }[];
+  /** M34 §A6: the query role's cache breakpoints live longer (1 hour) than
+   * the 5-minute default, because a reader who reads for a while before
+   * asking should still hit a warm cache. Anthropic-only; other providers
+   * ignore it exactly like `cache`. Undefined means the provider's default. */
+  cacheTtl?: "5m" | "1h";
   signal?: AbortSignal;
 }
 
@@ -57,6 +75,11 @@ export interface ReportedUsage {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens?: number;
+  /** M34 §A7: tokens spent *writing* a cache entry this call, distinct from
+   * `cacheReadTokens` — without this, a run that creates a cache entry but
+   * never reads one back (a book's first question) is invisible in the
+   * ledger rather than showing up as a real, if one-time, cost. */
+  cacheCreationTokens?: number;
   costUsd?: number;
 }
 

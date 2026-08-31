@@ -60,6 +60,31 @@ export function upsertChapterQuestion(
   return getChapterQuestion(db, resourceId, spineIndex)!;
 }
 
+/**
+ * M35 §B2: a posed question whose quote can't be located becomes a
+ * chapter-level question instead of a highlight pinned to the chapter's
+ * opening 120 characters — "the two features resolve each other; a wrong
+ * anchor is worse than no anchor." Unlike `upsertChapterQuestion` (the
+ * reader's own PUT, which always overwrites), this never clobbers a
+ * question the reader already wrote for that chapter — it only fills an
+ * empty slot. Returns the row either way, so the caller can hand the
+ * reader *something* to look at even when it left an existing row alone.
+ */
+export function seedChapterQuestionIfAbsent(
+  db: Database.Database,
+  resourceId: string,
+  spineIndex: number,
+  question: string,
+): ChapterQuestion {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO chapter_questions (resource_id, spine_index, question, note, created_at, updated_at)
+     VALUES (@resourceId, @spineIndex, @question, '', @now, @now)
+     ON CONFLICT(resource_id, spine_index) DO NOTHING`,
+  ).run({ resourceId, spineIndex, question, now });
+  return getChapterQuestion(db, resourceId, spineIndex)!;
+}
+
 /** The answer-space: plain text, autosaved — same shape as
  * `setHighlightNote` (annotations/highlights.ts). No-op if the chapter has no
  * question yet (there is nothing to attach a note to). */

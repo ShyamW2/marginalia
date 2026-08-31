@@ -25,6 +25,8 @@ interface MessageRow {
   context_note: string | null;
   context_depth: string | null;
   context_chapters: string;
+  context_thematic_chapters: string;
+  masked: number | null;
   created_at: string;
   // M22.5 H2: populated only by the LEFT JOIN in listMessagesForThread —
   // absent (undefined) on a bare `SELECT * FROM messages` row, which reads
@@ -37,6 +39,29 @@ interface MessageRow {
 
 function rowToThread(row: ThreadRow): Thread {
   return { id: row.id, highlightId: row.highlight_id, createdAt: row.created_at };
+}
+
+/** M35 §D1: one of a thread's (possibly several) targets — the primary one
+ * still lives on `threads.highlight_id` (settled decision, unchanged), this
+ * table is the *other* anchors. `ordinal` is creation order, not reading
+ * order (§D4's `< >` traversal sorts by spineIndex/offset instead, since
+ * that's the order a reader walks the book in, not the order quotes were
+ * proposed) — but creation order is exactly what deleteHighlight's
+ * promote-the-next-anchor rule needs. */
+export interface ThreadAnchor {
+  threadId: string;
+  highlightId: string;
+  ordinal: number;
+}
+
+interface ThreadAnchorRow {
+  thread_id: string;
+  highlight_id: string;
+  ordinal: number;
+}
+
+function rowToThreadAnchor(row: ThreadAnchorRow): ThreadAnchor {
+  return { threadId: row.thread_id, highlightId: row.highlight_id, ordinal: row.ordinal };
 }
 
 function rowToMessage(row: MessageRow): Message {
@@ -56,6 +81,8 @@ function rowToMessage(row: MessageRow): Message {
     contextNote: row.context_note,
     contextDepth: row.context_depth as ContextLadderDepth | null,
     contextChapters: JSON.parse(row.context_chapters),
+    contextThematicChapters: JSON.parse(row.context_thematic_chapters),
+    contextMasked: row.masked === null ? null : row.masked === 1,
     createdAt: row.created_at,
     provenance,
   };
@@ -78,16 +105,74 @@ export function getThreadById(db: Database.Database, id: string): Thread | undef
   return row ? rowToThread(row) : undefined;
 }
 
+/** Creates a thread and, in the same transaction, its first `thread_anchors`
+ * row (M35 §D1) — every thread this function creates carries full anchor
+ * coverage from the start, so `deleteHighlight` never has to special-case
+ * "a thread with no anchors of its own." */
 export function createThread(db: Database.Database, highlightId: string): Thread {
   const thread: Thread = {
     id: crypto.randomUUID(),
     highlightId,
     createdAt: new Date().toISOString(),
   };
-  db.prepare(
-    `INSERT INTO threads (id, highlight_id, created_at) VALUES (@id, @highlightId, @createdAt)`,
-  ).run(thread);
+  const run = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO threads (id, highlight_id, created_at) VALUES (@id, @highlightId, @createdAt)`,
+    ).run(thread);
+    db.prepare(
+      `INSERT INTO thread_anchors (thread_id, highlight_id, ordinal) VALUES (@id, @highlightId, 0)`,
+    ).run(thread);
+  });
+  run();
   return thread;
+}
+
+/** All of a thread's anchors, oldest first — the primary
+ * (`threads.highlight_id`) is always among them (ordinal 0, unless it's been
+ * promoted by `deleteHighlight`, in which case it's whichever anchor that
+ * left as the oldest survivor). */
+export function listThreadAnchors(db: Database.Database, threadId: string): ThreadAnchor[] {
+  const rows = db
+    .prepare(`SELECT * FROM thread_anchors WHERE thread_id = ? ORDER BY ordinal`)
+    .all(threadId) as ThreadAnchorRow[];
+  return rows.map(rowToThreadAnchor);
+}
+
+/**
+ * M35 §D1/§D6: adds one more target to an existing annotation — the vehicle
+ * for §C5's "one theme -> one annotation -> N anchors." `ordinal` is the
+ * next integer after this thread's current max, so a newly-added anchor
+ * never collides with or reorders an existing one.
+ */
+export function addThreadAnchor(
+  db: Database.Database,
+  threadId: string,
+  highlightId: string,
+): ThreadAnchor {
+  const { maxOrdinal } = db
+    .prepare(`SELECT COALESCE(MAX(ordinal), -1) AS maxOrdinal FROM thread_anchors WHERE thread_id = ?`)
+    .get(threadId) as { maxOrdinal: number };
+  const ordinal = maxOrdinal + 1;
+  db.prepare(
+    `INSERT INTO thread_anchors (thread_id, highlight_id, ordinal) VALUES (@threadId, @highlightId, @ordinal)`,
+  ).run({ threadId, highlightId, ordinal });
+  return { threadId, highlightId, ordinal };
+}
+
+/**
+ * Whether a highlight is already an anchor of *any* thread — the guard a
+ * caller building anchors from possibly-reused highlights (§C5's
+ * `persistThematicHighlights`, which can find the same pre-existing
+ * highlight row a second run) must check before calling `addThreadAnchor`:
+ * `(thread_id, highlight_id)` is the table's primary key, so re-adding an
+ * already-anchored highlight to the same thread throws, and adding it to a
+ * *different* thread would let one highlight belong to two annotations at
+ * once, which nothing downstream (§D3's primary-resolution join included)
+ * expects.
+ */
+export function isHighlightAnchored(db: Database.Database, highlightId: string): boolean {
+  const row = db.prepare(`SELECT 1 FROM thread_anchors WHERE highlight_id = ?`).get(highlightId);
+  return row !== undefined;
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -151,6 +236,8 @@ export interface CreateMessageTransparency {
   contextNote?: string | null;
   contextDepth?: ContextLadderDepth | null;
   contextChapters?: number[];
+  contextThematicChapters?: number[];
+  contextMasked?: boolean | null;
 }
 
 export function createMessage(
@@ -168,6 +255,8 @@ export function createMessage(
     contextNote: transparency.contextNote ?? null,
     contextDepth: transparency.contextDepth ?? null,
     contextChapters: transparency.contextChapters ?? [],
+    contextThematicChapters: transparency.contextThematicChapters ?? [],
+    contextMasked: transparency.contextMasked ?? null,
     createdAt: new Date().toISOString(),
     // The usage row (if any) is linked to this message's id only after
     // this call returns (see routes/threads.ts's linkUsageToMessage) — a
@@ -175,11 +264,13 @@ export function createMessage(
     provenance: null,
   };
   db.prepare(
-    `INSERT INTO messages (id, thread_id, role, content, context_note, context_depth, context_chapters, created_at)
-     VALUES (@id, @threadId, @role, @content, @contextNote, @contextDepth, @contextChapters, @createdAt)`,
+    `INSERT INTO messages (id, thread_id, role, content, context_note, context_depth, context_chapters, context_thematic_chapters, masked, created_at)
+     VALUES (@id, @threadId, @role, @content, @contextNote, @contextDepth, @contextChapters, @contextThematicChapters, @masked, @createdAt)`,
   ).run({
     ...message,
     contextChapters: JSON.stringify(message.contextChapters),
+    contextThematicChapters: JSON.stringify(message.contextThematicChapters),
+    masked: message.contextMasked === null ? null : message.contextMasked ? 1 : 0,
   });
   return message;
 }

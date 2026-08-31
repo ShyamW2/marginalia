@@ -16,6 +16,8 @@ import {
   putDigestRun,
   type DigestRun,
 } from "./store.js";
+import { getLookahead } from "./lookahead.js";
+import { visibleChapterDigests } from "./visibility.js";
 
 // Same conservative estimate as llm/context.ts and llm/usage.ts — duplicated
 // rather than imported, one constant, not worth the file coupling.
@@ -523,9 +525,12 @@ export async function maybeRefreshBookDigestSnapshot(
   resource: Resource,
   bookmarkSpineIndex: number,
 ): Promise<void> {
-  const chaptersInBookmark = listChapterDigests(db, resource.id).filter(
-    (c) => c.spineIndex <= bookmarkSpineIndex,
-  );
+  // M34 §B1: routed through the shared mask — with lookahead on for this
+  // book, the "safe" snapshot simply becomes the full reduce, same as it
+  // already would be once the reader finishes the book and the bookmark
+  // reaches the end.
+  const noMask = getLookahead(db, resource.id);
+  const chaptersInBookmark = visibleChapterDigests(db, resource.id, { bookmarkSpineIndex, noMask });
   if (chaptersInBookmark.length === 0) return;
 
   const frontier = Math.max(...chaptersInBookmark.map((c) => c.spineIndex));

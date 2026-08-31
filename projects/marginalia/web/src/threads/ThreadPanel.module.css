@@ -132,6 +132,21 @@
   overflow: visible;
 }
 
+/* M35 §D4: only rendered when a thread has more than one anchor — the
+   common single-quote case never sees this row of controls. */
+.anchorStepper {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.anchorCount {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
 .metaRow {
   display: flex;
   align-items: center;

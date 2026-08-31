@@ -57,7 +57,11 @@ export class CodexCliProvider implements LLMProvider {
   }
 
   async *stream(req: LLMStreamRequest): AsyncIterable<{ text: string }> {
-    const prompt = `${req.instructions}${lengthInstruction(this.maxResponseTokens)}\n\n${req.bookContext}\n\n${renderTranscript(req.messages)}`;
+    const prompt = [
+      `${req.instructions}${lengthInstruction(this.maxResponseTokens)}`,
+      ...req.bookContext.map((b) => b.text),
+      renderTranscript(req.messages),
+    ].join("\n\n");
     const { events } = await runExec({ model: this.model, prompt, signal: req.signal });
     this.lastUsage = usageFromEvents(events);
     const text = lastAgentMessage(events);

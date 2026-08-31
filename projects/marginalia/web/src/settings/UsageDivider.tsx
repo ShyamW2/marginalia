@@ -134,6 +134,7 @@ interface ProviderModelGroup {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
+  cacheCreationTokens: number;
   durationMs: number;
   costUsd: number;
   costBasis: UsageCostBasis;
@@ -154,6 +155,7 @@ function groupByProviderModel(rows: UsageBreakdownRow[]): ProviderModelGroup[] {
       existing.inputTokens += row.inputTokens;
       existing.outputTokens += row.outputTokens;
       existing.cacheReadTokens += row.cacheReadTokens;
+      existing.cacheCreationTokens += row.cacheCreationTokens;
       existing.durationMs += row.durationMs;
       existing.costUsd += costUsd;
       existing.callCount += row.callCount;
@@ -171,6 +173,7 @@ function groupByProviderModel(rows: UsageBreakdownRow[]): ProviderModelGroup[] {
         inputTokens: row.inputTokens,
         outputTokens: row.outputTokens,
         cacheReadTokens: row.cacheReadTokens,
+        cacheCreationTokens: row.cacheCreationTokens,
         durationMs: row.durationMs,
         costUsd,
         costBasis: row.costBasis,
@@ -221,6 +224,7 @@ function ProviderModelBreakdown({ period }: { period: UsagePeriod }) {
             <th>Model</th>
             <th>Tokens</th>
             <th>Cache read</th>
+            <th>Cache write</th>
             <th>Speed / cost</th>
           </tr>
         </thead>
@@ -231,6 +235,7 @@ function ProviderModelBreakdown({ period }: { period: UsagePeriod }) {
               <td>{g.model ?? "—"}</td>
               <td>{formatTokens(g.inputTokens + g.outputTokens)}</td>
               <td>{g.cacheReadTokens > 0 ? formatTokens(g.cacheReadTokens) : "—"}</td>
+              <td>{g.cacheCreationTokens > 0 ? formatTokens(g.cacheCreationTokens) : "—"}</td>
               <td>
                 {g.isLocal ? (
                   g.durationMs > 0 ? (
