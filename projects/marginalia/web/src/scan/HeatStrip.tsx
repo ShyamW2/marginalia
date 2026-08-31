@@ -5,6 +5,7 @@ import type {
   ScanBookChapter,
   ScanChapter,
   ScanHighlight,
+  ScanThemeZone,
   SearchHit,
 } from "@marginalia/shared";
 import { ImportanceStars } from "../highlights/ImportanceStars.js";
@@ -105,6 +106,10 @@ interface HeatStripProps {
    * chapter start" (decisions.md) — the only honest target at chapter
    * resolution. */
   onOpenChapter: (spineIndex: number) => void;
+  /** M35 §E6: a precise zone band clicks through to *its own* start, not the
+   * chapter's — reuses the reader's find-bar jump path (see ScanPage's
+   * `handleOpenZone`), never `onOpenChapter`'s chapter-anchor route. */
+  onOpenZone: (zone: ScanThemeZone) => void;
   /** M18: the whole-face warp's geometry, in the shared wrapper's own px —
    * identity (no displacement) when the CRT effect is off, so callers don't
    * need a separate "is warp active" branch. */
@@ -144,6 +149,7 @@ export function HeatStrip({
   showBookLayer,
   litThemes,
   onOpenChapter,
+  onOpenZone,
   warpGeometry,
   warpWrapperRef,
   onOpen,
@@ -443,29 +449,60 @@ export function HeatStrip({
           so a click there opens the highlight, never falls through to this
           chapter-level target. */}
       {showBookLayer &&
-        bookChapters.map((bc) => {
-          if (!bc.hasThematic) return null;
+        bookChapters.flatMap((bc) => {
+          if (!bc.hasThematic) return [];
           const chapter = chapters.find((c) => c.spineIndex === bc.spineIndex);
-          if (!chapter) return null;
-          const lit = litThemes === null || bc.themes.some((t) => litThemes.includes(t));
-          const rawStartX = fractionToView(chapter.startPercent, zoomState) * stripSize.width;
-          const rawEndX =
-            fractionToView(chapter.startPercent + chapter.lengthPercent, zoomState) * stripSize.width;
-          const rawY = stripSize.height - BASELINE_OFFSET;
-          const warpedStart = stripSize.width > 0 ? warpLocal(rawStartX, rawY) : { x: rawStartX, y: rawY };
-          const warpedEnd = stripSize.width > 0 ? warpLocal(rawEndX, rawY) : { x: rawEndX, y: rawY };
-          const left = Math.min(warpedStart.x, warpedEnd.x);
-          const width = Math.max(2, Math.abs(warpedEnd.x - warpedStart.x));
-          return (
-            <button
-              key={`book-${bc.spineIndex}`}
-              type="button"
-              className={lit ? `${styles.bookBand} ${styles.bookBandLit}` : styles.bookBand}
-              style={{ left, width }}
-              aria-label={`Section S${chapter.chapterNumber} book themes: ${bc.themes.join(", ") || "none"} — open chapter`}
-              onClick={() => onOpenChapter(bc.spineIndex)}
-            />
-          );
+          if (!chapter) return [];
+
+          const toBandStyle = (startPercent: number, lengthPercent: number): { left: number; width: number } => {
+            const rawStartX = fractionToView(startPercent, zoomState) * stripSize.width;
+            const rawEndX = fractionToView(startPercent + lengthPercent, zoomState) * stripSize.width;
+            const rawY = stripSize.height - BASELINE_OFFSET;
+            const warpedStart = stripSize.width > 0 ? warpLocal(rawStartX, rawY) : { x: rawStartX, y: rawY };
+            const warpedEnd = stripSize.width > 0 ? warpLocal(rawEndX, rawY) : { x: rawEndX, y: rawY };
+            return {
+              left: Math.min(warpedStart.x, warpedEnd.x),
+              width: Math.max(2, Math.abs(warpedEnd.x - warpedStart.x)),
+            };
+          };
+
+          // M35 §E3: "surviving zones precisely and themes with no surviving
+          // zone as today's quantised chapter-wide band — both at once, in
+          // the same view." A theme with a zone is never *also* drawn across
+          // the whole chapter — that would show the same theme twice, once
+          // at its real span and once claiming the whole chapter.
+          const zonedNames = new Set(bc.themeZones.map((z) => z.name));
+          const unzonedThemes = bc.themes.filter((name) => !zonedNames.has(name));
+
+          const bands = bc.themeZones.map((zone) => {
+            const lit = litThemes === null || litThemes.includes(zone.name);
+            return (
+              <button
+                key={`zone-${bc.spineIndex}-${zone.name}`}
+                type="button"
+                className={lit ? `${styles.bookBand} ${styles.bookBandLit}` : styles.bookBand}
+                style={toBandStyle(zone.startPercent, zone.lengthPercent)}
+                aria-label={`Section S${chapter.chapterNumber} theme "${zone.name}" — open this passage`}
+                onClick={() => onOpenZone(zone)}
+              />
+            );
+          });
+
+          if (unzonedThemes.length > 0) {
+            const lit = litThemes === null || unzonedThemes.some((t) => litThemes.includes(t));
+            bands.push(
+              <button
+                key={`book-${bc.spineIndex}`}
+                type="button"
+                className={lit ? `${styles.bookBand} ${styles.bookBandLit}` : styles.bookBand}
+                style={toBandStyle(chapter.startPercent, chapter.lengthPercent)}
+                aria-label={`Section S${chapter.chapterNumber} book themes: ${unzonedThemes.join(", ")} — open chapter`}
+                onClick={() => onOpenChapter(bc.spineIndex)}
+              />,
+            );
+          }
+
+          return bands;
         })}
 
       {showMineLayer &&

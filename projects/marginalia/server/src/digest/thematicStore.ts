@@ -58,6 +58,16 @@ export interface ThematicQuestion {
 export interface ThematicTheme {
   name: string;
   quotes: string[];
+  /** M35 §E1: the sentence a theme starts/ends at, verbatim from the
+   * chapter — text, never offsets (decision 11). Optional/nullable because
+   * a theme diffused through a whole chapter has no honest zone to name;
+   * absent here is not an error, it's the "no zone" case `themeZones.ts`'s
+   * checks are the other half of. Never cached as located offsets — same
+   * "recompute wherever a quote actually becomes something" rule §C1's own
+   * comment already settled, since offsets are section-text-relative and
+   * this JSON column doesn't know which section it's in. */
+  zoneStart?: string | null;
+  zoneEnd?: string | null;
 }
 
 export interface ThematicDigest {

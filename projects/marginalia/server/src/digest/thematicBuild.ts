@@ -44,9 +44,14 @@ const ThematicQuestionSchema = z.object({
 // quotes, the same decision-11 shape as a question's own `quote`. §C3b: the
 // name itself is capped short (a backstop; the prompt wording in
 // `thematicInstructions` is what actually gets a name rather than a thesis).
+// §E1: it also carries the sentence it starts/ends at — nullable, since a
+// theme diffused through the whole chapter has no honest zone to name and
+// the model is told to say so rather than invent narrow-sounding bounds.
 const ThematicThemeSchema = z.object({
   name: z.string().max(60),
   quotes: z.array(z.string()).min(1).max(3),
+  zoneStart: z.string().nullable().optional(),
+  zoneEnd: z.string().nullable().optional(),
 });
 type ThematicTheme = z.infer<typeof ThematicThemeSchema>;
 
@@ -99,11 +104,14 @@ function thematicInstructions(briefText: string): string {
     `Respond with a single JSON object with exactly these keys:\n` +
     `{\n` +
     `  "analysis": "a paragraph or two on what this chapter is about thematically, through the reader's angle if one was given",\n` +
-    `  "themes": [{"name": "a 2-4 word theme or motif name, e.g. \\"Fate versus free will\\" — a label, not a sentence", "quotes": ["1-3 short passages copied VERBATIM from the chapter that best evidence this theme"]}],\n` +
+    `  "themes": [{"name": "a 2-4 word theme or motif name, e.g. \\"Fate versus free will\\" — a label, not a sentence", "quotes": ["1-3 short passages copied VERBATIM from the chapter that best evidence this theme"], "zoneStart": "the sentence, copied VERBATIM, where this theme's own stretch of the chapter begins — or null if the theme runs through the whole chapter rather than one stretch of it", "zoneEnd": "the sentence, copied VERBATIM, where that stretch ends — or null alongside zoneStart"}],\n` +
     `  "questions": [{"text": "a specific question this chapter raises", "quote": "a short passage copied VERBATIM from the chapter that the question is about", "theme": "the name of the theme above this question is evidence for, or null"}]\n` +
     `}\n\n` +
     `Return at most ${MAX_THEMES} themes. Each theme name must be a short noun phrase naming the ` +
     `idea, not a thesis or sentence describing it.\n\n` +
+    `A theme's zoneStart/zoneEnd should only be given when the theme genuinely occupies one ` +
+    `contiguous stretch of the chapter — a theme running throughout should get null for both, ` +
+    `not the chapter's first and last sentences.\n\n` +
     `"questions" should have 2-3 entries, each with its own grounding quote copied exactly ` +
     `from the chapter text — do not paraphrase the quote.\n\n` +
     `Return only the JSON object, no other text.`
@@ -218,6 +226,13 @@ async function extractThematicPart(
  * wording but starts with zero quotes, which is then dropped by the same
  * rule §C3 uses everywhere else — a renamed-but-unevidenced theme isn't a
  * special case, it's just another theme with no locatable quote.
+ *
+ * M35 §E1: `zoneStart`/`zoneEnd` ride along the same reattachment. A part's
+ * zone sentences are only ever meaningful as verbatim *text* — every
+ * consumer re-locates them against the whole chapter's own section text
+ * regardless (the same pattern `persistThematicHighlights` already uses for
+ * quotes), so nothing here needs to know where a part sits inside the merged
+ * chapter.
  */
 function attachMergedThemeQuotes(mergedNames: string[], parts: ThematicPart[]): ThematicTheme[] {
   const byName = new Map<string, ThematicTheme>();
@@ -230,7 +245,9 @@ function attachMergedThemeQuotes(mergedNames: string[], parts: ThematicPart[]): 
   return mergedNames
     .map((name) => {
       const match = byName.get(name.trim().toLowerCase());
-      return match ? { name, quotes: match.quotes } : { name, quotes: [] };
+      return match
+        ? { name, quotes: match.quotes, zoneStart: match.zoneStart, zoneEnd: match.zoneEnd }
+        : { name, quotes: [] };
     })
     .filter((theme) => theme.quotes.length > 0);
 }

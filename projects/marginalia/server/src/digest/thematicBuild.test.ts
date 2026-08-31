@@ -656,3 +656,69 @@ describe("runThematicDigest — M35 §C1 merge reattaches theme quotes", () => {
     db.close();
   });
 });
+
+describe("runThematicDigest — M35 §E1 zone sentences", () => {
+  it("stores a theme's zone start/end sentences alongside its quotes", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Chapter one text about autonomy. It runs for one stretch." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => ({
+      analysis: "Ch1 is about autonomy.",
+      themes: [
+        {
+          name: "autonomy",
+          quotes: ["Chapter one text about autonomy."],
+          zoneStart: "Chapter one text about autonomy.",
+          zoneEnd: "It runs for one stretch.",
+        },
+      ],
+      questions: [],
+    }));
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0);
+    const digest = getThematicDigest(db, resource.id, 0)!;
+    expect(digest.themes[0].zoneStart).toBe("Chapter one text about autonomy.");
+    expect(digest.themes[0].zoneEnd).toBe("It runs for one stretch.");
+    db.close();
+  });
+
+  it("carries a merged theme's zone sentences through from the originating part, same as its quotes", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const paragraph = "Sentence about the sea. ".repeat(40);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 3, href: "a", text: `${paragraph}\n\n${paragraph}` },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider((req) => {
+      if (req.instructions.startsWith("You are merging")) {
+        return { analysis: "Merged.", themes: ["the sea"] };
+      }
+      return {
+        analysis: "Part.",
+        themes: [
+          {
+            name: "the sea",
+            quotes: ["Sentence about the sea."],
+            zoneStart: "Sentence about the sea.",
+            zoneEnd: "Sentence about the sea.",
+          },
+        ],
+        questions: [],
+      };
+    }, 1000);
+
+    await runThematicDigest(db, provider, resource, sections, 3, 3);
+    const digest = getThematicDigest(db, resource.id, 3)!;
+    expect(digest.themes[0].zoneStart).toBe("Sentence about the sea.");
+    expect(digest.themes[0].zoneEnd).toBe("Sentence about the sea.");
+    db.close();
+  });
+});

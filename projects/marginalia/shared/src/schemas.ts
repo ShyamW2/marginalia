@@ -990,10 +990,36 @@ export type ScanHighlight = z.infer<typeof ScanHighlightSchema>;
  * since a chapter-level theme label ("betrayal") is exactly the kind of
  * spoiler M19.5 exists to gate.
  */
+/**
+ * M35 §E: a theme's sub-chapter span, once its two endpoint sentences have
+ * both located, keep their order, sit inside the chapter and don't cover so
+ * much of it that "zone" would be a stretch (see `themeZones.ts`'s four
+ * checks) — a chapter-relative `startPercent`/`lengthPercent` pair (same
+ * book-wide-percent units as `ScanChapter`'s own fields, not chapter-local
+ * ones, so it composes with the strip's existing fraction math for free).
+ * `startQuote` is the *located* exact substring (never the model's raw
+ * text — typographic drift already survived `locateQuoteAnchor`'s own
+ * folding, and this is what a click hands the reader's find bar for a
+ * literal-substring jump, reusing that path rather than a second one).
+ */
+export const ScanThemeZoneSchema = z.object({
+  name: z.string(),
+  startPercent: z.number().min(0).max(1),
+  lengthPercent: z.number().min(0).max(1),
+  startQuote: z.string(),
+});
+export type ScanThemeZone = z.infer<typeof ScanThemeZoneSchema>;
+
 export const ScanBookChapterSchema = z.object({
   spineIndex: z.number().int().nonnegative(),
   hasThematic: z.boolean(),
   themes: z.array(z.string()),
+  /** M35 §E3: themes whose zone survived all four checks — a subset of
+   * `themes` by name. A theme absent here still renders as today's
+   * chapter-wide band; one present here renders *only* at its own precise
+   * span (§E3's "both at once, in the same view" is across themes in a
+   * chapter, not a theme drawn twice). */
+  themeZones: z.array(ScanThemeZoneSchema),
 });
 export type ScanBookChapter = z.infer<typeof ScanBookChapterSchema>;
 

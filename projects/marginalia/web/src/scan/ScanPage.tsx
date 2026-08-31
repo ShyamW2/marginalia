@@ -7,6 +7,7 @@ import type {
   HighlightKind,
   ScanData,
   ScanHighlight,
+  ScanThemeZone,
   SearchHit,
   SearchMatchMode,
 } from "@marginalia/shared";
@@ -299,6 +300,25 @@ export function ScanPage({
     }
   }
 
+  /**
+   * M35 §E6: "reusing the search-hit jump path rather than a second
+   * implementation" — `zone.startQuote` is already the *located* exact
+   * substring (themeZones.ts), not the model's raw sentence, so this is a
+   * literal-substring find, the same handoff `handleOpenSearchHit` above
+   * uses for an arbitrary search hit. Unlike `handleOpenChapter`, this never
+   * touches the chapter-anchor route — a zone isn't a highlight and this
+   * click shouldn't create one.
+   */
+  function handleOpenZone(zone: ScanThemeZone) {
+    navigate(`/read/${id}`, {
+      state: {
+        jumpToFindQuery: zone.startQuote,
+        jumpToFindHitIndex: 0,
+        jumpToFindMatchMode: "substring" satisfies SearchMatchMode,
+      },
+    });
+  }
+
   function handleImportanceChange(highlightId: string, next: HighlightImportance) {
     setData((prev) =>
       prev
@@ -583,6 +603,7 @@ export function ScanPage({
               showBookLayer={showBookLayer && data.book.hasDigest}
               litThemes={litThemes}
               onOpenChapter={handleOpenChapter}
+              onOpenZone={handleOpenZone}
               warpGeometry={warpGeometry}
               warpWrapperRef={warpWrapperRef}
               onOpen={handleOpenHighlight}

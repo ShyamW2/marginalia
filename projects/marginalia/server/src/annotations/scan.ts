@@ -1,5 +1,5 @@
 import type Database from "better-sqlite3";
-import type { ScanBookChapter, ScanChapter, ScanData, ScanHighlight } from "@marginalia/shared";
+import type { ScanBookChapter, ScanChapter, ScanData, ScanHighlight, ScanThemeZone } from "@marginalia/shared";
 import { getReadingPosition, getResourceById, getResourceTextSections } from "../library/store.js";
 import { listHighlightsWithThreadsForResource } from "./highlights.js";
 import { isReaderOrigin } from "./highlightOrigin.js";
@@ -13,6 +13,7 @@ import { listBookThemes } from "../digest/canonicalThemes.js";
 import { getLookahead } from "../digest/lookahead.js";
 import { getShowThematicQuotes } from "../digest/thematicQuoteVisibility.js";
 import { isChapterVisible } from "../digest/visibility.js";
+import { computeThemeZone } from "../digest/themeZones.js";
 
 function firstLine(text: string, maxLength = 140): string {
   const line = text.split("\n").find((l) => l.trim().length > 0) ?? "";
@@ -109,16 +110,42 @@ export function buildScanData(db: Database.Database, resourceId: string): ScanDa
   const noMask = getLookahead(db, resourceId);
   const hasDigest = listChapterDigests(db, resourceId).length > 0;
   const thematicByIndex = new Map(listThematicDigests(db, resourceId).map((t) => [t.spineIndex, t]));
+  const sectionTextByIndex = new Map(sections.map((s) => [s.spineIndex, s.text]));
   const bookChapters: ScanBookChapter[] = chapters.map((c) => {
     const t = thematicByIndex.get(c.spineIndex);
     const revealed = isChapterVisible(c.spineIndex, { bookmarkSpineIndex, noMask });
     const hasThematic = Boolean(t) && revealed;
+    // M35 §E1-§E2: zones are located fresh here, against this chapter's own
+    // full section text (never cached in thematic_digests.themes — same
+    // "recompute wherever a quote actually becomes something" rule §C1's own
+    // comment already settled) and converted from a chapter-local offset to
+    // a book-wide percent the same way `locateAnchor` above does for the
+    // Mine layer. Spoiler-gated by the same `revealed` check as `themes`
+    // below — a precise sub-chapter span past the bookmark is exactly as
+    // much of a spoiler as the chapter-wide band it would otherwise replace.
+    const sectionText = hasThematic ? (sectionTextByIndex.get(c.spineIndex) ?? "") : "";
+    const preceding = offsetIndex.precedingLength.get(c.spineIndex) ?? 0;
+    const themeZones: ScanThemeZone[] = hasThematic
+      ? (t?.themes ?? [])
+          .map((theme): ScanThemeZone | null => {
+            const zone = computeThemeZone(sectionText, theme);
+            if (!zone) return null;
+            return {
+              name: theme.name,
+              startPercent: totalLength > 0 ? (preceding + zone.startOffset) / totalLength : 0,
+              lengthPercent: totalLength > 0 ? (zone.endOffset - zone.startOffset) / totalLength : 0,
+              startQuote: zone.startQuote,
+            };
+          })
+          .filter((z): z is ScanThemeZone => z !== null)
+      : [];
     return {
       spineIndex: c.spineIndex,
       hasThematic,
       // M35 §C1: the Scan's Book layer still filters/legends by theme name
       // only — quotes are §E's job (sub-chapter zones), not this layer's.
       themes: hasThematic ? (t?.themes.map((theme) => theme.name) ?? []) : [],
+      themeZones,
     };
   });
   // Vocabulary only draws from what's actually shown here — a theme that

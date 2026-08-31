@@ -139,7 +139,7 @@ describe("buildScanData", () => {
     const data = buildScanData(db, "res-1")!;
     expect(data.book.hasDigest).toBe(false);
     expect(data.book.themeVocabulary).toEqual([]);
-    expect(data.book.chapters[0]).toEqual({ spineIndex: 0, hasThematic: false, themes: [] });
+    expect(data.book.chapters[0]).toEqual({ spineIndex: 0, hasThematic: false, themes: [], themeZones: [] });
   });
 
   it("book layer surfaces a chapter's thematic themes only once the bookmark has reached it", () => {
@@ -179,17 +179,108 @@ describe("buildScanData", () => {
     let data = buildScanData(db, "res-1")!;
     expect(data.book.hasDigest).toBe(true);
     expect(data.book.chapters).toEqual([
-      { spineIndex: 0, hasThematic: false, themes: [] },
-      { spineIndex: 1, hasThematic: false, themes: [] },
+      { spineIndex: 0, hasThematic: false, themes: [], themeZones: [] },
+      { spineIndex: 1, hasThematic: false, themes: [], themeZones: [] },
     ]);
     expect(data.book.themeVocabulary).toEqual([]);
 
     // Bookmark at chapter 0 — chapter 0 revealed, chapter 1 still gated.
     setReadingPosition(db, "res-1", "epubcfi(/6/4!/4/2)", 0, 0);
     data = buildScanData(db, "res-1")!;
-    expect(data.book.chapters[0]).toEqual({ spineIndex: 0, hasThematic: true, themes: ["autonomy"] });
-    expect(data.book.chapters[1]).toEqual({ spineIndex: 1, hasThematic: false, themes: [] });
+    expect(data.book.chapters[0]).toEqual({
+      spineIndex: 0,
+      hasThematic: true,
+      themes: ["autonomy"],
+      themeZones: [],
+    });
+    expect(data.book.chapters[1]).toEqual({ spineIndex: 1, hasThematic: false, themes: [], themeZones: [] });
     expect(data.book.themeVocabulary).toEqual(["autonomy"]);
+  });
+
+  describe("M35 §E: theme zones", () => {
+    it("locates a surviving zone and converts it to book-wide percent, alongside a theme with no zone", () => {
+      seedResource(db, "res-1");
+      // Built from known-length pieces so the expected percent math below is
+      // exact, not eyeballed: preamble(20) + zoneStart(17) + middle(10) +
+      // zoneEnd(15) + trailing(20) = 82 chars, well under §E2's 0.6 fraction
+      // cutoff ((62-20)/82 ≈ 0.51).
+      const chapterText =
+        "x".repeat(20) + "Zone starts here." + "y".repeat(10) + "Zone ends here." + "z".repeat(20);
+      seedSection(db, "res-1", 0, chapterText);
+      seedSection(db, "res-1", 1, "chapter one text");
+      const totalLength = chapterText.length + "chapter one text".length;
+
+      putThematicDigest(db, {
+        resourceId: "res-1",
+        spineIndex: 0,
+        briefHash: "b",
+        briefText: "",
+        analysis: "a",
+        themes: [
+          { name: "focused", quotes: ["Zone starts here."], zoneStart: "Zone starts here.", zoneEnd: "Zone ends here." },
+          // No zoneStart/zoneEnd at all — the "diffused through the chapter" case.
+          { name: "diffuse", quotes: ["Zone starts here."] },
+        ],
+        questions: [],
+      });
+      setReadingPosition(db, "res-1", "epubcfi(/6/4!/4/2)", 0, 0);
+
+      const data = buildScanData(db, "res-1")!;
+      const chapter = data.book.chapters[0];
+      expect(chapter.themes).toEqual(["focused", "diffuse"]);
+      expect(chapter.themeZones).toHaveLength(1);
+      const zone = chapter.themeZones[0];
+      expect(zone.name).toBe("focused");
+      expect(zone.startQuote).toBe("Zone starts here.");
+      expect(zone.startPercent).toBeCloseTo(20 / totalLength, 10);
+      expect(zone.lengthPercent).toBeCloseTo((20 + 17 + 10 + 15 - 20) / totalLength, 10);
+    });
+
+    it("drops a zone that fails a check (here: covers the whole chapter) and keeps the chapter-wide band only", () => {
+      seedResource(db, "res-1");
+      const chapterText = "Chapter starts right here. Then goes on. And ends right at the close.";
+      seedSection(db, "res-1", 0, chapterText);
+      putThematicDigest(db, {
+        resourceId: "res-1",
+        spineIndex: 0,
+        briefHash: "b",
+        briefText: "",
+        analysis: "a",
+        themes: [
+          {
+            name: "everywhere",
+            quotes: ["Chapter starts right here."],
+            zoneStart: "Chapter starts right here.",
+            zoneEnd: "And ends right at the close.",
+          },
+        ],
+        questions: [],
+      });
+      setReadingPosition(db, "res-1", "epubcfi(/6/4!/4/2)", 0, 0);
+
+      const data = buildScanData(db, "res-1")!;
+      expect(data.book.chapters[0].themes).toEqual(["everywhere"]);
+      expect(data.book.chapters[0].themeZones).toEqual([]);
+    });
+
+    it("never surfaces a zone for a chapter past the bookmark, same spoiler gate as themes", () => {
+      seedResource(db, "res-1");
+      const chapterText = "x".repeat(20) + "Zone starts here." + "y".repeat(10) + "Zone ends here." + "z".repeat(20);
+      seedSection(db, "res-1", 0, "chapter zero");
+      seedSection(db, "res-1", 1, chapterText);
+      putThematicDigest(db, {
+        resourceId: "res-1",
+        spineIndex: 1,
+        briefHash: "b",
+        briefText: "",
+        analysis: "a",
+        themes: [{ name: "focused", quotes: ["Zone starts here."], zoneStart: "Zone starts here.", zoneEnd: "Zone ends here." }],
+        questions: [],
+      });
+      // No reading position at all — nothing past chapter 0 is revealed.
+      const data = buildScanData(db, "res-1")!;
+      expect(data.book.chapters[1]).toEqual({ spineIndex: 1, hasThematic: false, themes: [], themeZones: [] });
+    });
   });
 
   describe("M35 §C6/§C7: thematic-origin highlights", () => {
