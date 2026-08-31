@@ -2061,30 +2061,76 @@ session** — same live-app verification line the Verify section below already c
 
 #### E. Theme zones, and the Scan gets sub-chapter resolution
 
-- [ ] **E1.** The thematic pass returns, per theme, the **sentence a theme starts at** and the
+- [x] **E1.** The thematic pass returns, per theme, the **sentence a theme starts at** and the
       **sentence it ends at** — text, never offsets — and code locates both.
-- [ ] **E2.** ⚠️ **Four sanity checks, all required.** A zone is kept only if both endpoints
+      _Done: `ThematicThemeSchema` gains nullable `zoneStart`/`zoneEnd`, and
+      `thematicInstructions` asks for them per theme (null/null when a theme runs through the
+      whole chapter rather than one stretch). Carried through evidence-filtering untouched
+      (`evidenceFilterThemes` already spreads the whole theme object) and through the merge
+      step the same "reattach from whichever part first proposed the name" way §C1 already
+      reattaches quotes (`attachMergedThemeQuotes`) — a part's zone sentences are never
+      meaningful as offsets across a part boundary, only as verbatim text, and every consumer
+      re-locates against the *whole* chapter's section text regardless, so no part-offset math
+      was needed. Located (never cached) in `themeZones.ts`'s `computeThemeZone`, called from
+      `scan.ts`. Tested in `thematicBuild.test.ts`._
+- [x] **E2.** ⚠️ **Four sanity checks, all required.** A zone is kept only if both endpoints
       locate, start precedes end, the span lies inside the chapter, and it does not exceed a
       set fraction of the chapter (a "zone" covering 95% is the model shrugging). Any failure
       **drops the zone and keeps the theme at chapter resolution** — degrade to today's
       behaviour, never to bad data.
-- [ ] **E3.** The Scan's Book layer renders surviving zones precisely and themes with no
+      _Done: `themeZones.ts`'s `computeThemeZone`, all four checks explicit (including the
+      third, which `locateQuoteAnchor`'s own bounds already guarantee structurally — kept
+      explicit anyway since this item names it as one of the four). The fraction cutoff is
+      `MAX_ZONE_FRACTION = 0.6`, a **designed, not measured** constant — no live provider ran
+      building this; reasoning in the file's own comment and in decisions.md's 2026-09-01
+      (later) entry. Tested in `themeZones.test.ts` (one case per check, plus a genuine
+      single-sentence zone kept, not rejected, when start and end name the same sentence)._
+- [x] **E3.** The Scan's Book layer renders surviving zones precisely and themes with no
       surviving zone as today's quantised chapter-wide band — **both at once, in the same
       view**.
-- [ ] **E4.** ⚠️ **This scopes a written rule; do not treat it as repealing one.**
+      _Done: `ScanBookChapter` gains `themeZones` (name + book-wide `startPercent`/
+      `lengthPercent` + the located exact `startQuote`), computed in `scan.ts`'s
+      `buildScanData` against each revealed chapter's own section text and spoiler-gated
+      identically to `themes`. `HeatStrip.tsx` renders one precise band per surviving zone and
+      the existing whole-chapter band only for the chapter's *other* themes (labelled with just
+      those names) — omitted entirely once every theme in the chapter has a zone, so a themed
+      zone is never drawn twice. Reuses `.bookBand`/`.bookBandLit` verbatim rather than a new
+      style, per settled decision 12. Tested in `scan.test.ts`._
+- [x] **E4.** ⚠️ **This scopes a written rule; do not treat it as repealing one.**
       decisions.md 2026-07-29 (addendum) forbids Book-layer data in the Mine layer's precise
       register *because chapter-resolution data drawn precisely claims accuracy it does not
       have*. A zone that passed E2 is no longer chapter-resolution. **The checks are the
       condition** — if E2 is weakened, E3 becomes the thing that rule forbids.
-- [ ] **E5.** "Mine wins on overlap" for hit-testing still holds — a zone must never steal a
+      _Done: no code of its own — E2's checks are the enforcement, and nothing about the Mine
+      layer's own rendering changed._
+- [x] **E5.** "Mine wins on overlap" for hit-testing still holds — a zone must never steal a
       click from a highlight.
-- [ ] **E6.** Clicking a zone opens the reader at its start offset, reusing the search-hit
+      _Done: zone bands render in the same Book-layer pass, still painted before the Mine
+      highlight bands in `HeatStrip.tsx` — unchanged DOM-order precedent ("Rendered *before*
+      the Mine highlight bands below so normal DOM stacking gives 'Mine wins on overlap' for
+      free")._
+- [x] **E6.** Clicking a zone opens the reader at its start offset, reusing the search-hit
       jump path rather than a second implementation.
+      _Done: `ScanPage.tsx`'s `handleOpenZone` navigates with `jumpToFindQuery`/
+      `jumpToFindHitIndex: 0`/`jumpToFindMatchMode: "substring"` — the same handoff
+      `handleOpenSearchHit` already uses, never the chapter-anchor route (a zone isn't a
+      highlight and this click shouldn't create one). `startQuote` is the *located* exact
+      substring, not the model's raw sentence, specifically so this literal-substring jump
+      can't miss on typographic drift. ⚠️ Known, accepted edge case in decisions.md: an
+      identical sentence recurring earlier in the book would jump to the wrong occurrence —
+      the task doc's own instruction to reuse this path rather than build a second, spine-
+      scoped one._
 
 _Acceptance: a chapter where a theme genuinely occupies one stretch shows a zone over that
 stretch and not the whole chapter; a theme diffused through a chapter still shows a band; a
 zone failing any check is invisible rather than wrong; clicking a zone lands on the right
 page._
+_Status: covered by unit tests across `themeZones.test.ts`, `thematicBuild.test.ts`,
+`scan.test.ts`. **A live thematic run and driving the Scan by hand were not done this
+session** — the shared dev server was already running with a live browser attached when this
+landed, and seeding test thematic data into that database was judged too risky to whatever
+that session is doing. Same "operator's call" line every other M35 real-data pass already
+carries._
 
 #### F. The chapter digest, expanded
 

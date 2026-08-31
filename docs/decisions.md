@@ -3,6 +3,59 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-01 (later) — M35 §E implemented: theme zones, and four gaps the task doc left to the session
+
+Implementing §E ("theme zones, and the Scan gets sub-chapter resolution") right after §C/§D
+landed, per the operator's own sequencing (§E, then §F, strictly one after the other — no
+concurrent work). Recorded here because none of the four are re-litigating a settled
+decision, but each was a real choice the task doc left open.
+
+**`MAX_ZONE_FRACTION = 0.6` is a designed cutoff, not a measured one.** §E2's fourth check
+("does not exceed a set fraction of the chapter") named the shape of the rule but not the
+number, and no live provider ran building this (same caveat every M35 §A/§B/§C real-data
+line already carries). 0.6 is documented in `themeZones.ts` itself with its reasoning: past
+60% of its own chapter, a "precise" span isn't telling a different story than the existing
+quantised chapter-wide band already does. Revisit with a real measurement the way §B1's
+merge-corruption rate was — this is exactly the kind of constant that measurement would
+either confirm or correct.
+
+**Zone geometry is never cached, same rule §A2/§C1 already settled for offsets.**
+`ThematicTheme.zoneStart`/`zoneEnd` are verbatim *sentences*, stored in `thematic_digests`'
+existing JSON column (no migration — same "no shape change was needed at the SQL level"
+as §C4's migration 33). The located offsets, the four §E2 checks, and the book-wide percent
+conversion all happen fresh in `scan.ts`'s `buildScanData`, against the chapter's own full
+section text — never against a single split part's shorter text, and never persisted. A
+merged chapter's `attachMergedThemeQuotes` reattaches a part's `zoneStart`/`zoneEnd` the same
+"first part to propose a matching name" way it already reattaches quotes, precisely because
+nothing downstream needs to know which part a sentence came from.
+
+**A zone band replaces its theme's slice of the chapter-wide band; it is never drawn
+alongside it.** §E3 reads as "both at once, in the same view" across the *themes* in a
+chapter (some zoned, some not), not as two bands for the same theme. `HeatStrip.tsx` renders
+one precise band per surviving zone, and the existing whole-chapter-wide band only for the
+themes that didn't get one (labelled with just those names) — omitted entirely once every
+theme in the chapter has a zone. This also meant not inventing a new visual language: a zone
+band reuses `.bookBand`/`.bookBandLit` verbatim, just positioned narrower — settled decision
+12 ("one control system... nothing gets a bespoke one again") applied to the Scan's Book
+register specifically, which `HeatStrip.module.css`'s own comment already ties to
+"never a taller band, never Mine's hue system."
+
+**§E6 hands the reader's find bar the *located* exact substring, not the model's raw
+sentence.** `themeZones.ts`'s `startQuote` comes from `locateQuoteAnchor`'s own match — a
+literal substring of the chapter's real text — specifically so the jump (`jumpToFindQuery`
++ `jumpToFindHitIndex: 0`, the same handoff `handleOpenSearchHit` already uses) can't fail on
+typographic drift between the model's sentence and the book's own punctuation. The known
+edge case — an identical sentence recurring earlier in the book would jump to the wrong
+occurrence — was accepted rather than built around, per the task doc's explicit instruction
+to reuse the search-hit path rather than build a second (spine-scoped) implementation.
+
+Live verification (a real thematic run, and driving the Scan by hand) was not done this
+session — the shared dev server was already running with a live browser attached to it when
+this landed, and injecting test thematic data into that database was judged too risky to the
+session actually using it. Unit tests cover all four checks, the merge carry-through, the
+spoiler gate, and the percent conversion math; this is the same "operator's call" line every
+other M35 real-data pass already carries.
+
 ## 2026-09-01 — M35 §C/§D implemented: five gaps the task doc left to the session
 
 Implementing §C ("themes carry quotes") and §D ("an annotation may have many anchors")
