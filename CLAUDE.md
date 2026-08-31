@@ -80,6 +80,24 @@ doc), never by drift.
    **Digest** rung of the context ladder (digest of the covering chapters + surrounding
    pages) — same grounding at a fraction of the tokens. Full-book remains one click
    away and remains the default for undigested books.
+   *Amended 2026-08-31 (M34), after measuring what the rung actually sends:* the Digest
+   rung is **masked and selective**, not "everything digested". Two rules. **(a) Spoiler
+   gating is its own axis, not a property of the cost rung** — a lookahead toggle,
+   independent of Off/Digest/Full, applied *structurally* (filter at `spine_index <=
+   bookmark`) on every reader-facing consumer including Full, which today ships the text
+   of unread chapters and is stopped only by a sentence of instruction. The mask belongs
+   at the point of **reading**, not generating: audio casting stays unmasked on purpose,
+   because chapter 40's character needs a voice before the reader gets there. **(b) Every
+   masked chapter contributes its summary and theme *labels* (~190 tokens); only a
+   selected few contribute their thematic *essay* (~618 tokens)** — the highlight's
+   chapter and the previous one unconditionally, plus chapters ranked on M24.5's
+   **distilled parent themes**, never on raw chapter themes, capped at 8–9. Measured on a
+   fully analysed 55-chapter book: the thematic block was 34K of the rung's 61K tokens,
+   and the chapter summaries — the intuitive thing to cut — were 11K. *Also settled
+   there:* `bookContext` is an ordered list of blocks with cache markers, stable material
+   first, because a single breakpoint after highlight-local text meant the Digest rung
+   was re-billed in full on every chapter change while Full was not — the token-saving
+   rung was the more expensive one for reading forward.
 9. **TTS is local, behind its own seam.** Audio goes through one narrow `TTSEngine`
    interface (`server/src/audio/engine.ts`, spec'd in AUDIO.md), first implemented with
    Kokoro in-process via ONNX — no cloud TTS, no Python sidecar. A more expressive
@@ -91,6 +109,15 @@ doc), never by drift.
 11. **The model never returns positions.** An extension of decision 2, learned at
    casting: the LLM returns *text* (a quoted string, a concept name) and code locates
    it. Never ask a model for char offsets, indices, or counts and then trust them.
+   *Clarified 2026-08-31 (M35), because a design review nearly got this backwards:* the
+   ban is on **numbers the model returns**. A number **code computes** by locating
+   model-returned text is this decision being followed, not bent — `locateQuoteAnchor`
+   and `sectionOffsets.ts`'s `locateAnchor` already do exactly that. And a character
+   offset into `resource_text` **cannot rot**: the resource is immutable on import
+   (decision 5), so font size, window width, margins and spread mode repaginate the
+   *rendered page*, never the source string. So located offsets are stored, and stored
+   alongside — not instead of — the quote and its context, which is what the client needs
+   to paint the mark in a DOM the plain-text extraction does not match byte for byte.
 12. **One control system, two registers** (2026-07-30, M19.7). Buttons, sliders, overlays
    and keycaps are built once and skinned by **material, not by room**: `paper` (Desk,
    Book, Digest, Settings — the reader taking its quietest variant) and `glass` (the
@@ -201,7 +228,11 @@ doc), never by drift.
   not new call sites.
 - **Anchors follow the W3C Web Annotation model**: exact quote + prefix/suffix context +
   position (CFI for EPUB) as fallback. Anchoring logic gets real unit tests — it is the
-  most fragile part of the system.
+  most fragile part of the system. That model has one body and **one or more targets**, so
+  an annotation linked to several passages (M35 §D, `thread_anchors`) is a move toward this
+  discipline, not away from it — but it is added *additively*, leaving `threads.highlight_id`
+  as the primary anchor, because weakening the anchor model to fit a feature is what M32 B
+  already refused to do.
 - **Structured outputs are schemas.** Every JSON the LLM returns has a validated schema
   (zod). A parse failure is a handled state, never a crash.
 - **Local-first.** Everything — library, annotations, vault, TTS — is files/SQLite on

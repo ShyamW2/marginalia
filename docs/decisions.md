@@ -3,6 +3,424 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-08-31 (later still) — The merge measured: it does corrupt quotes, and half the damage was our own matcher
+
+Ran the live pass the entry below asked for: four of East of Eden's sixteen splitting
+chapters (spine 9, 22, 48, 61 — 30K–46K chars, each split into two parts and merged), on the
+real digest role, sequentially. ~2.5 min per chapter. It answered §0c and found something
+§0c wasn't looking for.
+
+### The result, and the confound that isn't one
+
+⚠️ **Amended within the hour — the first reading of this was wrong, and the correction
+matters more than the original.** The table as first written compared Kafka-unsplit (9/9)
+against EoE-merged (3/11) and concluded the merge was the discriminator. A control run of
+**two unsplit *long* EoE chapters** (spine 25 at 25,941 chars, spine 46 at 24,500 — 85–90%
+of budget) came back **2/6 raw**, nearly as bad as the merged ones. So the raw rate splits
+by **book**, not by merge, and the typesetting check below (curly-vs-straight counts) was
+too coarse to catch it.
+
+**The merge conclusion survives, but only once the matcher is fixed — and that ordering is
+the whole lesson.** With typographic normalization applied, every unsplit failure disappears
+and every residual failure is from a merged chapter:
+
+| | n | today's matcher | normalized |
+|---|---|---|---|
+| **unsplit** (Kafka 9 + EoE 6) | 15 | 11/15 (73%) | **15/15 (100%)** |
+| **split/merged** (EoE) | 11 | 3/11 (27%) | **7/11 (64%)** |
+
+All four residual failures are from split chapters; none from unsplit. **How to apply:** the
+matcher bug was large enough to swamp the signal it sat on top of, and it happened to
+correlate with the book. Any quote-fidelity comparison run before M35 §B1b lands is
+measuring the matcher, not the model — including the 9/9 that made Kafka look perfect and
+the 3/11 that indicted the merge. `mergeThematicParts` asking the model in English not to
+paraphrase is not holding, which is what settled decision 2 predicts of any rule enforced by
+instruction where code could enforce it structurally.
+
+### Half of it was ours: the matcher is stricter than the anchor model needs
+
+Splitting the failures by *kind* changed the conclusion. Four of the eight are not paraphrase
+at all — the model transcribed faithfully and **normalized the punctuation**, and
+`locateQuoteAnchor`'s two tiers (exact substring, then whitespace-normalized) fold neither
+quotes nor dashes. Folding `’→'`, `—→-` and `…→...` on both sides before matching takes the
+merged rate from **27% to 64%** with no prompt change and no provider change.
+
+**How to apply:** do this first and independently (M35 §B1b). It is ~10 lines, it hardens
+against any model that tidies punctuation, and — the part that matters beyond this
+milestone — **every quote-location number measured before it is an undercount**, including
+the 9/9 that made the unsplit path look perfect.
+
+### The other half is real rewriting, so §B3 is confirmed
+
+Verified against the book text:
+
+| model returned | book says | error |
+|---|---|---|
+| `Charles won't be going, said Cyrus.` | `"Charles won't be going," Cyrus said.` | speech tag reordered, internal quotes dropped |
+| `Cathy had the inhuman attribute…` | `She had the inhuman attribute…` | pronoun replaced with the character's name |
+| `…every single thing. He's—how old?` | `…every single thing. I'd even tell him why you didn't tell him before. He's—how old?` | sentence elided, reply spliced across a paragraph break |
+
+Normalization cannot reach any of these. Carrying the parts' original `quote` strings through
+**in code** does, because the string is never re-emitted — so M35 §B3 moves from "build only
+if measured" to confirmed, and B1a's context bump is reclassified: it removes the merge from
+20 of 21 sections library-wide and is still worth doing, but it narrows the blast radius
+rather than fixing the mechanism.
+
+### And a correction to the ceiling reading below
+
+The four merged chapters returned **8, 8, 8, 8 themes** against Kafka's unsplit 7, 7, 7 —
+which first read as a merge artifact (`THEMATIC_MERGE_INSTRUCTIONS` dedupes two lists "at
+most 8"). ⚠️ **The control run killed that explanation too:** the two *unsplit* EoE chapters
+also returned **8 and 8**. So it is **8 for East of Eden and 7 for Kafka regardless of the
+merge** — a per-book constant, still with zero within-book variance. Length remains a live
+explanation (EoE's chapters are 24–46K, Kafka's 7–12.5K, so any threshold between 12.5K and
+24.5K fits) and so does book character; separating them needs a **Kafka chapter of ~25K**.
+The same correction applies to analysis length: EoE analyses run ~650–830 chars split *and*
+unsplit, against Kafka's 1,500–1,970 — also the book, not the merge.
+
+**What survives, and is the only part M35 §C3 depends on:** the counts do not vary *within* a
+book, across a 1.8× length spread on Kafka and a 1.9× spread on EoE. A length-scaled ceiling
+still buys nothing.
+
+## 2026-08-31 (later) — M34 §0 measured: three findings, and a ceiling that wasn't the problem
+
+The measurement gate ran (`pnpm --filter @marginalia/server measure`). It corrected the
+entry below on three points, which is what a gate is for. TASKS.md M34 §C3 and M35 §B1/§C3
+amended in place.
+
+### The digest role is not "a local 8K model", and the split rate is a setting
+
+Qwen3.5-hermes on local Ollama, declared **32,768** tokens — a 28,672-char map budget, not
+7,000. Splits: Kafka 1/55, Alice 1/14, East of Eden **16/67**, Metamorphosis 3/5. So the
+merge path is neither dead nor dominant, and **neither branch of §0c's fork held**.
+
+⚠️ **But the split rate is one setting, not a fact about the model.** The profile declares
+32,768 while the model's own Modelfile sets `num_ctx 65536` on a 262K-native model — the app
+under-declares by half, so nothing is truncated today; we simply chunk twice as often as
+necessary. At a declared 65,536 the budget is 57,344 chars and **20 of the 21 splitting
+sections stop splitting** (East of Eden 16→0). **How to apply:** try the setting before
+building the code fix. M35 §B3 (moving question selection out of the merge call) is correct
+regardless, but it may be defending a path that no longer runs. §B2 — never falling back to
+`chapterStartAnchor` — is worth doing either way; a wrong anchor is worse than no anchor.
+
+Quote fidelity so far is 9/9, **all from unsplit chapters**, so the merge is still entirely
+unmeasured. The next measurement is East of Eden's *split* chapters specifically — more
+Kafka grows n without touching the question.
+
+### The ceiling was the wrong thing to watch: the counts are constants
+
+Across chapters of 6,903 / 12,367 / 12,529 chars the model returned **7, 7, 7 themes and
+3, 3, 3 questions**. Themes never reached their ceiling of 8; questions sat on theirs.
+
+⚠️ **Zero variance across a 1.8× length spread is a stronger result than saturation would
+have been** — it says the model is not measuring the chapter at all. So the entry below's
+"set the budget in code from chapter length" is only half right: it correctly refuses to ask
+the model to choose, but a length-scaled ceiling just swaps one constant for another that
+code picked, and would be *presented* as content-sensitivity it does not have.
+
+**Decided instead: evidence is the limit, not the count.** M35 §C1 already requires a
+locatable verbatim quote per theme; code drops the ones that fail. A thin chapter cannot
+evidence seven themes, a dense one can, and the surviving count becomes a property of the
+chapter rather than of the prompt — settled decision 2 applied to counting. **And for the
+index use, uniform counts are a feature:** if long chapters carry more themes they overlap
+with more things, so length becomes a confound in M34 §C's ranking. Questions are the
+opposite case, because the reader sees them, so there the filter should be free to leave a
+thin chapter showing one.
+
+### The themes are theses, not names — which is why M34 §C had to rank on parents
+
+Kafka's three analysed chapters are all about fate and share **zero** strings: "Fate as
+internal storm rather than external obstacle" / "Fate as pull rather than choice (Shikoku)"
+/ "Fate as an unexplainable intrusion into ordinary life". `thematicInstructions` asks for
+"short theme or motif names" and is getting 6–12 word analytical claims.
+
+This is the operator's own objection ("the initially extracted themes might be too nuanced,
+so we never select a chapter") measured rather than hypothesised, and it makes §C3's
+"rank on distilled parent themes" not a preference but the only workable input. It also
+degrades three shipped things quietly: `themeTagging` is handed a vocabulary of unique
+essay-fragments to "pick from this exact list"; the Scan's theme filter would hold 7 × N
+distinct sentences; and distillation is asked to fold theses into parents. **Decided:** fix
+the prompt to produce a 2–4 word noun phrase (M35 §C3b), and keep the nuance in the analysis
+prose, where it already lives.
+
+⚠️ **And the ranking input does not exist yet:** `book_themes` and `canonical_themes` are
+**empty for every book** — `runThemeDistillation` has never run. M34 §C would ship ranking
+nothing and silently falling back to "current + previous". Run distillation as a
+precondition, or ship §C knowing that is its real behaviour.
+
+### Resolved same day — distillation becomes part of a thematic run
+
+The operator's call, and it is the right shape: **chain `runThemeDistillation` onto the end
+of a thematic run.** The precedent is one layer over — `runDigest` already ends with
+`reduceBookDigest` inside the same job; the thematic layer simply never grew its equivalent,
+which is why a pass with its own endpoint, job type and button has sat unpressed since
+M24.5. Best-effort, like `maybeRefreshBookDigestSnapshot`: chapters are already committed, so
+a failed distillation logs and leaves the run completed. The standalone endpoint stays.
+
+**Why this is enough to fix matching on its own, ahead of the theme-naming fix:**
+`theme_parents` maps each chapter theme *string* to a parent id, and ranking compares parent
+ids — so ugly children still work. That separates cleanly: **distillation fixes matching;
+M35 §C3b fixes display and tagging** (the Scan's filter key and `themeTagging`'s "pick from
+this exact list", both of which put raw theme strings in front of a human or a model). They
+are independent wins and M34 §C is not blocked on M35.
+
+⚠️ **One refinement it needs, or it fails the other way.** With 6–8 parents and 7 themes per
+chapter, most chapters will share most parents, and set overlap then selects *everything* —
+the operator's second failure mode, mirroring raw themes selecting nothing. So rank on a
+**weighted parent vector**: count how many of a chapter's themes land under each parent. A
+chapter with 4 of 7 themes under "Fate" is more about fate than one with 1 of 7. The weight
+is a **code-computed count**, which is the honest form of the vector idea this log rejected
+in its LLM-scored form — the objection there was never "vectors", it was "numbers the model
+made up with no shared calibration". Recorded as M34 §C0/§C0a.
+
+### Three open questions closed by the operator
+
+- **M35 §C4 — drop and re-run, do not migrate.** The theme column changes shape *and* its
+  contents are rewritten, so a migrated row carries the old prompt's theses in the new shape.
+  Three rows exist library-wide. ⚠️ Clear `book_themes`/`theme_parents` too — their children
+  are keyed on theme strings that will no longer exist — but never `canonical_themes`, which
+  is library-wide memory holding the colour assignments.
+- **M35 §D5 — an anchor deletes, not the thread.** The thread survives while ≥1 anchor
+  remains; the last anchor takes it with it, which is today's behaviour unchanged for
+  one-anchor threads. ⚠️ Deleting the *primary* anchor while others remain must promote the
+  next to primary rather than cascade. The vault publish writes **one note with its sources
+  in reading order** — a multi-anchor annotation is one thought about several passages, and
+  splitting it at publish time would undo the feature in the projection.
+- **M36 §A4 — glossary only.** A definition the reader has also noted on stays out of
+  Annotations, note shown in the glossary entry. `isGlossaryEntry` is the whole test; a
+  "…unless it has a note" clause would put the same word back in two lists.
+
+## 2026-08-31 — The LLM layer, measured: what the Digest rung sends, what a quote can know, and what caching actually costs
+
+Operator-initiated design review after M32, covering five areas the operator named: query
+context modes, multi-anchor annotations, thematic quotes, the glossary, and caching. It
+opens with numbers because two of the three premises we started from changed once they were
+measured. **Everything below was measured against the real library SQLite, not estimated
+from the code.** Becomes TASKS.md M34–M37.
+
+### What the rungs actually cost
+
+Rendered context sizes, extrapolating each book's own measured per-chapter averages to full
+coverage:
+
+| Book | Sections | **Full** | **Digest** | summaries / thematic / local pages |
+|---|---:|---:|---:|---|
+| Kafka on the Shore | 55 | 278K tok | 61K | 11K / **34K** / 15K |
+| East of Eden | 67 | 345K | ~70K | 13K / ~42K / 15K |
+| Metamorphosis | 5 | 39K | 25K | 0.8K / — / **24K** |
+| Alice | 14 | 47K | 14K | 2.9K / — / 10K |
+
+**Finding 1 — the thematic layer is the Digest rung's bulk, and the chapter summaries are
+not.** A chapter summary renders at ~190 tokens; a thematic analysis at ~618. On a fully
+analysed Kafka that is 11K against 34K — the thematic block is **55% of the whole rung**.
+Trimming chapter summaries, the intuition we started with, saves almost nothing. Also worth
+recording: on a short book the rung barely exists — 24K of Metamorphosis's 25K is the three
+full sections around the highlight, so Digest only earns its name on long books.
+
+**Finding 2 — the Digest rung is cache-hostile and Full is not.** `bookContext` is one
+string with one `cache_control` breakpoint at its end (`anthropic.ts:80`), and
+`buildDigestContext` *ends* that string with `FULL TEXT AROUND THE HIGHLIGHT`, which changes
+whenever the reader highlights in a different chapter. Anthropic caching is a strict prefix
+match terminating at the first difference, so the digest block in front of that tail is
+never read back. Full mode, on a book that fits without windowing, is byte-stable and caches
+completely.
+
+⚠️ **The consequence, stated plainly because it inverts the rung's purpose:** on Opus 5
+pricing, a question in a chapter the reader has just moved into costs ~$0.38 on Digest and
+~$0.14 on Full-with-a-warm-cache. **The token-saving rung is currently the more expensive
+one for the ordinary act of reading forward.** This is a placement bug, not a design
+question, and it is the highest-value item in the whole review.
+
+**Finding 3 — the spoiler mask exists in three places and is missing from two.**
+
+| Consumer | Reads | Masked? |
+|---|---|---|
+| Digest page (`buildDigestStatus`) | all chapters + book digest | yes — redacted server-side, with a reveal list |
+| Scan Book layer (`annotations/scan.ts:97`) | chapter + thematic themes | yes — including theme *names* |
+| Book digest snapshot (`build.ts:526`) | chapters ≤ bookmark | yes — the table exists for this |
+| **Query, Digest rung (`threads.ts:83`)** | every chapter summary + every thematic analysis | **no** |
+| **Define (`define.ts:233`)** | full synopsis + full cast + nearest summaries + every occurrence of the term in the book | **no** |
+| Audio casting (`audio.ts:280`) | full book digest + cast | no — **correctly**; see below |
+
+So the anti-spoiler promise on the query path is enforced by a sentence in
+`READING_COMPANION_INSTRUCTIONS` while the spoilers themselves sit in the context. We are
+paying for tokens we have instructed the model to ignore. Casting is a legitimate exception
+and the rule that makes it one is worth naming: **the mask belongs at the point of reading,
+not the point of generating.** Casting needs chapter 40's character to have a voice before
+the reader reaches chapter 40, and its output is voice assignments rather than prose.
+
+### The correction: a character offset into `resource_text` cannot rot
+
+Raised in review as "positions rot, which is why anchors are quote + prefix/suffix." That
+conflated two different coordinate systems and the operator was right to push back.
+
+- `resource_text` is **immutable on import** (settled decision 5). An offset into it is
+  stable forever. Font size, window width, the M14 margin setting and spread mode repaginate
+  the *rendered page*; they do not touch the source string.
+- What the W3C quote+context model actually buys us is different: a reader's highlight is
+  *born* from a DOM selection and must be re-found in the DOM to be painted, and the
+  server's plain-text extraction and the rendered DOM are not the same string.
+- The machinery already exists and already computes offsets — `sectionOffsets.ts`'s
+  `locateAnchor` returns `{spineIndex, offset, globalOffset, percent}`, which search and the
+  Scan both consume. It is computed at runtime and thrown away.
+
+⚠️ **Settled decision 11 is not in the way of this, and the distinction is worth writing
+down because it was nearly got wrong here.** Decision 11 bans trusting numbers *the model
+returns*. A number **code computes** by locating model-returned text is the decision being
+followed, not bent — it is exactly what `locateQuoteAnchor` already does for posed
+questions. CLAUDE.md gains a sentence saying so.
+
+**Decided:** store both, with distinct jobs. `offset` + `length` into the section's text is
+the canonical position — ordering, ranges, Scan zones, dedup, click-to-jump, "does this
+theme span 40–70% of the chapter". `exact` + `prefix`/`suffix` is what the client needs to
+paint it. They are not competing representations. A stored offset also lets a quote be
+**verified at generation time** rather than failing silently weeks later.
+
+### Decisions taken
+
+**Spoiler-gating is its own axis, not a property of the cost rung.** The reader gets a
+lookahead/spoilers toggle that is independent of Off/Digest/Full, applied structurally
+(filter at `spine_index <= bookmark`) on every reader-facing consumer including Full — which
+today is the leakiest rung of all, shipping the literal text of unread chapters. *Rejected:*
+coupling it to the ladder ("Full means spoilers"), because someone rereading a finished book
+wants no mask at any rung, and someone mid-book wants one at every rung.
+
+**The Digest rung sends every chapter's theme *labels* and a few chapters' theme *essays*.**
+Chapter summaries already carry a `themes: []` list, at ~190 tokens each, so the model can
+see that a motif runs through chapters 10, 14 and 15 without reading three essays about it.
+Full thematic prose goes only to the highlight's chapter, the previous one, and chapters
+selected by theme relevance. *Rejected:* collapsing Digest to the current chapter — that is
+the Off rung with extra steps, and Off already exists.
+
+**Selection matches distilled parent themes, never raw chapter themes.** Raw chapter themes
+are either too specific to ever match or too generic to discriminate — the operator's
+objection, and correct. M24.5 already built the fix: `book_themes` / `theme_parents` fold
+chapter themes under 6–8 book-level parents. Matching on parents also means selection and
+the Scan's filter agree by construction, since they draw on the same vocabulary. Cap 8–9
+chapters. **No recency weighting** — the mask already removes everything ahead, and the
+current and previous chapters are unconditional, which is a recency floor with no knob to
+mistune.
+
+**Context is a list of blocks with cache markers, not one string.**
+`LLMStreamRequest.bookContext: string` becomes `ContextBlock[]`, with stable material first
+and varying material last, and a marker at the boundary. Anthropic maps blocks to system
+blocks with up to 4 breakpoints; every other provider concatenates and ignores the marker.
+**This is provider-agnostic in benefit, not an Anthropic special case:** llama.cpp-backed
+local servers reuse the KV cache for the longest common prefix, so the same ordering saves
+prefill time locally where it saves money on Anthropic. Settled decision 1 is satisfied —
+`cache` is a hint on a shared shape, not a provider concept leaking through the seam.
+
+**Cache TTL for the query role is 1 hour, not the 5-minute default.** A cache read refreshes
+the timer for free, so continuous questioning keeps a 5-minute entry alive indefinitely; but
+a reader who reads a chapter for twenty minutes and *then* asks has always missed it. That
+is precisely the 5–60 minute gap where the 1h TTL's doubled write price (2× rather than
+1.25×) pays off. It needs three requests to break even instead of two.
+
+**Theme zones are two sentences and four sanity checks.** For sub-chapter theme location the
+model returns the sentence a theme *starts* at and the sentence it *ends* at — text, not
+numbers — and code locates both. A zone is kept only if: both endpoints locate, start
+precedes end, the span sits inside the chapter, and it does not exceed a set fraction of the
+chapter (a "zone" covering 95% is the model shrugging). Any failure drops the zone and keeps
+the theme at chapter resolution. Cheaper than asking for many quotes and degrades to today's
+behaviour rather than to bad data.
+
+**The Scan may render sub-chapter data precisely — under a named condition.** This amends
+this log's own 2026-07-29 (addendum) ruling that the Book layer must never be drawn in the
+Mine layer's precise register. ⚠️ **That rule is not being overturned, it is being scoped.**
+Its reason was that *chapter-resolution* data drawn precisely claims accuracy it does not
+have — and a quote-anchored zone that passed the four checks above is no longer
+chapter-resolution. The condition is the checks: a theme with no surviving zone still
+renders as today's quantised chapter-wide band, in the same view, at the same time. A click
+on a zone opens the reader at its start offset, reusing the search-hit jump path.
+
+**An annotation may have many anchors.** Today `threads.highlight_id` is `UNIQUE` — one
+thread, one highlight, permanently. The W3C Web Annotation model CLAUDE.md already commits
+to has one body and *one or more* targets, so this is a move toward the stated discipline,
+not away from it. Implemented additively as `thread_anchors(thread_id, highlight_id,
+ordinal)`, keeping `threads.highlight_id` as the primary anchor so no existing path changes;
+backfill is one row per existing thread. Traversal order is `spineIndex, offset` — which is
+another thing the stored offset is for.
+
+**Machine-proposed quotes are highlight rows with an origin, not a new table.** Migration
+26's own comment is the precedent: `definition` rides on the highlight rather than becoming
+a `definitions` table, so the glossary is "a filtered view, one predicate" and
+`deleteHighlight` cleans up with no cascade to forget. A quote stored as a highlight with
+`origin: 'reader' | 'thematic'` inherits rendering, anchoring, the Scan, jump-to and
+deletion for free. ⚠️ **The cost, recorded so it is not discovered late:** it pollutes
+highlight counts, the Scan's Mine layer and the vault publish unless all of them apply the
+same filter. One exported predicate, used everywhere — the same discipline the glossary fix
+below needs.
+
+**Budgets are set in code from chapter length; the model is never asked to choose one.**
+Both for theme/quote counts per chapter and for the substrate cap. Models reliably fill to
+whatever maximum they are given and rarely come in under, so "decide how many this chapter
+warrants" is a decorative instruction. Code measures the chapter, puts the number in the
+prompt ("this chapter is ~4,000 words; identify 2–4 themes") and sets the schema max to
+match. The operator's point that a thematically loaded short chapter deserves more than a
+long flat one is real but unknowable before reading; length is the only proxy available at
+budget time, and whether the model ever comes in under its ceiling is one of the two
+measurements below.
+
+**The thematic substrate is append-only, with a length-scaled cap.** A brief-blind, one-time
+extraction per chapter — verbatim passages with a line of context, the chapter's claims and
+tensions, who holds which position — which brief-driven passes read *instead of* the raw
+chapter. It exists because this log's 2026-07-29 (later) claim that "the thematic layer is
+cheap to re-run" is **false as implemented**: changing a brief re-reads every chapter at
+full text for exactly what the first run cost. Two rules: a full re-read stays available and
+is named as such in the UI ("re-read the book" vs "re-read my notes"), because a brief-blind
+extractor cannot know which passage a future brief will need; and quotes surfaced by any
+full re-read merge back into the substrate, so the bank grows toward what this reader keeps
+caring about. ⚠️ Append-only converges on being the chapter again — the cap is a hard
+requirement, not a nicety, with eviction of quotes no brief has ever drawn on.
+
+### Raised and deliberately not scheduled
+
+- **LLM-answered chapter questions.** M32 B gave a chapter-level question a hand-written
+  note and no model path. Answering one needs a sibling to `resolveContext` that takes a
+  chapter rather than a `Highlight` — cheap to build — but it also needs CLAUDE.md's "the
+  highlight is the prompt" bounded a second time (the reader supplies the question and the
+  *chapter* is the selection), and its own storage, since M32 B deliberately refused to
+  weaken the anchor model. **Not started from this list**; it is a decision before it is a
+  task.
+- **LLM-generated theme score vectors — rejected.** Asking the model for a per-theme score
+  is asking for a number, and worse, each chapter's thematic call is independent, so
+  chapter 3's "0.7" and chapter 40's "0.7" were produced with no shared calibration. A dot
+  product over them is arithmetic on noise that looks like a metric. Theme-set overlap over
+  the distilled parent vocabulary is honest, deterministic, and already computed.
+- **A local embedding seam — conditional, not scheduled.** If parent-theme overlap proves
+  too coarse in practice, the next step is a small ONNX embedding model over the *stored
+  analyses* (never a re-read of the book) behind an `EmbeddingEngine` seam beside
+  `TTSEngine`, keeping settled decision 10 intact. Measure the free version first.
+
+### The two measurements this arc opens with
+
+Both are cheap, both are currently guesses, and both change how much work the plan deserves.
+They land first so data accrues while M34 is built.
+
+1. **The anchor fallback rate.** `routes/digest.ts:510` is a bare
+   `locateQuoteAnchor(...) ?? chapterStartAnchor(...)` with no record of which fired. If a
+   quote fails to locate, the reader gets a highlight parked on the chapter's first 120
+   characters with no relation to the question — the "ungrounded annotation" the operator
+   reported. ⚠️ **The suspected cause is provider-dependent, which is why it must be measured
+   rather than reasoned about:** on Opus 5 a chapter never splits (budget ~875K chars) and a
+   quote comes from text the model just read; on a local 8K model nearly every chapter
+   splits, and every quote then passes through `mergeThematicParts` — a call containing *no
+   chapter text*, instructed in English not to paraphrase. Provider roles exist precisely so
+   digests run locally, so the merge path is likely the common one.
+2. **Whether the model ever comes in under a theme/quote ceiling.** Decides whether "dynamic
+   counts" is a real behaviour or whether the code-set cap is doing all the work.
+
+### Defects found while reading the code
+
+- `upsertChapterQuestion` (M32 B) is one row per `(resource, chapter)` and **replaces**
+  `question` on write, so a second question about a chapter silently destroys the first
+  while its `note` stays attached to a question that no longer exists.
+- `AnnotationsOverview.tsx` does no kind filtering at all, so Define's glossary entries
+  appear in both the glossary and the annotations list. `Glossary.tsx` already holds the
+  exact predicate; it is not exported.
+- `define.ts`'s context is unmasked (above), and is the widest spoiler surface in the app
+  for a feature whose output is under 100 tokens.
+
 ## 2026-08-27 (yet later) — M32 landed; a chip-text bug found live along the way
 
 M32 (TASKS.md) built as scoped: the chapter-end affordance (`ChapterEndPrompt.tsx`, wired

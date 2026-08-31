@@ -5,6 +5,78 @@ Append; don't rewrite history.
 
 ## Spec gaps
 
+- **2026-08-31 (M35 §B1b), `locateQuoteAnchor` matches punctuation it should be folding.**
+  Its two tiers are exact substring, then whitespace-normalized. Neither touches
+  **typography**, and every book in this library is typeset with curly quotes exclusively
+  (Kafka 7,835 curly apostrophes / 0 straight; East of Eden 7,328 / 0). A model that tidies
+  `’`→`'` while transcribing faithfully therefore fails to locate, and the quote silently
+  falls back to the chapter's opening line. Measured: folding curly quotes, em/en dashes and
+  `…` on both sides takes the merged-chapter hit rate from **27% to 64%**. ⚠️ This is
+  independent of any prompt or provider fix — it is the matcher being stricter than the
+  anchor model needs, and it makes every quote-location number measured before it an
+  undercount.
+
+- **2026-08-31 (M34 §0b), the thematic pass emits theses where the schema says names.**
+  `thematicInstructions` asks for "short theme or motif names, at most 8"; the model returns
+  6–12 word analytical claims — "Self as split into protective/hardened alter-ego (Crow) and
+  vulnerable self (Kafka)". Kafka's three analysed chapters are all about fate and share zero
+  strings between them. ⚠️ Three shipped things consume this vocabulary and all degrade
+  quietly: `themeTagging` instructs the model to "pick from this exact list" and hands it one
+  unique essay-fragment per chapter per theme; the Scan's theme filter would hold 7 × N
+  distinct sentences; and `runThemeDistillation` is asked to fold theses into 6–8 parents.
+  Fixed in M35 §C3b. Recorded here because it is a **prompt/schema mismatch that has been
+  live since M19.5**, not something the M34/M35 work introduced.
+
+- **2026-08-31, `runThemeDistillation` has never run — `book_themes` and `canonical_themes`
+  are empty for every book.** ⚠️ Not for want of a caller: it has its own endpoint
+  (`POST /api/resources/:id/theme-distillation`), its own job type, and a button on the
+  digest page. It is a **separate manual step that nobody has ever pressed**, and nothing
+  chains it onto a thematic run — unlike the plot layer, where `runDigest` ends with
+  `reduceBookDigest` in the same job. So the distilled parent vocabulary that the Scan's
+  filter key and M34 §C's ranking both depend on does not exist in any real library. A
+  feature reading `listBookThemes` today gets `[]` and takes its fallback path silently —
+  which reads as "working" in every test that does not assert on the ranking itself.
+  Fixed by M34 §C0 (chain it, best-effort, at the end of a thematic run).
+
+- **2026-08-31 (M34 §0b), counts do not vary with chapter length.** 7/7/7 themes and 3/3/3
+  questions across chapters of 6,903 / 12,367 / 12,529 chars. Zero variance over a 1.8×
+  spread. Anyone tempted to add a length-scaled ceiling should read decisions.md
+  2026-08-31 (later) first: it swaps one constant for another and presents it as
+  content-sensitivity. The lever that does vary is the evidence filter (M35 §C1/§C3).
+
+- **2026-08-31 (M34 §0c), the measured answer to the note below — the premise was wrong
+  in the operator's favour.** The note dated the same day reasons about "a local 8K
+  model" where nearly every chapter splits. Measured against the real library:
+  the digest role is **Qwen3.5-hermes on a local Ollama endpoint, declared at 32,768
+  tokens** in its provider profile (and the Modelfile itself sets `num_ctx 65536`, on a
+  262K-native model — so the app *under*-declares the window; nothing is being silently
+  truncated). That is a **28,672-char map budget**, not 7,000, and the split rate over
+  the actual books is: Kafka on the Shore **1/55 (2%)**, Alice **1/14 (7%)**, East of
+  Eden **16/67 (24%)**, Metamorphosis **3/5 (60%)** — the last only because its five
+  "chapters" are whole parts of the novella, median 38K chars.
+  ⚠️ **So `mergeThematicParts` is not the common path here either**, and the argument
+  that quote fidelity is a merge-seam problem does not survive contact with this
+  operator's setup. It still governs East of Eden's long chapters, where a quarter of
+  the book goes through the merge. Re-run `pnpm --filter @marginalia/server measure`
+  after changing the digest role — the whole conclusion moves with that one setting,
+  which is the note below's real point and it stands.
+
+- **2026-08-31 (M34/M35 scoping), found while measuring the LLM layer:** the digest
+  role's context window silently decides **which code path is the normal one**, and
+  nothing in any single file says so. The map budget is
+  `contextTokens × MAP_BUDGET_FRACTION (0.25) × CHARS_PER_TOKEN (3.5)`, so on a hosted
+  1M-context model that is ~875K chars and `splitIntoChunks` never splits a chapter —
+  `mergeChapterParts` / `mergeThematicParts` are dead code in practice. On a local 8K
+  model it is 7,000 chars and nearly every chapter splits, so the merge call is on the
+  critical path for every chapter, and it is the one call that receives **no chapter
+  text** — which is where a posed question's verbatim quote can silently become a
+  paraphrase and fall back to `chapterStartAnchor`. Provider roles exist precisely so
+  digests can run on a cheap local model, so the merge path is probably the *common* one
+  for this operator and the rare one in any hosted test. ⚠️ Anyone reasoning about quote
+  fidelity, chunk seams, or thematic cost must state which provider they are reasoning
+  about first; a result measured on one says nothing about the other. M34 §0 exists to
+  turn this from an argument into a number.
+
 - **2026-07-30 (M19.7), found while verifying the generalized `Slider`, pre-existing
   not introduced by it:** the reader's `%` control previews and commits in two
   different percent spaces. The drag/keyboard preview is computed by adding a
