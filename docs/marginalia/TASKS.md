@@ -1444,37 +1444,37 @@ costs local inference time, so it is the operator's call, not the session's._
 
 #### A. Context is a list of blocks, not one string
 
-- [ ] **A1.** `LLMStreamRequest.bookContext: string` becomes `bookContext: ContextBlock[]`,
+- [x] **A1.** `LLMStreamRequest.bookContext: string` becomes `bookContext: ContextBlock[]`,
       where `ContextBlock = { text: string; cache?: boolean }`. One narrow shape on the
       existing seam (settled decision 1) — `cache` is a hint, not a provider concept.
-- [ ] **A2.** `AnthropicProvider.stream` maps blocks to system text blocks, putting
+- [x] **A2.** `AnthropicProvider.stream` maps blocks to system text blocks, putting
       `cache_control` on each block marked `cache`. ⚠️ **Max 4 breakpoints per request**, and
       the instructions block is already one of them today — budget accordingly. Below the
       per-model minimum a marked block silently does not cache and costs nothing extra
       (Opus 5: 512 tokens; Sonnet 5: 1024; Opus 4.6 / Haiku 4.5: 4096), so a short block
       being marked is wasteful but not wrong.
-- [ ] **A3.** Every other provider (`openaiCompat`, `claudeAgent`, `codexCli`) joins the
+- [x] **A3.** Every other provider (`openaiCompat`, `claudeAgent`, `codexCli`) joins the
       blocks with `\n\n` and ignores `cache`. `openaiCompat.ts:174` already records that
       there is no cache API for arbitrary endpoints; leave that comment, extend it to say
       the ordering still helps a llama.cpp-backed server reuse its KV cache.
-- [ ] **A4.** `buildDigestContext` returns blocks ordered **stable first, varying last**:
+- [x] **A4.** `buildDigestContext` returns blocks ordered **stable first, varying last**:
       `[book digest + chapter summaries + thematic prose]` marked `cache: true`, then
       `[full text around the highlight]` unmarked. ⚠️ This ordering is the entire point of
       the section — a block that varies per highlight placed before the marker makes the
       marker worthless.
-- [ ] **A5.** `buildContext` (Full) returns a single marked block, preserving today's
+- [x] **A5.** `buildContext` (Full) returns a single marked block, preserving today's
       behaviour. ⚠️ Except when `selectWindow` fires: a windowed Full context *is*
       highlight-dependent, so on that path the window is the varying tail and only the
       header is stable — which is to say, on a book long enough to window, Full's caching is
       already broken and A5 must not pretend otherwise. Leave it unmarked rather than
       marking something that will never be read back.
-- [ ] **A6.** The query role's cache TTL is **1 hour**, not the 5-minute default. A cache
+- [x] **A6.** The query role's cache TTL is **1 hour**, not the 5-minute default. A cache
       read refreshes the timer for free, so continuous questioning keeps a 5-minute entry
       warm on its own; the case this buys is a reader who reads for twenty minutes and
       *then* asks. Write cost goes 1.25× → 2×, so it needs three requests rather than two to
       pay off. ⚠️ Where two blocks carry different TTLs, the longer-TTL block must appear
       **before** the shorter one.
-- [ ] **A7.** Surface the cache split in the usage ledger. `reportedUsage()` already carries
+- [x] **A7.** Surface the cache split in the usage ledger. `reportedUsage()` already carries
       `cacheReadTokens`; also record cache *creation* tokens so a run that never reads back
       is visible as a number rather than inferred.
 
@@ -1491,37 +1491,48 @@ casting (`routes/audio.ts:280`) is a deliberate exception and stays unmasked: ch
 character needs a voice before the reader reaches chapter 40, and casting's output is voice
 assignments, not prose.
 
-- [ ] **B1.** One shared helper — `visibleChapterDigests(db, resourceId, opts)` and its
+- [x] **B1.** One shared helper — `visibleChapterDigests(db, resourceId, opts)` and its
       thematic sibling — filtering at `spine_index <= bookmarkSpineIndex`, with an explicit
       reveal set and an explicit "no mask" mode. ⚠️ Build it **once** and route all four
       reader-facing consumers through it. Three of them
       (`buildDigestStatus`, `annotations/scan.ts:97`, `build.ts:526`) already do this
       correctly with three separate implementations; this replaces them, it does not add a
       fourth.
-- [ ] **B2.** `routes/threads.ts`'s `resolveContext` uses it — the Digest rung stops shipping
+- [x] **B2.** `routes/threads.ts`'s `resolveContext` uses it — the Digest rung stops shipping
       every chapter's summary and analysis.
-- [ ] **B3.** `dictionary/define.ts:233` uses it. ⚠️ Define is currently the app's **widest**
+- [x] **B3.** `dictionary/define.ts:233` uses it. ⚠️ Define is currently the app's **widest**
       spoiler surface: full synopsis, full cast, nearest chapter summaries, and every
       occurrence of the term anywhere in the book, for an output under 100 tokens. Mask the
       occurrence windows too, not just the digest.
-- [ ] **B4.** Full is masked as well. It ships the literal text of unread chapters today and
+- [x] **B4.** Full is masked as well. It ships the literal text of unread chapters today and
       is stopped only by a sentence in `READING_COMPANION_INSTRUCTIONS`.
-- [ ] **B5.** A **lookahead / spoilers toggle**, stored per book on `resource_ai_settings`
+- [x] **B5.** A **lookahead / spoilers toggle**, stored per book on `resource_ai_settings`
       (migration 28, alongside 0a) and **independent of the Off/Digest/Full depth**. Off by
       default. ⚠️ Do not fold it into `ContextLadderDepth` — someone rereading a finished
       book wants no mask at any rung and someone mid-book wants one at every rung; they are
       two questions.
-- [ ] **B6.** The toggle lives beside `ContextLadderToggle.tsx` in the same register, and
+- [x] **B6.** The toggle lives beside `ContextLadderToggle.tsx` in the same register, and
       says what it does in a word ("Lookahead"), not in a sentence.
 
 _Acceptance: with lookahead off, a question asked at 40% of a book produces a context
 containing no chapter past the bookmark — assert on the built context, not on the answer.
 With it on, behaviour matches today. Define stops citing occurrences from unread chapters.
 The digest page and Scan are unchanged._
+_Done: `digest/visibility.ts` (`isChapterVisible`, `visibleChapterDigests`,
+`visibleThematicDigests`) is the one shared gate, routed through by `buildDigestStatus` and
+`buildThematicStatus` (digest.ts), `scan.ts`'s book layer, `build.ts`'s
+`maybeRefreshBookDigestSnapshot`, `threads.ts`'s `resolveContext` (chapter digests, thematic
+chapters, and — B4 — the sections fed to Full), and `define.ts`'s `buildDefineContext`
+(book digest via the safe snapshot, chapter summaries, and occurrence windows). The highlight's
+own chapter is force-included in the reveal set everywhere, so a stale/lagging bookmark can
+never mask the very chapter the reader is asking about. `resource_ai_settings.lookahead`
+landed as **migration 30**, not 28 — §A7's cache-creation-tokens column claimed 29 first.
+Tests: `digest/visibility.test.ts`, `routes/threads.test.ts`, three new cases in
+`dictionary/define.test.ts`._
 
 #### C. Selective thematic inclusion
 
-- [ ] **C0.** ⚠️ **Chain `runThemeDistillation` onto the end of a thematic run — a
+- [x] **C0.** ⚠️ **Chain `runThemeDistillation` onto the end of a thematic run — a
       precondition, not an improvement.** Measured 2026-08-31 across six chapters on each of
       **two books and two models** (Qwen3.5 and GPT 5.6 Luna): 48 of 48 theme strings unique,
       **zero exact repeats, mean pairwise Jaccard 0.000** in every case. Raw theme strings do
@@ -1535,7 +1546,14 @@ The digest page and Scan are unchanged._
       not replace one. Re-running is safe by design: `replaceBookThemes` is a wholesale
       replace, and parent *identity* and colour survive it through `canonical_themes` +
       `matchConcept`.
-- [ ] **C0a.** ⚠️ **Rank on a weighted parent vector, not a parent set.** With only 6–8
+      _Done: `thematicBuild.ts`'s `runThematicDigest` calls `runThemeDistillation` right
+      before its final `persistRun("completed", ...)`, only when `pending.length > 0` (a
+      run that changed nothing skips the extra call). Wrapped in try/catch — a thrown
+      error is logged (`console.error`) and swallowed, never thrown past the thematic
+      run. Tests: `thematicBuild.test.ts`'s "M34 §C0" block — distillation runs and
+      populates `book_themes`, a failed distillation still leaves the run `completed`,
+      and a no-op re-run (nothing new committed) never re-invokes it._
+- [x] **C0a.** ⚠️ **Rank on a weighted parent vector, not a parent set.** With only 6–8
       parents and 7 themes per chapter, most chapters will share most parents and set overlap
       selects everything — the operator's second failure mode, and the mirror of raw themes
       selecting nothing. `theme_parents` maps each chapter theme to a parent, so **count how
@@ -1543,12 +1561,25 @@ The digest page and Scan are unchanged._
       chapter with 4 of 7 themes under "Fate" is more about fate than one with 1 of 7, and
       the weight is a code-computed count, not a model-returned number — the honest form of
       the vector idea decisions.md rejected in its LLM-scored form.
-- [ ] **C1.** Chapter **summaries** stay whole (all masked chapters). They are ~190 tokens
+      _Done: `digest/thematicSelection.ts`'s `selectThematicChapters` builds each candidate
+      chapter's vector as counts-per-parent (`parentIds.map(id => counts.get(id) ?? 0)`,
+      via `theme_parents`/`listBookThemes`) and ranks by the dot product against the
+      highlight chapter's own vector — shared *weight*, not boolean overlap._
+- [x] **C1.** Chapter **summaries** stay whole (all masked chapters). They are ~190 tokens
       each and carry their own `themes: []` list, which is what lets the model see a motif
       recurring across chapters it never reads an essay about.
-- [ ] **C2.** Thematic **essays** are selected: the highlight's own chapter and the previous
+      _Done: already true going into §C — `threads.ts`'s `resolveContext` passes every
+      `visibleChapterDigests` row through unconditionally as `chapterDigests`; §C only
+      narrows the *thematic* block. No change needed._
+- [x] **C2.** Thematic **essays** are selected: the highlight's own chapter and the previous
       one unconditionally, plus chapters ranked by theme relevance, **capped at 8–9 total**.
-- [ ] **C3.** ⚠️ **Rank on distilled parent themes (`listBookThemes` / `theme_parents`), never
+      _Done: `selectThematicChapters` takes the highlight's own chapter plus the nearest
+      preceding candidate unconditionally, then fills up to `THEMATIC_ESSAY_CAP = 9` (total,
+      including the unconditional pair) with the highest-scoring remaining candidates,
+      excluding zero-score chapters rather than padding the cap with irrelevant ones. Wired
+      into `threads.ts`'s `resolveContext` (Digest rung), between the existing
+      `visibleThematicDigests` mask/brief filter and `buildDigestContext`._
+- [x] **C3.** ⚠️ **Rank on distilled parent themes (`listBookThemes` / `theme_parents`), never
       on raw chapter themes.** Raw themes are either too specific to ever match or too
       generic to select everything — this is the whole reason M24.5's distillation is the
       right input. A book with no distillation yet falls back to "current + previous only",
@@ -1565,26 +1596,70 @@ The digest page and Scan are unchanged._
       So §C's fallback is today's *only* behaviour. Either run distillation as a precondition
       of §C, or ship §C knowing it is "current + previous" until someone does; do not ship it
       believing it ranks.
-- [ ] **C4.** No recency weighting. The mask already removes everything ahead and C2's
+      _Done: with C0 now running distillation automatically, this is no longer a manual
+      precondition — but the fallback still exists and is tested independently
+      (`selectThematicChapters` returns the unconditional pair only when `listBookThemes`
+      is empty, or when the highlight chapter itself has no thematic vector to rank from —
+      `thematicSelection.test.ts`)._
+- [x] **C4.** No recency weighting. The mask already removes everything ahead and C2's
       unconditional pair is a recency floor; a weighting knob adds a way to be wrong with no
       way to notice.
-- [ ] **C5.** Selection is **deterministic** for a given (book, highlight chapter, bookmark,
+      _Done: no such knob exists — `selectThematicChapters` has no time/distance term, only
+      the unconditional pair and the parent-vector score._
+- [x] **C5.** Selection is **deterministic** for a given (book, highlight chapter, bookmark,
       brief). Non-determinism here silently destroys A4's cache prefix.
+      _Done: sorts are stable and ties break on spine index ascending
+      (`.sort((a, b) => b.score - a.score || a.chapter.spineIndex - b.chapter.spineIndex)`);
+      no randomness, no wall-clock input. Covered by
+      `thematicSelection.test.ts`'s "is deterministic for the same inputs"._
 
 _Acceptance: on a fully analysed long book, the Digest rung's thematic block contains at most
 9 chapters and always contains the highlight's own; asking twice from the same chapter
 produces byte-identical context; a book with chapter themes but no distillation still answers,
 using only current + previous._
+_Status: covered by unit tests — `thematicSelection.test.ts` (fallback with no distillation,
+fallback when the highlight chapter has no thematic vector, ranking by weighted parent
+overlap vs. raw overlap, the 8–9 cap, determinism) and `routes/threads.test.ts` (the mask
+still wins over rank — a chapter that would score highest is excluded when it's past the
+bookmark and therefore never a candidate). **Not yet driven on a real, fully-distilled book**
+(the Verify section below) — that needs the operator's own library and digest role._
 
 #### D. Transparency keeps up
 
-- [ ] **D1.** `contextChapters` currently records plot-digest chapters only. Extend the
+- [x] **D1.** `contextChapters` currently records plot-digest chapters only. Extend the
       answer-transparency record to name the thematic chapters that fed the answer and
       whether the mask was on. ⚠️ decisions.md 2026-07-28 (later) makes this non-optional:
       "an answer grounded in 12% of a book that doesn't say so just looks like the model got
       worse." §C makes the grounding *narrower and variable*, which is exactly when the
       record has to say more, not less.
-- [ ] **D2.** The thread's existing context readout shows it — no new surface.
+      _Done: `buildDigestContext` (`llm/context.ts`) now returns `thematicChaptersUsed`
+      alongside `chaptersUsed`, sourced from the same `sortedThematic` it already built.
+      `resolveContext` (`routes/threads.ts`) reports it for the digest rung and `[]` for
+      off/full, plus a new `contextMasked` (`!noMask`, the lookahead state at the moment the
+      answer was generated) for all three rungs. Threaded through
+      `persistExchange`/`streamThreadReply`'s transparency object, the SSE `done` payload,
+      `CreateMessageTransparency`/`createMessage` (`annotations/threads.ts`), and two new
+      `messages` columns — `context_thematic_chapters TEXT NOT NULL DEFAULT '[]'` and
+      `masked INTEGER` (nullable: NULL means a pre-§D message with no recorded state,
+      matching `context_depth`'s own shape) — migration 31. `MessageSchema` and
+      `ThreadStreamEventSchema`'s done variant carry the two new fields
+      (`shared/src/schemas.ts`); `contextMasked` is non-nullable on the live SSE event
+      (always known there) and nullable on the persisted `Message`. Tests:
+      `llm/context.test.ts` (thematicChaptersUsed present/absent), `routes/threads.test.ts`
+      ("M34 §D transparency" — masked flips with `setLookahead`, thematic chapters reported
+      separately from plot-digest ones, both rungs without a thematic layer report `[]`),
+      `annotations/threads.test.ts` (createMessage round-trips both fields, and defaults to
+      `[]`/`null` when not passed)._
+- [x] **D2.** The thread's existing context readout shows it — no new surface.
+      _Done: `ThreadPanel.tsx`'s existing `context: digest (chapters …)` line
+      (`styles.contextUsage`, the same caption the depth/chapters readout already used) now
+      appends `· thematic 1, 0` when `contextThematicChapters` is non-empty and
+      `· Lookahead off`/`· Lookahead on` whenever `contextMasked` is recorded (omitted for
+      `null`, i.e. a pre-§D message). "Lookahead" matches the toggle's own label
+      (`ContextLadderToggle.tsx`) rather than inventing new vocabulary for "mask". No new
+      component — `streamThread.ts`'s `onDone` and the optimistic-message stub in
+      `ThreadPanel.tsx` were extended to carry the two fields through, same as every other
+      transparency field._
 
 _Acceptance: an answer in the reader names its depth, its mask state, and the chapters (plot
 and thematic) that grounded it._
@@ -1595,7 +1670,7 @@ and thematic) that grounded it._
       then in a chapter ten sections later. Confirm from the ledger that the second call
       *read* the digest prefix from cache rather than rewriting it, and that the answer names
       what grounded it.
-- [ ] With lookahead off, ask a question that can only be answered by a chapter past the
+- [x] With lookahead off, ask a question that can only be answered by a chapter past the
       bookmark, and confirm the model says it cannot rather than answering from masked text.
 - [ ] Switch the query role to a local OpenAI-compatible endpoint and confirm every rung still
       answers, with no cache-related error and no change in answer shape.
@@ -1617,24 +1692,41 @@ already computes exactly this offset and throws it away.
 
 #### A. Offsets, stored
 
-- [ ] **A1.** `highlights` gains `offset INTEGER` and `length INTEGER` (nullable — a legacy
+- [x] **A1.** `highlights` gains `offset INTEGER` and `length INTEGER` (nullable — a legacy
       row has none), populated by locating the anchor in the section's text at creation.
-- [ ] **A2.** ⚠️ **Store both representations; they have different jobs and do not compete.**
+      _Done: migration 32. Populated by `createHighlight`'s optional `offset`/`length`,
+      computed at both creation sites — `findAnchorInText` for the reader's own selection
+      (`routes/highlights.ts`), `locateQuoteAnchor`'s now-returned offset for posed-question
+      anchors (`routes/digest.ts`)._
+- [x] **A2.** ⚠️ **Store both representations; they have different jobs and do not compete.**
       `offset`+`length` is the canonical *position* — ordering, ranges, zones, dedup,
       click-to-jump, "does this theme span 40–70% of the chapter". `exact`+`prefix`/`suffix`
       is what the *client* needs to paint it, because the server's plain-text extraction and
       the rendered DOM are not the same string and `resolveAnchor`'s three-tier rule
       (CFI → text → unanchored) still governs rendering. Do not delete either.
-- [ ] **A3.** Backfill existing highlights via `buildSectionOffsetIndex` + `locateAnchor`.
+      _Done: both are stored, neither replaced. `offset`/`length` are server-only for now —
+      same shape as `anchor_source` (migration 28), since nothing in §A/§B renders them yet.
+      See decisions.md 2026-08-31 (night)._
+- [x] **A3.** Backfill existing highlights via `buildSectionOffsetIndex` + `locateAnchor`.
       A highlight that no longer locates keeps `NULL` and is not an error — it is already the
       "unanchored" state the reader can see.
-- [ ] **A4.** Model-proposed quotes are **verified at generation time**: locate before
+      _Done: `pnpm --filter server backfill-offsets` (`server/src/cli/backfillOffsets.ts`),
+      re-runnable — only ever touches rows where `offset IS NULL`. Not run against the
+      operator's real library yet; that's the operator's call, same as §0c's `measure`._
+- [x] **A4.** Model-proposed quotes are **verified at generation time**: locate before
       persisting, and record the result. A quote that cannot be found never becomes a row
       that fails silently weeks later.
+      _Done: `routes/digest.ts`'s chapter-anchor route already located before persisting
+      (M34 §0a); it now also carries the located offset/length onto the highlight it creates,
+      so "verified" and "recorded" cover offset/length too, not just anchor_source._
 
 _Acceptance: every newly created highlight has an offset; the backfill leaves no book with
 fewer located highlights than before; a highlight whose text was never findable is still
 listed and still marked unanchored._
+_Status: covered by unit tests (`highlights.test.ts`'s "M35 §A offset/length" block,
+`chapterAnchor.test.ts`). **The backfill CLI has not been run against the operator's real
+library yet** — like §0c's `measure`, that's a read/write pass over real data and is the
+operator's call, not the session's._
 
 #### B. A quote survives the merge
 
@@ -1660,7 +1752,7 @@ listed and still marked unanchored._
 - [x] **B1a.** The context bump is still worth doing and still sidesteps this for most books
       (declared 32,768 → 65,536 removes 20 of 21 splits library-wide), but it is **no longer
       the alternative to B3** — it narrows the blast radius; it does not fix the mechanism.
-- [ ] **B1b. ⚠️ `locateQuoteAnchor` has no typographic normalization** — the model
+- [x] **B1b. ⚠️ `locateQuoteAnchor` has no typographic normalization** — the model
       transcribed faithfully and tidied the punctuation, and neither existing tier (exact
       substring, then whitespace-tolerant) folds a curly quote. Measured across all 26 stored
       quotes it takes **unsplit chapters from 73% to 100%** and merged ones from 27% to 64%.
@@ -1680,7 +1772,11 @@ listed and still marked unanchored._
       ⚠️ Do **not** reach for "strip all quote characters from both sides" — it scores one
       better (15/15) but changes string length, so offsets no longer map back and you owe an
       index map. Only pay that if the last case proves to matter.
-- [ ] **B3.** ⚠️ **Confirmed necessary — promoted from "only if measured" — but scoped to
+      _Done: `chapterAnchor.ts`'s `locateQuoteAnchor` — tier 2 (same-length fold) and tier 3
+      (widened separator, on the folded text) exactly as specified; `QuoteAnchor` now also
+      returns `offset`/`length`. Unit-tested in `chapterAnchor.test.ts` (curly quotes, em
+      dash, dropped internal quotation mark, offset round-trips to the real passage)._
+- [x] **B1c.** ⚠️ **Confirmed necessary — promoted from "only if measured" — but scoped to
       the local path.** A 272K-context model (codex-cli reports 272,000 → a 238,000-char map
       budget) splits **nothing** in this library, so B3 only ever runs for a small-context
       digest role. The 2026-08-31 A/B also put the merge in its place: isolating it on the
@@ -1697,29 +1793,65 @@ listed and still marked unanchored._
 
       Carrying the parts' original `quote` strings through in code fixes **all** of these,
       because the string is never re-emitted. Expect 11/11 rather than 7/11.
-- [ ] **B2.** Stop falling back to `chapterStartAnchor` for posed questions. An unlocatable
+      _Done: this was measurement/analysis, not a code task — see B3 below for the fix it
+      argues for. ⚠️ Relabeled from its original "B3" to B1c: TASKS.md had two items both
+      labeled B3 (this one and the merge fix below); decisions.md's own "M35 §B3" references
+      already meant the merge fix, so that item keeps the name and this one, being purely
+      the case for it, moves off it rather than the other way round._
+- [x] **B2.** Stop falling back to `chapterStartAnchor` for posed questions. An unlocatable
       quote produces a **chapter-level question** (M32 B's `chapter_questions`) instead of a
       highlight parked on the chapter's first 120 characters. The two features resolve each
       other; a wrong anchor is worse than no anchor.
-- [ ] **B3.** Take quotes away from the merge step. `mergeThematicParts` returns only
+      _Done: `routes/digest.ts`'s chapter-anchor route, `seedChapterQuestionIfAbsent`
+      (chapterQuestions.ts). ⚠️ Scoped to a **real, non-empty** quote — the Scan's book-band
+      click-through (`ScanPage.tsx`) sends an empty quote on purpose to land on the chapter's
+      own opening, and still goes straight to `chapterStartAnchor` exactly as before; only a
+      posed question's own quote takes this new path. See decisions.md 2026-08-31 (night)._
+- [x] **B3.** Take quotes away from the merge step. `mergeThematicParts` returns only
       `analysis` and `themes`; **code** selects which questions survive — one per part, up to
       3 — carrying each original `quote` string through untouched. ⚠️ This is settled
       decision 2 applied where it wasn't: `THEMATIC_MERGE_INSTRUCTIONS` currently *asks* the
       model in English not to paraphrase a quote, when code can make it impossible. The merge
       call receives no chapter text, so it has no way to verify one either.
+      _Done: `thematicBuild.ts` — `ThematicMergeSchema` drops `questions` from the merge
+      call's schema entirely; `selectMergedQuestions` takes each part's first question, in
+      part order, capped at `MAX_QUESTIONS`. Re-tested in `thematicBuild.test.ts` (a merge
+      response with a fabricated `questions` field is proven inert; surviving quotes are
+      exactly the parts' own, one real / one fabricated, located accordingly)._
 
 _Acceptance: on a provider whose budget forces chapters to split, every question's quote is
 byte-identical to the quote its part produced; a question whose quote cannot be located
 appears as a chapter question, and no highlight is created at the chapter's opening._
+_Status: covered by unit tests (`thematicBuild.test.ts`'s merge-passthrough case,
+`chapterQuestions.test.ts`'s `seedChapterQuestionIfAbsent` cases). **Not yet exercised
+against a real split chapter on the operator's actual digest provider** — the Verify section
+below still needs a live run, same as M34 §0c flagged for its own measurements._
 
 #### C. Themes carry quotes
 
-- [ ] **C1.** `ThematicPartSchema`'s `themes: string[]` becomes
+- [x] **C1.** `ThematicPartSchema`'s `themes: string[]` becomes
       `themes: { name: string; quotes: string[] }[]`, 1–3 verbatim quotes per theme, located
       by `locateQuoteAnchor` and stored with their offsets.
-- [ ] **C2.** Questions may reference a theme, so a posed question and the theme it belongs
+      _Done: `thematicBuild.ts`'s `ThematicThemeSchema` + `evidenceFilterThemes` (per-part,
+      against that part's own text). The merge step stays name-only per B3's precedent
+      (`ThematicMergeSchema` unchanged) — `attachMergedThemeQuotes` reattaches each merged
+      name's quotes from the originating part after the model call, never trusting the merge
+      with quote content. ⚠️ **"stored with their offsets" turned out to mean at C5's
+      highlight-creation time, not in `thematic_digests.themes`'s own JSON** — the type is
+      literally `{name, quotes: string[]}[]` as specified, and offsets are computed (again,
+      never cached) wherever a quote actually becomes a highlight row. `thematicStore.ts`'s
+      `ThematicTheme` type, `listThemeVocabulary` maps `.name`. Tested in
+      `thematicBuild.test.ts`._
+- [x] **C2.** Questions may reference a theme, so a posed question and the theme it belongs
       to point at the same evidence.
-- [ ] **C3.** ⚠️ **Evidence is the limit, not the count — do not scale the ceiling by chapter
+      _Done: `ThematicQuestionSchema.theme` (nullable), validated in
+      `thematicBuild.ts`'s `validateQuestionThemes` against that part's own surviving theme
+      names — a name that doesn't match is nulled, never trusted. Carried through the merge
+      untouched (same as the question's own `quote`); note it still names a *part*-level
+      theme, which the merge may have reworded — full stitching into the same
+      thread/highlight is §C5's job, not built here. Client schema
+      (`ThematicQuestionSchema`/`ThematicChapterStatusSchema.themes`) updated to match._
+- [x] **C3.** ⚠️ **Evidence is the limit, not the count — do not scale the ceiling by chapter
       length.** M34 §0b measured it: across chapters of 6,903 / 12,367 / 12,529 chars the
       model returned **7, 7, 7 themes and 3, 3, 3 questions**. Themes never touched their
       ceiling of 8; questions sat on their ceiling of 3. **Both are constants with zero
@@ -1746,14 +1878,20 @@ appears as a chapter question, and no highlight is created at the chapter's open
       above without changing this item's conclusion: whatever varies, it is not varying with
       length. **Before writing more prose about what the counts mean, raise `MAX_THEMES` to 12
       and re-run one chapter of each book.**_
-- [ ] **C3a.** ⚠️ **Do not vary the theme count deliberately for the index use.** Themes feed
+      _Done: `MAX_THEMES` raised 8 → 12 in `thematicBuild.ts`, and evidence-filtering (C1)
+      is the lever that actually varies with content — a theme survives only with at least
+      one locatable quote. **Re-running one chapter of each book to see whether 12 still
+      binds is a real-provider measurement, the operator's call, not built here.**_
+- [x] **C3a.** ⚠️ **Do not vary the theme count deliberately for the index use.** Themes feed
       the Scan, the vocabulary, distillation and M34 §C's ranking. If long chapters get more
       themes they overlap with everything more often, so **length becomes a confound in the
       relevance ranking** — a long chapter would be selected for being long. Roughly uniform
       counts make the comparison honest. Questions are the opposite case: the reader *sees*
       them (`ChapterEndPrompt`), so a padded third question is a visible cost, and there the
       evidence filter should be allowed to leave a thin chapter showing one.
-- [ ] **C3b.** ⚠️ **Fix what a theme *is* — the prompt is asking for names and getting
+      _Done: no code change is the point — verified no length-scaled ceiling exists anywhere
+      in `thematicBuild.ts`; `MAX_THEMES`/`MAX_QUESTIONS` are flat constants._
+- [x] **C3b.** ⚠️ **Fix what a theme *is* — the prompt is asking for names and getting
       theses.** _(Also a weak-model fix: GPT 5.6 Luna already returns clean 2–4 word noun
       phrases — "Secrecy and revelation", "Mercy versus justice" — with no prompt change,
       while Qwen was inconsistent **across books**, emitting long theses on Kafka and bare
@@ -1767,11 +1905,16 @@ appears as a chapter question, and no highlight is created at the chapter's open
       theme filter, whose dropdown would otherwise hold 7 × N distinct sentences.
       ⚠️ The one thing being lost is real: the thesis carries nuance the label does not. Put
       the nuance in the analysis prose, where it already belongs, not in the index key.
+      _Done: `thematicInstructions` now asks for "a 2-4 word theme or motif name... a label,
+      not a sentence" with a contrast example, and `ThematicThemeSchema.name` caps at 60
+      chars as a backstop (the prompt wording is the real fix, per this item's own note)._
 - [ ] **C3c.** The only place chapter length genuinely argues for scaling is where the *unit*
       differs, not the content: Metamorphosis's five "chapters" are whole parts (median 38K
       chars) against Kafka's ~12K. That is a spine-section-is-not-a-chapter problem, shared
       with the digest and the Scan, and if anything scales it should scale on that and say so.
-- [ ] **C4.** ⚠️ **Decided 2026-08-31 by the operator: drop and re-run, do not migrate.**
+      _Not built — recorded here as a known scope note (shared with the digest and the Scan),
+      same as it was before this session; no acceptance criterion of its own to build against._
+- [x] **C4.** ⚠️ **Decided 2026-08-31 by the operator: drop and re-run, do not migrate.**
       `thematic_digests.themes` changes shape (string → object with quotes) *and* its contents
       are rewritten by C3b, so a migrated row would carry the old prompt's theses in the new
       shape — the worst of both. Only 3 thematic rows exist library-wide, so the cost is
@@ -1780,49 +1923,141 @@ appears as a chapter question, and no highlight is created at the chapter's open
       keyed on the old theme strings and would otherwise point at names that no longer exist.
       ⚠️ Do **not** touch `canonical_themes` — it is library-wide memory and holds the colour
       assignments (settled in `canonicalThemes.ts`'s own comment).
-- [ ] **C5.** Machine-proposed quotes are stored as **highlight rows** carrying
+      _Done: migration 33 (drop-and-clear only — no shape change was needed at the SQL level
+      since `themes`/`questions` are JSON TEXT columns; C1's type change and C3b's prompt
+      rewrite are what actually change the shape stored). `canonical_themes` untouched;
+      covered by a dedicated `db.test.ts` case seeding all four theme-adjacent tables and
+      asserting the three per-resource ones clear while `canonical_themes` survives.
+      **Re-running the thematic pass to repopulate under the new prompt is the operator's
+      call**, same as §A3/§0c's own real-data passes._
+- [x] **C5.** Machine-proposed quotes are stored as **highlight rows** carrying
       `origin: 'reader' | 'thematic'`, not as a new table. Migration 26's own comment is the
       precedent: a definition rides on its highlight so the glossary is "a filtered view, one
       predicate" and `deleteHighlight` cleans up with no cascade to forget. This inherits
       rendering, anchoring, the Scan, jump-to and deletion for free.
-- [ ] **C6.** ⚠️ **One exported predicate, used everywhere.** `origin: 'thematic'` rows
+      _Done: migration 35 (`highlights.origin`, default `'reader'`), `createHighlight`'s
+      optional `origin`. `digest/thematicHighlights.ts`'s `persistThematicHighlights`, wired
+      into `runThematicDigest` right after a chapter's thematic row commits — one
+      `createHighlight` (`kind: "honey"` — "Key quote", the label M30 A already gave that
+      slot; settled decision 16 forbids inventing a fifth) per evidenced quote, one thread
+      per theme via §D's `getOrCreateThread`/`addThreadAnchor` ("one theme → one annotation →
+      N anchors", §D6). Idempotent (`findHighlightByExact` reuses an existing row) and guards
+      against a highlight already anchoring a *different* thread
+      (`threads.ts`'s `isHighlightAnchored`) rather than double-linking or throwing on
+      `thread_anchors`' primary key. Tested in `thematicHighlights.test.ts` and
+      `thematicBuild.test.ts`._
+- [x] **C6.** ⚠️ **One exported predicate, used everywhere.** `origin: 'thematic'` rows
       otherwise pollute the reader's highlight count, the Annotations list, the Scan's Mine
       layer and the vault publish. Every one of those applies the same filter, from one
       place — the same discipline M36 §A needs for definitions.
-- [ ] **C7.** A reader-facing **show/hide** toggle for thematic quotes in the book, defaulting
+      _Done: one predicate per runtime, same name and shape — server
+      `annotations/highlightOrigin.ts`, client `highlights/highlightOrigin.ts` — mirroring
+      `glossaryEntries`' existing precedent. Applied unconditionally (independent of §C7's
+      toggle) at `library/store.ts`'s `listResourceSummaries` (SQL `origin = 'reader'`,
+      both the highlight and thread counts), `ReaderView.tsx`'s count badge and
+      `AnnotationsOverview` (a derived `readerHighlights`), and `vault/compiler.ts`'s
+      `answeredHighlights`. Tested in `library/store.test.ts`, `scan.test.ts`,
+      `compiler.test.ts`._
+- [x] **C7.** A reader-facing **show/hide** toggle for thematic quotes in the book, defaulting
       to **off**. "Only my own marks" is the reasonable expectation.
+      _Done: migration 36 (`resource_ai_settings.show_thematic_quotes`, default 0) —
+      `digest/thematicQuoteVisibility.ts` mirrors `lookahead.ts` exactly. GET/PUT
+      `/api/resources/:id/show-thematic-quotes`. Gates two things: whether
+      `GET /:id/highlights` includes thematic rows at all (so they never even reach the
+      reader's inline marks/margin rail unless on) and the Scan's Mine layer
+      (`buildScanData`'s `highlights` array) — `totalHighlights` stays reader-only regardless
+      (§C6). Client toggle lives beside the lookahead pill/icon in
+      `ContextLadderToggle.tsx` ("Thematic quotes", same wide/narrow dual-render). Tested in
+      `scan.test.ts`._
 
 _Acceptance: a thematic run produces themes with locatable quotes; with the toggle off the
 reader's highlight count and Annotations list are identical to before the run; with it on the
 quotes appear in the text and jump correctly; deleting the book removes them._
+_Status: covered by unit tests across `thematicBuild.test.ts`, `thematicHighlights.test.ts`,
+`library/store.test.ts`, `scan.test.ts`, `compiler.test.ts`. **A live thematic run against the
+operator's real library, and a manual toggle-on/toggle-off pass in the running app, have not
+been done this session** — same "read/write pass over real data is the operator's call" line
+§0c/§A3 already drew._
 
 #### D. An annotation may have many anchors
 
-- [ ] **D1.** `thread_anchors(thread_id, highlight_id, ordinal)`. ⚠️ **Additive only** —
+- [x] **D1.** `thread_anchors(thread_id, highlight_id, ordinal)`. ⚠️ **Additive only** —
       `threads.highlight_id` stays `UNIQUE` and stays the primary anchor, so no existing path
       changes; backfill one row per existing thread.
-- [ ] **D2.** This is *toward* CLAUDE.md's stated discipline, not away from it: the W3C Web
+      _Done: migration 34 — junction-table shape matching `highlight_tags`/`highlight_themes`
+      (composite PK, plain `REFERENCES`, no `ON DELETE`), indexed on `highlight_id` (the hot
+      path — "does this highlight anchor a thread", not "list a thread's anchors"). Backfilled
+      one row per existing thread at `ordinal` 0 in the same migration. `threads.ts`'s
+      `createThread` now also writes the primary's own `thread_anchors` row (in the same
+      transaction) so every thread created going forward carries full anchor coverage from
+      the start — `addThreadAnchor`/`listThreadAnchors`/`isHighlightAnchored` round out the
+      API. Tested in `threads.test.ts`, `highlights.test.ts`, `db.test.ts`._
+- [x] **D2.** This is *toward* CLAUDE.md's stated discipline, not away from it: the W3C Web
       Annotation model has one body and **one or more** targets. Say so in the migration
       comment.
-- [ ] **D3.** Clicking any linked quote opens the same annotation.
-- [ ] **D4.** The annotation editor gets `< >` traversal across its anchors, near the quote at
+      _Done: migration 34's own comment states it, referencing CLAUDE.md's engineering
+      discipline entry._
+- [x] **D3.** Clicking any linked quote opens the same annotation.
+      _Done: `listHighlightsWithThreadsForResource` now also returns `primaryHighlightId` —
+      null for an ordinary highlight or a thread's own primary, set to the primary's id for a
+      genuine secondary anchor. Client resolves through it
+      (`threads/resolvePrimaryAnchor.ts`'s `resolveOpenHighlightId`) at every place a click
+      opens the panel — a mark click in the book text, the Scan's jump-to (mount-time
+      `initialHighlightId`), and the margin-rail/Annotations-overview/glossary shared
+      `handleOpenThread` — while still **navigating to the specific passage clicked** (the
+      panel's identity resolves to the primary; the reader's position does not). Tested in
+      `highlights.test.ts` (`primaryHighlightId` shape) and
+      `threads/resolvePrimaryAnchor.test.ts` (the resolution rule itself)._
+- [x] **D4.** The annotation editor gets `< >` traversal across its anchors, near the quote at
       the top. Order is `spineIndex, offset` — which is the other thing §A is for.
-- [ ] **D5.** ⚠️ **Decided 2026-08-31.** Deleting a linked highlight removes **that anchor
+      _Done: `GET /api/threads/:id/anchors` (`listHighlightsForThread`, ordered
+      `spine_index, "offset" IS NULL, "offset", ordinal` — reading order, not creation order).
+      `ThreadPanel.tsx` fetches it once a real thread exists, renders `‹ N of M ›` next to the
+      quote (reusing `FindBar.tsx`'s exact glyphs/pattern and `search/findCursor.ts`'s
+      `stepFindCursor` — no new interaction design) only when there's more than one anchor,
+      and the quote text itself tracks the current anchor. Stepping calls back to
+      `ReaderView.tsx`'s `handleJumpToAnchor`, which navigates the rendition **without**
+      touching `expandedThread` (that would remount the panel by its `key` and lose the
+      traversal position). Tested in `highlights.test.ts` (`listHighlightsForThread`'s reading
+      order)._
+- [x] **D5.** ⚠️ **Decided 2026-08-31.** Deleting a linked highlight removes **that anchor
       only**; the thread survives while at least one anchor remains, and deleting the last
       anchor deletes the thread — which is exactly today's behaviour in the one-anchor case,
       so nothing changes for existing data. **The trap:** `threads.highlight_id` is the
       primary anchor and has a foreign key, so deleting the primary while others remain must
       **promote the next anchor to primary**, never cascade the thread away. A test for that
       specific order is not optional.
-- [ ] **D5a.** The vault publish writes **one note with its sources listed in reading order**,
+      _Done: `annotations/highlights.ts`'s `deleteHighlight` rewritten — looks up the thread
+      via `thread_anchors` (falling back to `threads.highlight_id` directly for a thread
+      predating any anchor row, so both shapes converge on the same logic), deletes only this
+      highlight's own anchor row, and either promotes the oldest remaining anchor to primary
+      (`UPDATE threads SET highlight_id = ...`, a no-op when the deleted highlight wasn't
+      primary) or, if none remain, runs today's full cascade unchanged. Three dedicated tests
+      in `highlights.test.ts`: non-primary delete leaves the thread and primary untouched,
+      primary delete with survivors promotes the next one by ordinal (not an arbitrary
+      survivor), and last-anchor delete cascades exactly as before._
+- [x] **D5a.** The vault publish writes **one note with its sources listed in reading order**,
       not one note per anchor. A multi-anchor annotation is one thought about several
       passages; splitting it at publish time would undo the feature in the projection.
-- [ ] **D6.** This is the vehicle for §C's multi-quote themes: one theme → one annotation → N
+      _Done: `vault/compiler.ts`'s `publishResource` now fetches each thread's full anchor
+      list (`listHighlightsForThread`) and renders a multi-quote block (each quote + its
+      chapter label) when there's more than one; a single-anchor thread's note is
+      byte-for-byte the same shape as before this milestone. The distillation call itself
+      also sees every passage, not just the primary's. `publishStore.ts`'s ledger was already
+      keyed by `thread_id`, so no schema change there. Tested in `compiler.test.ts`
+      (multi-anchor note + reading order, and single-anchor's unchanged shape)._
+- [x] **D6.** This is the vehicle for §C's multi-quote themes: one theme → one annotation → N
       anchors. Build D before wiring C5's quotes into it, or C5 produces N unrelated
       highlights.
+      _Done: built and tested in that order — §D1–§D5a landed first, §C5 wires into
+      `getOrCreateThread`/`addThreadAnchor` only after, exactly as this item requires._
 
 _Acceptance: three quotes linked to one annotation open the same editor from any of them;
 `< >` walks them in reading order and moves the reader's page; a reload preserves the links._
+_Status: covered by unit tests across `threads.test.ts`, `highlights.test.ts`,
+`resolvePrimaryAnchor.test.ts`, `compiler.test.ts`, `db.test.ts`. **Manually linking three
+quotes by hand in the running app and walking them with `< >` has not been done this
+session** — same live-app verification line the Verify section below already calls for._
 
 #### E. Theme zones, and the Scan gets sub-chapter resolution
 

@@ -3,6 +3,95 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-01 — M35 §C/§D implemented: five gaps the task doc left to the session
+
+Implementing §C ("themes carry quotes") and §D ("an annotation may have many anchors")
+in that dependency order (§D's infrastructure before §C5 wires quotes into it, per §D6)
+surfaced five places worth recording, none of which overturn a settled decision.
+
+**The annotation panel stays keyed by the primary highlight, not the thread.** §D3 asks
+that clicking any linked anchor open the same annotation. The alternative considered was
+rekeying `ReaderView.tsx`'s `expandedThread`/`ThreadPanel` by `thread_id` — rejected because
+importance/note/kind/panel-position are per-*highlight* columns, and a multi-anchor thread's
+secondary anchors (§C5's machine-proposed ones especially) have no meaningful separate
+values for any of them. Instead: `listHighlightsWithThreadsForResource` now returns
+`primaryHighlightId` (null except on a genuine non-primary anchor), and every click path
+resolves through it (`resolveOpenHighlightId`) before opening the panel — while still
+**navigating to the specific passage clicked**, not the primary's. The panel's own `< >`
+traversal (§D4) moves the reader without touching `expandedThread` at all, so stepping
+never remounts the panel or loses its state.
+
+**Offset/length still never reach the client's `Highlight` type — §D4 went through a
+dedicated endpoint instead.** The 2026-08-31 (night) entry flagged "revisit when §D... needs
+the client to see one." It didn't: `GET /api/threads/:id/anchors` returns just
+`{highlightId, exact, spineIndex}` in reading order, computed server-side
+(`listHighlightsForThread`'s own `ORDER BY`). `HighlightSchema` stays exactly as narrow as
+before.
+
+**§C5's thematic quotes use `kind: "honey"` ("Key quote"), never a new kind.** Settled
+decision 16 forbids inventing a fifth slot; `honey`'s existing M30 A label already names
+exactly what a theme's evidence quote is, and `slate` ("Thematic Question") was already
+taken by the sibling concept (posed questions). `origin: 'reader' | 'thematic'` is the
+orthogonal axis that actually distinguishes them from a reader's own marks — never folded
+into `kind`, per that same settled decision.
+
+**§C6 (unconditional exclusion) and §C7 (the toggle) gate two different things, not one.**
+The count/Annotations list/vault publish exclude `origin: 'thematic'` rows always,
+regardless of the toggle — a machine proposal is never "yours" no matter what's currently
+painted. The toggle instead gates whether those rows are fetched/rendered as marks at all
+(`GET /:id/highlights` and the Scan's Mine layer). Conflating the two would have meant a
+toggle-on session briefly inflating the reader's own highlight count.
+
+**`persistThematicHighlights` guards against a highlight already anchoring a thread before
+calling `addThreadAnchor`.** `thread_anchors`' primary key is `(thread_id, highlight_id)`,
+and nothing stops two different themes proposing the identical quote (a re-run under a
+changed brief, or two themes genuinely sharing a passage) from resolving to the same
+existing highlight via `findHighlightByExact`. Re-adding it to the same thread would throw;
+adding it to a *different* thread would let one highlight anchor two annotations, which
+§D3's `primaryHighlightId` join doesn't expect. `threads.ts`'s new `isHighlightAnchored`
+filters such highlights out before a thread is formed for that theme — a normal case
+(nothing new to do), not an error.
+
+Migrations landed in this order: 33 (§C4's drop-and-clear), 34 (§D1's `thread_anchors`),
+35 (§C5's `highlights.origin`), 36 (§C7's `show_thematic_quotes`) — §D's infrastructure
+before §C5 needed it, matching §D6.
+
+## 2026-08-31 (night) — M35 §A/§B implemented: three gaps the task doc left to the session
+
+Implementing §A ("offsets, stored") and §B ("a quote survives the merge") surfaced three
+places TASKS.md described the *what* but not the *how*. Recorded here per "significant
+design choices get a short entry," not because any of them overturn a settled decision.
+
+**`offset`/`length` are server-only, same as `anchor_source`.** §A2 says store both
+representations, not which one the API schema carries. Nothing in §A or §B renders an
+offset — `HighlightSchema` doesn't gain the fields, mirroring migration 28's own precedent
+("nothing renders it yet"). Revisit when §D (`<>` traversal, ordered by `spineIndex, offset`)
+or §E (zones) actually needs the client to see one.
+
+**§B2's fallback only fires for a *real* quote that fails to locate.** The chapter-anchor
+route has a second caller the task doc doesn't mention: the Scan's book-band click-through
+(`ScanPage.tsx`'s `handleOpenChapter`) sends an **empty** quote on purpose, to land on the
+chapter's own opening — it was already relying on `chapterStartAnchor`'s fallback, not a
+posed question's failure. Routing every miss to a chapter question would have silently
+broken "click a band, land at the chapter start." The route now branches on whether a quote
+was given at all: empty → `chapterStartAnchor`, exactly as before; non-empty and unlocatable
+→ §B2's new chapter-question path. `anchor_source: 'chapter_start'` now means only the
+former.
+
+**§B2's seed never clobbers the reader's own chapter question.** `chapter_questions` is one
+row per chapter, and `upsertChapterQuestion` (the reader's own PUT) always overwrites. A
+posed question that can't be pinned to a passage still isn't allowed to overwrite something
+the reader typed — `seedChapterQuestionIfAbsent` only fills an empty slot (`ON CONFLICT DO
+NOTHING`, then re-read). If the reader already has a question there, the posed one is
+dropped rather than shown; no UI currently surfaces "a posed question failed silently,"
+which is an acceptable gap for a first implementation but worth flagging for polish.
+
+**§B3's "one per part, up to 3" reads literally: at most one question per part, in part
+order, capped at `MAX_QUESTIONS`.** A 4-part chapter contributes from only its first 3
+parts; a part with zero surviving questions contributes none. This was chosen over "rank
+all candidates and take the best 3" because ranking needs the chapter text, which is
+exactly what the merge call doesn't have — the same reason it can't verify a quote either.
+
 ## 2026-08-31 (evening) — A/B on one model swap: what a weak digest model actually costs
 
 Ran the same six East of Eden chapters through **GPT 5.6 Luna** (codex-cli, 272K context →
