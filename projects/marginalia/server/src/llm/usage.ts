@@ -18,6 +18,11 @@ import { getProviderProfile } from "../settings/providers.js";
  * (decisions.md: roles are reused across features, but the ledger's
  * "broken down by operation" would lose the plot/thematic distinction this
  * milestone exists to draw if the two shared a tag).
+ * "substrate" is M37 §A's own tag, same reasoning: it shares the digest role
+ * with "thematic" (and is called from inside `runThematicDigest`), but the
+ * whole point of M37 is comparing what a brief-blind pass costs against what
+ * the brief-driven pass built on top of it costs — folding the two into one
+ * tag would hide the number the milestone exists to produce.
  */
 export type LLMOperation =
   | "thread"
@@ -25,6 +30,7 @@ export type LLMOperation =
   | "digest"
   | "cast"
   | "thematic"
+  | "substrate"
   | "theme-distillation"
   // M30 C: Define's digest-rung fallback. Its own tag rather than "thread"
   // because it is the one operation in the app with a hard *product* cap on

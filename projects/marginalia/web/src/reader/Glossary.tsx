@@ -1,13 +1,21 @@
 import { motion, useReducedMotion } from "motion/react";
 import type { HighlightWithThread } from "@marginalia/shared";
+import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
 import styles from "./Glossary.module.css";
+
+/** M36 B1: the three orders a glossary can read in. "Reading order" is
+ * today's default and is *not* the same axis as "chronological" — see the
+ * note on `sortGlossaryEntries` below. */
+export type GlossarySortMode = "reading" | "alpha" | "chrono";
 
 interface GlossaryProps {
   /** Every highlight in the book. Filtering happens here on purpose — see
    * the note on `glossaryEntries` below. */
   highlights: HighlightWithThread[];
   unanchoredIds: Set<string>;
+  sort: GlossarySortMode;
+  onSortChange: (mode: GlossarySortMode) => void;
   onJumpTo: (highlight: HighlightWithThread) => void;
   onClose: () => void;
 }
@@ -25,22 +33,69 @@ interface GlossaryProps {
  * server already returns highlights in, so this preserves it rather than
  * re-sorting.
  */
+/**
+ * M36 A1: the predicate itself, exported — `AnnotationsOverview` imports
+ * this rather than growing a second copy, so the glossary's inclusion rule
+ * and the annotations list's exclusion rule are structurally the same test
+ * and cannot drift apart. M36 A4 (decided 2026-08-31): a definition
+ * highlight the reader has *also* written a note on still stays glossary-only
+ * — this is deliberately the *whole* test, with no "…unless it has a note"
+ * clause, which would put the same word back in both lists.
+ */
+export function isGlossaryEntry(h: HighlightWithThread): boolean {
+  // Kind *and* definition: a sage highlight without a definition is an
+  // ordinary mark the reader made, and belongs in Annotations, not here.
+  return h.kind === "sage" && h.definition.trim().length > 0;
+}
+
 export function glossaryEntries(
   highlights: HighlightWithThread[],
 ): HighlightWithThread[] {
-  // Kind *and* definition: a sage highlight without a definition is an
-  // ordinary mark the reader made, and belongs in Annotations, not here.
-  return highlights.filter((h) => h.kind === "sage" && h.definition.trim().length > 0);
+  return highlights.filter(isGlossaryEntry);
 }
+
+/**
+ * M36 B: reading order is already the order the server returns highlights
+ * in (`spineIndex, createdAt`), so it's a passthrough, not a sort. A–Z reads
+ * the headword; chronological is *when the reader looked the word up*,
+ * which — B2 — is a genuinely different axis from reading order: on a
+ * reread, lookups happen in a different order than the words appear.
+ */
+export function sortGlossaryEntries(
+  entries: HighlightWithThread[],
+  mode: GlossarySortMode,
+): HighlightWithThread[] {
+  if (mode === "reading") return entries;
+  const sorted = [...entries];
+  if (mode === "alpha") {
+    sorted.sort((a, b) => a.exact.localeCompare(b.exact, undefined, { sensitivity: "base" }));
+  } else {
+    sorted.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+  return sorted;
+}
+
+const SORT_OPTIONS: { mode: GlossarySortMode; label: string }[] = [
+  { mode: "reading", label: "Reading order" },
+  { mode: "alpha", label: "A–Z" },
+  { mode: "chrono", label: "When looked up" },
+];
 
 /**
  * The glossary instrument (settled decision 13: an instrument you put *on*
  * the Book, never a fourth room), sitting alongside the annotations overview
  * and built to the same shape so the two read as siblings.
  */
-export function Glossary({ highlights, unanchoredIds, onJumpTo, onClose }: GlossaryProps) {
+export function Glossary({
+  highlights,
+  unanchoredIds,
+  sort,
+  onSortChange,
+  onJumpTo,
+  onClose,
+}: GlossaryProps) {
   const reducedMotion = useReducedMotion();
-  const entries = glossaryEntries(highlights);
+  const entries = sortGlossaryEntries(glossaryEntries(highlights), sort);
 
   return (
     <motion.div
@@ -62,6 +117,22 @@ export function Glossary({ highlights, unanchoredIds, onJumpTo, onClose }: Gloss
         </span>
         <IconButton icon="×" label="Close" size="sm" onClick={onClose} />
       </div>
+
+      {entries.length > 1 && (
+        <div className={styles.sortRow} role="group" aria-label="Sort the glossary">
+          {SORT_OPTIONS.map((option) => (
+            <Button
+              key={option.mode}
+              variant="ghost"
+              size="sm"
+              pressed={sort === option.mode}
+              onClick={() => onSortChange(option.mode)}
+            >
+              {option.label}
+            </Button>
+          ))}
+        </div>
+      )}
 
       {entries.length === 0 ? (
         <div className={styles.empty}>

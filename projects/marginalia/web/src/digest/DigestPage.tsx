@@ -284,7 +284,11 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allChapters.length]);
 
-  async function handleAnalyzeThemes() {
+  // M37 §D1: "notes" (default) reads each chapter's substrate — cheap,
+  // because it's already built; "full" re-reads the chapter's own text,
+  // paying again what the very first analysis cost. Both post to the same
+  // route; `mode` is the only thing that changes.
+  async function handleAnalyzeThemes(mode: "notes" | "full") {
     if (!id || allChapters.length === 0 || thematicJobId) return;
     setThematicError(null);
     const spineStart = allChapters[thematicStartIdx]?.spineIndex ?? allChapters[0].spineIndex;
@@ -292,6 +296,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     const result = await startJobRequest(`/api/resources/${id}/thematic`, {
       spineStart: Math.min(spineStart, spineEnd),
       spineEnd: Math.max(spineStart, spineEnd),
+      mode,
     });
     if ("jobId" in result) {
       setThematicJobId(result.jobId);
@@ -481,9 +486,11 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
             />
             {/* M35 §G1: the same From/To dials the plot digest already uses
                 (ChapterDial, M20.5) — spanning the whole book, since a
-                thematic run reads a chapter's own raw section text and has
-                no dependency on that chapter's plot digest. Hidden below two
-                chapters, where a range has nothing to narrow. */}
+                thematic run has no dependency on that chapter's plot digest.
+                Hidden below two chapters, where a range has nothing to
+                narrow. M37 §B: a "notes" run reads each chapter's own
+                substrate rather than its raw section text; only a "full"
+                re-read (§D1) still pays that original cost. */}
             {allChapters.length > 1 && (
               <div className={styles.thematicRangeRow}>
                 <ChapterDial
@@ -514,10 +521,20 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleAnalyzeThemes}
+                onClick={() => handleAnalyzeThemes("notes")}
                 disabled={thematicJobId !== null || allChapters.length === 0}
+                title="Reads each chapter's saved substrate — cheap, but a brief-blind extract can miss a passage this brief would have wanted."
               >
-                {thematicJobId ? "Analyzing…" : "Analyze themes"}
+                {thematicJobId ? "Analyzing…" : "Re-read my notes"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleAnalyzeThemes("full")}
+                disabled={thematicJobId !== null || allChapters.length === 0}
+                title="Re-reads the full chapter text for every chapter in range — costs what the very first analysis did, and folds anything new it finds back into your notes."
+              >
+                {thematicJobId ? "Analyzing…" : "Re-read the book"}
               </Button>
               {thematicJobId && (
                 <Button variant="outline" size="sm" onClick={handleCancelThematic}>
@@ -541,6 +558,16 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                 </Button>
               )}
             </div>
+            {/* M37 §D2: said plainly, not left as a tooltip only — a
+                brief-blind substrate can't know which passage a future
+                brief will need, so "re-read my notes" is a real, visible
+                tradeoff rather than a caveat to bury. */}
+            <p className={styles.briefHint}>
+              "Re-read my notes" is cheap and usually enough, but it can miss a passage your
+              saved notes never kept — the notes were written before this brief existed.
+              "Re-read the book" costs what the very first analysis did, and anything new it
+              finds is folded back into your notes for next time.
+            </p>
             {thematicError && <p className={styles.pausedNotice}>Thematic analysis failed: {thematicError}</p>}
             {taggingError && <p className={styles.pausedNotice}>Theme tagging failed: {taggingError}</p>}
             {distillError && <p className={styles.pausedNotice}>Theme distillation failed: {distillError}</p>}

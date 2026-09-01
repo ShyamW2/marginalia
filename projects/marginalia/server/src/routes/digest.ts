@@ -527,7 +527,7 @@ digestRouter.post("/:id/thematic", async (req, res) => {
     res.status(400).json({ error: "invalid_body" });
     return;
   }
-  const { spineStart, spineEnd } = parsed.data;
+  const { spineStart, spineEnd, mode } = parsed.data;
   if (spineStart > spineEnd) {
     res.status(400).json({ error: "invalid_range" });
     return;
@@ -546,8 +546,16 @@ digestRouter.post("/:id/thematic", async (req, res) => {
     resource.title,
     async (signal, reportProgress) => {
       try {
-        await runThematicDigest(db, provider, resource, sections, spineStart, spineEnd, signal, (current, total, message) =>
-          reportProgress({ current, total, message }),
+        await runThematicDigest(
+          db,
+          provider,
+          resource,
+          sections,
+          spineStart,
+          spineEnd,
+          signal,
+          (current, total, message) => reportProgress({ current, total, message }),
+          mode,
         );
       } catch (err) {
         if (err instanceof LLMError) {
@@ -560,7 +568,12 @@ digestRouter.post("/:id/thematic", async (req, res) => {
         throw err;
       }
     },
-    sectionRangeUiLabel(sections, spineStart, spineEnd, resource.metadata.chapterTitles),
+    // M37 §D1: "re-read the book" is named as such in the tasks tray too —
+    // the reader chose the expensive path deliberately, so the job label
+    // should say so rather than looking identical to the cheap default.
+    mode === "full"
+      ? `${sectionRangeUiLabel(sections, spineStart, spineEnd, resource.metadata.chapterTitles)} (full re-read)`
+      : sectionRangeUiLabel(sections, spineStart, spineEnd, resource.metadata.chapterTitles),
   );
   res.status(202).json({ jobId: job.id });
 });
@@ -679,6 +692,17 @@ digestRouter.put("/:id/chapter-questions/:spineIndex", (req, res) => {
   const parsed = UpsertChapterQuestionBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  // M36 C1, found reading M32's code: this row is one-per-chapter and its
+  // `note` is keyed to whatever `question` currently sits in it — clobbering
+  // the question on a second write orphans the note against text that no
+  // longer exists. Refuse rather than silently destroy (same shape as
+  // threads.ts's highlight_already_anchored 409); an identical resubmission
+  // is not a conflict.
+  const existing = getChapterQuestion(db, resource.id, spineIndex);
+  if (existing && existing.question !== parsed.data.question) {
+    res.status(409).json({ error: "chapter_question_exists", existing });
     return;
   }
   res.json(upsertChapterQuestion(db, resource.id, spineIndex, parsed.data.question));

@@ -2,6 +2,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { HighlightKind, HighlightWithThread } from "@marginalia/shared";
 import { IconButton } from "../controls/IconButton.js";
 import { groupHighlightsByThread } from "../threads/resolvePrimaryAnchor.js";
+import { isGlossaryEntry } from "./Glossary.js";
 import styles from "./AnnotationsOverview.module.css";
 
 function truncate(text: string, max: number): string {
@@ -26,6 +27,11 @@ interface AnnotationsOverviewProps {
  * time. Unanchored highlights (CFI + text-search both failed to relocate
  * them) surface here too, clearly marked, since they can't be jumped to but
  * still need to be findable — typically to just delete them.
+ *
+ * M36 A2: excludes glossary entries via the same `isGlossaryEntry` predicate
+ * `Glossary.tsx` includes them by — a looked-up word lives in exactly one
+ * list, and importing the one predicate (rather than each view growing its
+ * own kind check) is what keeps the two from drifting apart.
  */
 export function AnnotationsOverview({
   highlights,
@@ -36,7 +42,8 @@ export function AnnotationsOverview({
   labels,
 }: AnnotationsOverviewProps) {
   const reducedMotion = useReducedMotion();
-  const unanchoredCount = highlights.filter((h) => unanchoredIds.has(h.id)).length;
+  const visibleHighlights = highlights.filter((h) => !isGlossaryEntry(h));
+  const unanchoredCount = visibleHighlights.filter((h) => unanchoredIds.has(h.id)).length;
 
   // M35 §D-follow-up, found live 2026-09-01: unlike the margin rail (which
   // collapses a multi-anchor thread to one dot — there's no room there for
@@ -102,7 +109,7 @@ export function AnnotationsOverview({
     >
       <div className={styles.header}>
         <span className={styles.title}>
-          Annotations{highlights.length > 0 ? ` (${highlights.length})` : ""}
+          Annotations{visibleHighlights.length > 0 ? ` (${visibleHighlights.length})` : ""}
         </span>
         <IconButton icon="×" label="Close" size="sm" className={styles.closeButton} onClick={onClose} />
       </div>
@@ -114,11 +121,11 @@ export function AnnotationsOverview({
         </div>
       )}
 
-      {highlights.length === 0 ? (
+      {visibleHighlights.length === 0 ? (
         <div className={styles.empty}>No highlights yet in this book.</div>
       ) : (
         <ul className={styles.list}>
-          {groupHighlightsByThread(highlights).map((group) =>
+          {groupHighlightsByThread(visibleHighlights).map((group) =>
             group.length > 1 ? (
               <li key={group[0].primaryHighlightId ?? group[0].id} className={styles.group}>
                 <span className={styles.groupLabel}>{group.length} passages, one annotation</span>

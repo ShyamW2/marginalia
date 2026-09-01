@@ -2,13 +2,14 @@
 import { z } from "zod/v4";
 import type Database from "better-sqlite3";
 import type { Resource } from "@marginalia/shared";
-import { LLMError, type LLMProvider } from "../llm/provider.js";
+import { LLMError, getProvider, type LLMProvider } from "../llm/provider.js";
 import { sectionLabel } from "../llm/context.js";
 import type { ResourceTextSection } from "../library/store.js";
 import { splitIntoChunks, withNetworkRetry } from "./build.js";
 import { locateQuoteAnchor } from "./chapterAnchor.js";
 import { persistThematicHighlights } from "./thematicHighlights.js";
 import { runThemeDistillation } from "./themeDistillation.js";
+import { ensureChapterSubstrate, mergeQuotesIntoSubstrate, serializeSubstrateForPrompt } from "./substrateBuild.js";
 import {
   getBrief,
   getThematicRun,
@@ -202,6 +203,7 @@ async function extractThematicPart(
   author: string | null,
   chapterLabel: string,
   partText: string,
+  groundTruthText: string,
   partIndex: number,
   partCount: number,
   signal?: AbortSignal,
@@ -214,7 +216,14 @@ async function extractThematicPart(
     schema: ThematicPartSchema,
     signal,
   });
-  return validateQuestionThemes({ ...result, themes: evidenceFilterThemes(result.themes, partText) });
+  // M37 §B: `partText` is now the substrate's serialization, not the
+  // chapter itself, so evidence-filtering has to check quotes against the
+  // chapter's own text (`groundTruthText`) rather than what the model was
+  // shown — a quote copied verbatim out of the substrate is, by §A1's own
+  // construction, already a locatable substring of the chapter, so this is
+  // strictly the same check `evidenceFilterThemes` always did, pointed at
+  // the text a highlight actually anchors into.
+  return validateQuestionThemes({ ...result, themes: evidenceFilterThemes(result.themes, groundTruthText) });
 }
 
 /**
@@ -295,11 +304,31 @@ interface ThematicChapterResult {
   partCount: number;
 }
 
-/** Thematic analysis of one chapter, operating on the raw chapter text —
- * deliberately not on the plot layer's summary, so the two passes stay
- * fully independent calls (decisions.md: "do not build them as one call").
- * Returns a null `part`, never throws, when the chapter still won't fit
- * after one re-split, mirroring build.ts's digestChapter. */
+/**
+ * M37 §D1: "re-read my notes" (the default — reads the chapter's substrate,
+ * §B's cheap-to-re-run path) vs "re-read the book" (bypasses the substrate
+ * and reads the chapter's own full text, same cost the pre-M37 thematic pass
+ * always paid). Threaded from the route body through `runThematicDigest`.
+ */
+export type ThematicMode = "notes" | "full";
+
+/**
+ * M37 §B1/§D1: reads the chapter's substrate (`inputText` = the substrate's
+ * serialization) in `"notes"` mode — the two passes were already independent
+ * calls (decisions.md: "do not build them as one call"); this is that same
+ * independence, with the input swapped for the cheap-to-re-run one. In
+ * `"full"` mode `inputText` is the chapter's own raw text instead, the same
+ * cost the pass always paid before M37 §B.
+ * `groundTruthText` is still the chapter's real section text, needed only to
+ * verify a proposed quote actually locates (§B2) — the model never reads it
+ * as such (in `"full"` mode it *is* what the model reads, but evidence-
+ * filtering re-locates against it independently either way).
+ * Returns a null `part`, never throws, when the input still won't fit after
+ * one re-split, mirroring build.ts's digestChapter (in `"notes"` mode this
+ * essentially never triggers: a substrate is capped at §A2's ~2,000-token
+ * ceiling, far under a chunk budget sized off the provider's context window;
+ * in `"full"` mode it's exactly as likely as the pre-M37 pass was).
+ */
 async function digestChapterThematic(
   provider: LLMProvider,
   contextTokens: number,
@@ -307,14 +336,15 @@ async function digestChapterThematic(
   title: string,
   author: string | null,
   chapterLabel: string,
-  text: string,
+  inputText: string,
+  groundTruthText: string,
   signal?: AbortSignal,
 ): Promise<ThematicChapterResult> {
   const budgetChars = contextTokens * MAP_BUDGET_FRACTION * CHARS_PER_TOKEN;
   let partCount = 0;
 
   async function attempt(maxChars: number): Promise<ThematicPart> {
-    const chunks = splitIntoChunks(text, maxChars);
+    const chunks = splitIntoChunks(inputText, maxChars);
     partCount = chunks.length;
     const parts: ThematicPart[] = [];
     for (let i = 0; i < chunks.length; i++) {
@@ -326,6 +356,7 @@ async function digestChapterThematic(
           author,
           chapterLabel,
           chunks[i],
+          groundTruthText,
           i,
           chunks.length,
           signal,
@@ -388,11 +419,18 @@ function logThematicShape(
 /**
  * Runs (or resumes) a thematic pass over [spineStart, spineEnd] under the
  * resource's *current* brief. Chapters already covered under this exact
- * brief are skipped (idempotent re-runs are free); chapters covered under a
- * stale brief are regenerated. No book-level reduce — the thematic layer is
- * per-chapter only (decisions.md doesn't ask for a book-level thematic
- * synopsis, and one would immediately raise the same spoiler question the
- * plot layer's book digest already has to solve).
+ * brief are skipped (idempotent re-runs are free) in `"notes"` mode; chapters
+ * covered under a stale brief are always regenerated. No book-level reduce —
+ * the thematic layer is per-chapter only (decisions.md doesn't ask for a
+ * book-level thematic synopsis, and one would immediately raise the same
+ * spoiler question the plot layer's book digest already has to solve).
+ *
+ * M37 §D1: `mode` is the reader's visible choice between the two paths —
+ * `"notes"` (default) reads each chapter's substrate; `"full"` bypasses it
+ * and reads the chapter's own text, and — unlike `"notes"` — never skips a
+ * chapter already covered under the current brief, since the point of asking
+ * for a full re-read is to force the deeper pass even when nothing about the
+ * brief has changed.
  */
 export async function runThematicDigest(
   db: Database.Database,
@@ -403,10 +441,18 @@ export async function runThematicDigest(
   spineEnd: number,
   signal?: AbortSignal,
   onProgress?: (current: number, total: number, message: string | null) => void,
+  mode: ThematicMode = "notes",
 ): Promise<ThematicRun> {
   const contextTokens = provider.capabilities().contextTokens;
   const brief = getBrief(db, resource.id);
   const briefHash = hashBrief(brief.text);
+  // M37 §A: a separate operation tag on the same "digest" role/profile —
+  // usage.ts's own comment on "substrate" explains why this can't just
+  // reuse `provider` as-is despite it resolving to the identical profile.
+  // Falls back to the thematic-tagged provider only if the role's profile
+  // somehow vanished between the two lookups (it can't, in practice: this
+  // function already has a non-null `provider` for the same role).
+  const substrateProvider = getProvider(db, "digest", "substrate", resource.id) ?? provider;
 
   const priorRun = getThematicRun(db, resource.id);
   const failedSpineIndices = new Set<number>(
@@ -439,7 +485,7 @@ export async function runThematicDigest(
   );
   const pending = sections
     .filter((s) => s.spineIndex >= spineStart && s.spineIndex <= spineEnd)
-    .filter((s) => !coveredUnderBrief.has(s.spineIndex))
+    .filter((s) => mode === "full" || !coveredUnderBrief.has(s.spineIndex))
     .sort((a, b) => a.spineIndex - b.spineIndex);
 
   const total = Math.max(pending.length, 1);
@@ -451,6 +497,36 @@ export async function runThematicDigest(
 
     const chapterLabel = sectionLabel(section.spineIndex, resource.metadata.chapterTitles);
     try {
+      // M37 §A/§B: brief-blind first — built once per chapter, keyed on the
+      // chapter's own text (not the brief), and reused as-is on every
+      // subsequent brief change from here on. `ensureChapterSubstrate`
+      // returns the existing row immediately once one exists, so this is a
+      // real LLM call only the first time this chapter is ever thematically
+      // analysed under any brief.
+      const substrate = await withNetworkRetry(
+        () =>
+          ensureChapterSubstrate(
+            db,
+            substrateProvider,
+            contextTokens,
+            resource,
+            chapterLabel,
+            section,
+            signal,
+          ),
+        signal,
+      );
+      if (substrate === null) {
+        failedSpineIndices.add(section.spineIndex);
+        current++;
+        onProgress?.(current, total, chapterLabel);
+        continue;
+      }
+
+      // M37 §D1: "notes" reads the substrate's serialization (§B, cheap);
+      // "full" bypasses it and reads the chapter's own text — the reader's
+      // explicit "re-read the book" choice, at the pass's original cost.
+      const inputText = mode === "full" ? section.text : serializeSubstrateForPrompt(substrate);
       const result = await withNetworkRetry(
         () =>
           digestChapterThematic(
@@ -460,6 +536,7 @@ export async function runThematicDigest(
             resource.title,
             resource.author,
             chapterLabel,
+            inputText,
             section.text,
             signal,
           ),
@@ -486,6 +563,19 @@ export async function runThematicDigest(
       // now that the chapter's own thematic row is committed — same section
       // text the themes' quotes were evidence-filtered against.
       persistThematicHighlights(db, resource.id, section.spineIndex, section.text, part.themes);
+      // M37 §C1/§C2: every theme quote this pass actually surfaced is a
+      // "this brief drew on this passage" signal, in both modes — a "notes"
+      // pass only ever reinforces draw counts on passages already in the
+      // substrate (its quotes came from there), while a "full" pass can
+      // introduce quotes §A1 never kept, which is the actual merge-back.
+      mergeQuotesIntoSubstrate(
+        db,
+        resource.id,
+        section.spineIndex,
+        section.text,
+        part.themes.flatMap((t) => t.quotes),
+        briefHash,
+      );
       failedSpineIndices.delete(section.spineIndex);
       current++;
       onProgress?.(current, total, chapterLabel);

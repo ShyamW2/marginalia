@@ -65,23 +65,34 @@ export async function fetchChapterQuestions(resourceId: string): Promise<Chapter
   }
 }
 
-/** M32 B: creates the chapter's own question on first write, or replaces its
- * text on any later one — one row per chapter, no LLM involved. */
+/** M32 B: creates the chapter's own question on first write. M36 C1: a
+ * second, *different* question about the same chapter is refused by the
+ * server (409) rather than silently replacing the first — the caller must
+ * tell the reader, not just retry or drop it. */
+export type UpsertChapterQuestionResult =
+  | { ok: true; question: ChapterQuestion }
+  | { ok: false; reason: "conflict"; existing: ChapterQuestion }
+  | { ok: false; reason: "error" };
+
 export async function upsertChapterQuestion(
   resourceId: string,
   spineIndex: number,
   question: string,
-): Promise<ChapterQuestion | null> {
+): Promise<UpsertChapterQuestionResult> {
   try {
     const res = await fetch(`/api/resources/${resourceId}/chapter-questions/${spineIndex}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question }),
     });
-    if (!res.ok) return null;
-    return (await res.json()) as ChapterQuestion;
+    if (res.status === 409) {
+      const data = (await res.json()) as { existing: ChapterQuestion };
+      return { ok: false, reason: "conflict", existing: data.existing };
+    }
+    if (!res.ok) return { ok: false, reason: "error" };
+    return { ok: true, question: (await res.json()) as ChapterQuestion };
   } catch {
-    return null;
+    return { ok: false, reason: "error" };
   }
 }
 

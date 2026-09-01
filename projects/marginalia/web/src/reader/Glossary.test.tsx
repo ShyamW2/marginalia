@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { HighlightWithThread } from "@marginalia/shared";
-import { Glossary, glossaryEntries } from "./Glossary.js";
+import { Glossary, glossaryEntries, isGlossaryEntry, sortGlossaryEntries } from "./Glossary.js";
 
 afterEach(cleanup);
 
@@ -65,6 +65,51 @@ describe("glossaryEntries", () => {
     expect(glossaryEntries([defined])).toHaveLength(1);
     expect(glossaryEntries([{ ...defined, definition: "" }])).toHaveLength(0);
   });
+
+  // M36 A4: a note on a definition highlight must not pull it back into
+  // Annotations — `isGlossaryEntry` (which this is built on) stays a
+  // two-condition test with no "...unless noted" clause.
+  it("keeps a noted definition glossary-only", () => {
+    const noted = highlight({ exact: "noted", definition: "(noun) a thing", note: "my own gloss" });
+    expect(glossaryEntries([noted]).map((e) => e.exact)).toEqual(["noted"]);
+  });
+});
+
+describe("isGlossaryEntry (M36 A1)", () => {
+  it("is the exact predicate glossaryEntries filters with, exported for AnnotationsOverview to share", () => {
+    const defined = highlight({ definition: "(noun) a thing" });
+    const plain = highlight({});
+    expect(isGlossaryEntry(defined)).toBe(true);
+    expect(isGlossaryEntry(plain)).toBe(false);
+    expect(glossaryEntries([defined, plain])).toEqual([defined]);
+  });
+});
+
+describe("sortGlossaryEntries (M36 B)", () => {
+  const first = highlight({ exact: "banana", spineIndex: 0, definition: "d", createdAt: "2026-01-03T00:00:00.000Z" });
+  const second = highlight({ exact: "apple", spineIndex: 5, definition: "d", createdAt: "2026-01-01T00:00:00.000Z" });
+  const third = highlight({ exact: "cherry", spineIndex: 2, definition: "d", createdAt: "2026-01-02T00:00:00.000Z" });
+  const entries = [first, second, third];
+
+  it("reading order is a passthrough — the server's spineIndex, createdAt order", () => {
+    expect(sortGlossaryEntries(entries, "reading")).toEqual(entries);
+  });
+
+  it("A-Z sorts on the headword", () => {
+    expect(sortGlossaryEntries(entries, "alpha").map((e) => e.exact)).toEqual([
+      "apple",
+      "banana",
+      "cherry",
+    ]);
+  });
+
+  it("chronological sorts on when the word was looked up, not where it sits in the book", () => {
+    expect(sortGlossaryEntries(entries, "chrono").map((e) => e.exact)).toEqual([
+      "apple",
+      "cherry",
+      "banana",
+    ]);
+  });
 });
 
 describe("Glossary", () => {
@@ -77,6 +122,8 @@ describe("Glossary", () => {
           highlight({ exact: "unmarked" }),
         ]}
         unanchoredIds={new Set()}
+        sort="reading"
+        onSortChange={vi.fn()}
         onJumpTo={vi.fn()}
         onClose={vi.fn()}
       />,
@@ -98,6 +145,8 @@ describe("Glossary", () => {
       <Glossary
         highlights={[entry]}
         unanchoredIds={new Set()}
+        sort="reading"
+        onSortChange={vi.fn()}
         onJumpTo={onJumpTo}
         onClose={vi.fn()}
       />,
@@ -113,6 +162,8 @@ describe("Glossary", () => {
       <Glossary
         highlights={[entry]}
         unanchoredIds={new Set([entry.id])}
+        sort="reading"
+        onSortChange={vi.fn()}
         onJumpTo={vi.fn()}
         onClose={vi.fn()}
       />,
@@ -128,10 +179,46 @@ describe("Glossary", () => {
       <Glossary
         highlights={[highlight({ exact: "unmarked" })]}
         unanchoredIds={new Set()}
+        sort="reading"
+        onSortChange={vi.fn()}
         onJumpTo={vi.fn()}
         onClose={vi.fn()}
       />,
     );
     expect(screen.getByText(/Nothing defined yet/)).toBeTruthy();
+  });
+
+  it("offers the three sort modes and reports the reader's choice", () => {
+    const onSortChange = vi.fn();
+    render(
+      <Glossary
+        highlights={[
+          highlight({ exact: "banana", definition: "d" }),
+          highlight({ exact: "apple", definition: "d" }),
+        ]}
+        unanchoredIds={new Set()}
+        sort="reading"
+        onSortChange={onSortChange}
+        onJumpTo={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "A–Z" }));
+    expect(onSortChange).toHaveBeenCalledWith("alpha");
+  });
+
+  it("hides the sort control when there's nothing to sort", () => {
+    render(
+      <Glossary
+        highlights={[highlight({ exact: "solo", definition: "d" })]}
+        unanchoredIds={new Set()}
+        sort="reading"
+        onSortChange={vi.fn()}
+        onJumpTo={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("group", { name: "Sort the glossary" })).toBeNull();
   });
 });

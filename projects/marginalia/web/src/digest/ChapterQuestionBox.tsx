@@ -28,6 +28,7 @@ interface ChapterQuestionBoxProps {
 export function ChapterQuestionBox({ resourceId, spineIndex, question, onCreated }: ChapterQuestionBoxProps) {
   const [draft, setDraft] = useState("");
   const [asking, setAsking] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
 
   const [noteDraft, setNoteDraft] = useState(question?.note ?? "");
   const [noteSaveState, setNoteSaveState] = useState<"idle" | "saving" | "saved">("idle");
@@ -52,12 +53,24 @@ export function ChapterQuestionBox({ resourceId, spineIndex, question, onCreated
     const text = draft.trim();
     if (!text) return;
     setAsking(true);
-    const created = await upsertChapterQuestion(resourceId, spineIndex, text);
+    setAskError(null);
+    const result = await upsertChapterQuestion(resourceId, spineIndex, text);
     setAsking(false);
-    if (created) {
-      onCreated(created);
+    if (result.ok) {
+      onCreated(result.question);
       setDraft("");
+      return;
     }
+    if (result.reason === "conflict") {
+      // M36 C1: the server refused because this chapter already has a
+      // *different* question — sync to what's actually stored (the reader's
+      // own draft is left in the box, untouched, so nothing they typed
+      // disappears) rather than silently dropping the write.
+      onCreated(result.existing);
+      setAskError("This chapter already has a question — your first one is still there. Clear it before asking a different one.");
+      return;
+    }
+    setAskError("Couldn't save that question — try again.");
   }
 
   function handleNoteChange(next: string) {
@@ -90,6 +103,7 @@ export function ChapterQuestionBox({ resourceId, spineIndex, question, onCreated
             Ask
           </Button>
         </div>
+        {askError && <p className={styles.askError}>{askError}</p>}
       </div>
     );
   }
@@ -103,6 +117,7 @@ export function ChapterQuestionBox({ resourceId, spineIndex, question, onCreated
         </span>
       </div>
       <p className={styles.question}>{question.question}</p>
+      {askError && <p className={styles.askError}>{askError}</p>}
       <textarea
         className={styles.noteTextarea}
         placeholder="Your own answer, or just a thought…"

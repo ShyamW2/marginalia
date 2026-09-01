@@ -49,6 +49,12 @@
   color: var(--color-text);
 }
 
+.askError {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: var(--color-danger);
+}
+
 .noteTextarea {
   width: 100%;
   font-size: 0.85rem;

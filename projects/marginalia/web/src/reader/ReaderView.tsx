@@ -97,7 +97,7 @@ import { isReaderOrigin } from "../highlights/highlightOrigin.js";
 import { AnnotationsOverview } from "./AnnotationsOverview.js";
 import { DefinitionCard, type DefinitionCardState } from "./DefinitionCard.js";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog.js";
-import { Glossary, glossaryEntries } from "./Glossary.js";
+import { Glossary, glossaryEntries, isGlossaryEntry, type GlossarySortMode } from "./Glossary.js";
 import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, currentChapter as deriveCurrentChapter, type TocEntry } from "./toc.js";
 import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
@@ -1019,7 +1019,14 @@ export function ReaderView({
   // can render inline. Every other consumer of `highlights` (marks, margin
   // rail) is deliberately left unfiltered — that's where the toggle's own
   // effect is supposed to show.
-  const readerHighlights = useMemo(() => highlights.filter(isReaderOrigin), [highlights]);
+  // M36 A2: also excludes glossary entries (`isGlossaryEntry`), so the strip
+  // button's count and AnnotationsOverview's own list can't disagree —
+  // AnnotationsOverview re-applies the same predicate itself, so this isn't
+  // load-bearing for correctness there, only for this button's count.
+  const readerHighlights = useMemo(
+    () => highlights.filter((h) => isReaderOrigin(h) && !isGlossaryEntry(h)),
+    [highlights],
+  );
   const [unanchoredIds, setUnanchoredIds] = useState<Set<string>>(new Set());
   const [pendingSelection, setPendingSelection] =
     useState<PendingSelection | null>(null);
@@ -1222,6 +1229,10 @@ export function ReaderView({
   // stacked lists over the page is exactly the clutter DESIGN.md's
   // "instruments, not rooms" rule exists to avoid.
   const [showGlossary, setShowGlossary] = useState(false);
+  // M36 B: lifted above the panel (which unmounts via AnimatePresence when
+  // closed) so the choice "persists for the session" rather than resetting
+  // to reading order every time the glossary is reopened.
+  const [glossarySort, setGlossarySort] = useState<GlossarySortMode>("reading");
   // M30 C: the Define result, anchored where the selection was. Null when no
   // lookup is showing; `result: null` inside it means one is in flight.
   const [definitionCard, setDefinitionCard] = useState<DefinitionCardState | null>(null);
@@ -4516,6 +4527,8 @@ export function ReaderView({
                 key="glossary"
                 highlights={highlights}
                 unanchoredIds={unanchoredIds}
+                sort={glossarySort}
+                onSortChange={setGlossarySort}
                 onJumpTo={handleJumpToGlossaryEntry}
                 onClose={() => setShowGlossary(false)}
               />

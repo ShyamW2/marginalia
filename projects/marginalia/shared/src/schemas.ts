@@ -817,6 +817,11 @@ export const UsageOperationSchema = z.enum([
   "digest",
   "cast",
   "thematic",
+  // M37 §A: the brief-blind substrate pass — its own tag, alongside
+  // "thematic", for the same reason usage.ts's LLMOperation comment gives:
+  // the milestone exists to compare what this costs against what the
+  // brief-driven pass built on top of it costs.
+  "substrate",
   "theme-distillation",
   // M30 C: Define's digest-rung fallback. Its own tag rather than "thread" —
   // it is the one operation with a hard product cap on output length, and
@@ -1356,10 +1361,15 @@ export const ThematicStatusSchema = z.object({
 });
 export type ThematicStatus = z.infer<typeof ThematicStatusSchema>;
 
-/** POST /api/resources/:id/thematic body — same shape as starting a plot
- * digest run, reused rather than duplicated. */
-export const StartThematicDigestBodySchema = StartDigestBodySchema;
-export type StartThematicDigestBody = StartDigestBody;
+/** POST /api/resources/:id/thematic body — extends the plot digest's start
+ * body with M37 §D1's reader-visible choice: `"notes"` (default) reads each
+ * chapter's substrate (§B, cheap); `"full"` bypasses it and reads the
+ * chapter's own text ("re-read the book" in the UI), forcing every chapter
+ * in range to be reanalyzed even under an unchanged brief. */
+export const StartThematicDigestBodySchema = StartDigestBodySchema.extend({
+  mode: z.enum(["notes", "full"]).default("notes"),
+});
+export type StartThematicDigestBody = z.infer<typeof StartThematicDigestBodySchema>;
 
 /** POST /api/resources/:id/chapter-anchor body — turns a posed question's
  * verbatim quote into a real highlight (decision 11: the model returns

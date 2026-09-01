@@ -6,6 +6,7 @@ import { runThematicDigest } from "./thematicBuild.js";
 import { getChapterDigest } from "./store.js";
 import { listBookThemes } from "./canonicalThemes.js";
 import { listHighlightsForResource } from "../annotations/highlights.js";
+import { getChapterSubstrate } from "./substrateStore.js";
 import {
   getThematicDigest,
   getThematicRun,
@@ -56,6 +57,15 @@ function makeProvider(
   // distillation's own `extract` call away from it by default (no themes to
   // distil is exactly right for tests that were never about §C0).
   distillationExtract: (req: LLMExtractRequest<unknown>) => unknown = () => ({ themes: [] }),
+  // M37 §A: `runThematicDigest` now also builds a chapter's substrate before
+  // the thematic call — every existing test's `scriptedExtract` is written
+  // against the thematic-part shape, not the substrate shape, so route the
+  // substrate's own `extract` call away from it by default. An empty
+  // substrate is fine for every one of these tests: the thematic mock below
+  // never actually reads what the substrate said (it branches on the
+  // chapter label baked into `req.input`), and evidence-filtering checks a
+  // returned quote against the chapter's real text, not the substrate.
+  substrateExtract: (req: LLMExtractRequest<unknown>) => unknown = () => ({ passages: [], claims: [] }),
 ): LLMProvider {
   return {
     id: "openai-compatible",
@@ -66,6 +76,9 @@ function makeProvider(
     async extract<T>(req: LLMExtractRequest<T>): Promise<T> {
       if (req.instructions.startsWith("You are distilling")) {
         return distillationExtract(req) as T;
+      }
+      if (req.instructions.startsWith("You are building a durable, reusable extract")) {
+        return substrateExtract(req) as T;
       }
       return scriptedExtract(req) as T;
     },
@@ -85,7 +98,11 @@ describe("runThematicDigest", () => {
     putBrief(db, resource.id, "read for self-determination");
 
     const provider = makeProvider((req) => {
-      if (req.input.includes("Chapter one")) {
+      // M37 §B: the thematic call's input is now the chapter's substrate,
+      // not its raw text — the chapter label (present in every extract
+      // call's input regardless of what's in the substrate) is the stable
+      // way to tell the two chapters apart here.
+      if (req.input.includes("section 0")) {
         return {
           analysis: "Ch1 is about autonomy.",
           themes: [{ name: "autonomy", quotes: ["Chapter one text."] }],
@@ -166,6 +183,53 @@ describe("runThematicDigest", () => {
     db.close();
   });
 
+  it("M37 §D1: unlike 'notes' mode, 'full' mode re-analyzes a chapter already covered under the current brief", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+    putBrief(db, resource.id, "a brief");
+
+    let calls = 0;
+    const provider = makeProvider(() => {
+      calls++;
+      return { analysis: "analysis", themes: [], questions: [] };
+    });
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0, undefined, undefined, "notes");
+    expect(calls).toBe(1);
+    // Same brief, same range — "notes" mode would skip this as already
+    // covered (the test above), but "full" is the reader explicitly asking
+    // for the deeper pass regardless.
+    await runThematicDigest(db, provider, resource, sections, 0, 0, undefined, undefined, "full");
+    expect(calls).toBe(2);
+    db.close();
+  });
+
+  it("M37 §C1: a 'full' re-read's theme quotes merge back into the chapter's substrate", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sectionText = "Chapter one text, with a passage worth remembering in it.";
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: sectionText }];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider(() => ({
+      analysis: "analysis",
+      themes: [{ name: "memory", quotes: ["a passage worth remembering"] }],
+      questions: [],
+    }));
+
+    await runThematicDigest(db, provider, resource, sections, 0, 0, undefined, undefined, "full");
+
+    const substrate = getChapterSubstrate(db, resource.id, 0);
+    const match = substrate?.passages.find((p) => p.quote === "a passage worth remembering");
+    expect(match).toBeDefined();
+    expect(match?.drawnByBriefHashes).toEqual([hashBrief("")]);
+    db.close();
+  });
+
   it("changing the brief makes prior chapters stale and re-running regenerates them", async () => {
     const db = createDb(":memory:");
     const resource = makeResource();
@@ -204,7 +268,9 @@ describe("runThematicDigest", () => {
     seedSections(db, resource.id, sections);
 
     const provider = makeProvider((req) => {
-      if (req.input.includes("Chapter two")) throw new LLMError("rate_limit", "slow down");
+      // M37 §B: match on the chapter label, not the raw text — see the
+      // first test's comment on why.
+      if (req.input.includes("section 1")) throw new LLMError("rate_limit", "slow down");
       return { analysis: "Ch1 analysis", themes: [], questions: [] };
     });
 
@@ -261,7 +327,9 @@ describe("runThematicDigest", () => {
 
     const controller = new AbortController();
     const provider = makeProvider((req) => {
-      if (req.input.includes("Chapter one")) {
+      // M37 §B: match on the chapter label, not the raw text — see the
+      // first test's comment on why.
+      if (req.input.includes("section 0")) {
         controller.abort();
         return { analysis: "Ch1 analysis", themes: [], questions: [] };
       }
@@ -290,7 +358,9 @@ describe("runThematicDigest — M34 §C0 chains distillation onto the run", () =
 
     const provider = makeProvider(
       (req) =>
-        req.input.includes("Chapter one")
+        // M37 §B: match on the chapter label, not the raw text — see the
+        // first test's comment on why.
+        req.input.includes("section 0")
           ? {
               analysis: "Ch1 is about fate.",
               themes: [{ name: "fate as pull", quotes: ["Chapter one text."] }],
@@ -466,7 +536,16 @@ describe("runThematicDigest — M34 0b shape log", () => {
           },
         ],
       };
-    }, 1000);
+    }, 1000, undefined, () => ({
+      // M37 §B: the thing that now needs to force a 2-chunk split is the
+      // chapter's *substrate*, not its raw text — one small locatable
+      // passage plus one long claim, which `serializeSubstrateForPrompt`
+      // turns into paragraphs sized to overflow the same 875-char budget
+      // via the same overlap mechanism `splitIntoChunks` already gave the
+      // raw-text version of this test.
+      passages: [{ quote: "sea" }],
+      claims: [{ claim: "This chapter is about the sea. ".repeat(50), holder: null }],
+    }));
 
     const log = captureShapeLog();
     try {

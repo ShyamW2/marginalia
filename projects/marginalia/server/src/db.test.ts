@@ -52,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(37);
+    expect(version).toBe(38);
     db.close();
   });
 
@@ -292,7 +292,7 @@ describe("db migrations", () => {
       legacy.close();
 
       const db = createDb(tmpPath);
-      expect(db.pragma("user_version", { simple: true })).toBe(37);
+      expect(db.pragma("user_version", { simple: true })).toBe(38);
       expect(db.prepare("SELECT COUNT(*) AS n FROM thematic_digests").get()).toEqual({ n: 0 });
       expect(db.prepare("SELECT COUNT(*) AS n FROM book_themes").get()).toEqual({ n: 0 });
       expect(db.prepare("SELECT COUNT(*) AS n FROM theme_parents").get()).toEqual({ n: 0 });
@@ -314,7 +314,7 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(37);
+      expect(second.pragma("user_version", { simple: true })).toBe(38);
       second.close();
     } finally {
       cleanupDbFile(tmpPath);
@@ -343,7 +343,7 @@ describe("db migrations", () => {
       legacy.close();
 
       const repaired = createDb(tmpPath);
-      expect(repaired.pragma("user_version", { simple: true })).toBe(37);
+      expect(repaired.pragma("user_version", { simple: true })).toBe(38);
       const columnsAfter = repaired.prepare("PRAGMA table_info(resource_ai_settings)").all() as { name: string }[];
       expect(columnsAfter.some((c) => c.name === "show_thematic_quotes")).toBe(true);
       repaired.close();
@@ -361,7 +361,7 @@ describe("db migrations", () => {
       // ("duplicate column name") from migration 37 re-adding a column
       // migration 36 already added correctly.
       const reopened = createDb(tmpPath);
-      expect(reopened.pragma("user_version", { simple: true })).toBe(37);
+      expect(reopened.pragma("user_version", { simple: true })).toBe(38);
       reopened.close();
     } finally {
       cleanupDbFile(tmpPath);

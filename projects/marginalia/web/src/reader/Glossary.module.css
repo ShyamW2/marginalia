@@ -31,6 +31,13 @@
   color: var(--color-text);
 }
 
+.sortRow {
+  display: flex;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem 0;
+  flex-wrap: wrap;
+}
+
 .empty {
   padding: 1rem 0.75rem;
   font-size: 0.85rem;

@@ -39,9 +39,15 @@ export function listChapterQuestions(db: Database.Database, resourceId: string):
   return rows.map(rowToChapterQuestion);
 }
 
-/** Creates the chapter's question on first write, or replaces its text on any
- * later one — one row per (resource, chapter), same upsert shape
- * `putBrief` (thematicStore.ts) uses for its own single-row-per-resource case. */
+/** Creates the chapter's question on first write, or replaces its text on a
+ * later write for the *same* text (an idempotent resubmit) — one row per
+ * (resource, chapter), same upsert shape `putBrief` (thematicStore.ts) uses
+ * for its own single-row-per-resource case. This function alone does not
+ * defend the second-write case (M36 C1): the route
+ * (routes/digest.ts's PUT handler) checks for a genuinely different existing
+ * question and refuses with 409 before calling this, since overwriting here
+ * would silently destroy the first question while leaving its `note`
+ * attached to text that no longer exists. */
 export function upsertChapterQuestion(
   db: Database.Database,
   resourceId: string,

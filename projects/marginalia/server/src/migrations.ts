@@ -898,4 +898,29 @@ export const MIGRATIONS: Migration[] = [
       database.exec("ALTER TABLE resource_ai_settings ADD COLUMN show_thematic_quotes INTEGER NOT NULL DEFAULT 0;");
     },
   },
+  {
+    // M37 §A "the thematic substrate": a brief-blind, one-time pass per
+    // chapter — verbatim passages and the chapter's claims/tensions — kept
+    // separate from `thematic_digests` on purpose. `thematic_digests` is
+    // keyed on `brief_hash` because it *is* the brief's reading; this table
+    // is keyed the way `chapter_digests` (migration 10) is keyed: on
+    // `source_hash` alone, never on the brief, since re-running under a new
+    // brief must not force this table to regenerate (that's the whole
+    // problem M37 exists to fix). Row existence is coverage, same as
+    // `chapter_digests` — resources are immutable on import (settled
+    // decision 5), so a chapter's `source_hash` never has occasion to change
+    // out from under an existing row.
+    version: 38,
+    sql: `
+      CREATE TABLE chapter_substrate (
+        resource_id   TEXT NOT NULL REFERENCES resources(id),
+        spine_index   INTEGER NOT NULL,
+        passages      TEXT NOT NULL DEFAULT '[]',
+        claims        TEXT NOT NULL DEFAULT '[]',
+        source_hash   TEXT NOT NULL,
+        generated_at  TEXT NOT NULL,
+        PRIMARY KEY (resource_id, spine_index)
+      );
+    `,
+  },
 ];
