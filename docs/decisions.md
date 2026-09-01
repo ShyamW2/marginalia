@@ -3,6 +3,98 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-01 (later still) — M37 §C/§D: draw counts live on the passage, not a separate ledger
+
+Finished M37. Two design calls §C/§D left open.
+
+**"Which briefs drew on a quote" is tracked on the `SubstratePassage` itself**
+(`drawnByBriefHashes: string[]`), not in a separate table keyed by brief. A passage is already
+the unit `putChapterSubstrate` reads and writes wholesale, and the count only ever needs to
+answer one question — eviction priority for *this chapter's* substrate — so a join was more
+machinery than the question needs. Old rows (written before this field existed) read back with
+`?? []`, the same "absent reads as the empty case" treatment `getBrief` already gives an unset
+brief; no migration, since `passages` is a JSON blob column.
+
+**Both modes credit draws, not just `"full"`.** §C1's own wording ("quotes surfaced by any full
+re-read merge back") could be read as gating the whole mechanism on `"full"` mode, but a
+`"notes"`-mode pass's quotes are, by §B2's construction, always copied verbatim out of the
+substrate it was shown — so crediting them too is free and is exactly what makes "two or more
+briefs independently selected it" a measured fact rather than a guess that only fires the rare
+time someone pays for a full re-read. `"full"` mode is still the *only* mode that can introduce
+a brand new passage §A1 never kept — that's what "merge back" actually means; crediting an
+existing one is the same signal, cheaper to produce.
+
+**`"full"` mode forces every chapter in range, bypassing the "already covered under this
+brief" skip.** The reader reaching for "re-read the book" specifically because the cheap path
+might have missed something would be defeated by silently no-op'ing on every chapter that
+already has a row under the current brief — which, for a normal "just changed my brief" flow,
+is every chapter about to be touched by `"notes"` mode anyway.
+
+**Eviction ties break toward the passage's original position, not its recency.** Passages are
+sorted into three tiers (2+-brief draws, 1, none) with a stable sort, so within a tier the
+earlier one in the stored list survives a clamp first. Since §A1 extracts passages in the
+chapter's own reading order and appends run in call order after that, "earlier" reads as
+"closer to how the chapter unfolds" rather than "older" — there was no version-history reason
+to prefer either direction, so this was the tiebreak that needed no new state to implement.
+
+## 2026-09-01 (later) — M37 §A/§B: the substrate build lives inside the thematic job, not a job of its own
+
+Started M37 despite its own "do not start before M34 and M35 are verified" note — every
+substantive task in both is done; what remains is manual/live verification (a real digest
+provider call, driving the UI) that only the operator can run, not a code gap. Flagged to the
+operator, who chose to proceed.
+
+**No new route, no new job kind.** `ensureChapterSubstrate` is called from inside
+`runThematicDigest`'s per-chapter loop, before the brief-driven call, rather than exposed as
+its own `POST /:id/substrate` + job-registry entry. A substrate is needed exactly once per
+chapter regardless of which brief triggers the first thematic run over it, so "build it lazily
+the first time a chapter is thematically analyzed" already gets full coverage without a
+separate UI affordance, a separate run-tracking table, or a separate rate-limit pause/resume
+path — it inherits all three from the thematic job wrapping it. Revisit only if §D ("re-read
+the book" vs "re-read my notes") ends up needing to trigger a substrate build with no thematic
+run attached.
+
+**Usage ledger:** `"substrate"` is its own `LLMOperation`/`UsageOperation` tag (both
+`server/src/llm/usage.ts` and `shared/src/schemas.ts` — the two have to move together, same as
+`"thematic"` and `"theme-distillation"` already do), fetched via a second `getProvider(db,
+"digest", "substrate", resource.id)` call inside `runThematicDigest` rather than reusing the
+"thematic"-tagged `provider` parameter — same profile, different tag. The whole point of M37
+is comparing what a brief-blind pass costs against what the brief-driven pass built on top of
+it costs; folding the two into one ledger tag would hide the number the milestone exists to
+produce.
+
+**Evidence-filtering moved to ground truth.** §B's brief-driven pass now reads the substrate's
+serialization, not the chapter, so `evidenceFilterThemes` (M35 §C3) had to start checking a
+proposed quote's locatability against the chapter's real section text rather than against
+whatever text the model was actually shown (previously always the same thing). A quote copied
+verbatim out of the substrate is, by §A1's own construction, already a locatable substring of
+the chapter — so this is the same check as before, pointed at the text a highlight actually
+anchors into, not a loosening of it.
+
+## 2026-09-01 — M36 C1: refuse the second chapter question rather than allow many per chapter
+
+M36 §C1 offered two fixes for `upsertChapterQuestion`'s silent-overwrite defect: allow many
+questions per chapter (a row per question), or refuse a second, different write with a
+visible message. Took the refuse path.
+
+**Why not many-per-chapter:** the `note` column is the answer-space for *the* chapter
+question, singular — `ChapterQuestionBox.tsx` has one textarea, not a list. Moving to
+one-row-per-question reopens which question a note belongs to (exactly the ambiguity this
+defect is about) and needs a schema migration plus a list UI, for a feature (a reader asking
+several distinct standing questions about one chapter) nobody has asked for. Today's UI
+doesn't even expose a path to a second write — `ChapterQuestionBox` shows the ask form only
+while `question` is null — so the realistic trigger is a client/server desync (e.g. M35 §B2's
+`seedChapterQuestionIfAbsent` racing a manual write), not a reader deliberately replacing
+their question.
+
+**Where the guard lives:** the check (`getChapterQuestion` first, compare, 409 if different)
+sits in the route (`server/src/routes/digest.ts`), not inside `upsertChapterQuestion` itself —
+same shape as `threads.ts`'s `POST /:id/anchors` checking `getAnchoredThreadId` before calling
+`addThreadAnchor`. `upsertChapterQuestion` stays a plain, honestly-named upsert; the safety
+policy belongs at the one call site that decides what a "write" from the reader means.
+`seedChapterQuestionIfAbsent` (the M35 §B2 caller) is unaffected — it already never
+overwrites.
+
 ## 2026-09-01 (later night) — M35 §G1 corrected: no chapter needs a plot digest first
 
 The operator asked, checking rather than assuming: does a chapter have to be plot-digested

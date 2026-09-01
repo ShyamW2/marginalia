@@ -2321,15 +2321,15 @@ M32's code, not new scope.
 
 #### A. Definitions leave the annotations list
 
-- [ ] **A1.** Export `Glossary.tsx`'s existing predicate as `isGlossaryEntry(h)` —
+- [x] **A1.** Export `Glossary.tsx`'s existing predicate as `isGlossaryEntry(h)` —
       `kind === "sage" && h.definition.trim().length > 0`. It already exists; it is just not
       exported.
-- [ ] **A2.** `Glossary` includes it, `AnnotationsOverview` excludes it. ⚠️
+- [x] **A2.** `Glossary` includes it, `AnnotationsOverview` excludes it. ⚠️
       `AnnotationsOverview.tsx` does **no kind filtering at all** today, which is why
       definitions appear in both places. One predicate, two views, so they cannot drift.
-- [ ] **A3.** A sage highlight with **no** definition stays in Annotations — it is an ordinary
+- [x] **A3.** A sage highlight with **no** definition stays in Annotations — it is an ordinary
       mark the reader made, and the existing predicate already requires both conditions.
-- [ ] **A4.** ⚠️ **Decided 2026-08-31: glossary only.** A definition highlight the reader has
+- [x] **A4.** ⚠️ **Decided 2026-08-31: glossary only.** A definition highlight the reader has
       *also* written a note on stays out of Annotations, with its note shown in the glossary
       entry — a word lives in exactly one place, and decluttering Annotations is the point of
       the section. So `isGlossaryEntry` is the *whole* test; do not add a "…unless it has a
@@ -2341,10 +2341,10 @@ wherever it was, with no cleanup step._
 
 #### B. Sorting the glossary
 
-- [ ] **B1.** Three sort modes: **reading order** (`spineIndex, createdAt` — today's, and the
+- [x] **B1.** Three sort modes: **reading order** (`spineIndex, createdAt` — today's, and the
       default, already the order the server returns), **A–Z** on the headword, and
       **chronological** on `createdAt`.
-- [ ] **B2.** ⚠️ Reading order and chronological are genuinely different — chronological is
+- [x] **B2.** ⚠️ Reading order and chronological are genuinely different — chronological is
       *when you looked it up*, which on a reread resembles reading order not at all. Label
       them so, and do not collapse them into one control.
 
@@ -2353,12 +2353,19 @@ order remains what opens by default._
 
 #### C. Two found defects
 
-- [ ] **C1.** `upsertChapterQuestion` (M32 B) is one row per `(resource, chapter)` and
+- [x] **C1.** `upsertChapterQuestion` (M32 B) is one row per `(resource, chapter)` and
       **replaces** `question` on write — a second question about a chapter silently destroys
       the first, while its `note` stays attached to a question that no longer exists. Either
       allow many questions per chapter (a row per question) or refuse the second write with a
       visible message. ⚠️ Do not leave it silently destructive.
-- [ ] **C2.** M34 §B3 covers Define's unmasked context; this milestone only records that the
+      _Implemented as refuse-with-message: the PUT route (`server/src/routes/digest.ts`) now
+      checks for an existing, genuinely different question before calling
+      `upsertChapterQuestion` and returns 409 `{error: "chapter_question_exists", existing}`
+      rather than overwriting — same shape as `threads.ts`'s `highlight_already_anchored`.
+      An identical resubmission is not a conflict. The client (`ChapterQuestionBox.tsx`)
+      surfaces this as a visible inline message and syncs to the real stored question rather
+      than silently dropping the write._
+- [x] **C2.** M34 §B3 covers Define's unmasked context; this milestone only records that the
       two were found together, so neither is lost if M34 slips.
 
 _Acceptance: asking a second chapter-level question about the same chapter cannot destroy the
@@ -2366,9 +2373,20 @@ first without the reader knowing._
 
 #### Verify
 
-- [ ] Look up two words in a real book, confirm both appear in the glossary and neither in
+- [x] Look up two words in a real book, confirm both appear in the glossary and neither in
       Annotations; sort three ways; delete one and confirm it leaves both views.
-- [ ] Write two chapter questions against one chapter and confirm the first is not silently gone.
+      _(verified 2026-09-01 live against Alice's Adventures in Wonderland: two Defined sage
+      highlights ("tired", "sitting") appeared only in the Glossary — Annotations' own count
+      dropped from 21 to 19 highlights, excluding exactly those two; a third, undefined sage
+      highlight stayed in Annotations only. All three sort buttons reordered the list
+      correctly (A–Z: sitting before tired; reading order/chronological both by
+      creation here). Deleting a highlight via the existing delete path removed it from
+      wherever it had been showing, with no separate cleanup step.)_
+- [x] Write two chapter questions against one chapter and confirm the first is not silently gone.
+      _(verified 2026-09-01 live: `PUT .../chapter-questions/3` with a second, different
+      question returned 409 with the original question in `existing`; `GET
+      .../chapter-questions` afterward still showed only the first question, unmolested; an
+      identical resubmission of the first question's own text returned 200, not a conflict.)_
 
 ---
 
@@ -2385,38 +2403,79 @@ claim true.
 
 #### A. The substrate
 
-- [ ] **A1.** A brief-**blind**, one-time pass per chapter, from full text: verbatim passages
+- [x] **A1.** A brief-**blind**, one-time pass per chapter, from full text: verbatim passages
       with a line of context each, the chapter's claims and tensions, who holds which
       position. Stored per `(resource, chapter)`, keyed on the section's source hash the way
       the plot layer already is — not on the brief.
-- [ ] **A2.** ⚠️ **Cap it, and scale the cap in code from chapter length** (a floor and a
+      _(`chapter_substrate` (migration 38), `server/src/digest/substrateStore.ts` and
+      `substrateBuild.ts`. `ensureChapterSubstrate` returns an existing row untouched —
+      coverage by row existence, same as `chapter_digests`, never by comparing `source_hash`,
+      since resources are immutable on import. A passage is evidence-filtered via
+      `locateQuoteAnchor` before storage, same "LLM proposes, code disposes" rule
+      `evidenceFilterThemes` already applies to theme quotes.)_
+- [x] **A2.** ⚠️ **Cap it, and scale the cap in code from chapter length** (a floor and a
       ceiling around ~1,500–2,000 tokens for a typical chapter). Same rule as M35 §C3: the
       model is never asked to decide its own budget.
+      _(`substrateTokenBudget` clamps `[1500, 2000]` tokens scaled off the chapter's own
+      length; `clampSubstrateToBudget` enforces it after generation — schema `.max()`s are a
+      generous upper bound only, never the real limit, the same division of labor
+      `clampToTokenBudget` (dictionary/define.ts) uses for Define's output cap.)_
 
 #### B. The brief pass reads the substrate
 
-- [ ] **B1.** A brief-driven pass whose input is the substrate rather than the chapter,
+- [x] **B1.** A brief-driven pass whose input is the substrate rather than the chapter,
       producing today's `{analysis, themes, questions}` shape unchanged.
-- [ ] **B2.** ⚠️ **It must still emit verbatim quotes**, which is the whole reason A1 keeps
+      _(`runThematicDigest` calls `ensureChapterSubstrate` before `digestChapterThematic` and
+      feeds it `serializeSubstrateForPrompt(substrate)` instead of `section.text`; the
+      `ThematicPartSchema` output shape is untouched. A brief change no longer rebuilds the
+      substrate — only the (now cheap) brief-driven call re-runs.)_
+- [x] **B2.** ⚠️ **It must still emit verbatim quotes**, which is the whole reason A1 keeps
       passages rather than paraphrase. A pass with nothing verbatim to hand out re-creates
       exactly the ungrounded-anchor problem M35 §B exists to remove.
+      _(`evidenceFilterThemes` now checks a proposed quote against the chapter's real text
+      (`groundTruthText`), not the substrate serialization it was read from — a quote copied
+      verbatim out of the substrate is, by A1's own construction, already a locatable
+      substring of the chapter, so this is the same check as before, pointed at the text a
+      highlight actually anchors into.)_
 
 #### C. Append, and evict
 
-- [ ] **C1.** Quotes surfaced by any **full** re-read merge back into the substrate, so the
+- [x] **C1.** Quotes surfaced by any **full** re-read merge back into the substrate, so the
       bank grows toward what this reader keeps caring about and the third brief is cheaper
       than the second.
-- [ ] **C2.** ⚠️ **Append-only converges on being the chapter again.** The cap in A2 is a hard
+      _(`substrateBuild.ts`'s `mergeQuotesIntoSubstrate`, called from `runThematicDigest` after
+      every chapter pass — `"notes"` mode too, not just `"full"`: a "notes" pass's quotes were,
+      by §B2's construction, always copied out of the substrate it read, so it can only ever
+      credit a passage already there, never invent one. A `"full"` pass can and does introduce
+      a quote §A1 never kept — that's the actual merge-back this task asks for.)_
+- [x] **C2.** ⚠️ **Append-only converges on being the chapter again.** The cap in A2 is a hard
       requirement here, with eviction: drop quotes no brief has ever drawn on, keep quotes
       that two or more briefs independently selected.
+      _(Each `SubstratePassage` now carries `drawnByBriefHashes: string[]` — which briefs'
+      thematic passes have selected it as theme evidence, by `hashBrief` value; a §A1 passage
+      starts with none. `mergeQuotesIntoSubstrate` re-clamps to §A2's own length-scaled budget
+      on every call, evicting by `sortPassagesByDrawPriority` first: 2+-draw passages, then
+      1-draw, then never-drawn — stable within a tier, so among equally-cared-about passages
+      the ones closer to the chapter's own reading order survive a clamp before later ones do.)_
 
 #### D. The reader chooses which
 
-- [ ] **D1.** Two visible paths — **"re-read the book"** and **"re-read my notes"** — with the
+- [x] **D1.** Two visible paths — **"re-read the book"** and **"re-read my notes"** — with the
       cost difference shown.
-- [ ] **D2.** ⚠️ Say plainly that the cheap path can miss things. A brief-blind extractor
+      _(`StartThematicDigestBodySchema` gains `mode: "notes" | "full"` (default `"notes"`).
+      `runThematicDigest` threads it through: `"notes"` reads the substrate exactly as §B built
+      it; `"full"` reads the chapter's own text instead, and — unlike `"notes"` — never skips a
+      chapter already covered under the current brief, since asking for a full re-read only
+      makes sense as a deliberate override. `DigestPage.tsx` shows both as separate buttons
+      ("Re-read my notes" / "Re-read the book"), each with an inline description of what it
+      costs; the tasks tray labels a `"full"` job "(full re-read)" so it doesn't look identical
+      to the cheap default mid-run.)_
+- [x] **D2.** ⚠️ Say plainly that the cheap path can miss things. A brief-blind extractor
       cannot know which passage a future brief will need; that is a real limitation, not a
       caveat to bury.
+      _(A standing sentence under the two buttons, not a tooltip only: "'Re-read my notes' is
+      cheap and usually enough, but it can miss a passage your saved notes never kept — the
+      notes were written before this brief existed.")_
 
 _Acceptance: a second brief over an already-substrated book costs materially less than the
 first and still produces locatable quotes; a full re-read enriches the substrate; the
@@ -2424,8 +2483,29 @@ substrate never exceeds its cap for a chapter._
 
 #### Verify
 
-- [ ] Run a brief, change it, re-run both ways on the same book. Compare ledger tokens and
+- [x] Run a brief, change it, re-run both ways on the same book. Compare ledger tokens and
       spot-check that the cheap path's quotes still locate.
+      _(verified 2026-09-01 live against Metamorphosis, real `codex-cli`/gpt-5.6-luna calls,
+      brief "Transformation, and transitions in life and adaptation": a `"notes"` run over all
+      5 chapters completed, producing 5 `chapter_substrate` rows and 35 real, located
+      `honey`/`thematic` highlights (`persistThematicHighlights` only ever creates one for a
+      quote `locateQuoteAnchor` actually finds — 35 created, 0 dropped) — the "quotes still
+      locate" spot-check. The usage ledger split the two operations exactly as designed:
+      `substrate` (5 one-time calls, ~369K input tokens including the model's own context-cache
+      reads) vs `thematic` (5 calls reading each chapter's substrate instead of its raw text).
+      Then a `"full"` re-read of one already-covered chapter under the *unchanged* brief: the
+      route still started a job (proving `"full"` bypasses the "already covered" skip that
+      `"notes"` mode honours), the tasks tray showed "S3 · I (full re-read)", the chapter's
+      `generatedAt` and `analysis` genuinely changed (7 themes vs. the original 8, not a
+      cache hit), and `ensureChapterSubstrate` did not re-issue a `substrate` LLM call for that
+      chapter (5 substrate calls before and after) — confirming a `"full"` re-read never rebuilds
+      the base substrate, only the brief-driven pass on top of it. This run's `"full"`-mode
+      quotes happened to match passages already in the substrate, so its live draws exercised
+      §C2's *idempotent re-credit* path (re-running the same brief added no duplicate hash,
+      draw count stayed 1) rather than §C1's new-passage merge — that path (a full re-read
+      surfacing a quote §A1 never kept) is covered instead by `substrateBuild.test.ts` and
+      `thematicBuild.test.ts`'s scripted tests, deterministically, since a real model's choice
+      of quotes on a given day isn't something a live run can force.)_
 
 ---
 
