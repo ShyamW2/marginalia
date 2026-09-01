@@ -1,4 +1,5 @@
 import type { HighlightWithThread } from "@marginalia/shared";
+import { groupHighlightsByThread, groupPrimary } from "../threads/resolvePrimaryAnchor.js";
 import styles from "./MarginRail.module.css";
 
 function truncate(text: string, max: number): string {
@@ -26,15 +27,16 @@ export function MarginRail({
 
   return (
     <div className={styles.rail}>
-      {highlights.map((highlight) => {
-        const unanchored = unanchoredIds.has(highlight.id);
-        const active = highlight.spineIndex === currentSpineIndex;
-        const hasThread = highlight.thread !== null;
-        const hasAnswer = highlight.thread?.hasAnswer ?? false;
-        const hasNote = highlight.note.trim().length > 0;
+      {groupHighlightsByThread(highlights).map((group) => {
+        const primary = groupPrimary(group);
+        const unanchored = unanchoredIds.has(primary.id);
+        const active = group.some((h) => h.spineIndex === currentSpineIndex);
+        const hasThread = primary.thread !== null;
+        const hasAnswer = primary.thread?.hasAnswer ?? false;
+        const hasNote = group.some((h) => h.note.trim().length > 0);
         const className = [
           styles.dotButton,
-          styles[highlight.kind],
+          styles[primary.kind],
           active ? styles.active : "",
           unanchored ? styles.unanchored : "",
           // M13: a note reads with the same folded-corner treatment as a
@@ -49,25 +51,36 @@ export function MarginRail({
         const suffixParts = [
           threadState ? `thread ${threadState}` : null,
           hasNote ? "note" : null,
+          group.length > 1 ? `${group.length} passages` : null,
         ].filter((part): part is string => part !== null);
         const title = unanchored
-          ? `Couldn't relocate: "${truncate(highlight.exact, 80)}"`
+          ? `Couldn't relocate: "${truncate(primary.exact, 80)}"`
           : suffixParts.length > 0
-            ? `${truncate(highlight.exact, 80)} (${suffixParts.join(", ")})`
-            : truncate(highlight.exact, 80);
+            ? `${truncate(primary.exact, 80)} (${suffixParts.join(", ")})`
+            : truncate(primary.exact, 80);
 
         return (
-          <div key={highlight.id} className={styles.dotWrapper}>
+          <div key={primary.id} className={styles.dotWrapper}>
             <button
               type="button"
               className={className}
               title={title}
-              aria-label={`Go to highlight: ${truncate(highlight.exact, 40)}`}
+              aria-label={
+                group.length > 1
+                  ? `Go to annotation, ${group.length} passages: ${truncate(primary.exact, 40)}`
+                  : `Go to highlight: ${truncate(primary.exact, 40)}`
+              }
               onClick={() => {
-                onNavigate(highlight);
-                onOpenThread(highlight);
+                onNavigate(primary);
+                onOpenThread(primary);
               }}
-            />
+            >
+              {group.length > 1 && (
+                <span className={styles.countBadge} aria-hidden="true">
+                  {group.length}
+                </span>
+              )}
+            </button>
             <button
               type="button"
               className={styles.removeButton}
@@ -75,7 +88,7 @@ export function MarginRail({
               title="Delete highlight"
               onClick={(event) => {
                 event.stopPropagation();
-                onDelete(highlight);
+                onDelete(primary);
               }}
             >
               ×

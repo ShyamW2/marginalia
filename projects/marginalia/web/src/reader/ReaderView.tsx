@@ -1027,6 +1027,16 @@ export function ReaderView({
      * draft textarea from this once, on mount, via its own `key`-per-
      * highlight remount. */
     initialDraft?: string;
+    /** M35 §D3/§D4, found live 2026-09-01: `highlightId` above is always
+     * resolved to the thread's *primary* anchor (that's the panel's
+     * identity, per D3), which lost track of which anchor the reader
+     * actually clicked — every open-by-click landed the `‹ N of M ›`
+     * stepper on the primary's own position regardless of which of a
+     * multi-anchor thread's marks was clicked. This carries the
+     * originally-clicked anchor's id through, so `ThreadPanel` can seed the
+     * stepper there instead of always at the primary. Omitted (falls back
+     * to `highlightId`) wherever there's only ever one candidate anchor. */
+    initialAnchorHighlightId?: string;
   } | null>(null);
   // M32 A "the chapter-end affordance": the just-finished chapter's posed
   // questions, shown quietly once `handleRelocated` sees the reader cross
@@ -2665,7 +2675,7 @@ export function ReaderView({
       // primary — the one annotation, not a second one on this passage.
       if (data.highlightId) {
         const highlightId = resolveOpenHighlightId(highlightsRef.current, data.highlightId);
-        setExpandedThread({ highlightId, top: DEFAULT_THREAD_PANEL_TOP });
+        setExpandedThread({ highlightId, top: DEFAULT_THREAD_PANEL_TOP, initialAnchorHighlightId: data.highlightId });
       }
     }
     rendition.on("markClicked", handleMarkClicked);
@@ -3015,6 +3025,7 @@ export function ReaderView({
             highlightId: resolveOpenHighlightId(resourceHighlights, jumpTarget.id),
             top: DEFAULT_THREAD_PANEL_TOP,
             initialDraft: initialQuestion,
+            initialAnchorHighlightId: jumpTarget.id,
           });
         }
 
@@ -3482,6 +3493,7 @@ export function ReaderView({
     setExpandedThread({
       highlightId: highlight.primaryHighlightId ?? highlight.id,
       top: DEFAULT_THREAD_PANEL_TOP,
+      initialAnchorHighlightId: highlight.id,
     });
   }
 
@@ -4180,6 +4192,7 @@ export function ReaderView({
                 thread={expandedHighlight.thread}
                 top={expandedThread.top}
                 initialDraft={expandedThread.initialDraft}
+                initialAnchorHighlightId={expandedThread.initialAnchorHighlightId}
                 providerConfigured={providerConfigured}
                 appBoundsRef={appBoundsRef}
                 onClose={() => setExpandedThread(null)}

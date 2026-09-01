@@ -135,4 +135,15 @@ describe("toDraft7JsonSchema", () => {
     expect(json.$schema).toBeUndefined();
     expect(json.type).toBe("object");
   });
+
+  it("lists every property in `required`, including optional/nullable ones — codex's strict output-schema mode rejects a schema whose `required` omits a declared property", () => {
+    const schema = z.object({
+      name: z.string(),
+      zoneStart: z.string().nullable().optional(),
+      nested: z.object({ inner: z.string().optional() }),
+    });
+    const json = toDraft7JsonSchema(schema) as { required: string[]; properties: { nested: { required: string[] } } };
+    expect(json.required.sort()).toEqual(["name", "nested", "zoneStart"]);
+    expect(json.properties.nested.required).toEqual(["inner"]);
+  });
 });

@@ -94,6 +94,13 @@ interface ThreadPanelProps {
    * remounts per-highlight via ReaderView's `key` prop) — a posed
    * question's text, arriving pre-filled rather than requiring retyping. */
   initialDraft?: string;
+  /** M35 §D4, found live 2026-09-01: `highlightId` above is always this
+   * thread's *primary* anchor (the panel's identity — D3), which isn't
+   * necessarily the anchor the reader actually clicked to get here. When
+   * the caller knows which anchor was clicked, this seeds the `‹ N of M ›`
+   * stepper there instead of always defaulting to the primary's own
+   * position. Falls back to `highlightId` when omitted. */
+  initialAnchorHighlightId?: string;
   providerConfigured: boolean;
   /** M19.6 "annotations roam the app": widened from the reading stage to
    * this — the reader page's own root. Drag (and now resize) are
@@ -110,6 +117,15 @@ interface ThreadPanelProps {
    * anchor's own highlight id, which the caller resolves to a CFI the same
    * way a margin-rail click already does (`handleNavigateToHighlight`). */
   onJumpToAnchor?: (highlightId: string) => void;
+  /** M35 §G4: bumped by the reader's parent every time a quote is linked to
+   * this thread through the "select/add highlight" mode, so the anchors
+   * effect below (keyed on `threadId`, which never changes for an existing
+   * thread) knows to refetch rather than only ever fetching once. */
+  anchorsVersion?: number;
+  /** M35 §G4: enters "select/add highlight" mode targeting this thread —
+   * omitted (no button rendered) until a real thread exists, since there's
+   * nothing yet to add an anchor *to*. */
+  onAddQuotes?: () => void;
   onThreadChange: (highlightId: string, thread: ThreadSummary) => void;
   onImportanceChange: (highlightId: string, importance: HighlightImportance) => void;
   onNoteChange: (highlightId: string, note: string) => void;
@@ -137,11 +153,14 @@ export function ThreadPanel({
   thread,
   top,
   initialDraft,
+  initialAnchorHighlightId,
   providerConfigured,
   appBoundsRef,
   onClose,
   onDelete,
   onJumpToAnchor,
+  anchorsVersion,
+  onAddQuotes,
   onThreadChange,
   onImportanceChange,
   onNoteChange,
@@ -202,13 +221,20 @@ export function ThreadPanel({
     return () => {
       cancelled = true;
     };
-  }, [threadId]);
+  }, [threadId, anchorsVersion]);
 
-  // Which anchor the reader is currently looking at — defaults to wherever
-  // `highlightId` (the primary, this panel's own identity) sits in the
-  // fetched list, falling back to the first entry until anchors have loaded.
+  // Which anchor the reader is currently looking at. `onJumpToAnchor`
+  // deliberately doesn't touch `expandedThread` (that would remount this
+  // panel by its `key` and lose the traversal position) — so this panel's
+  // own `highlightId` prop stays fixed at the thread's primary anchor for
+  // its whole open lifetime, and can't be the thing `< >` advances. Local
+  // state instead, seeded from `highlightId` and moved only by
+  // `handleStepAnchor` (found live 2026-09-01: the prop-derived index never
+  // changed, so the stepper always read "1 of N" and the quote never
+  // advanced no matter how many times `‹›` was clicked).
+  const [viewedHighlightId, setViewedHighlightId] = useState(initialAnchorHighlightId ?? highlightId);
   const currentAnchorIndex = Math.max(
-    anchors.findIndex((a) => a.highlightId === highlightId),
+    anchors.findIndex((a) => a.highlightId === viewedHighlightId),
     0,
   );
   const currentAnchor = anchors[currentAnchorIndex];
@@ -217,7 +243,10 @@ export function ThreadPanel({
     if (anchors.length < 2) return;
     const nextIndex = stepFindCursor(currentAnchorIndex, anchors.length, direction);
     const nextAnchor = anchors[nextIndex];
-    if (nextAnchor) onJumpToAnchor?.(nextAnchor.highlightId);
+    if (nextAnchor) {
+      setViewedHighlightId(nextAnchor.highlightId);
+      onJumpToAnchor?.(nextAnchor.highlightId);
+    }
   }
 
   // Shared by mount (below) and the quote-expand toggle further down: a
@@ -780,6 +809,18 @@ export function ThreadPanel({
           onClick={onDelete}
         />
       </div>
+      {/* M35 §G4: only once a real thread exists — there's nothing yet to add
+          a second anchor to on a highlight that's still just a highlight.
+          Its own row, not squeezed into metaRow's left group — that row
+          already fights ImportanceStars and TagEditor for width against the
+          delete button at panel-minimum widths (found live 2026-09-01). */}
+      {thread && onAddQuotes && (
+        <div className={styles.addQuotesRow}>
+          <Button variant="outline" size="sm" className={styles.addQuotesButton} onClick={onAddQuotes}>
+            Add additional quotes
+          </Button>
+        </div>
+      )}
 
       <div className={styles.noteSection}>
         <div className={styles.noteHeader}>

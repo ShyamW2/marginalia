@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "motion/react";
 import type { HighlightKind, HighlightWithThread } from "@marginalia/shared";
 import { IconButton } from "../controls/IconButton.js";
+import { groupHighlightsByThread } from "../threads/resolvePrimaryAnchor.js";
 import styles from "./AnnotationsOverview.module.css";
 
 function truncate(text: string, max: number): string {
@@ -37,6 +38,54 @@ export function AnnotationsOverview({
   const reducedMotion = useReducedMotion();
   const unanchoredCount = highlights.filter((h) => unanchoredIds.has(h.id)).length;
 
+  // M35 §D-follow-up, found live 2026-09-01: unlike the margin rail (which
+  // collapses a multi-anchor thread to one dot — there's no room there for
+  // more than a count), this list has room to keep every passage visible.
+  // "I don't mind it being broken out, provided [they're] bounded together"
+  // (the operator's own framing) — so each thread's anchors stay individual
+  // rows, just wrapped in one bounded group instead of interleaved loose
+  // among unrelated highlights.
+  function renderEntry(highlight: HighlightWithThread) {
+    const unanchored = unanchoredIds.has(highlight.id);
+    const hasThread = highlight.thread !== null;
+    const hasAnswer = highlight.thread?.hasAnswer ?? false;
+    const hasNote = highlight.note.trim().length > 0;
+    const baseStatus = unanchored
+      ? "Unanchored"
+      : hasAnswer
+        ? "Answered"
+        : hasThread
+          ? "Awaiting answer"
+          : labels[highlight.kind];
+    // M13: a note reads as annotated here too, distinguishable from
+    // (and stackable with) the thread status.
+    const status = hasNote && !unanchored ? `${baseStatus} · Note` : baseStatus;
+
+    return (
+      <li key={highlight.id} className={styles.item}>
+        <button
+          type="button"
+          className={`${styles.entry} ${styles[highlight.kind]} ${unanchored ? styles.unanchored : ""}`}
+          disabled={unanchored}
+          onClick={() => onJumpTo(highlight)}
+        >
+          <span className={styles.dot} aria-hidden="true" />
+          <span className={styles.entryBody}>
+            <span className={styles.quote}>&ldquo;{truncate(highlight.exact, 90)}&rdquo;</span>
+            <span className={styles.status}>{status}</span>
+          </span>
+        </button>
+        <IconButton
+          icon="×"
+          label="Delete highlight"
+          size="sm"
+          className={styles.deleteButton}
+          onClick={() => onDelete(highlight)}
+        />
+      </li>
+    );
+  }
+
   return (
     <motion.div
       className={styles.panel}
@@ -69,48 +118,16 @@ export function AnnotationsOverview({
         <div className={styles.empty}>No highlights yet in this book.</div>
       ) : (
         <ul className={styles.list}>
-          {highlights.map((highlight) => {
-            const unanchored = unanchoredIds.has(highlight.id);
-            const hasThread = highlight.thread !== null;
-            const hasAnswer = highlight.thread?.hasAnswer ?? false;
-            const hasNote = highlight.note.trim().length > 0;
-            const baseStatus = unanchored
-              ? "Unanchored"
-              : hasAnswer
-                ? "Answered"
-                : hasThread
-                  ? "Awaiting answer"
-                  : labels[highlight.kind];
-            // M13: a note reads as annotated here too, distinguishable from
-            // (and stackable with) the thread status.
-            const status = hasNote && !unanchored ? `${baseStatus} \u00b7 Note` : baseStatus;
-
-            return (
-              <li key={highlight.id} className={styles.item}>
-                <button
-                  type="button"
-                  className={`${styles.entry} ${styles[highlight.kind]} ${
-                    unanchored ? styles.unanchored : ""
-                  }`}
-                  disabled={unanchored}
-                  onClick={() => onJumpTo(highlight)}
-                >
-                  <span className={styles.dot} aria-hidden="true" />
-                  <span className={styles.entryBody}>
-                    <span className={styles.quote}>&ldquo;{truncate(highlight.exact, 90)}&rdquo;</span>
-                    <span className={styles.status}>{status}</span>
-                  </span>
-                </button>
-                <IconButton
-                  icon="×"
-                  label="Delete highlight"
-                  size="sm"
-                  className={styles.deleteButton}
-                  onClick={() => onDelete(highlight)}
-                />
+          {groupHighlightsByThread(highlights).map((group) =>
+            group.length > 1 ? (
+              <li key={group[0].primaryHighlightId ?? group[0].id} className={styles.group}>
+                <span className={styles.groupLabel}>{group.length} passages, one annotation</span>
+                <ul className={styles.groupList}>{group.map(renderEntry)}</ul>
               </li>
-            );
-          })}
+            ) : (
+              renderEntry(group[0])
+            ),
+          )}
         </ul>
       )}
     </motion.div>

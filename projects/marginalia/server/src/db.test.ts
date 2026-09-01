@@ -52,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(36);
+    expect(version).toBe(37);
     db.close();
   });
 
@@ -64,7 +64,7 @@ describe("db migrations", () => {
     const tmpPath = tmpDbPath("kind-backfill");
     try {
       const legacy = new BetterSqlite3(tmpPath);
-      legacy.exec(MIGRATIONS[0].sql);
+      legacy.exec(MIGRATIONS[0].sql!);
       legacy.pragma("user_version = 1");
       const now = new Date().toISOString();
       legacy
@@ -257,7 +257,7 @@ describe("db migrations", () => {
     try {
       const legacy = new BetterSqlite3(tmpPath);
       for (const m of MIGRATIONS.filter((m) => m.version <= 32).sort((a, b) => a.version - b.version)) {
-        legacy.exec(m.sql);
+        legacy.exec(m.sql!);
       }
       legacy.pragma("user_version = 32");
       const now = new Date().toISOString();
@@ -292,7 +292,7 @@ describe("db migrations", () => {
       legacy.close();
 
       const db = createDb(tmpPath);
-      expect(db.pragma("user_version", { simple: true })).toBe(36);
+      expect(db.pragma("user_version", { simple: true })).toBe(37);
       expect(db.prepare("SELECT COUNT(*) AS n FROM thematic_digests").get()).toEqual({ n: 0 });
       expect(db.prepare("SELECT COUNT(*) AS n FROM book_themes").get()).toEqual({ n: 0 });
       expect(db.prepare("SELECT COUNT(*) AS n FROM theme_parents").get()).toEqual({ n: 0 });
@@ -314,8 +314,55 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(36);
+      expect(second.pragma("user_version", { simple: true })).toBe(37);
       second.close();
+    } finally {
+      cleanupDbFile(tmpPath);
+    }
+  });
+
+  it("migration 037 repairs a database where user_version reached 36 but resource_ai_settings never actually got show_thematic_quotes — found live 2026-09-01", () => {
+    // Reproduces the exact broken state a live dev database was found in:
+    // every migration through 36 applied (so a normal pending-migrations
+    // check sees nothing left to do), yet the column migration 36 was
+    // supposed to add is missing. SQLite can't express "ALTER TABLE ADD
+    // COLUMN IF NOT EXISTS", so simulate it directly — apply every
+    // migration through 36 for real, then drop just that one column back
+    // off (SQLite 3.35+'s DROP COLUMN), which stands in for however the
+    // original state actually arose.
+    const tmpPath = tmpDbPath("migration-37-repair");
+    try {
+      const legacy = new BetterSqlite3(tmpPath);
+      for (const m of MIGRATIONS.filter((m) => m.version <= 36).sort((a, b) => a.version - b.version)) {
+        legacy.exec(m.sql!);
+      }
+      legacy.pragma("user_version = 36");
+      legacy.exec("ALTER TABLE resource_ai_settings DROP COLUMN show_thematic_quotes;");
+      const columnsBefore = legacy.prepare("PRAGMA table_info(resource_ai_settings)").all() as { name: string }[];
+      expect(columnsBefore.some((c) => c.name === "show_thematic_quotes")).toBe(false);
+      legacy.close();
+
+      const repaired = createDb(tmpPath);
+      expect(repaired.pragma("user_version", { simple: true })).toBe(37);
+      const columnsAfter = repaired.prepare("PRAGMA table_info(resource_ai_settings)").all() as { name: string }[];
+      expect(columnsAfter.some((c) => c.name === "show_thematic_quotes")).toBe(true);
+      repaired.close();
+    } finally {
+      cleanupDbFile(tmpPath);
+    }
+  });
+
+  it("migration 037 is a no-op when show_thematic_quotes already exists — the healthy-database case every other machine is in", () => {
+    const tmpPath = tmpDbPath("migration-37-noop");
+    try {
+      const db = createDb(tmpPath);
+      db.close();
+      // Reopening an already-fully-migrated database must not throw
+      // ("duplicate column name") from migration 37 re-adding a column
+      // migration 36 already added correctly.
+      const reopened = createDb(tmpPath);
+      expect(reopened.pragma("user_version", { simple: true })).toBe(37);
+      reopened.close();
     } finally {
       cleanupDbFile(tmpPath);
     }

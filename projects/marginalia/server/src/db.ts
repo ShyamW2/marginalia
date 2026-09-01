@@ -36,7 +36,8 @@ function runMigrations(database: Database.Database): void {
 
   for (const migration of pending) {
     const applyMigration = database.transaction(() => {
-      database.exec(migration.sql);
+      if (migration.run) migration.run(database);
+      else database.exec(migration.sql!);
       // pragma values can't be bound params; migration.version is our own
       // integer literal, never user input.
       database.pragma(`user_version = ${migration.version}`);

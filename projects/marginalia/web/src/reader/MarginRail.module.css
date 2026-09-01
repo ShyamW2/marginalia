@@ -132,6 +132,26 @@
   outline-offset: 3px;
 }
 
+/* Found live 2026-09-01: a multi-anchor thread's dot carries this — a
+   notification-style count sitting on the dot's own corner, small enough
+   not to fight the dot/fold shapes above for space. */
+.countBadge {
+  position: absolute;
+  top: -0.4rem;
+  right: -0.5rem;
+  min-width: 0.95rem;
+  height: 0.95rem;
+  padding: 0 0.15rem;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-bg-raised);
+  font-size: 0.55rem;
+  line-height: 0.95rem;
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 0 0 1.5px var(--color-bg-raised);
+}
+
 .removeButton {
   position: absolute;
   /* Offset to the side rather than overlapping the dot itself, so revealing

@@ -143,12 +143,38 @@ function lengthInstruction(maxResponseTokens?: number): string {
   return `\n\nKeep your response under approximately ${maxResponseTokens} tokens (roughly ${words} words). This is a soft target you should aim for, not an enforced limit.`;
 }
 
+/** codex's `--output-schema` is enforced as an OpenAI strict-mode JSON
+ * schema, which — unlike the draft-07 spec itself — demands `required` list
+ * *every* key in `properties`, optional or not; `zod`'s `.optional()` fields
+ * are correctly omitted from `required` by `z.toJSONSchema` (that's what
+ * draft-07 says `required` means), so a schema with any optional field is
+ * rejected outright before the model ever runs (surfaced 2026-09-01,
+ * "invalid_json_schema" on M35's `zoneStart`/`zoneEnd`). Optionality is
+ * still expressed — those fields are `.nullable()`, so `null` is a valid
+ * value — this only widens `required` to satisfy the stricter contract. */
+function forceAllPropertiesRequired(node: unknown): void {
+  if (!node || typeof node !== "object") return;
+  const obj = node as Record<string, unknown>;
+  if (obj.properties && typeof obj.properties === "object") {
+    obj.required = Object.keys(obj.properties as Record<string, unknown>);
+  }
+  for (const value of Object.values(obj)) {
+    if (Array.isArray(value)) {
+      value.forEach(forceAllPropertiesRequired);
+    } else if (value && typeof value === "object") {
+      forceAllPropertiesRequired(value);
+    }
+  }
+}
+
 /** Exported for tests. Same rationale as claudeAgent.ts's `toAgentJsonSchema`
  * — codex's `--output-schema` validates draft-07, zod v4's default 2020-12
- * `$schema` marker isn't that. */
+ * `$schema` marker isn't that — plus the strict-mode `required` widening
+ * above, which only this provider's schema needs. */
 export function toDraft7JsonSchema(schema: z.ZodType<unknown>): Record<string, unknown> {
   const json = z.toJSONSchema(schema, { target: "draft-7" }) as Record<string, unknown>;
   delete json.$schema;
+  forceAllPropertiesRequired(json);
   return json;
 }
 

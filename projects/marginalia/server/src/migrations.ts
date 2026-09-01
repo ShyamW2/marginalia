@@ -1,6 +1,12 @@
+import type Database from "better-sqlite3";
+
 export interface Migration {
   version: number;
-  sql: string;
+  /** Either a plain SQL script, or a `run` step for a migration that has to
+   * check state before acting (see migration 37's own comment for why one
+   * was needed). Exactly one of the two is set. */
+  sql?: string;
+  run?: (database: Database.Database) => void;
 }
 
 /**
@@ -868,5 +874,28 @@ export const MIGRATIONS: Migration[] = [
     sql: `
       ALTER TABLE resource_ai_settings ADD COLUMN show_thematic_quotes INTEGER NOT NULL DEFAULT 0;
     `,
+  },
+  {
+    // Found live 2026-09-01: on at least one machine, `pragma user_version`
+    // reported 36 (so `runMigrations` never retried migration 36) while
+    // `resource_ai_settings` genuinely had no `show_thematic_quotes` column
+    // — every read of it (`thematicQuoteVisibility.ts`'s `getShowThematicQuotes`,
+    // called from the reader's own `GET /:id/highlights`) threw
+    // `no such column`, which `fetchHighlights` on the client swallows as
+    // `if (!res.ok) return [];` — so every highlight a reader had ever made
+    // silently vanished from the reader on the next load while the
+    // resource-list highlight count (a separate query, unaffected) kept
+    // reporting the true number. However migration 36 actually failed to
+    // leave its column behind, a version-gated migration can't self-heal by
+    // re-running it (the version guard is what skips it) — this checks
+    // `resource_ai_settings`'s own columns at run time and only adds the
+    // column if it's still missing, so it's a safe no-op on every database
+    // where migration 36 genuinely did apply.
+    version: 37,
+    run: (database) => {
+      const columns = database.prepare("PRAGMA table_info(resource_ai_settings)").all() as { name: string }[];
+      if (columns.some((c) => c.name === "show_thematic_quotes")) return;
+      database.exec("ALTER TABLE resource_ai_settings ADD COLUMN show_thematic_quotes INTEGER NOT NULL DEFAULT 0;");
+    },
   },
 ];
