@@ -3,6 +3,50 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-01 (post-M37) — three bug fixes, and a recurring staleness bug worth naming
+
+**The tasks tray's SSE stream now reconnects and has a heartbeat.** Found live on the
+Mac (not the Linux rig): a thematic-reading job showed no book/range while running and
+never signalled completion without a reload. Root cause was entirely client-side —
+`web/src/jobs/jobsApi.ts`'s hand-rolled `fetch()`-based SSE stream had no reconnect
+logic (unlike native `EventSource`) and the server sent no traffic between real job
+events, so a silently-dropped connection (a known WebKit/Safari behavior for idle
+chunked-fetch streams) looked identical to "nothing new happened" indefinitely. Fixed
+with a server-side heartbeat comment on both job SSE endpoints and client-side
+reconnect-with-backoff, plus a polling fallback in `JobsContext` while any job is
+running, as defense-in-depth over the fetch-stream approach rather than replacing it.
+
+**Digest theme-quote clicks silently no-op'd, and it's the same staleness bug as the
+Scan band-click fix, twice.** `ReaderPage.tsx`'s `initialLocationState` is captured once
+via `useState(() => location.state)` at mount — deliberately, to dodge a race with the
+async resource fetch (see its own comment, and the Scan band-click bug it already
+documents). But a second `navigate()` to the same route while `ReaderPage` is already
+mounted — exactly what happens when Digest overlays the already-open reader and a theme
+quote is clicked — updates `location.state` without this ever seeing it. Even fixing
+that, two more staleness bugs sat in `ReaderView.tsx`: `findMatchMode` was a
+`useState` initializer never reapplied on a later request, and `initialFindHitConsumedRef`
+latched `true` after the first jump *ever*, silently no-op'ing every later one. Fixed by
+giving `ReaderPage` a second, *live* read of `location.state` for the find-jump fields
+specifically (safe here — nothing actually clears `location.state`, so the race the
+frozen copy was written to avoid doesn't apply to this read), paired with a
+`findRequestKey` (react-router's `location.key`) threaded into `ReaderView` so its
+effects key off "a new request happened" rather than "the value changed" or "first time
+ever." This is the second occurrence of "a value captured once via
+`useState(() => ...)` goes stale across a same-route re-navigation while the component
+stays mounted" — worth recognizing by name next time; not yet worth a shared hook for
+two occurrences.
+
+**"Add additional quotes" now shows on a note-only annotation, not just an AI-chat
+one.** `ThreadPanel.tsx` gated the button on a `thread` existing, but a plain note never
+creates one (`handleThreadChange` only fires after a chat reply or a deliberate bare
+`postHighlightThread` call) — so the multi-anchor UI built in M35 §G was unreachable for
+the common "just write a note" flow. Widened the gate to `thread || note`, and
+`handleStartAddQuotes` now lazily calls the already-existing `postHighlightThread`
+(`POST /api/highlights/:id/thread`, no LLM call — already used by "Link a quote") the
+first time it's needed on a note-only highlight. No anchor-model change: a highlight
+still needs a `threads` row to hang anchors off, it's just created on demand instead of
+requiring a question to have been asked first.
+
 ## 2026-09-01 (later still) — M37 §C/§D: draw counts live on the passage, not a separate ledger
 
 Finished M37. Two design calls §C/§D left open.
