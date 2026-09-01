@@ -45,23 +45,40 @@ export async function requestCancelJob(id: string): Promise<void> {
   }
 }
 
+const RECONNECT_MIN_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 10000;
+
 /** Shared by `subscribeJobEvents` and `subscribeAllJobEvents` — both just
  * read a `Job` off each SSE frame's `data:` line and hand it to `onUpdate`;
  * neither cares about the `event:` line, since `onUpdate` already handles
  * both "created" and "updated" identically (upserting into a map). Returns
  * an unsubscribe function that closes *this client's* connection only —
- * never the job(s) themselves. */
+ * never the job(s) themselves.
+ *
+ * Unlike native `EventSource`, a hand-rolled `fetch()` stream doesn't
+ * reconnect on its own when the connection drops — and a long-idle chunked
+ * stream can be dropped silently (observed on Safari/WebKit) with no error
+ * ever surfacing. So a stream ending for any reason other than our own
+ * `unsubscribe()` triggers a reconnect with backoff, rather than leaving the
+ * caller stuck on a stale snapshot. */
 function subscribeSse(url: string, onUpdate: (job: Job) => void): () => void {
   const controller = new AbortController();
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryDelay = RECONNECT_MIN_DELAY_MS;
 
-  (async () => {
+  async function connect(): Promise<void> {
     let response: Response;
     try {
       response = await fetch(url, { signal: controller.signal });
     } catch {
+      scheduleReconnect();
       return;
     }
-    if (!response.ok || !response.body) return;
+    if (controller.signal.aborted) return;
+    if (!response.ok || !response.body) {
+      scheduleReconnect();
+      return;
+    }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -76,24 +93,46 @@ function subscribeSse(url: string, onUpdate: (job: Job) => void): () => void {
         while ((idx = buffer.indexOf("\n\n")) !== -1) {
           const rawEvent = buffer.slice(0, idx);
           buffer = buffer.slice(idx + 2);
+          // A bare heartbeat frame (`: heartbeat`) has no `data:` line and is
+          // otherwise ignored — its only job is to prove the connection is
+          // still alive, which reaching this point at all already does.
           const dataLine = rawEvent.split("\n").find((line) => line.startsWith("data:"));
           if (!dataLine) continue;
           const jsonText = dataLine.slice(5).trim();
           if (!jsonText) continue;
           try {
             const parsed = JobSchema.safeParse(JSON.parse(jsonText));
-            if (parsed.success) onUpdate(parsed.data);
+            if (parsed.success) {
+              onUpdate(parsed.data);
+              retryDelay = RECONNECT_MIN_DELAY_MS; // a good frame resets backoff
+            }
           } catch {
             // malformed event — skip it, keep reading
           }
         }
       }
     } catch {
-      // aborted (our own unsubscribe) or connection lost — nothing to do
+      // aborted (our own unsubscribe) or connection lost — fall through to
+      // the reconnect check below either way
     }
-  })();
 
-  return () => controller.abort();
+    if (!controller.signal.aborted) scheduleReconnect();
+  }
+
+  function scheduleReconnect(): void {
+    if (controller.signal.aborted) return;
+    retryTimer = setTimeout(() => {
+      retryDelay = Math.min(retryDelay * 2, RECONNECT_MAX_DELAY_MS);
+      void connect();
+    }, retryDelay);
+  }
+
+  void connect();
+
+  return () => {
+    controller.abort();
+    if (retryTimer !== null) clearTimeout(retryTimer);
+  };
 }
 
 /**

@@ -756,6 +756,15 @@ interface ReaderViewProps {
    * the Scan lands on the same result set it was looking at rather than
    * silently re-searching under a different rule. */
   initialFindMatchMode?: SearchMatchMode;
+  /** A value that changes on every distinct find-jump request, even when
+   * `initialFindQuery` repeats the same string or the reader room was
+   * already mounted (the Digest overlay sits on top of it rather than
+   * replacing it) — react-router's `location.key` is what `ReaderPage`
+   * passes. Without this, a second request while already mounted either
+   * never re-triggers the effect below (identical query) or silently no-ops
+   * (the hit-index consumed-ref, found live 2026-09-01: only the first
+   * digest-quote click in a reader session ever jumped). */
+  findRequestKey?: string;
   /** Carries the find bar's live query, matching rule and cursor to the Scan
    * when the reader's "see in Scan" affordance fires — never called any
    * other way (TASKS.md M24 A: "not the default and not automatic"). */
@@ -789,6 +798,7 @@ export function ReaderView({
   initialFindQuery,
   initialFindHitIndex,
   initialFindMatchMode,
+  findRequestKey,
   onFindHandoffToScan,
 }: ReaderViewProps) {
   const openSettingsToLLM = useOpenSettings("llm");
@@ -1365,15 +1375,22 @@ export function ReaderView({
 
   // M24: arriving from the Scan's own search cursor (the reverse handoff —
   // see `initialFindHitIndex` on ReaderViewProps) opens the bar pre-filled
-  // and, once its own search request resolves, jumps straight to that hit —
-  // consumed once via the ref guard, not re-run on every later refetch.
+  // and, once its own search request resolves, jumps straight to that hit.
+  // Keyed on `findRequestKey` (not just `initialFindQuery`) and re-arms the
+  // consumed-ref below on every fire — found live 2026-09-01: a digest quote
+  // click navigates to this same route while the reader room is already
+  // mounted underneath the Digest overlay, so neither "the query string
+  // changed" nor "consumed once, ever" actually identify a fresh request;
+  // only a new navigation (a new `location.key`) does.
+  const initialFindHitConsumedRef = useRef(false);
   useEffect(() => {
     if (initialFindQuery === undefined) return;
     setFindOpen(true);
     setFindQuery(initialFindQuery);
+    if (initialFindMatchMode !== undefined) setFindMatchMode(initialFindMatchMode);
+    initialFindHitConsumedRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialFindQuery]);
-  const initialFindHitConsumedRef = useRef(false);
+  }, [initialFindQuery, findRequestKey]);
   useEffect(() => {
     if (initialFindHitIndex === undefined || initialFindHitConsumedRef.current) return;
     if (findHits.length === 0) return;
@@ -3496,11 +3513,24 @@ export function ReaderView({
    * annotation's panel — enters the same mode, targeting the thread that's
    * already there, restricted to fresh selections only (decisions.md
    * 2026-09-01 evening explains why this entry doesn't also accept a click
-   * on an existing highlight). */
-  function handleStartAddQuotes() {
-    if (!expandedHighlight?.thread) return;
+   * on an existing highlight).
+   *
+   * Widened 2026-09-01: reachable now from a note-only annotation too (no
+   * thread yet), since ThreadPanel's button is gated on thread-or-note, not
+   * thread alone. Lazily creates the bare `threads` row the same way
+   * `handleLinkQuote` above already does via `postHighlightThread` — no LLM
+   * call — rather than requiring a question to have been asked first. */
+  async function handleStartAddQuotes() {
+    if (!expandedHighlight) return;
+    let thread = expandedHighlight.thread;
+    if (!thread) {
+      const summary = await postHighlightThread(expandedHighlight.id);
+      if (!summary) return;
+      thread = summary;
+      handleThreadChange(expandedHighlight.id, thread);
+    }
     setLinkQuoteMode({
-      threadId: expandedHighlight.thread.id,
+      threadId: thread.id,
       primaryHighlightId: expandedHighlight.id,
       allowExistingHighlightClick: false,
     });

@@ -31,7 +31,15 @@ jobsRouter.get("/events", (req, res) => {
 
   const unsubscribe = subscribeAllJobs(send);
 
+  // Idle chunked-fetch streams can be dropped silently by an intermediary
+  // (or by WebKit's own handling of them) with neither side noticing until
+  // a real job event needs to flow — a comment line every 15s gives both
+  // ends periodic traffic to detect a dead connection against, matching
+  // what native EventSource gets for free from most servers.
+  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 15000);
+
   res.on("close", () => {
+    clearInterval(heartbeat);
     unsubscribe();
   });
 });
@@ -80,7 +88,13 @@ jobsRouter.get("/:id/events", (req, res) => {
   const unsubscribe = subscribeJob(req.params.id, send);
   send(initial);
 
+  // Same heartbeat as the all-jobs stream above — this one is shorter-lived
+  // (ends when the job does), but a long-running job can still sit idle
+  // between progress events for a while.
+  const heartbeat = setInterval(() => res.write(": heartbeat\n\n"), 15000);
+
   res.on("close", () => {
+    clearInterval(heartbeat);
     unsubscribe?.();
   });
 });

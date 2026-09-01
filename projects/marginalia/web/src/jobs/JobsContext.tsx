@@ -84,6 +84,23 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   // directly and never registers it here.
   useEffect(() => subscribeAllJobEvents(upsert), [upsert]);
 
+  // Defense-in-depth over the SSE stream above (which now reconnects on its
+  // own, but a dropped-and-silently-stuck connection is exactly the failure
+  // mode that motivated this): while any job is running, periodically
+  // re-fetch the registry snapshot so metadata/progress/completion recover
+  // even if a specific SSE edge case doesn't. Idle otherwise — no chatter
+  // when nothing is running.
+  const hasRunningJob = useMemo(() => [...jobsById.values()].some((j) => j.status === "running"), [jobsById]);
+  useEffect(() => {
+    if (!hasRunningJob) return;
+    const interval = setInterval(() => {
+      fetchJobs().then((list) => {
+        for (const job of list) upsert(job);
+      });
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [hasRunningJob, upsert]);
+
   const registerStarted = useCallback(
     (info: StartedJobInfo) => {
       // A stub, immediately overwritten by the real snapshot the global

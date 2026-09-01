@@ -106,6 +106,16 @@ export function ReaderPage({
   const [initialLocationState] = useState<ReaderLocationState | null>(
     () => location.state as ReaderLocationState | null,
   );
+  // Live, unlike the above — a find-jump request (e.g. clicking a quote in
+  // the Digest overlay, which sits on top of this already-mounted room
+  // rather than replacing it) needs to be seen on every one of its
+  // same-route `navigate()` calls, not just the first. Nothing here clears
+  // `location.state` after mount, so this doesn't run into the async-race
+  // `initialLocationState` was written to avoid; `location.key` is passed
+  // alongside so ReaderView can tell two requests apart even when the query
+  // text repeats (found live 2026-09-01, alongside the consumed-ref bug this
+  // pairs with — see ReaderView.tsx's `findRequestKey`).
+  const liveLocationState = location.state as ReaderLocationState | null;
   const scanButtonRef = useRef<HTMLButtonElement>(null);
   const digestButtonRef = useRef<HTMLButtonElement>(null);
   // M20.7 "the opening": read once at mount, the same click-time-rect
@@ -311,9 +321,10 @@ export function ReaderPage({
             scanButtonRef={scanButtonRef}
             digestButtonRef={digestButtonRef}
             stageRef={readerStageRef}
-            initialFindQuery={initialLocationState?.jumpToFindQuery}
-            initialFindHitIndex={initialLocationState?.jumpToFindHitIndex}
-            initialFindMatchMode={initialLocationState?.jumpToFindMatchMode}
+            initialFindQuery={liveLocationState?.jumpToFindQuery}
+            initialFindHitIndex={liveLocationState?.jumpToFindHitIndex}
+            initialFindMatchMode={liveLocationState?.jumpToFindMatchMode}
+            findRequestKey={location.key}
             onFindHandoffToScan={handleFindHandoffToScan}
           />
         </div>

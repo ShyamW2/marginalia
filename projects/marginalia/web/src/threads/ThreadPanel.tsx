@@ -809,12 +809,15 @@ export function ThreadPanel({
           onClick={onDelete}
         />
       </div>
-      {/* M35 §G4: only once a real thread exists — there's nothing yet to add
-          a second anchor to on a highlight that's still just a highlight.
-          Its own row, not squeezed into metaRow's left group — that row
-          already fights ImportanceStars and TagEditor for width against the
-          delete button at panel-minimum widths (found live 2026-09-01). */}
-      {thread && onAddQuotes && (
+      {/* M35 §G4, widened 2026-09-01: shown once there's a thread OR a note —
+          either means the annotation is more than "just a highlight", so
+          there's something to add a second anchor to. A bare highlight with
+          neither still hides this (found live: gating on thread alone missed
+          the plain-note case, the common path when no question is ever
+          asked). Its own row, not squeezed into metaRow's left group — that
+          row already fights ImportanceStars and TagEditor for width against
+          the delete button at panel-minimum widths (found live 2026-09-01). */}
+      {(thread || noteDraft.trim().length > 0) && onAddQuotes && (
         <div className={styles.addQuotesRow}>
           <Button variant="outline" size="sm" className={styles.addQuotesButton} onClick={onAddQuotes}>
             Add additional quotes
