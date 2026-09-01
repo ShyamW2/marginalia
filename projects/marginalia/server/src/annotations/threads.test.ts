@@ -5,8 +5,11 @@ import {
   addThreadAnchor,
   createMessage,
   createThread,
+  getAnchoredThreadId,
   getOrCreateThread,
   getThreadByHighlightId,
+  getThreadSummary,
+  isHighlightAnchored,
   listMessagesForThread,
   listThreadAnchors,
 } from "./threads.js";
@@ -139,6 +142,74 @@ describe("thread_anchors — M35 §D1", () => {
       { threadId: thread.id, highlightId: second.id, ordinal: 1 },
       { threadId: thread.id, highlightId: third.id, ordinal: 2 },
     ]);
+    db.close();
+  });
+});
+
+describe("getAnchoredThreadId / isHighlightAnchored — M35 §G3", () => {
+  it("is undefined/false for a highlight that anchors nothing", () => {
+    const db = createDb(":memory:");
+    const highlight = seedHighlight(db);
+
+    expect(getAnchoredThreadId(db, highlight.id)).toBeUndefined();
+    expect(isHighlightAnchored(db, highlight.id)).toBe(false);
+    db.close();
+  });
+
+  it("names the thread a highlight is already anchored to, primary or secondary", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+    const primary = seedHighlightFor(db, resourceId, 0);
+    const second = seedHighlightFor(db, resourceId, 2);
+    const thread = createThread(db, primary.id);
+    addThreadAnchor(db, thread.id, second.id);
+
+    expect(getAnchoredThreadId(db, primary.id)).toBe(thread.id);
+    expect(getAnchoredThreadId(db, second.id)).toBe(thread.id);
+    expect(isHighlightAnchored(db, second.id)).toBe(true);
+    db.close();
+  });
+
+  it("distinguishes a highlight anchored to a different thread from one anchored to none", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+    const primaryA = seedHighlightFor(db, resourceId, 0);
+    const primaryB = seedHighlightFor(db, resourceId, 3);
+    const threadA = createThread(db, primaryA.id);
+    const threadB = createThread(db, primaryB.id);
+
+    expect(getAnchoredThreadId(db, primaryA.id)).toBe(threadA.id);
+    expect(getAnchoredThreadId(db, primaryA.id)).not.toBe(threadB.id);
+    db.close();
+  });
+});
+
+describe("getThreadSummary — M35 §G4", () => {
+  it("is empty for a just-created thread with no messages", () => {
+    const db = createDb(":memory:");
+    const highlight = seedHighlight(db);
+    const thread = createThread(db, highlight.id);
+
+    expect(getThreadSummary(db, thread.id)).toEqual({
+      id: thread.id,
+      hasAnswer: false,
+      messageCount: 0,
+    });
+    db.close();
+  });
+
+  it("reflects messages already posted to the thread", () => {
+    const db = createDb(":memory:");
+    const highlight = seedHighlight(db);
+    const thread = createThread(db, highlight.id);
+    createMessage(db, thread.id, "user", "a question");
+    createMessage(db, thread.id, "assistant", "an answer");
+
+    expect(getThreadSummary(db, thread.id)).toEqual({
+      id: thread.id,
+      hasAnswer: true,
+      messageCount: 2,
+    });
     db.close();
   });
 });

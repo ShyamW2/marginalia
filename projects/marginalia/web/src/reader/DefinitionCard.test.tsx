@@ -39,6 +39,7 @@ describe("AskPill's Define button", () => {
         definable={exact.split(" ").length <= 4 && exact.length <= 48}
         onPlayFromHere={vi.fn()}
         labels={DEFAULT_KIND_LABELS}
+        onLinkQuote={vi.fn()}
       />,
     );
     return screen.getByRole("button", { name: /^Define/ });

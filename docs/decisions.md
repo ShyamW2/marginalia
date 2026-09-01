@@ -3,6 +3,112 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-01 (later night) — M35 §G1 corrected: no chapter needs a plot digest first
+
+The operator asked, checking rather than assuming: does a chapter have to be plot-digested
+before it can be thematically analyzed? It does not, and §G1 as first shipped got this
+wrong — it bounded the new range dials to `status.chapters.filter(c => c.digested)`,
+inheriting that scope unexamined from the *old* hardcoded `handleAnalyzeThemes` (which
+spanned "first-to-last digested chapter") rather than checking whether that range was ever
+a real requirement or just where the original button happened to stop. `thematicBuild.ts`'s
+`runThematicDigest` takes the book's raw `ResourceTextSection[]` (`getResourceTextSections`)
+and never reads `chapter_digests`; nothing in the route checks the range against digest
+coverage either. The two passes are independent — thematic analysis works directly off the
+chapter's own text.
+
+**Given the choice, opened wide rather than left narrow.** The dials now span every chapter
+in the book. The alternative (keep the old bound, as a deliberate simplicity choice rather
+than a load-bearing requirement) was offered and declined — the operator's own reasoning
+was that requiring plot-digest-first when the server doesn't is exactly the kind of
+UI-invented constraint this milestone exists to remove, not preserve.
+
+**Recorded as its own entry rather than folded into §G's implementation note above**
+because the mistake and its correction are worth keeping visible on their own — the
+original §G1 task-doc entry has been rewritten in place (not left wrong with a patch
+underneath) since nothing depended on the incorrect version having shipped first.
+
+## 2026-09-01 (night) — M35 §G implemented: thematic's controls, and the manual link path
+
+Implemented right after scoping it (below) rather than as a separate session, since the
+scoping conversation itself settled every open question — there was nothing left for an
+implementation pass to re-decide. Two things worth recording that the task doc's own
+wording left slightly open.
+
+**"Add additional quotes" hides itself while the mode is already active.** Nothing in the
+task doc says a `ThreadPanel` open *during* its own "add more quotes" flow should stop
+offering the button that started it, but re-clicking it mid-mode would either no-op or
+silently reset `linkQuoteMode` to identical values — neither is a real feature, both are a
+button that looks live but does nothing new. `ReaderView.tsx` passes `onAddQuotes={undefined}`
+whenever `linkQuoteMode` is set, which `ThreadPanel` already treats as "don't render the
+button" (the same optional-prop convention `onJumpToAnchor` uses for "no traversal target").
+
+**The mode banner is one fixed pebble, not a popover anchored to the click or selection.**
+The task doc didn't specify where the confirm step's UI should sit. A popover anchored to
+an existing-highlight click has nowhere real to anchor to — `markClicked` (epub.js/marks-
+pane's own event) hands back only the CFI range and the mark's own data, no pointer
+coordinates — and building a second, selection-anchored popover just for the other half of
+the same mode would be two implementations of one confirm. `LinkQuoteBanner` reuses
+`FindBar.tsx`'s own centred-pebble pattern instead: one fixed location, whose content
+switches between "here's the mode, here's how to exit" and "add this quote?" depending on
+whether something is currently pending. A fresh selection's pending state costs no extra
+variable at all — while the mode is active, a live `pendingSelection` *is* "confirm this
+selection?" (see the banner's `pendingExact` prop in `ReaderView.tsx`), so there's exactly
+one piece of confirm state (`linkQuoteConfirm`, for the existing-highlight case only)
+rather than two that could drift apart.
+
+Not driven by hand in the running app this session — the same line every other M35
+real-data/live-UI item in this milestone already carries, and closing that gap for good is
+what the operator asked this section to build.
+
+## 2026-09-01 (evening) — M35 §G scoped: closing the "operator's call" UI gap
+
+§A–§F all landed with real, working server behaviour that no session ever drove by hand —
+every "Verify" checkbox for M34/M35 was left unticked with the same line ("a live pass is
+the operator's call, not the session's"). The operator asked, correctly, for the missing
+UI rather than more unexercised server code: **thematic's start/stop parity with the
+plot digest, and a way to actually create the multi-anchor threads §D built** (`addThreadAnchor`
+had exactly one caller — the machine path in `thematicHighlights.ts` — and no route or
+button ever called it for a reader's own choice). Recorded here per the operator being
+the one to make this call, same as every "real-data pass" line already deferred to them.
+
+**Thematic gets the Digest spotlight's own controls, not new ones.** `DigestSpotlight.tsx`
+already solved "pick a chapter range, start a job, cancel it in place" with `ChapterDial`
+From/To and a `handleCancel` wired straight to the job registry's existing `cancelJob` —
+built for the plot digest, M20.5. The thematic pass runs through the exact same job
+registry (`startJob("thematic", ...)`) and already accepts an arbitrary `spineStart`/
+`spineEnd`; the only thing missing was the UI reusing that plumbing. Settled decision 12
+("one control system... nothing gets a bespoke one again") applied here: this is a second
+consumer of an existing control, not a reason to design a second one.
+
+**Manual linking gets two entry points, both producing the same `thread_anchors` row.**
+The reader can start from a highlight/selection with no thread yet ("Link a quote" —
+building a brand-new multi-anchor thread interactively, optionally pulling in an already-
+existing, still-threadless highlight along the way) or from an already-open annotation's
+panel ("Add additional quotes" — growing that specific thread). Both funnel through one
+new endpoint (§G3) and one client mode (§G4), never two implementations of "attach a
+highlight to a thread."
+
+**The ground rule the operator set: a highlight can join a thread, a thread can never
+join a thread.** Merging two already-annotated passages into one annotation is out of
+scope "for now" — explicitly deferred, not designed around. This is why the panel-opened
+entry point ("Add additional quotes") only ever lets the reader select *new* text rather
+than click an existing highlight: from that entry point every existing highlight the
+reader could click is either threadless (fine, but then why disallow it? — because the
+operator asked for the panel path to stay to new text only, keeping the two entry points
+distinct rather than identical) or already threaded (forbidden by the rule). The
+selection-popup entry point is the one that may click an existing, *threadless* highlight,
+because at that point no thread exists yet to be accused of "joining" another one. Server-
+side, `isHighlightAnchored` (already built for §C5's machine path) is the one guard behind
+both entry points — refuse with a visible in-place message, never a silent merge and never
+exiting the mode.
+
+**The select/add-highlight mode stays open across additions.** One activation should be
+able to build a three-quote annotation without re-entering the mode between each quote —
+each addition (a confirmed new selection, or a permitted existing-highlight click) leaves
+the mode active; only Esc or its own on-screen × ends it. Page turning keeps working while
+it's active, since assembling a multi-anchor thread across a book-spanning theme is
+exactly the case this exists for.
+
 ## 2026-09-01 (later still) — M35 §F implemented: the chapter digest, expanded
 
 Implementing §F right after §E landed, same strict one-after-the-other sequencing the

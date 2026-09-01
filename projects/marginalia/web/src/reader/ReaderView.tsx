@@ -88,9 +88,11 @@ import { FarLeafCover } from "./FarLeafCover.js";
 import { PageSlide } from "./PageSlide.js";
 import { DwellRing } from "./DwellRing.js";
 import { AskPill } from "./AskPill.js";
+import { LinkQuoteBanner } from "./LinkQuoteBanner.js";
 import { MarginRail } from "./MarginRail.js";
 import { ThreadPanel } from "../threads/ThreadPanel.js";
 import { resolveOpenHighlightId } from "../threads/resolvePrimaryAnchor.js";
+import { addThreadAnchor } from "../threads/threadAnchorsApi.js";
 import { isReaderOrigin } from "../highlights/highlightOrigin.js";
 import { AnnotationsOverview } from "./AnnotationsOverview.js";
 import { DefinitionCard, type DefinitionCardState } from "./DefinitionCard.js";
@@ -620,6 +622,16 @@ async function postHighlight(
   return { ...created, thread: null };
 }
 
+/** M35 §G4: ensures `highlightId` has a real `threads` row before any
+ * message exists, so "Link a quote" has a `threadId` to call
+ * `addThreadAnchor` against right away rather than waiting for the reader to
+ * actually ask something. */
+async function postHighlightThread(highlightId: string): Promise<ThreadSummary | null> {
+  const res = await fetch(`/api/highlights/${highlightId}/thread`, { method: "POST" });
+  if (!res.ok) return null;
+  return (await res.json()) as ThreadSummary;
+}
+
 async function fetchSettings(): Promise<Settings | null> {
   try {
     const res = await fetch("/api/settings");
@@ -1016,6 +1028,43 @@ export function ReaderView({
   // closed over — the same ref-mirror pattern as focusModeRef/themeVarsRef.
   const pendingSelectionRef = useRef<PendingSelection | null>(null);
   pendingSelectionRef.current = pendingSelection;
+
+  // M35 §G4 "select/add highlight" mode — entered from either AskPill's
+  // "Link a quote" (a brand-new thread, `allowExistingHighlightClick: true`)
+  // or ThreadPanel's "Add additional quotes" on an already-open thread
+  // (`false` — the ground rule, decisions.md 2026-09-01 evening, is that a
+  // highlight may join a thread but a thread may never join a thread, and
+  // restricting this entry to fresh text only is what keeps the two entries
+  // from reading as the same tool). Mirrored into a ref for the same reason
+  // `pendingSelectionRef` is — `handleMarkClicked` below is registered once
+  // per rendition mount and must see the live value, not the one it closed
+  // over.
+  const [linkQuoteMode, setLinkQuoteMode] = useState<{
+    threadId: string;
+    primaryHighlightId: string;
+    allowExistingHighlightClick: boolean;
+  } | null>(null);
+  const linkQuoteModeRef = useRef(linkQuoteMode);
+  linkQuoteModeRef.current = linkQuoteMode;
+  // An eligible existing-highlight click waiting on the reader's
+  // confirmation before it actually becomes an anchor — the "there should be
+  // a confirm step" the operator asked for. A fresh *selection*'s own
+  // confirm needs no separate state: while the mode is active, `pendingSelection`
+  // itself already means "confirm this selection?" (see the banner's
+  // `pendingExact` below), so confirming/cancelling that case reads straight
+  // off `pendingSelection` instead of a second, redundant flag that could
+  // drift from it.
+  const [linkQuoteConfirm, setLinkQuoteConfirm] = useState<{
+    kind: "highlight";
+    highlightId: string;
+    exact: string;
+  } | null>(null);
+  const [linkQuoteError, setLinkQuoteError] = useState<string | null>(null);
+  // Bumped on every successful link so ThreadPanel's anchors effect (keyed on
+  // `threadId`, which never changes for an already-existing thread) knows to
+  // refetch rather than only fetching once per panel mount.
+  const [anchorsVersion, setAnchorsVersion] = useState(0);
+
   // Reopening a book always restores threads collapsed (SPEC) — this state
   // is local and resets to null on every mount, no persistence needed.
   const [expandedThread, setExpandedThread] = useState<{
@@ -1038,6 +1087,21 @@ export function ReaderView({
      * to `highlightId`) wherever there's only ever one candidate anchor. */
     initialAnchorHighlightId?: string;
   } | null>(null);
+  // M35 §G4: a margin-rail/annotations-overview/glossary click opens a
+  // *different* thread's panel through `handleOpenThread`, which — unlike
+  // `handleMarkClicked` — has no reason to know about "select/add highlight"
+  // mode and doesn't check it. Rather than teach every one of those call
+  // sites about a mode most of them will never interact with, this catches
+  // the result: once the open panel no longer belongs to the thread the mode
+  // is building, the mode (and any pending confirm) is stale and exits.
+  useEffect(() => {
+    if (linkQuoteMode && expandedThread && expandedThread.highlightId !== linkQuoteMode.primaryHighlightId) {
+      setLinkQuoteMode(null);
+      setLinkQuoteConfirm(null);
+      setLinkQuoteError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedThread]);
   // M32 A "the chapter-end affordance": the just-finished chapter's posed
   // questions, shown quietly once `handleRelocated` sees the reader cross
   // forward into the next chapter — never set for an undigested chapter
@@ -1382,6 +1446,16 @@ export function ReaderView({
     // follows (a Settings-over-Scan closes Settings first, not both).
     if (findOpenRef.current) {
       closeFindBar();
+      return;
+    }
+    // M35 §G4: "select/add highlight" mode is the next-innermost layer —
+    // Esc always exits the whole mode (never just its pending confirm, per
+    // the operator's own instruction), same early-return shape as the find
+    // bar above it.
+    if (linkQuoteModeRef.current) {
+      setLinkQuoteMode(null);
+      setLinkQuoteConfirm(null);
+      setLinkQuoteError(null);
       return;
     }
     setPendingSelection(null);
@@ -2668,15 +2742,41 @@ export function ReaderView({
     rendition.on("selected", handleSelected);
 
     function handleMarkClicked(_cfiRange: string, data: { highlightId?: string }) {
+      if (!data.highlightId) return;
+
+      // M35 §G4: "select/add highlight" mode intercepts a mark click before
+      // it ever opens a panel — `linkQuoteModeRef` (not the `linkQuoteMode`
+      // state) because this handler is registered once per rendition mount
+      // and would otherwise see the value from that render forever.
+      const mode = linkQuoteModeRef.current;
+      if (mode) {
+        if (!mode.allowExistingHighlightClick) {
+          setLinkQuoteError("Existing highlights can't be added from here — select new text instead.");
+          return;
+        }
+        const clicked = highlightsRef.current.find((h) => h.id === data.highlightId);
+        if (!clicked || clicked.id === mode.primaryHighlightId) return;
+        const clickedThreadId = clicked.thread?.id ?? null;
+        if (clickedThreadId !== null || clicked.primaryHighlightId !== null) {
+          setLinkQuoteError(
+            clickedThreadId === mode.threadId
+              ? "This quote is already part of this annotation."
+              : "This quote already belongs to a different annotation.",
+          );
+          return;
+        }
+        setLinkQuoteError(null);
+        setLinkQuoteConfirm({ kind: "highlight", highlightId: clicked.id, exact: clicked.exact });
+        return;
+      }
+
       // A click on a highlight mark also fires as a content 'click' below —
       // handleContentClick's own mark hit-test (M19.6) is what keeps that
       // from also turning the page. Clicking a highlight expands its thread.
       // M35 §D3: a click on a non-primary anchor resolves to the thread's
       // primary — the one annotation, not a second one on this passage.
-      if (data.highlightId) {
-        const highlightId = resolveOpenHighlightId(highlightsRef.current, data.highlightId);
-        setExpandedThread({ highlightId, top: DEFAULT_THREAD_PANEL_TOP, initialAnchorHighlightId: data.highlightId });
-      }
+      const highlightId = resolveOpenHighlightId(highlightsRef.current, data.highlightId);
+      setExpandedThread({ highlightId, top: DEFAULT_THREAD_PANEL_TOP, initialAnchorHighlightId: data.highlightId });
     }
     rendition.on("markClicked", handleMarkClicked);
 
@@ -2726,6 +2826,11 @@ export function ReaderView({
       // HTML parsing — only treat *navigable* links as click-through targets.
       if (target?.closest("a[href]")) return;
       if (contents.window.getSelection()?.toString()) return;
+      // M35 §G4: while the mode is active, `pendingSelection` alone *is* the
+      // pending "add this selection?" confirm (see the banner's `pendingExact`)
+      // — clearing it here already dismisses that confirm, nothing extra
+      // needed. A pending "link this existing highlight?" confirm isn't tied
+      // to `pendingSelection` at all, so it's untouched by this click.
       setPendingSelection(null);
     }
     rendition.on("click", handleContentClick);
@@ -3334,6 +3439,132 @@ export function ReaderView({
 
   function handleAsk() {
     void createHighlightFromSelection("slate", true);
+  }
+
+  /**
+   * M35 §G4, entry point A: "Link a quote" on the selection pill. Creates the
+   * seed highlight exactly like Ask does (same `slate` kind — this becomes a
+   * conversation-shaped annotation, not a plain mark), but instead of just
+   * opening an empty panel it also ensures the highlight has a real
+   * `threads` row *now* (`postHighlightThread`, since the normal
+   * `POST /api/threads` path needs a non-empty question and this shouldn't
+   * have to wait for one) and enters "select/add highlight" mode targeting
+   * it — further selections or existing-highlight clicks keep adding anchors
+   * to this same thread until the reader exits the mode.
+   */
+  async function handleLinkQuote() {
+    if (!pendingSelection) return;
+    const created = await postHighlight({
+      resourceId,
+      exact: pendingSelection.exact,
+      prefix: pendingSelection.prefix,
+      suffix: pendingSelection.suffix,
+      cfi: pendingSelection.cfi,
+      spineIndex: pendingSelection.spineIndex,
+      kind: "slate",
+    });
+    if (!created) {
+      setPendingSelection(null);
+      return;
+    }
+    setHighlights((prev) => [...prev, created]);
+    resolvedIdsRef.current.add(created.id);
+    attachOwnedMark(created.id, created.cfi, created.kind);
+    pendingSelection.contents.window.getSelection()?.removeAllRanges();
+    const top = pendingSelection.top;
+    setPendingSelection(null);
+
+    const summary = await postHighlightThread(created.id);
+    if (!summary) return;
+    handleThreadChange(created.id, summary);
+    setExpandedThread({ highlightId: created.id, top });
+    setLinkQuoteMode({ threadId: summary.id, primaryHighlightId: created.id, allowExistingHighlightClick: true });
+  }
+
+  /** M35 §G4, entry point B: "Add additional quotes" on an already-open
+   * annotation's panel — enters the same mode, targeting the thread that's
+   * already there, restricted to fresh selections only (decisions.md
+   * 2026-09-01 evening explains why this entry doesn't also accept a click
+   * on an existing highlight). */
+  function handleStartAddQuotes() {
+    if (!expandedHighlight?.thread) return;
+    setLinkQuoteMode({
+      threadId: expandedHighlight.thread.id,
+      primaryHighlightId: expandedHighlight.id,
+      allowExistingHighlightClick: false,
+    });
+  }
+
+  function handleExitLinkQuoteMode() {
+    setLinkQuoteMode(null);
+    setLinkQuoteConfirm(null);
+    setLinkQuoteError(null);
+  }
+
+  /** The reader confirmed either "add this selection" (implicit — mode
+   * active plus a live `pendingSelection` is the confirm, per the state
+   * comment above) or "link this existing highlight" (`linkQuoteConfirm`).
+   * Both funnel into the same `addThreadAnchor` call (§G3), and both leave
+   * the mode active afterward so several quotes can be attached in one pass
+   * (decisions.md: "the mode never closes itself after one addition"). */
+  async function handleConfirmLinkQuote() {
+    const mode = linkQuoteMode;
+    if (!mode) return;
+    setLinkQuoteError(null);
+
+    if (linkQuoteConfirm) {
+      const { highlightId } = linkQuoteConfirm;
+      const result = await addThreadAnchor(mode.threadId, highlightId);
+      if (result.ok) {
+        setHighlights((prev) =>
+          prev.map((h) => (h.id === highlightId ? { ...h, primaryHighlightId: mode.primaryHighlightId } : h)),
+        );
+        setAnchorsVersion((v) => v + 1);
+      } else {
+        setLinkQuoteError("This quote already belongs to a different annotation.");
+      }
+      setLinkQuoteConfirm(null);
+      return;
+    }
+
+    if (!pendingSelection) return;
+    const created = await postHighlight({
+      resourceId,
+      exact: pendingSelection.exact,
+      prefix: pendingSelection.prefix,
+      suffix: pendingSelection.suffix,
+      cfi: pendingSelection.cfi,
+      spineIndex: pendingSelection.spineIndex,
+      kind: "slate",
+    });
+    pendingSelection.contents.window.getSelection()?.removeAllRanges();
+    setPendingSelection(null);
+    if (!created) {
+      setLinkQuoteError("Couldn't create that highlight — try again.");
+      return;
+    }
+    setHighlights((prev) => [...prev, created]);
+    resolvedIdsRef.current.add(created.id);
+    attachOwnedMark(created.id, created.cfi, created.kind);
+
+    const result = await addThreadAnchor(mode.threadId, created.id);
+    if (result.ok) {
+      setHighlights((prev) =>
+        prev.map((h) => (h.id === created.id ? { ...h, primaryHighlightId: mode.primaryHighlightId } : h)),
+      );
+      setAnchorsVersion((v) => v + 1);
+    } else {
+      setLinkQuoteError("Couldn't link that quote — try again.");
+    }
+  }
+
+  function handleCancelLinkQuoteConfirm() {
+    if (linkQuoteConfirm) {
+      setLinkQuoteConfirm(null);
+      return;
+    }
+    pendingSelection?.contents.window.getSelection()?.removeAllRanges();
+    setPendingSelection(null);
   }
 
   /**
@@ -4134,7 +4365,11 @@ export function ReaderView({
             )}
           </AnimatePresence>
           <AnimatePresence>
-            {pendingSelection && (
+            {/* M35 §G4: the pill only makes sense outside the mode it can
+                itself start — while "select/add highlight" is active, a new
+                selection goes through LinkQuoteBanner's own confirm instead
+                (below), never both at once. */}
+            {pendingSelection && !linkQuoteMode && (
               <AskPill
                 key="ask-pill"
                 left={pendingSelection.left}
@@ -4145,6 +4380,20 @@ export function ReaderView({
                 definable={isDefinableTerm(pendingSelection.exact)}
                 onPlayFromHere={() => void handlePlayFromSelection()}
                 labels={kindLabels}
+                onLinkQuote={() => void handleLinkQuote()}
+              />
+            )}
+          </AnimatePresence>
+          <AnimatePresence>
+            {linkQuoteMode && (
+              <LinkQuoteBanner
+                key="link-quote-banner"
+                allowExistingHighlightClick={linkQuoteMode.allowExistingHighlightClick}
+                pendingExact={linkQuoteConfirm ? linkQuoteConfirm.exact : (pendingSelection?.exact ?? null)}
+                error={linkQuoteError}
+                onConfirm={() => void handleConfirmLinkQuote()}
+                onCancelConfirm={handleCancelLinkQuoteConfirm}
+                onExit={handleExitLinkQuoteMode}
               />
             )}
           </AnimatePresence>
@@ -4198,6 +4447,8 @@ export function ReaderView({
                 onClose={() => setExpandedThread(null)}
                 onDelete={() => handleDeleteHighlight(expandedHighlight)}
                 onJumpToAnchor={handleJumpToAnchor}
+                anchorsVersion={anchorsVersion}
+                onAddQuotes={linkQuoteMode ? undefined : handleStartAddQuotes}
                 onThreadChange={handleThreadChange}
                 onImportanceChange={handleImportanceChange}
                 onNoteChange={handleNoteChange}

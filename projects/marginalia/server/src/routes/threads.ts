@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import type Database from "better-sqlite3";
 import {
+  AddThreadAnchorBodySchema,
   CreateThreadBodySchema,
   CreateThreadMessageBodySchema,
 } from "@marginalia/shared";
@@ -13,7 +14,9 @@ import {
   getResourceTextSections,
 } from "../library/store.js";
 import {
+  addThreadAnchor,
   createMessage,
+  getAnchoredThreadId,
   getOrCreateThread,
   getThreadById,
   getThreadWithMessages,
@@ -490,4 +493,50 @@ threadsRouter.get("/:id/anchors", (req, res) => {
     spineIndex: h.spineIndex,
   }));
   res.json({ anchors });
+});
+
+/**
+ * M35 §G3: the write-side counterpart to the anchors read above — links one
+ * more highlight to an existing annotation. The ground rule (decisions.md
+ * 2026-09-01 evening): a highlight may join a thread, a thread may never
+ * join a thread. `getAnchoredThreadId` tells apart "already anchors *this*
+ * thread" (no-op, 200 — the reader double-clicked, or a retry) from "already
+ * anchors a *different* one" (409 — refuse rather than silently merging two
+ * annotations).
+ */
+threadsRouter.post("/:id/anchors", (req, res) => {
+  const db = getDb();
+  const thread = getThreadById(db, req.params.id);
+  if (!thread) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const parsed = AddThreadAnchorBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "invalid_body" });
+    return;
+  }
+  const highlight = getHighlightById(db, parsed.data.highlightId);
+  if (!highlight) {
+    res.status(404).json({ error: "highlight_not_found" });
+    return;
+  }
+  const primary = getHighlightById(db, thread.highlightId);
+  if (primary && highlight.resourceId !== primary.resourceId) {
+    res.status(400).json({ error: "cross_resource" });
+    return;
+  }
+
+  const existingThreadId = getAnchoredThreadId(db, highlight.id);
+  if (existingThreadId === thread.id) {
+    res.json({ highlightId: highlight.id, threadId: thread.id });
+    return;
+  }
+  if (existingThreadId !== undefined) {
+    res.status(409).json({ error: "highlight_already_anchored" });
+    return;
+  }
+
+  addThreadAnchor(db, thread.id, highlight.id);
+  res.status(201).json({ highlightId: highlight.id, threadId: thread.id });
 });

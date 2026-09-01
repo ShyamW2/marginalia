@@ -94,6 +94,14 @@
   flex-wrap: wrap;
 }
 
+/* M35 §G1: same layout as the Scan's DigestSpotlight `.dialRow` — two
+   ChapterDials side by side, sitting just above the buttons they scope. */
+.thematicRangeRow {
+  display: flex;
+  gap: 1.5rem;
+  margin-top: 0.6rem;
+}
+
 .pausedNotice {
   font-size: 0.8rem;
   color: var(--color-danger);

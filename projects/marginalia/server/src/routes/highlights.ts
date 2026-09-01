@@ -20,6 +20,7 @@ import {
   setHighlightPanelOffset,
   setHighlightPanelSize,
 } from "../annotations/highlights.js";
+import { getOrCreateThread, getThreadSummary } from "../annotations/threads.js";
 import { defineHighlight, deepenDefinition } from "../dictionary/define.js";
 import { listTagsForHighlight, setTagsForHighlight } from "../annotations/tags.js";
 import { getResourceById, getResourceTextSection } from "../library/store.js";
@@ -58,6 +59,27 @@ highlightsRouter.post("/", (req, res) => {
     length: match ? match.end - match.start : null,
   });
   res.status(201).json(highlight);
+});
+
+/**
+ * M35 §G4: ensures a highlight has a real `threads` row *before* any
+ * message exists, so the reader's "Link a quote" flow has a `threadId` it
+ * can call `POST /api/threads/:id/anchors` against right away — the normal
+ * `POST /api/threads` path (routes/threads.ts:324) requires a non-empty
+ * question and would otherwise be the only thing that ever creates one.
+ * Idempotent: a highlight that already has a thread (with or without
+ * messages) just gets that one back, same as `getOrCreateThread` everywhere
+ * else in this file's neighbourhood.
+ */
+highlightsRouter.post("/:id/thread", (req, res) => {
+  const db = getDb();
+  const highlight = getHighlightById(db, req.params.id);
+  if (!highlight) {
+    res.status(404).json({ error: "highlight_not_found" });
+    return;
+  }
+  const thread = getOrCreateThread(db, highlight.id);
+  res.status(201).json(getThreadSummary(db, thread.id));
 });
 
 highlightsRouter.delete("/:id", (req, res) => {

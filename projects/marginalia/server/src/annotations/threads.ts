@@ -7,6 +7,7 @@ import type {
   MessageProvenance,
   MessageRole,
   Thread,
+  ThreadSummary,
   ThreadWithMessages,
 } from "@marginalia/shared";
 import { endpointHostFor } from "../llm/usage.js";
@@ -175,6 +176,19 @@ export function isHighlightAnchored(db: Database.Database, highlightId: string):
   return row !== undefined;
 }
 
+/**
+ * Which thread (if any) a highlight already anchors — the read `isHighlightAnchored`
+ * doesn't give you, and what M35 §G3's manual-link route needs to tell "already
+ * anchors *this* thread" (no-op) apart from "already anchors a *different* one"
+ * (refuse — a highlight may join a thread, a thread may never join a thread).
+ */
+export function getAnchoredThreadId(db: Database.Database, highlightId: string): string | undefined {
+  const row = db
+    .prepare(`SELECT thread_id AS threadId FROM thread_anchors WHERE highlight_id = ?`)
+    .get(highlightId) as { threadId: string } | undefined;
+  return row?.threadId;
+}
+
 function isUniqueConstraintError(err: unknown): boolean {
   return (
     err instanceof Error &&
@@ -191,6 +205,25 @@ function isUniqueConstraintError(err: unknown): boolean {
  * create one — the loser's insert fails the unique constraint. Rather than
  * surfacing that as a 500, reuse the thread the winner just created.
  */
+/**
+ * The same `{id, hasAnswer, messageCount}` shape
+ * `listHighlightsWithThreadsForResource` computes per-highlight in its own
+ * join, for a single already-known thread id — M35 §G4's "create the seed
+ * thread up front, before any message exists" needs to hand the client a
+ * real `ThreadSummary` immediately rather than waiting for that resource-wide
+ * list to next refetch.
+ */
+export function getThreadSummary(db: Database.Database, threadId: string): ThreadSummary {
+  const row = db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM messages WHERE thread_id = ? AND role = 'assistant') AS answerCount,
+         (SELECT COUNT(*) FROM messages WHERE thread_id = ?) AS messageCount`,
+    )
+    .get(threadId, threadId) as { answerCount: number; messageCount: number };
+  return { id: threadId, hasAnswer: row.answerCount > 0, messageCount: row.messageCount };
+}
+
 export function getOrCreateThread(db: Database.Database, highlightId: string): Thread {
   const existing = getThreadByHighlightId(db, highlightId);
   if (existing) return existing;

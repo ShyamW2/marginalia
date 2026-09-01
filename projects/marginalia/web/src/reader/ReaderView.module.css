@@ -20,6 +20,7 @@
  *   | definition card           | --reader-z-definition-card   | 10 |
  *   | roaming panels            | --reader-z-panel             | 11 |
  *   | find bar                  | --reader-z-find-bar          | 12 |
+ *   | link-quote mode banner    | --reader-z-link-quote-banner | 13 |
  *   | dwell ring                | --reader-z-dwell-ring        | 50 |
  *   | pinch-resize instrument   | --reader-z-pinch-instrument  | 51 |
  *
@@ -57,6 +58,7 @@
   --reader-z-definition-card: 10;
   --reader-z-panel: 11;
   --reader-z-find-bar: 12;
+  --reader-z-link-quote-banner: 13;
   --reader-z-dwell-ring: 50;
   /* M31 C6: `position: fixed` like the dwell ring, for the same reason — it
      escapes `.stage`'s stacking context to compare against the root, so its

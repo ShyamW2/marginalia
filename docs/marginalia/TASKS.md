@@ -2168,6 +2168,133 @@ _Status: covered by the server/web builds and full test suites (both green, no r
 session**, same reason as §E: the shared dev server was already running with a live browser
 attached when this landed._
 
+#### G. Thematic gets the Digest's own controls, and annotations get a manual link path
+
+Scoped 2026-09-01 (decisions.md, "closing the 'operator's call' UI gap"). Every §A–§F
+Verify item above is a real server capability no one has driven by hand — this section is
+what makes that possible, rather than adding a seventh unexercised behaviour. Two
+unrelated gaps, grouped because both are "the server can do this and nothing in the UI
+asks it to."
+
+- [x] **G1.** The thematic pass gets a chapter-range picker — `ChapterDial` From/To,
+      exactly as `DigestSpotlight.tsx` already built for the plot digest (M20.5) — instead
+      of `DigestPage.tsx`'s `handleAnalyzeThemes` always spanning first-to-last digested
+      chapter. Same `POST /:id/thematic` endpoint, same `spineStart`/`spineEnd` body — no
+      server change.
+      ⚠️ **Corrected after checking `thematicBuild.ts`, before shipping the wrong scope
+      twice: the dials span the whole book, not just digested chapters.** The first pass
+      through this item assumed a thematic run needs a chapter's own plot digest and bounded
+      the dials to `status.chapters.filter(c => c.digested)` — carrying forward the *old*
+      hardcoded `handleAnalyzeThemes`'s own range (first-to-last digested chapter) without
+      checking whether that range was ever a real requirement. It wasn't: `runThematicDigest`
+      takes `sections: ResourceTextSection[]` (`getResourceTextSections` — the book's raw
+      text) and never reads `chapter_digests`; the route has no digested-range check either.
+      A chapter can be thematically analyzed with no plot digest done on it at all.
+      _Done: `DigestPage.tsx`'s `allChapters` (`status.chapters`, unfiltered — corrected from
+      an earlier `digestedChapters` filter), `thematicStartIdx`/`thematicEndIdx` state
+      re-synced to the full book span whenever `allChapters.length` changes (a manual
+      narrowing is scoped to the current visit, same as the plot digest's dials promise
+      nothing across a change in what they dial over). Two `ChapterDial`s, hidden below two
+      chapters (nothing to narrow). `handleAnalyzeThemes` reads the dialed range instead of
+      always the full span; the button's label dropped "for digested chapters" since it no
+      longer describes what the button does._
+- [x] **G2.** Inline cancel for the thematic, tagging, and distill jobs, right on
+      `DigestPage.tsx`, the way `DigestSpotlight.handleCancel` already calls the existing
+      `cancelJob` registry function for the plot digest. Today all three buttons go from
+      their idle label to a disabled "…ing" label with no way to stop short of finding the
+      job in the global tasks tray. ⚠️ This is exposing a control that already exists for
+      every job kind, not building a new cancellation mechanism.
+      _Done: `useJobs()`'s own `cancel` (renamed `cancelJob` at the destructure site to avoid
+      shadowing), three one-line handlers, a `Button` rendered beside each "…ing" label only
+      while that job's id is set._
+- [x] **G3.** `POST /api/threads/:id/anchors { highlightId }` — the write-side counterpart
+      to §D4's existing read-only `GET .../anchors`. Wraps `addThreadAnchor`, guarded by
+      the same `isHighlightAnchored` check `persistThematicHighlights` (§C5) already uses:
+      refuse with 409 when `highlightId` already anchors a *different* thread — the
+      ground rule is a highlight may join a thread, a thread may never join a thread — and
+      no-op (200) when it already anchors this one. A highlight with a thread of its own is
+      the only thing this ever refuses; a plain, threadless highlight always succeeds.
+      _Done: `routes/threads.ts`'s `POST /:id/anchors`, `AddThreadAnchorBodySchema`
+      (shared/src/schemas.ts). Uses a new `getAnchoredThreadId` (annotations/threads.ts) —
+      `isHighlightAnchored` itself only answers yes/no, not *which* thread, which is what
+      distinguishes the no-op case from the refusal — and rejects a highlight belonging to a
+      different resource entirely (400 `cross_resource`, via the thread's own primary
+      highlight's `resourceId`) as a second guard `persistThematicHighlights` never needed
+      (it never crosses books). A second small addition this section turned out to need:
+      `POST /api/highlights/:id/thread` (`getOrCreateThread` + a new `getThreadSummary`
+      helper) — the normal `POST /api/threads` path requires a non-empty question, and
+      §G4's "Link a quote" needs a real `threadId` to anchor to *before* any question is
+      asked. Client: `threadAnchorsApi.ts`'s `addThreadAnchor`, `ReaderView.tsx`'s
+      `postHighlightThread`. Tested: `annotations/threads.test.ts`'s "M35 §G3"/"M35 §G4"
+      blocks (`getAnchoredThreadId`/`isHighlightAnchored`/`getThreadSummary`)._
+- [x] **G4.** A "select/add highlight" reader mode, entered two ways, both producing a
+      `thread_anchors` row via §G3:
+      - from the existing selection popup, on a highlight/selection with **no thread yet**
+        — "Link a quote" — this is how a brand-new multi-anchor thread gets built, before
+        any note or question has been asked of it;
+      - from an **already-open** `ThreadPanel` — "Add additional quotes" — growing that
+        specific thread.
+
+      While the mode is active: a banner names it and offers its own on-screen **×**; Esc
+      also exits; page turning keeps working, since assembling anchors across a book-
+      spanning theme is exactly the case this is for. Highlighting new text prompts a
+      confirm ("Add this quote to the annotation?") before the highlight is created
+      (`origin: 'reader'`) and linked — this is the *only* way in from the panel-opened
+      entry point. From the selection-popup entry point, clicking an **existing,
+      threadless** highlight is also permitted and links it directly, in place, with the
+      same confirm; clicking one that already anchors a different thread is refused with a
+      visible inline message (§G3's 409) and the mode stays open rather than exiting or
+      silently doing nothing. ⚠️ **The mode never closes itself after one addition** — it
+      stays open so several quotes (any mix of fresh selections and one pre-existing
+      highlight) can be attached in a single pass; only Esc/× ends it. Once at least one
+      anchor exists, the panel opens (or stays open, for the panel-opened entry) showing
+      the thread, and §D4's existing `‹ N of M ›` stepper walks whatever was just built —
+      no new traversal UI.
+      _Done: `ReaderView.tsx`'s `linkQuoteMode`/`linkQuoteConfirm`/`linkQuoteError` state
+      (mirrored into `linkQuoteModeRef` for `handleMarkClicked`, registered once per
+      rendition mount, the same reason `pendingSelectionRef` exists) plus `handleLinkQuote`
+      (entry A), `handleStartAddQuotes` (entry B), `handleConfirmLinkQuote`,
+      `handleCancelLinkQuoteConfirm`, `handleExitLinkQuoteMode`. New `LinkQuoteBanner.tsx`,
+      built on `FindBar.tsx`'s own centred-pebble-over-the-page pattern (a mode banner
+      anchored to a fixed position rather than the click/selection, since `markClicked`
+      carries no pointer coordinates to anchor a floating popover to); its "confirm" state
+      doubles as the display for a fresh selection (no separate state needed — while the
+      mode is active, a live `pendingSelection` *is* the pending confirm) and for an
+      eligible existing-highlight click (`linkQuoteConfirm`). `AskPill` gained a "Link a
+      quote" button (`onLinkQuote`) and is hidden while the mode is active, so a selection
+      never drives both it and the banner's confirm at once. `ThreadPanel` gained
+      `onAddQuotes` (only rendered once a real thread exists) and `anchorsVersion` (bumped on
+      every successful link, since the anchors-fetch effect is keyed on `threadId`, which
+      never changes for an already-existing thread and so would otherwise never refetch).
+      `handleEscapeShortcut` exits the mode as the next-innermost layer after the find bar;
+      a safety effect exits the mode if the open panel ever changes to a different
+      highlight (a margin-rail/overview click opens a different thread through
+      `handleOpenThread`, which has no reason to know about this mode). New z-index token
+      `--reader-z-link-quote-banner: 13` (ReaderView.module.css's own layering table)._
+- [x] **G5.** Ground rule, not a task of its own: linking only ever goes highlight → thread,
+      never thread → thread. Two already-annotated passages cannot be merged this way.
+      Deferred "for now" per the operator, same shape as C3c's parked scope note — revisit
+      only if a real need for it shows up, not before.
+      _Done: enforced by §G3's `getAnchoredThreadId` check (server) and reflected by §G4's
+      mode restricting the panel-opened entry to fresh text only and refusing an already-
+      threaded highlight clicked from the selection-popup entry, in place, with a visible
+      message. No merge-two-threads path exists anywhere in this section._
+
+_Acceptance: from a highlight's selection popup, three quotes — two fresh selections and
+one pre-existing untethered highlight — can be attached to one new annotation without
+leaving the mode between additions. From an already-open annotation's panel, "Add
+additional quotes" attaches a new quote by selecting fresh text, and the existing `‹ N of
+M ›` stepper walks all of them after a reload. Attempting to link a quote that already
+belongs to a different annotation shows a visible refusal and never merges the two
+threads. Dialing a narrower chapter range for a thematic run and cancelling it in flight
+behaves identically to the plot digest's own dials and cancel._
+_Status: server logic covered by unit tests (`annotations/threads.test.ts`'s new blocks);
+`tsc -b` and the full test suite are green on both packages with no regressions (467 server
+tests, 473 web tests) and both packages build clean. **Driving any of G1–G4 by hand in the
+running app has not been done this session** — same "operator's call" line every other
+M35 real-data/live-UI item in this milestone already carries, and the whole reason this
+section exists is to make that drive possible for the first time._
+
 #### Verify
 
 - [ ] Run a thematic pass over a real chapter range on the operator's actual digest provider.
@@ -2176,6 +2303,13 @@ attached when this landed._
 - [ ] Link three quotes to one annotation by hand, reload, and walk them with `< >`.
 - [ ] Open the Scan with thematic quotes on and off; confirm the Mine layer's counts are
       unchanged by the run, and that a zone click lands on the passage it drew.
+- [ ] §G: dial a narrower chapter range than "all digested" for a thematic run and confirm
+      only that range analyzes; cancel a running thematic/tagging/distill job in place from
+      the digest page and confirm it actually stops (not just the button re-enabling).
+- [ ] §G: build a three-quote annotation from the selection popup (mixing fresh selections
+      and one pre-existing highlight), then separately use an existing annotation's "Add
+      additional quotes" to attach one more; confirm a highlight already anchoring another
+      thread is refused rather than silently merged.
 
 ---
 

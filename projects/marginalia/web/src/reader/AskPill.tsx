@@ -27,6 +27,14 @@ interface AskPillProps {
   /** M30 A: the reader's own names for the four kind slots (settings, not
    * the hardcoded constant) — see highlightKinds.ts's `kindLabelsFromSettings`. */
   labels: Record<HighlightKind, string>;
+  /** M35 §G4: turns this selection into the seed quote of a brand-new
+   * multi-anchor annotation and enters "select/add highlight" mode, where
+   * further selections (or a click on an existing, threadless highlight)
+   * keep adding anchors to it. Unlike Ask, this never itself opens a
+   * conversation — ReaderView still opens the panel so the reader can see
+   * what's been linked, but the point of this button is the *linking*, not
+   * a question. */
+  onLinkQuote: () => void;
 }
 
 /**
@@ -47,6 +55,7 @@ export function AskPill({
   definable,
   onPlayFromHere,
   labels,
+  onLinkQuote,
 }: AskPillProps) {
   const reducedMotion = useReducedMotion();
 
@@ -102,6 +111,15 @@ export function AskPill({
           }
         >
           Define
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={styles.linkQuoteButton}
+          onClick={onLinkQuote}
+          title="Build a multi-quote annotation, starting from this passage"
+        >
+          Link a quote
         </Button>
         <Button variant="solid" size="sm" className={styles.askButton} onClick={onAsk}>
           Ask

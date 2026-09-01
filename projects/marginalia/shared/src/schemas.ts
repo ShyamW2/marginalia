@@ -392,6 +392,13 @@ export type CreateThreadMessageBody = z.infer<
   typeof CreateThreadMessageBodySchema
 >;
 
+/** Body for POST /api/threads/:id/anchors (M35 §G3) — links one more highlight
+ * to an existing annotation as an additional anchor. */
+export const AddThreadAnchorBodySchema = z.object({
+  highlightId: z.string().min(1),
+});
+export type AddThreadAnchorBody = z.infer<typeof AddThreadAnchorBodySchema>;
+
 /** A thread with its full message history, for GET /api/threads/:id. */
 export const ThreadWithMessagesSchema = ThreadSchema.extend({
   messages: z.array(MessageSchema),

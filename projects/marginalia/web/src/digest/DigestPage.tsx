@@ -19,6 +19,7 @@ import { deleteAllAudio, deleteSectionAudio, fetchAudioSections } from "../audio
 import { themeRampColor } from "./themeRamp.js";
 import { createChapterAnchor, fetchChapterQuestions, fetchThematicStatus, revealParams } from "./digestApi.js";
 import { ChapterQuestionBox } from "./ChapterQuestionBox.js";
+import { ChapterDial } from "../scan/ChapterDial.js";
 import styles from "./DigestPage.module.css";
 
 /** M22.5 G: "N MB"/"N KB" for the rendered-audio column — no existing
@@ -125,11 +126,16 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const [bookThemes, setBookThemes] = useState<ScanBookTheme[]>([]);
   const [distillJobId, setDistillJobId] = useState<string | null>(null);
   const [distillError, setDistillError] = useState<string | null>(null);
+  // M35 §G1: the thematic range picker's own indices, into `allChapters`
+  // below (every chapter in the book — a thematic run has no dependency on
+  // a chapter's plot digest, so there's nothing to bound this to).
+  const [thematicStartIdx, setThematicStartIdx] = useState(0);
+  const [thematicEndIdx, setThematicEndIdx] = useState(0);
   const [chapterQuestions, setChapterQuestions] = useState<ChapterQuestion[]>([]);
   const [audioSections, setAudioSections] = useState<AudioSectionsResponse | null>(null);
   const [deletingSpine, setDeletingSpine] = useState<number | null>(null);
   const [deletingAllAudio, setDeletingAllAudio] = useState(false);
-  const { registerStarted, jobs } = useJobs();
+  const { registerStarted, jobs, cancel: cancelJob } = useJobs();
   // M35 §F1: the chapter currently showing its themes' quotes — one at a
   // time, stepped with `< >` across every analyzed-and-revealed chapter
   // (§F3), the same "expand" scope decisions.md's own analysis/questions
@@ -257,20 +263,55 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobs, thematicJobId, taggingJobId, distillJobId]);
 
+  // M35 §G1, corrected after checking `thematicBuild.ts`: a thematic run
+  // reads a chapter's own *raw* section text (`getResourceTextSections`),
+  // never the plot digest — there is no server-side dependency on a chapter
+  // having been plot-digested first. The dials span every chapter in the
+  // book, not just the digested ones (an earlier version of this section
+  // assumed the opposite and was wrong).
+  const allChapters = status?.chapters ?? [];
+
+  // M35 §G1: the range picker's own default — the full book, same as the
+  // old hardcoded "everything digested" behaviour's spirit (analyze as much
+  // as there is) but now over the whole spine — re-syncs whenever the
+  // *count* of chapters changes (which in practice only happens once, right
+  // after the book's own spine loads), not on every render. A manually
+  // narrowed selection is scoped to the current visit, same as the plot
+  // digest's own dials never promise to remember a choice.
+  useEffect(() => {
+    setThematicStartIdx(0);
+    setThematicEndIdx(Math.max(0, allChapters.length - 1));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allChapters.length]);
+
   async function handleAnalyzeThemes() {
-    if (!id || !status || thematicJobId) return;
-    const digestedChapters = status.chapters.filter((c) => c.digested);
-    if (digestedChapters.length === 0) return;
+    if (!id || allChapters.length === 0 || thematicJobId) return;
     setThematicError(null);
-    const spineStart = digestedChapters[0].spineIndex;
-    const spineEnd = digestedChapters[digestedChapters.length - 1].spineIndex;
-    const result = await startJobRequest(`/api/resources/${id}/thematic`, { spineStart, spineEnd });
+    const spineStart = allChapters[thematicStartIdx]?.spineIndex ?? allChapters[0].spineIndex;
+    const spineEnd = allChapters[thematicEndIdx]?.spineIndex ?? allChapters[allChapters.length - 1].spineIndex;
+    const result = await startJobRequest(`/api/resources/${id}/thematic`, {
+      spineStart: Math.min(spineStart, spineEnd),
+      spineEnd: Math.max(spineStart, spineEnd),
+    });
     if ("jobId" in result) {
       setThematicJobId(result.jobId);
       registerStarted({ id: result.jobId, kind: "thematic", resourceId: id, resourceTitle: null });
     } else {
       setThematicError(result.error);
     }
+  }
+
+  // M35 §G2: exposes the cancel every job already supports (the tasks tray's
+  // own button calls the same `cancelJob`) right where the job was started,
+  // instead of requiring a trip to the tray to stop one of these three.
+  function handleCancelThematic() {
+    if (thematicJobId) cancelJob(thematicJobId);
+  }
+  function handleCancelTagging() {
+    if (taggingJobId) cancelJob(taggingJobId);
+  }
+  function handleCancelDistill() {
+    if (distillJobId) cancelJob(distillJobId);
   }
 
   // "Tag highlights" — the Mine layer's theme signal for the scan
@@ -438,6 +479,29 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
               }}
               placeholder="No brief set — thematic analysis will read the book on its own terms."
             />
+            {/* M35 §G1: the same From/To dials the plot digest already uses
+                (ChapterDial, M20.5) — spanning the whole book, since a
+                thematic run reads a chapter's own raw section text and has
+                no dependency on that chapter's plot digest. Hidden below two
+                chapters, where a range has nothing to narrow. */}
+            {allChapters.length > 1 && (
+              <div className={styles.thematicRangeRow}>
+                <ChapterDial
+                  label="From"
+                  chapters={allChapters}
+                  value={thematicStartIdx}
+                  onCommit={setThematicStartIdx}
+                  disabled={thematicJobId !== null}
+                />
+                <ChapterDial
+                  label="To"
+                  chapters={allChapters}
+                  value={thematicEndIdx}
+                  onCommit={setThematicEndIdx}
+                  disabled={thematicJobId !== null}
+                />
+              </div>
+            )}
             <div className={styles.briefFooter}>
               <Button
                 variant="outline"
@@ -451,16 +515,31 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                 variant="outline"
                 size="sm"
                 onClick={handleAnalyzeThemes}
-                disabled={thematicJobId !== null || !status.chapters.some((c) => c.digested)}
+                disabled={thematicJobId !== null || allChapters.length === 0}
               >
-                {thematicJobId ? "Analyzing…" : "Analyze themes for digested chapters"}
+                {thematicJobId ? "Analyzing…" : "Analyze themes"}
               </Button>
+              {thematicJobId && (
+                <Button variant="outline" size="sm" onClick={handleCancelThematic}>
+                  Cancel
+                </Button>
+              )}
               <Button variant="outline" size="sm" onClick={handleTagThemes} disabled={taggingJobId !== null}>
                 {taggingJobId ? "Tagging…" : "Tag highlights with themes"}
               </Button>
+              {taggingJobId && (
+                <Button variant="outline" size="sm" onClick={handleCancelTagging}>
+                  Cancel
+                </Button>
+              )}
               <Button variant="outline" size="sm" onClick={handleDistillThemes} disabled={distillJobId !== null}>
                 {distillJobId ? "Distilling…" : "Distil book-level themes"}
               </Button>
+              {distillJobId && (
+                <Button variant="outline" size="sm" onClick={handleCancelDistill}>
+                  Cancel
+                </Button>
+              )}
             </div>
             {thematicError && <p className={styles.pausedNotice}>Thematic analysis failed: {thematicError}</p>}
             {taggingError && <p className={styles.pausedNotice}>Theme tagging failed: {taggingError}</p>}
