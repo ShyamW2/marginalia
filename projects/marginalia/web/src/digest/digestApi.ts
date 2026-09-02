@@ -9,6 +9,22 @@ export function revealParams(revealed: Set<number>): URLSearchParams {
   return params;
 }
 
+/** M38 §C2: the reading pane's own hover notice needs the brief's text
+ * without paying for a full `ThematicStatus` fetch (every chapter's
+ * analysis) just to reach its `.brief.text` field — this hits the same
+ * lightweight GET the Digest page's save button already round-trips
+ * through. */
+export async function fetchBrief(resourceId: string): Promise<string> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}/brief`);
+    if (!res.ok) return "";
+    const body = (await res.json()) as { text: string };
+    return body.text;
+  } catch {
+    return "";
+  }
+}
+
 export async function fetchThematicStatus(
   resourceId: string,
   revealed: Set<number>,

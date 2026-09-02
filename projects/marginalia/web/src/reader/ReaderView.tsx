@@ -136,7 +136,7 @@ import { useMarqueeOverflow } from "./useMarqueeOverflow.js";
 import { PinchResizeInstrument } from "./PinchResizeInstrument.js";
 import { TEXT_SIZE_MAX, TEXT_SIZE_MIN } from "../settings/tabs/ReadingTab.js";
 import { ChapterEndPrompt } from "./ChapterEndPrompt.js";
-import { createChapterAnchor, fetchThematicStatus } from "../digest/digestApi.js";
+import { createChapterAnchor, fetchBrief, fetchThematicStatus } from "../digest/digestApi.js";
 import styles from "./ReaderView.module.css";
 
 const DEFAULT_THREAD_PANEL_TOP = 20;
@@ -1014,6 +1014,35 @@ export function ReaderView({
     setDigestChapterJobId(null);
     window.setTimeout(() => setDigestChapterResult(null), 4000);
   }, [jobs, digestChapterJobId]);
+
+  // M38 §C1: "Digest this chapter" splits into two explicit choices —
+  // plot (`digestChapterJobId` above, unchanged) and themes, tracked the
+  // same way (a transient result label; the tray owns real progress/cancel).
+  const [themeChapterJobId, setThemeChapterJobId] = useState<string | null>(null);
+  const [themeChapterResult, setThemeChapterResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!themeChapterJobId) return;
+    const job = jobs.find((j) => j.id === themeChapterJobId);
+    if (!job || job.status === "running") return;
+    setThemeChapterResult(
+      job.status === "completed" ? "Analysed ✓" : job.status === "cancelled" ? "Cancelled" : "Analysis failed",
+    );
+    setThemeChapterJobId(null);
+    window.setTimeout(() => setThemeChapterResult(null), 4000);
+  }, [jobs, themeChapterJobId]);
+
+  // M38 §C2: "hovering shows a small notice ... the reading brief's own
+  // text if one is set" — a plain GET, not the full `ThematicStatus` (which
+  // would pull every chapter's analysis just to reach one field). Refetched
+  // whenever the book changes; the Digest page's own save button is the only
+  // writer, and this reader doesn't need to notice a save made in another
+  // tab mid-session any more than the rest of this page's book-level state
+  // does.
+  const [readingBriefText, setReadingBriefText] = useState("");
+  useEffect(() => {
+    fetchBrief(resourceId).then(setReadingBriefText);
+  }, [resourceId]);
   // M12: table of contents (flattened, spine+percent resolved once
   // book.locations has generated) and the scrub-dial/popover UI state for
   // the progress readout.
@@ -3379,6 +3408,35 @@ export function ReaderView({
     }
   }
 
+  /** M38 §C1: the reading pane's theme half of the split — a single-chapter
+   * thematic run via the existing `/thematic` route (`spineStart ===
+   * spineEnd`), not a new endpoint. Mode is left at its server default
+   * ("notes" — the chapter's own saved substrate), matching this button's
+   * quick, from-the-reading-pane framing rather than offering the Digest
+   * page's fast-vs-full choice here too. */
+  async function handleAnalyzeChapterThemes() {
+    if (currentSpineIndex === null || themeChapterJobId) return;
+    setThemeChapterResult(null);
+    const result = await startJobRequest(`/api/resources/${resourceId}/thematic`, {
+      spineStart: currentSpineIndex,
+      spineEnd: currentSpineIndex,
+    });
+    if ("jobId" in result) {
+      setThemeChapterJobId(result.jobId);
+      registerStarted({ id: result.jobId, kind: "thematic", resourceId, resourceTitle: null });
+    } else {
+      setThemeChapterResult("Analysis failed");
+      window.setTimeout(() => setThemeChapterResult(null), 4000);
+    }
+  }
+
+  // M38 §C2: shown on hover, before committing to the job — the same text
+  // either way a run would actually use, since "notes" mode reads whatever
+  // brief is current at run time.
+  const themeChapterNotice = readingBriefText.trim()
+    ? `Analysing themes as set in your reading brief: "${readingBriefText.trim()}"`
+    : "Analysing themes automatically";
+
   // M21 transport controls. The footer's play/pause button is the one place
   // a reader can start listening without ever visiting the desk/list — it
   // starts from wherever the book is currently open to.
@@ -3965,13 +4023,25 @@ export function ReaderView({
       triggerRef={digestButtonRef}
     >
       <div className={styles.clusterPanel}>
+        {/* M38 §C1: "Digest this chapter" splits into two explicit,
+            separately-labeled choices — plot and themes — rather than one
+            button that conflated the two with no way to pick just one. */}
         <Button
           variant="ghost"
           size="sm"
           disabled={currentSpineIndex === null || digestChapterJobId !== null}
           onClick={handleDigestChapter}
         >
-          {digestChapterJobId ? "Digesting…" : digestChapterResult ?? "Digest this chapter"}
+          {digestChapterJobId ? "Digesting…" : digestChapterResult ?? "Digest Plot"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={currentSpineIndex === null || themeChapterJobId !== null}
+          onClick={handleAnalyzeChapterThemes}
+          title={themeChapterNotice}
+        >
+          {themeChapterJobId ? "Analysing…" : themeChapterResult ?? "Analyse Themes for this Chapter"}
         </Button>
         <Button variant="ghost" size="sm" onClick={onOpenDigest}>
           Open digest

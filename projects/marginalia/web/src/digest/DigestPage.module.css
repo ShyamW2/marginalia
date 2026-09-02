@@ -94,14 +94,6 @@
   flex-wrap: wrap;
 }
 
-/* M35 §G1: same layout as the Scan's DigestSpotlight `.dialRow` — two
-   ChapterDials side by side, sitting just above the buttons they scope. */
-.thematicRangeRow {
-  display: flex;
-  gap: 1.5rem;
-  margin-top: 0.6rem;
-}
-
 .pausedNotice {
   font-size: 0.8rem;
   color: var(--color-danger);
@@ -362,4 +354,284 @@
   font-size: 0.7rem;
   color: var(--color-text-muted);
   white-space: nowrap;
+}
+
+/* M38 §A/§B: the landing page's Tools block — the Analyse range, the
+   Analyse/Tag/Consolidate buttons, and their own error/legend output.
+   Same card chrome as .briefSection so the landing page reads as one
+   family of blocks rather than the old single monolithic toolbar box. */
+.toolsSection {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem 1.2rem;
+  margin-bottom: 1.5rem;
+  background: var(--color-bg-raised);
+}
+
+.toolsHeading {
+  font-family: var(--font-serif);
+  font-size: 1.05rem;
+  margin: 0 0 0.6rem;
+}
+
+.rangeRow {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+}
+
+.rangeItem {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.rangeLabel {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.toolsFooter {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.analyseWrap {
+  position: relative;
+}
+
+.analysePanel {
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 5;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.analyseOption {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.analyseModeRow {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin-left: 1.4rem;
+}
+
+.analyseModeOption {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.analyseHint {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin: 0 0 0 1.4rem;
+}
+
+.analyseActions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+/* M38 §A1: the per-chapter page — a stepper strip above the reused chapter
+   card. */
+.chapterView {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.backToGridLink {
+  align-self: flex-start;
+  color: var(--color-text-muted);
+  text-decoration: none;
+  font-size: 0.82rem;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+.backToGridLink:hover {
+  color: var(--color-text);
+  text-decoration: underline;
+}
+
+.chapterStepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.chapterPickerWrap {
+  position: relative;
+}
+
+.chapterTitleButton {
+  font-family: var(--font-serif);
+  font-size: 0.95rem;
+  color: var(--color-text);
+  background: none;
+  border: none;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  text-align: center;
+  max-width: 40ch;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chapterTitleButton:hover {
+  text-decoration: underline;
+}
+
+.chapterPickerPanel {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  max-height: 320px;
+  overflow-y: auto;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  padding: 0.3rem;
+}
+
+.chapterPickerEntry {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chapterPickerEntry:hover {
+  background: var(--color-bg-raised);
+}
+.chapterPickerEntryActive {
+  font-weight: 600;
+}
+
+/* M38 §A1: "Book so far, clickable to open in full view" — clamped by
+   default so the landing page's synopsis doesn't crowd out the grid. */
+.synopsisClamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: pointer;
+}
+.synopsis[role="button"] {
+  cursor: pointer;
+}
+
+/* M38 §A1/§A2: the chapter grid. */
+.gridSection {
+  margin-bottom: 2rem;
+}
+
+.gridHeading {
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  margin: 0 0 0.6rem;
+}
+
+.chapterGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.6rem;
+}
+
+.chapterCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  background: var(--color-bg-raised);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  min-height: 4.2rem;
+}
+.chapterCell:hover {
+  border-color: var(--color-accent);
+}
+
+.chapterCellNumber {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chapterCellName {
+  font-family: var(--font-serif);
+  font-size: 0.82rem;
+  line-height: 1.3;
+  color: var(--color-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.chapterCellBadges {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: auto;
+}
+
+.chapterBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+}
+
+.chapterBadgeOn {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-bg);
 }
