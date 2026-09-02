@@ -2527,11 +2527,11 @@ theme analysis with no way to choose one.
 
 #### A. A landing page in front of the chapter list
 
-- [ ] **A1.** Opening the Digest (the 'g' shortcut / "Open digest") lands on a landing view, not
+- [x] **A1.** Opening the Digest (the 'g' shortcut / "Open digest") lands on a landing view, not
       straight into the scrolling chapter list: Tools (§B's Analyse/Consolidate controls),
       Reading brief (as today), Book so far (as today, clickable to open in full view), and a
       chapter grid.
-- [ ] **A2.** The chapter grid shows section number + chapter name per cell, with small
+- [x] **A2.** The chapter grid shows section number + chapter name per cell, with small
       checkmarks/icons for plot digest, thematic analysis, and rendered audio presence —
       reusing the status each chapter card already computes (`c.digested`, `t?.analyzed`, the
       audio-presence lookup `DigestPage.tsx` already loads), not a new query.
@@ -2539,10 +2539,10 @@ theme analysis with no way to choose one.
       8's masking rule) — a grid cell must not leak plot/theme completion state for a chapter
       past the bookmark; a checkmark is itself a spoiler-shaped signal ("something happens
       here").
-- [ ] **A3.** Clicking a chapter cell opens that chapter's own page — plot digest, thematic
+- [x] **A3.** Clicking a chapter cell opens that chapter's own page — plot digest, thematic
       analysis, and quotes, scrollable — reusing the existing per-chapter card rendering
       (`DigestPage.tsx`'s chapter-card block) rather than rebuilding it.
-- [ ] **A4.** That per-chapter page shows the current chapter at top with `‹ ›` to step to the
+- [x] **A4.** That per-chapter page shows the current chapter at top with `‹ ›` to step to the
       next/previous chapter, and a clickable chapter title that opens the same chapter
       selector/navigator the reading pane already uses, to jump anywhere directly.
 
@@ -2552,21 +2552,21 @@ a chapter and stepping `‹ ›` through several never requires returning to the
 
 #### B. One Analyse control, and an explained "Saved"
 
-- [ ] **B1.** Replace the vertical `ChapterDial` FROM/TO range picker with the app's one
+- [x] **B1.** Replace the vertical `ChapterDial` FROM/TO range picker with the app's one
       horizontal `Slider`/`SliderDial` (`web/src/controls/Slider.tsx`, already used for
       reading-progress) — live popup shows the chapter title while dragging, per decision 12
       ("one control system"). Add a typeable section-number entry so setting a range on a
       60+-chapter book doesn't require dragging across all of it.
-- [ ] **B2.** Collapse "Re-read my notes" and "Re-read the book" behind one **Analyse** button.
+- [x] **B2.** Collapse "Re-read my notes" and "Re-read the book" behind one **Analyse** button.
       Pressing it opens a submenu: choose Plot and/or Themes; choosing Themes also offers
       today's fast-vs-full choice (the existing `mode: "notes" | "full"` on
       `StartThematicDigestBodySchema`) inline, not as a separate top-level button.
-- [ ] **B3.** "Distil book-level themes" stays a separate, clearly-labeled action — confirmed
+- [x] **B3.** "Distil book-level themes" stays a separate, clearly-labeled action — confirmed
       not redundant with per-chapter analysis (it folds per-chapter themes into book-level
       canonical themes across chapters analyzed at different times) — renamed **"Consolidate
       themes"** so its relationship to Analyse reads as a distinct second step, not a fourth
       unrelated button.
-- [ ] **B4.** The "Saved" state (today's Save-brief button, relabeled and disabled once saved)
+- [x] **B4.** The "Saved" state (today's Save-brief button, relabeled and disabled once saved)
       gets a tooltip/inline caption explaining what it means — today it reads as an unexplained
       greyed-out control with no affordance hinting it's Save's own settled state.
 
@@ -2576,11 +2576,11 @@ relationship; "Saved" no longer needs a human to explain it._
 
 #### C. Reading-pane split: Digest Plot vs. Analyse Themes
 
-- [ ] **C1.** "Digest this chapter" becomes a submenu: **"Digest Plot"** (today's existing
+- [x] **C1.** "Digest this chapter" becomes a submenu: **"Digest Plot"** (today's existing
       `handleDigestChapter` call, unchanged) and **"Analyse Themes for this Chapter"** — a
       single-chapter thematic run via the existing `/thematic` route with
       `spineStart = spineEnd = currentSpineIndex`, not a new endpoint.
-- [ ] **C2.** Hovering "Analyse Themes for this Chapter" shows a small notice, for transparency
+- [x] **C2.** Hovering "Analyse Themes for this Chapter" shows a small notice, for transparency
       before committing to the job: the reading brief's own text if one is set ("analysing
       themes as set in your reading brief: '{brief text}'"), or "analysing themes automatically"
       if none.
@@ -2590,13 +2590,13 @@ labeled choices, and a reader always knows what angle a theme run will take befo
 
 #### Verify
 
-- [ ] Open Digest on a book with several already-analyzed chapters and several undigested ones;
+- [x] Open Digest on a book with several already-analyzed chapters and several undigested ones;
       confirm the grid's checkmarks match reality and the bookmark mask hides completion state
       past it.
-- [ ] Set a chapter range by typing a section number into the new slider rather than dragging;
+- [x] Set a chapter range by typing a section number into the new slider rather than dragging;
       run Analyse → Themes only, fast mode; confirm it matches today's "Re-read my notes"
       behavior exactly.
-- [ ] From the reading pane, open the "Digest this chapter" submenu, hover "Analyse Themes for
+- [x] From the reading pane, open the "Digest this chapter" submenu, hover "Analyse Themes for
       this Chapter" with and without a reading brief set, and confirm the notice text matches
       each case.
 

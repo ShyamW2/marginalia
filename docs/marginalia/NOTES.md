@@ -7472,3 +7472,54 @@ The pinch commits to `readerFontScale` (so it reflows and holds for the rest of 
 session) but never reaches the server — Settings' own save is a whole-object `PUT`, and
 threading one pinch-driven field through that seam looked like a second, undiscussed decision
 riding along inside this one. Full reasoning in decisions.md, dated with this entry.
+
+## M38 — the Digest landing page, one Analyse control, the reading-pane split — 2026-09-01
+
+Implemented against East of Eden (Steinbeck) on the already-running dev server, hot-reloaded
+throughout with zero console errors. Two things TASKS.md left for the implementer to decide,
+flagged here rather than silently resolved:
+
+### A4's chapter picker is not literally `ChapterNav`
+
+TASKS.md asks for "the same chapter selector/navigator the reading pane already uses." The
+reader's `ChapterNav` (`web/src/reader/ChapterNav.tsx`) is built directly on the epub.js
+`Book`/`Rendition` it navigates — its `onSelect` calls `rendition.display(entry.href)`, and
+its list comes from `buildToc(book)`, which needs the actual book loaded. The Digest page
+never loads epub.js (it works entirely off `/api/resources/:id/digest`'s JSON); pulling
+epub.js into a status page just to share one component looked like a much bigger, riskier
+change than this milestone's "UI-only" framing intended. Built a new popover local to
+`DigestPage.tsx` instead, reproducing the look (same click-to-open, listbox-of-chapters
+pattern) and the click-to-jump behavior, driven by `status.chapters` instead of the book's
+TOC. Flagged in-code at the picker's own JSX. If this is wrong, the fix is either generalizing
+`ChapterNav` over an item type both pages can supply, or deciding the two really do want
+different pickers — a real design question, not a one-line change either way.
+
+### B2's "submenu" is an inline panel, not a floating dropdown
+
+No dropdown/menu primitive exists anywhere in this codebase (checked: only `ExpandingCluster`,
+which is icon-trigger-shaped and built for the reader's floating chrome, not a static page's
+labeled button). The Analyse button's "submenu" is an absolutely-positioned panel anchored to
+its own wrapper — checkboxes for Plot/Themes, a Fast/Full radio pair shown only when Themes is
+checked, a Run button — closed on outside click (`useOutsideClick`, the same primitive
+`ExpandingCluster` itself uses). Reads as a new, small control shape rather than a reuse of an
+existing one; worth a look under decision 12's "one control system" lens.
+
+### What was and wasn't run live
+
+Drove the whole surface with a headless Chromium against the live dev server: the landing
+page's Tools/brief/book-so-far/grid, a chapter cell into its own page, the `‹ ›` stepper, the
+chapter picker, the Analyse panel's checkboxes and Fast/Full radios, the range slider's
+click-to-type (typing "10" correctly jumped the reader to "S10 · Chapter 3"), and the reading
+pane's split "Digest Plot"/"Analyse Themes for this Chapter" buttons with their hover notice
+(confirmed both the brief-set and no-brief text). Zero console errors throughout. **Not run**:
+actually pressing Analyse → Run, or the reading pane's "Analyse Themes for this Chapter"
+button — both start a real thematic-analysis job against whatever LLM provider is configured,
+which costs real tokens/money on someone else's account without being asked to spend it.
+`handleRunAnalyse`'s Themes-only path calls the pre-existing `handleAnalyzeThemes` function
+completely unchanged (only how it's invoked moved), so this is a much smaller leap of faith
+than it would be for genuinely new logic — but it's still an inference, not a confirmed run,
+and worth actually firing once before trusting it fully.
+
+A reading brief was set and saved during the click-to-type verification pass above (to check
+C2's hover-notice text against a real value) and restored to empty afterward via the same
+`PUT /brief` route the Save button itself uses.
