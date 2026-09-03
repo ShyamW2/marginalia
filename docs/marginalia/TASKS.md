@@ -2835,25 +2835,77 @@ by a person.
 
 #### B. The spine, and the generated EPUB
 
-- [ ] **B1.** Section detection per PDF.md §4's fallback ladder: PDF outline → detected
+- [x] **B1.** Section detection per PDF.md §4's fallback ladder: PDF outline → detected
       headings → whole document if under 40 pages → fixed 10-page groups.
       ⚠️ **The spine unit is a section, never a page.** Page-as-section turns a 30-page paper
       into a 30-chapter book whose scan and digest are meaningless.
       ⚠️ Outline destinations are page-anchored; a section beginning one-third down a page
       splits that page's text at the heading, never rounds to the page boundary.
-- [ ] **B2.** Generate `LIBRARY_DIR/<id>.reflow.epub` — valid `container.xml`, an OPF whose
+      _Done: `sections.ts` (`buildSections`), the ladder in `detectBoundaries`. **One bug
+      found and fixed while generating a real EPUB from the §A8 fixture, not caught by A7's
+      unit tests**: a wrapped multi-line title (e.g. a long paper title spanning two lines)
+      independently qualified as a heading on *every* wrapped line, producing one section
+      per line instead of one section for the whole title. Fixed by coalescing a run of
+      consecutive heading-qualifying lines into a single boundary. Detail in NOTES.md "M39
+      §B — the generated EPUB, and two bugs testing it for real turned up". Leading content
+      before the first outline/heading boundary is never dropped (a synthetic boundary at
+      document start is inserted when needed) — covered by `sections.test.ts`._
+- [x] **B2.** Generate `LIBRARY_DIR/<id>.reflow.epub` — valid `container.xml`, an OPF whose
       spine is in reading order, embedded figure images, and stable `section-000.xhtml`
       hrefs. Byte-reproducible for a given (pdf, extractor version): no timestamps, no random
       ids, no map-iteration-order in the output. Regenerate rather than fail if it is missing
       at read time.
-- [ ] **B3.** ⚠️ Emit a real EPUB 3 **nav document** with one entry per section. A nav-less
+      _Done: `generateEpub.ts` (`generateReflowEpub`) — `container.xml`, `content.opf`
+      (manifest + spine), per-section XHTML, `images/fig-p<page>-<n>.png` for every
+      successfully-rasterized figure/equation. Every id/filename is derived from
+      `spineIndex`/page index (never `Date.now()`/random/map order), and every zip entry's
+      timestamp is pinned (`AdmZip`'s `entry.header.time`) — `generateEpub.test.ts` asserts
+      byte-for-byte identical output across two calls with the same sections.
+      ⚠️ **"Regenerate rather than fail if missing at read time" is not implemented — that's
+      a read-path behavior with nowhere to live until M39 §C wires up import/serving.** This
+      task is the generator function only._
+- [x] **B3.** ⚠️ Emit a real EPUB 3 **nav document** with one entry per section. A nav-less
       generated EPUB renders correctly and breaks `toc.ts`, `ChapterNav`, the chapter ticks
       and the percent mapping — it will look like four unrelated bugs.
-- [ ] **B4.** Section titles into `metadata.chapterTitles`, keyed by `String(spineIndex)`,
+      _Done: `OEBPS/nav.xhtml`, `epub:type="toc"`, one `<li><a>` per section — asserted in
+      `generateEpub.test.ts`. **Also emits `toc.ncx`, not asked for explicitly but required**
+      for B4 below to work at all — see that task's note._
+- [x] **B4.** Section titles into `metadata.chapterTitles`, keyed by `String(spineIndex)`,
       by the same route `extractChapterTitles` already uses.
-- [ ] **B5.** A test that generates an EPUB from a fixture PDF and parses it back with the
+      _Done, but not from the nav document._ `extractChapterTitles` (`epub.ts:85`) reads
+      titles from an NCX's `navMap`, not from EPUB3 `nav.xhtml` — noted at `epub.ts:80` as a
+      standing SPEC-GAP ("EPUB3 `nav.xhtml`... isn't parsed"). B3's nav alone would satisfy
+      "a real EPUB 3 nav document" but leave `metadata.chapterTitles` empty for every
+      generated PDF. `generateEpub.ts` emits both — an EPUB3 nav (B3) and an NCX
+      (`toc.ncx`) purely so the existing parser has something to read; both are valid and
+      correct, this is the standard EPUB3-with-EPUB2-fallback shape, not a hack for one
+      parser. `generateEpub.test.ts` round-trips through `extractEpub` and asserts
+      `metadata.chapterTitles` comes back populated._
+- [x] **B5.** A test that generates an EPUB from a fixture PDF and parses it back with the
       existing `extractEpub` — the round trip must produce the same section count and the
       same text as the extractor emitted directly.
+      _Done: `generateEpub.test.ts`'s first case. "Same text" is asserted whitespace-
+      normalized (collapsed to single spaces) rather than byte-identical — `blocksToText`'s
+      own paragraph separator is `"\n\n"`, `htmlToText`'s (the parser this round-trips
+      through) is a single `"\n"` between block elements, an existing, unrelated formatting
+      convention difference between two independently-built text-normalizers. This matters
+      less than it sounds: **`resource_text` rows come from `PdfSection.text` directly**
+      (M39 §C2, not built yet), never by re-parsing the generated EPUB — the `.reflow.epub`
+      is `PDF.md §2`'s "derived artifact... what the reflow pane renders", a separate
+      concern from what feeds resource_text. This test's job is content/section-boundary
+      fidelity through that rendering path, which whitespace-normalized comparison verifies
+      exactly as strictly._
+
+_Acceptance for B: verified live against two of the §A8 gate's fixtures (the two-column
+paper and the book-with-outline) — generated a `.reflow.epub` for each, inspected every zip
+entry, and round-tripped through `extractEpub`. Found and fixed a second real bug beyond
+B1's (NOTES.md "M39 §B"). The generated files are correct EPUBs: valid `container.xml`
+and OPF, an EPUB3 nav plus NCX, section text with figures/captions in the right reading
+position, and `metadata.chapterTitles` populated on round-trip. Not yet exercised: a PDF
+whose reflow spans 40+ pages (fixed 10-page-group titling) or one with an unresolvable
+outline entry (`/Fit`-style, y rounds to page boundary) — both are unit-tested but not
+driven through a real generated EPUB, since no real book-length PDF was available (same
+gap as A8)._
 
 #### C. Import, identity, and re-extraction
 

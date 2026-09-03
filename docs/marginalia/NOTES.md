@@ -6222,15 +6222,23 @@ ink.
   run of the same smoke check on the Mac (Node 20) — install, generate a small PDF, confirm
   `page.render()` produces a real PNG with no node-gyp/ABI error.
 
-- **M39 §A8 — the real gate is still owed.** The blocking gate ran against five synthetic
-  `pdfkit`-generated PDFs, not real ones (no corpus available in this environment; the
-  operator explicitly approved the substitution — see "M39 §A — the extractor, and what the
-  §A8 gate actually found", 2026-09-03, above). It was still worth doing — it caught two
-  real bugs — but a synthetic fixture built by the same process judging its output is
+- **M39 §A8 (and §B) — the real gate is still owed.** The blocking gate ran against five
+  synthetic `pdfkit`-generated PDFs, not real ones (no corpus available in this
+  environment; the operator explicitly approved the substitution — see "M39 §A — the
+  extractor, and what the §A8 gate actually found", 2026-09-03, above). It was still worth
+  doing — it caught two real bugs in §A and, separately, generating and reading an actual
+  `.reflow.epub` from two of those fixtures caught two more real bugs in §B (NOTES.md "M39
+  §B", same date) — but a synthetic fixture built by the same process judging its output is
   structurally the wrong shape for what this gate is for. Before M39 ships: run the
   extractor over five real PDFs (two-column paper w/ figures+equations, single-column
   preprint, report w/ tables, PDF-of-a-book w/ outline, a scanned document), dump plain
-  text, and have the operator read all five.
+  text, have the operator read all five, and generate + inspect a `.reflow.epub` for at
+  least the two-column paper and the book (§B was only exercised against the synthetic
+  versions of those two). Also still untested against a real PDF: the 40+-page fixed-
+  10-page-group section-titling rung (§B1) and a real book's outline, whose destination
+  types this session only observed as `/Fit` (pdfkit's own choice) — a real book generated
+  by LaTeX/hyperref or an office suite is more likely to use `/XYZ`, which is what carries
+  a real y-coordinate for the "split a page at its heading" rule to use.
 
 ## M24.5 §1-3 — distillation, the colour ramp, and library-wide matching — 2026-08-18
 
@@ -7634,3 +7642,60 @@ both bugs above lived in the session's scratchpad, not the repo — nothing PDF-
 shaped was committed. `extract.test.ts` (committed) keeps one small real end-to-end
 pdfkit-generated fixture as ongoing regression coverage of the pdfjs-dist integration
 itself, distinct from the pure-function unit tests.
+
+## M39 §B — the generated EPUB, and two bugs testing it for real turned up — 2026-09-03
+
+Implemented `server/src/library/pdf/sections.ts` (B1, the §4 fallback ladder) and
+`generateEpub.ts` (B2–B4, the real EPUB writer: `container.xml`, OPF, EPUB3 nav, NCX,
+per-section XHTML, embedded figure images). 12 new unit tests plus B5's round-trip test —
+44 tests total in `library/pdf/` after this section, all green, and the full suite (520
+tests across the server package) stayed green throughout.
+
+Unlike §A, this section's unit tests (`sections.test.ts`, `generateEpub.test.ts`) all
+passed on the first run — both bugs below were caught not by those tests but by actually
+generating a `.reflow.epub` from two of the §A8 gate's synthetic fixtures (the two-column
+paper and the book-with-outline) and reading the result: inspecting every zip entry,
+opening the generated XHTML, and round-tripping through `extractEpub`. Worth recording as
+a method note on its own: **unit tests against hand-built fixtures verify the rule you
+wrote is the rule you meant; they don't verify the rule covers what a real pipeline
+actually produces.** `sections.test.ts`'s heading-detection cases all used single-line
+headings, because that's what I wrote them to test — the bug below only exists for a
+*multi-line* heading, a case B1's own unit tests never constructed because I didn't think
+to construct it. Driving the real pipeline end to end is what surfaced it.
+
+**Bug 1 (fixed): a wrapped multi-line title produced one section per line.**
+`detectHeadingBoundaries` flagged every line whose font size cleared the modal-body
+threshold — correct in isolation, but a long title that word-wraps across two lines (very
+common; the two-column fixture's own title does this) produces *two* heading-qualifying
+lines, each independently starting a new section boundary. The gate's paper title split
+into "A Study of Bimodal Column Detection in Rendered" as one section and "Documents" as a
+second, one-line, near-empty section right after it. Fixed by coalescing a run of
+consecutive heading-qualifying lines (no non-heading line between them, same page) into a
+single boundary, joining their text with a space for the title. `sections.ts`'s
+`detectHeadingBoundaries`, comment explains the finding inline.
+
+**Bug 2 (fixed): the section's heading line rendered twice in the generated XHTML.**
+`sectionXhtml` always emits `<h1>{section.title}</h1>`, but `section.blocks` — the slice
+`sections.ts` produces — legitimately *includes* the heading line as the first `line`
+block (by design: `resource_text` should include a chapter's own heading, matching how
+EPUB spine text already works, so `sections.ts` never strips it). The result: every
+generated chapter opened with its title twice, once as `<h1>`, once as the first `<p>`
+with identical text. Fixed with `stripLeadingTitleLines` — drops the leading run of `line`
+blocks whose joined text matches `section.title` exactly (whitespace-normalized) before
+building the body paragraphs. Deliberately conservative: if the match isn't exact (an
+outline entry's title text can differ from the page's own heading text — different case,
+different punctuation, a shortened form), nothing is stripped, leaving the harmless
+duplication rather than risking silently eating real body content on a near-match.
+`resource_text`/`section.text` themselves are untouched by this fix — it only changes what
+the generated EPUB's XHTML renders, not what `blocksToText` returns.
+
+**Not found by this pass, and worth naming as a gap rather than a clean bill of health**:
+neither generated fixture exercised the 40+-page fixed-10-page-group rung, an unresolvable
+outline entry (this session's `/Fit` case from §A rounds cleanly to the page boundary, but
+that's the *degenerate* case — a partially-resolvable outline mixing `/XYZ` and `/Fit`
+entries was never generated), or a section whose text is empty (front matter with truly no
+text before the first heading). All three are covered by `sections.test.ts`'s unit tests
+directly, which is a real form of coverage, but not the same as having watched them
+produce an actual `.reflow.epub` and read it — the same caveat §A8's NOTES.md entry
+records for the extractor itself applies here: **the real gate, with a real long paper or
+book-length PDF, is still owed** before this ships.
