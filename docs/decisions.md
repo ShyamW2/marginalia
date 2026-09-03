@@ -32,6 +32,221 @@ plain crossfade**, not the opening's own richer 2D fly-and-rotate fallback. Reco
 deliberate cut, not a gap found later — a fully symmetric list-view put-down is future
 work.
 
+## 2026-09-03 (M39 handoff audit) — four corrections before implementation
+
+Audit of M39 against OPUS.md's handoff test ("could this be built two materially different
+ways from the text as written?") before starting an implementation session. Four things
+were underdetermined or wrong; all four are now fixed in TASKS.md and PDF.md.
+
+**1. "Scanned" was a third `kind`, and it shouldn't have been.** Settled decision 18 says
+`kind` selects a prompt/schema pair — and `scan` selects none, so the enum meant two things
+at once and one of its values broke the rule the decision exists to state. Genre and "does
+this have a text layer" are **independent axes**: a scanned novel is a real thing the day
+OCR arrives. `kind` is now `prose | document` (genre only) and the text layer is its own
+flag, `resources.text_layer INTEGER NOT NULL DEFAULT 1`.
+
+**2. PDF import is a job; EPUB import stays synchronous.** They are genuinely different
+costs — EPUB extraction is an unzip and an HTML parse, PDF extraction walks every page's
+text items, detects columns and rasterizes regions. Left synchronous, a 400-page PDF blocks
+the single-process server and therefore blocks *reading* for the length of the import.
+`JobKindSchema` gains `"pdf-import"`; progress reports per page. ⚠️ Recorded explicitly:
+do **not** unify by making EPUB import a job too — it is instant, the Desk's optimistic flow
+depends on the synchronous route, and that is unrelated work hiding inside this milestone.
+
+**3. The import format guard is three paths, not one.** `DeskPage.tsx`'s `accept` attribute,
+its drop handler, and `routes/resources.ts`'s
+`originalname.toLowerCase().endsWith(".epub")` check. Missing the third means every PDF is
+rejected server-side in a way the client cannot explain. Also added designed failure states —
+`encrypted_pdf` and `invalid_pdf`, each with its own Desk message — while a PDF with **no
+text layer is explicitly not a failure**: it imports as a scan.
+
+**4. The canvas dependency, and why `@napi-rs/canvas` rather than node-canvas.** pdf.js's
+`getTextContent()` is pure JS, but `page.render()` needs a canvas, and that is what the
+equation bands, the figures and the PDF cover all go through. Node has none, so this is a
+native module — in a repo that has already lost time to `better-sqlite3` ABI mismatches
+killing the server silently across the Mac (Node 20) / Linux (Node 24) split. The
+recommendation, accepted, was `@napi-rs/canvas`: it ships **prebuilt N-API binaries**, so
+there is no node-gyp step and no per-Node-ABI rebuild — N-API's forward compatibility across
+Node majors is precisely the property the `better-sqlite3` failure lacked. The alternatives
+were text-only reflow with figures deferred to M41 (safest, but a paper without its figures
+is a notably weaker product) and client-side rasterization (no native dep, but it splits the
+import across the wire and breaks the import-as-job model above).
+
+⚠️ **Rasterization degrades; it never fails the import.** Canvas missing or throwing →
+extraction continues text-only, the caption still enters `resource_text`, the `<figure>` is
+omitted rather than half-written, and it logs once. A machine where the native module didn't
+install gets papers without pictures, not a library it cannot add to. **A0 requires
+`page.render()` be confirmed on both machines before §A5/§A6 are written.**
+
+**Left open on purpose.** The `document` chapter schema's field list (`contributions`,
+`methods`, `findings`, `limitations`) is proposed, not measured — worth revisiting once a
+real paper has been digested, since the fields that come back empty are the wrong fields.
+
+## 2026-09-03 (later) — Continuous scroll, and the seam it belongs to
+
+Operator request in the same session, after reading the PDF arc docs: a third reader view
+beyond slide and curl — continuous scroll, no pagination, no page numbers, keeping the
+book % and adding a chapter %. Scoped as **M40 §C**; spec in `docs/marginalia/PDF.md` §7.4.
+
+**This was already a recorded future arc, and the earlier analysis holds.** decisions.md
+2026-07-29 ("A scrolling manuscript mode") ruled that it reopens PRODUCT.md's "pagination
+won", that the real cost is not the scrolling but that *every reader effect built since M10
+assumes pages*, and that it is therefore a **second reading mode with its own affordances,
+not a toggle**. Nothing found today contradicts any of that.
+
+**What changed is where it lives.** In July, a scroll mode meant another branch inside
+`ReaderView` — which is precisely the fork M40 §A exists to prevent. With the renderer seam
+it is a **capability profile** instead, and this is the argument for keeping M40 as its own
+milestone rather than folding it into M41 as preparation: a seam validated by one new
+implementation is weakly validated. A scrolling reflowable surface and a fixed-page image
+surface are genuinely different consumers, and building the first proves the interface
+before the second depends on it. It also answers the practical objection that a pure
+refactor milestone is easy to defer — M40 now ships something you can read with.
+
+**The open question is closed: per-section `flow: "scrolled-doc"`, not the continuous
+manager.** The 2026-07-29 entry required this be decided before building ("they are
+different products"). The argument is the product's own shape rather than the library's
+quality: this app is chapter-shaped in four places that infinite cross-chapter scroll would
+dissolve — M17's digest unit, decision 8a's spoiler mask filtering at
+`spine_index <= bookmark`, audio's per-section manifests, and **M32's chapter-end prompt**,
+a designed moment at exactly the boundary that would stop existing. A surface that
+pre-renders the next chapter into view also quietly undermines the mask's premise. *A
+secondary concern — that epub.js's continuous manager is its least-maintained path and prone
+to scroll-position jitter — is reasoned, not measured, and is deliberately not the load-bearing
+argument.*
+
+**One `EpubRenderer` with a `flow` construction option, not two classes.** `flow` is fixed
+at `renderTo` time so a mode switch destroys and recreates the rendition, but marks, CFI
+handling, selection and theming are all shared; two classes duplicates ~95% of the code.
+
+**Progress readout.** Page numbers go off via `capabilities.pageNumbers: false` rather than
+a new `PageNumberMode` value. Book % is unchanged from `book.locations`. Chapter % is
+`scrollTop / (scrollHeight - clientHeight)` measured directly. ⚠️ It must **not** come from
+`location.start.displayed.page/.total`, which is what `pageNumber.ts`'s `"chapter"` mode
+reads today — that is a *paginated* measure and does not mean what its name suggests under
+`scrolled-doc`. This is the most likely wrong turn in §C, because the existing field looks
+like exactly the right one.
+
+**Three traps recorded because each will present as a bug somewhere else.** Annotation
+panels drift, since `ThreadPanel`'s `panelDx`/`panelDy` are offsets from a mark's anchor rect
+that now moves continuously (this is what §7.2's `markRect` is for, and it will look like a
+`ThreadPanel` bug). M11's turn zones and M20's drag-to-peel must be **unbound, not hidden**,
+or a live pointer handler eats the scroll gesture and it reads as "scrolling feels broken".
+And reading position must save on a debounced scroll, or `PUT /:id/position` runs hot for
+the whole session.
+
+**Two corrections to the docs written earlier today**, both surfaced by operator questions
+and both real gaps rather than wording:
+
+- **`reading_state.location` is a CFI too** (`migrations.ts:41`, `TEXT NOT NULL`). The M40
+  anchor amendment covered `highlights.cfi` and missed this one, which is easy to miss
+  because it is not on the `highlights` table. It needs no migration — it is already TEXT —
+  but it needs a serialization convention that **accepts a bare CFI on read**, since every
+  row written before M40 is one. A position parser assuming a CFI throws on the first PDF,
+  or silently reopens a book at chapter 1. Now PDF.md §7.3 and TASKS M40 §B4.
+- **PDF.md §7.2's interface was a sketch presented as a specification.** It had no
+  unsubscribe from `onSelection` (a listener leak into a destroyed iframe across route
+  changes), no location-change event at all despite `ReaderView` consuming
+  `rendition.on("relocated")`, no theming or font-scale entry points despite
+  `useEpubThemeVars` existing, no way to position an annotation panel, and no separation
+  between a highlight mark and audio's transient tint — two bookkeepings `ReaderView`
+  already keeps apart deliberately. Rewritten in full, with the four things the shape exists
+  to force spelled out and an explicit list of what is deliberately *not* on the seam
+  (search, TOC, anything 3D).
+
+## 2026-09-03 — PDF: the format arc (M39–M41), and the seam that didn't exist
+
+Design session on the operator's PDF proposal ("open digital PDFs, with two options:
+convert to EPUB and read with the existing reading pane, or read as a PDF but keep the
+inline LLM features"). Full specification: `docs/marginalia/PDF.md`. Work: TASKS.md
+M39–M41.
+
+**Three premise findings, in the order they change the shape of the idea.**
+
+**1. `ResourceRenderer` does not exist.** CLAUDE.md's engineering discipline has listed it
+since the beginning as one of four narrow seams, alongside `LLMProvider`,
+`AnnotationStore` and `VaultCompiler`. Grep over `server/`, `web/` and `shared/` returns
+zero occurrences. The reading pane is epub.js top to bottom: `ReaderView.tsx` imports
+`Book`, `Rendition`, `Contents` and `EpubCFI` directly, highlight painting is
+`rendition.annotations` keyed by CFI string, and `toc.ts` parses epub.js's nav model. So
+"a PDF renderer is a second implementation of an existing seam" was false, and it is
+exactly the failure OPUS.md names — a document claiming something the code does not do.
+It mattered here because it made the native-PDF option look an order of magnitude cheaper
+than it is. **The document is now corrected rather than the claim quietly kept:**
+CLAUDE.md marks the seam as not-yet-existing, and M40 §A is where it becomes real.
+
+**2. The LLM half is already format-agnostic, and that is the whole leverage.** Every AI
+feature — the digest, the thematic substrate, the scan, search, the context ladder, audio
+rendering, define, the glossary, the vault compiler — reads one table,
+`resource_text(resource_id, spine_index, href, text)`, and **not one of them touches
+epub.js**; epub.js is a `web/` dependency only, and the server does its own extraction
+with adm-zip + htmlparser2. 90 files touch `spine_index`; none touch the renderer.
+Anything that can emit ordered text sections therefore inherits the entire AI feature set
+for free. This is why reflow-to-EPUB is nearly free and why it ships first.
+
+**3. "Maybe plot summary is the wrong term" was pointing at a schema, not a label.**
+`build.ts`'s chapter prompt returns `characters` and its book reduce returns `cast` and
+`narratorGender` — the digest is fiction-shaped at the schema level. On a paper those
+fields are noise that then flows into the context ladder and the scan, and `cast` is not
+removable because it drives multi-voice audio casting. Resolved with a `resources.kind`
+axis (`prose` | `document`) that selects one alternate prompt/schema pair and **nothing
+else**; a `document` yields an empty cast and audio falls back to M21 single-voice, which
+already exists. The rename itself ("Digest Plot" → "Summarise") is about six strings and
+touches no column, job kind or stored key.
+
+**The scoping catch worth recording.** The operator's own framing — "if it's a crappy
+scan, for now it just opens and allows a preview" — requires a PDF viewer, so the
+reflow-only option was never actually renderer-free. Under the chosen scope this is moot,
+but the reasoning is preserved because it is the argument for why the scan path is cheap
+once the native pane exists at all: a preview is the native pane with
+`capabilities.textSelection = false`.
+
+**Decisions taken.**
+
+- **PDF resource id is `sha256(pdfBytes ‖ ":" ‖ EXTRACTOR_VERSION)`.** An extractor that
+  will certainly be iterated is in direct tension with decision 5 (immutable-on-import):
+  either improvements never reach imported PDFs, or re-extraction rewrites text under live
+  highlights and rots every anchor. Versioning the id resolves it without exception — a
+  re-import after an extractor upgrade is a *new resource beside the old one*, never a
+  mutation. The cost is that highlights don't follow, mitigated by a re-anchor CLI that
+  reuses the existing text-first anchoring (`findAnchorInText`, `locateAnchor`). No UI:
+  a reader must never trigger a silent re-extraction. EPUB identity is untouched.
+- **The spine unit for a reflowed PDF is a detected section, never a page.** Every LLM
+  feature in the app is chapter-shaped — the digest's unit, the scan's bands, the context
+  ladder's selection, the spoiler mask's `spine_index <= bookmark` filter, audio's
+  per-section manifests. Page-as-section turns a 30-page paper into a 30-chapter book with
+  a meaningless scan. Fallback ladder: PDF outline → detected headings → whole document if
+  under 40 pages → fixed 10-page groups.
+- **Figures and equations are rasterized and embedded, never reconstructed.** For a paper
+  the figures *are* the content; reflowed text without them is a worse product than the
+  PDF. Equations arrive as glyph soup and reconstructing them poisons the digest, search
+  and narration. The caption enters `resource_text`; the image never does.
+- **`Locator` — `(sectionIndex, offset, length)` — becomes the primary anchor; the CFI
+  demotes to an EPUB-only fast path.** SPEC.md's "the CFI range is the primary anchor"
+  cannot hold for a format with no CFI. This is a *reordering* of the existing resolution
+  ladder, not a replacement: the CFI stays step 1 for EPUB and EPUB behaviour does not
+  change. Decision 11's 2026-08-31 clarification already permits it — an offset code
+  computed by locating text is that decision being followed, and an offset into
+  `resource_text` cannot rot because the resource is immutable.
+- **`ReaderView` is refactored before `PdfRenderer` is written, not after.** Measured:
+  4,750 lines, 116 `useState`/`useRef` — REFACTORING.md's textbook "long *and* stateful"
+  outlier, about to receive risky work, which is that document's own highest-value timing.
+  The chrome stays format-blind and asks `capabilities`, never the format. Two copies of a
+  4,750-line component is the worst outcome available in this arc and is what happens by
+  default if the refactor is deferred.
+
+**Preserved disagreement.** The recommendation was **reflow only** for M39, with the
+native pane deferred to a future arc behind a named gate, on the grounds that (a) the
+native pane inherits none of the reading pane's last twenty milestones — highlight
+painting, anchoring, pagination, spread, margins, the M20/M27 fold, the find bar's marks,
+audio sentence-follow — and (b) embedding figures in the reflowed EPUB captures most of
+the native pane's value for a fraction of the work, so building both at once risks
+spending three milestones before knowing whether extraction is good enough for either to
+be worth reading. **The operator chose the full arc, and that is the decision.** The
+concern is answered structurally rather than by argument: M39 §A is a blocking measurement
+gate on extraction quality read over five real PDFs, and M40 §A is a blocking refactor —
+so if extraction turns out to be poor, it is discovered in M39 §A rather than in M41.
+
 ## 2026-09-01 (post-M37) — three bug fixes, and a recurring staleness bug worth naming
 
 **The tasks tray's SSE stream now reconnects and has a heartbeat.** Found live on the

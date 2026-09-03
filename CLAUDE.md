@@ -19,6 +19,10 @@ distilled insights compile into an Obsidian vault.
   **binding for M24.7**; the `.dc.html` design frames it cites live in the synced design
   project, not in this repo
 - `docs/marginalia/AUDIO.md` — audio/TTS subsystem spec (engine seam, casting, cache) — **binding for M21+**
+- `docs/marginalia/PDF.md` — the PDF format arc: extraction rules, the generated-EPUB
+  contract, the spine unit, document kinds, and the `ResourceRenderer` seam — **binding
+  for M39–M41**. Read §2 before touching resource identity and §4 before touching the
+  spine; both encode traps that break silently.
 - `docs/marginalia/PAGE_CURL.md` — the page curl (M20): the shipped model, its invariants,
   the geometry of what it *cannot* do in 2D, and how the page snapshot is built (§5 — four
   of its lines exist because of failures that render a plausible but wrong bitmap). Read
@@ -64,6 +68,10 @@ doc), never by drift.
    the seam can prove it cannot.*
 3. **EPUB first.** Nail reflowable books (rendering, typography, CFI anchoring) before
    PDF or Markdown. The core loop must feel wonderful in one format before breadth.
+   *Condition met 2026-09-03:* after M38 the EPUB loop is nailed, so **PDF is scheduled**
+   as M39–M41 (`docs/marginalia/PDF.md`). This is the gate opening as designed, not the
+   decision being overturned — and it opens for PDF only. **Markdown stays parked**, and
+   "we're doing formats now" is not an argument for starting it.
 4. **Node server + browser UI.** Local server owns the library, annotation store, and
    LLM calls; the browser renders. Wrap in Tauri/Electron only after the product is proven.
 5. **Immutable-on-import library.** Importing a resource snapshots it (content-addressed).
@@ -202,6 +210,67 @@ doc), never by drift.
    a kind hue on purpose (M30 moves `slate` blue→purple) means re-running **both** solves and
    recording the new minimum separations. *A fifth kind was offered and declined — the four
    slots already say what was wanted; revisit only when a fifth can be named.*
+17. **A format is a renderer, not a second app** (2026-09-03, M39–M41). PDF support is
+   scheduled, and it is bounded by four rules so it stays one product. **(a) The text
+   substrate is the seam that matters.** Every LLM feature — digest, thematic substrate,
+   scan, search, the context ladder, audio, define, glossary, vault — reads
+   `resource_text(resource_id, spine_index, href, text)` and touches epub.js nowhere, so
+   *anything that can emit ordered text sections inherits the whole feature set*. A new
+   format's first job is to produce good rows in that table; the renderer is downstream of
+   that, which is why M39 ships reflow-to-EPUB before M41 ships a native pane, and why M39
+   §A is a blocking gate on extraction quality read over five real PDFs. **(b) The spine
+   unit is a section, never a page** — every AI feature in the app is chapter-shaped
+   (the digest's unit, the scan's bands, the mask's `spine_index <= bookmark` filter,
+   audio's per-section manifests), so page-as-section turns a 30-page paper into a
+   30-chapter book with a meaningless scan. **(c) `ResourceRenderer` becomes real in M40,
+   and the chrome asks `capabilities`, never the format** — a `if (format === 'pdf')` in
+   `ReaderView` is the seam being bypassed. `ReaderView` (4,750 lines, 116 state hooks
+   when measured) is refactored *before* the second renderer is written, not after;
+   two copies of it is the worst outcome available in this arc. *Amended 2026-09-03
+   (later), the same day:* **the seam has three consumers, only one of which is a PDF** —
+   a scrolling EPUB surface (M40 §C), the native PDF pane, and the scan preview. That is
+   deliberate: a seam validated by one new implementation is weakly validated. It also
+   settles where a **continuous scroll reading mode** lives — it is a *capability profile*
+   on this seam, never another branch inside `ReaderView`, which is what made it
+   unattractive when it was analysed as a future arc in July. Scroll reopens PRODUCT.md's
+   "pagination won" deliberately, stays a **second mode with its own affordances rather
+   than a toggle** (every reader effect since M10 assumes pages), and is **per-section
+   `flow: "scrolled-doc"`, never the continuous cross-chapter manager** — the app is
+   chapter-shaped in four places infinite scroll would dissolve (M17's digest unit,
+   decision 8a's mask, audio's per-section manifests, M32's chapter-end prompt).
+   See PDF.md §7.4. **(d) The primary anchor
+   becomes the format-neutral `Locator` — `(sectionIndex, offset, length)` — and the CFI
+   demotes to an EPUB-only fast path.** This amends SPEC.md's "the CFI range is the
+   primary anchor", which cannot hold for a format that has no CFI; it is a *reordering*
+   of the existing resolution ladder, and EPUB behaviour does not change. Decision 11's
+   2026-08-31 clarification already permits it: an offset **code computed** by locating
+   text is that decision being followed, and an offset into `resource_text` cannot rot
+   because the resource is immutable (decision 5). *The cost accepted with eyes open:* an
+   extractor that will be iterated fights immutability, so a PDF's id includes its
+   extractor version and an upgrade produces a **new resource beside the old one** rather
+   than rewriting text under live highlights — highlights are moved by an explicit CLI, and
+   nothing in the UI may ever trigger a re-extraction. *A reflow-only M39 with the native
+   pane deferred was recommended and declined — see decisions.md 2026-09-03 for both sides.*
+18. **A book's genre is a schema, not a label** (2026-09-03, M39 §D). The digest is
+   fiction-shaped at the schema level, not the copy level: chapter digests return
+   `characters`, book digests return `cast` and `narratorGender`, and `cast` is not
+   removable because it drives multi-voice audio casting (AUDIO.md). So `resources.kind`
+   (`prose` | `document`) **selects one alternate prompt/schema pair in
+   `build.ts` and selects nothing else** — the job machinery, the substrate, the thematic
+   layer (already genre-neutral), the scan, the context ladder and the vault compiler are
+   unchanged. A `document` yields an empty cast and audio falls back to M21's existing
+   single-voice narration; no new audio path. `kind` is reader-settable both directions —
+   a PDF of a novel and an EPUB of a textbook both exist — and changing it never
+   invalidates a stored digest, which renders from the fields it was built with. The
+   user-facing rename is "Digest Plot" → **"Summarise"**, pairing as *Summarise / Analyse
+   Themes*; **no column, job kind, API field or stored JSON key is renamed**, because that
+   buys nothing and costs a migration. *Corrected 2026-09-03 (later), before implementation:*
+   "scanned" is **not** a third kind. Genre and "does this have a text layer" are
+   independent axes — a scanned novel is a real thing, and it becomes one the day OCR
+   arrives — so the text layer is its own flag (`resources.text_layer`), and `kind` stays
+   purely the genre that selects a schema. Putting `scan` in the kind enum made the enum
+   mean two things and gave one of its values no schema to select, which is this decision's
+   own rule broken by its own encoding.
 
 ## Discipline
 
@@ -223,7 +292,9 @@ doc), never by drift.
   ask → answer → publish to vault) before widening any layer.
 
 ### Engineering discipline
-- **One narrow seam per subsystem.** `LLMProvider`, `ResourceRenderer` (per format),
+- **One narrow seam per subsystem.** `LLMProvider`, `ResourceRenderer` (per format —
+  ⚠️ **aspirational until M40**: as of 2026-09-03 it does not exist in the code, and the
+  reading pane is epub.js top to bottom; M40 §A creates it, see settled decision 17),
   `AnnotationStore`, `VaultCompiler`. New formats and providers are new implementations,
   not new call sites.
 - **Anchors follow the W3C Web Annotation model**: exact quote + prefix/suffix context +

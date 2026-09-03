@@ -6,8 +6,8 @@ Obsidian vault.*
 
 ## The core loop
 
-1. **Import** a resource (EPUB first; PDF, Markdown later) into a local, immutable,
-   content-addressed library.
+1. **Import** a resource (EPUB first; PDF scheduled as M39–M41, Markdown later) into a
+   local, immutable, content-addressed library.
 2. **Read** it in a beautiful reader — real typography, pagination, remembered position,
    light/dark themes.
 3. **Highlight** a passage. A subtle affordance appears (not a modal, not a context-menu
@@ -66,8 +66,13 @@ In: EPUB import/render, highlights, inline Q&A threads (streaming), thread persi
 and revisiting, publish-to-vault with concept linking, provider config (at least Claude +
 one OpenAI-compatible endpoint).
 
-Out (explicitly deferred): PDF, Markdown, free-floating chat, two-way vault sync,
+Out (explicitly deferred): Markdown, free-floating chat, two-way vault sync,
 embeddings/semantic search, multi-device, OCR, mobile.
+
+_(PDF left this list on 2026-09-03, once settled decision 3's "nail EPUB first" condition
+was met at M38. It is scoped as **M39–M41** — reflow, the renderer seam, the native pane —
+against `docs/marginalia/PDF.md`. **OCR stays out**, and a scanned PDF is a designed
+preview-only state rather than a supported format; see PDF.md §6.)_
 
 ## Open questions — all resolved (2026-07-19)
 
@@ -77,3 +82,7 @@ embeddings/semantic search, multi-device, OCR, mobile.
 - Highlight colors / kinds: **yes, in M7** — four semantic kinds
   (rose/sage/honey/slate), muted washes per DESIGN.md; user tags follow in M9.
 - Pagination vs. scroll: **pagination won** (shipped in M2, feel confirmed).
+  _Reopened deliberately 2026-09-03:_ scroll returns as **M40 §C**, a *second* reading mode
+  with its own affordances — not a replacement and not a toggle. Pagination remains the
+  default and remains what the fold, spread, turn zones and page numbers are built for. See
+  `docs/marginalia/PDF.md` §7.4.

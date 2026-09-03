@@ -2720,6 +2720,363 @@ labeled choices, and a reader always knows what angle a theme run will take befo
 
 ---
 
+### M39 — PDF, reflowed: extraction, the generated EPUB, and document kinds
+
+Scoped 2026-09-03 (design session on the operator's PDF proposal). **Binding spec:
+`docs/marginalia/PDF.md` §1–§6.** Reasoning and the preserved disagreement:
+decisions.md 2026-09-03. First of three — M40 builds the renderer seam, M41 the native
+pane. Amends settled decision 3 ("EPUB first"), whose condition is met as of M38.
+
+**Why it exists:** the operator wants to read scientific papers with the inline LLM the
+way they read books. The finding that shapes this milestone is that every AI feature in
+the app — digest, thematic substrate, scan, search, context ladder, audio, define,
+glossary, vault — reads `resource_text(resource_id, spine_index, href, text)` and touches
+epub.js **nowhere**. So a PDF that can be turned into ordered text sections inherits the
+whole feature set. M39 does exactly that and no more: no new renderer, no new seam.
+
+**Verification:** M39 is **not** a headless milestone — §C4, §D6 and §E3 are UI, and its
+acceptance criterion is a real paper read in the real reader. It needs live driving
+(CLAUDE.md working practice), on top of §A8's human read of five extraction dumps. The only
+section of this arc with no user-visible surface is **M40 §A/§B/§D**, and that is exactly
+why M40 §A5's acceptance insists on driving an EPUB live: an invisible refactor that
+silently breaks the fold or audio-follow will not show up in a test run.
+
+⚠️ **§A is a blocking gate.** Extraction quality, not rendering, is the risk in this arc.
+An extractor that interleaves columns produces text that reads fine in a diff and destroys
+every downstream feature silently. Do not start §B until §A's five outputs have been read
+by a person.
+
+#### A. The extractor, and the gate
+
+- [ ] **A0.** Dependencies: `pdfjs-dist` (Node build) and **`@napi-rs/canvas`** — chosen
+      over node-canvas for its prebuilt N-API binaries (no node-gyp, no per-ABI rebuild), the
+      property `better-sqlite3` lacks and that has already cost this repo silent server
+      deaths across the Mac/Linux split. Install and confirm `page.render()` produces a PNG
+      **on both machines** before writing §A5/§A6.
+      ⚠️ **Rasterization degrades, never fails the import.** Canvas missing or throwing →
+      extraction continues text-only, the caption still enters `resource_text`, the
+      `<figure>` is omitted rather than half-written, and it logs once.
+- [ ] **A1.** `server/src/library/pdf/` — extract text from a PDF with `pdfjs-dist` (Node
+      build), server-side, matching where `epub.ts` already lives. Everything derives from
+      `getTextContent()` items' `transform`/`width`/`height`/`fontName`; no heuristic may
+      depend on the order items happen to arrive in.
+- [ ] **A2.** Header/footer removal per PDF.md §3.1. ⚠️ The test is band position **and**
+      digit-stripped repetition across ≥3 pages. Position alone eats a paper's title and
+      its first heading on page 1.
+- [ ] **A3.** Column detection per PDF.md §3.2 — bimodal left-edge histogram, ≥5% page-width
+      gap, ≥25% of items per mode; single column is the default and the fallback.
+      ⚠️ An item wider than 70% of page width (title block, abstract, full-width figure) is
+      emitted in y-order outside the column sort, or the title lands mid-introduction.
+- [ ] **A4.** Line assembly, de-hyphenation and paragraph breaks per PDF.md §3.3.
+      ⚠️ Never de-hyphenate before a capital or a digit — "Fourier-Transform" and "GPT-4"
+      are not line breaks.
+- [ ] **A5.** Equation bands are detected and rasterized, never reconstructed (PDF.md §3.4).
+      Nothing enters `resource_text` for one.
+- [ ] **A6.** Figure/table regions are detected by whitespace bounds + a caption matching
+      `/^(Fig(ure)?|Table|Algorithm|Chart|Scheme)\.?\s*\d+/i`, rasterized at 2× to PNG.
+      ⚠️ The image never enters `resource_text`; the caption always does.
+- [ ] **A7.** Unit tests over synthetic `getTextContent()` fixtures for A2–A4: a two-column
+      page, a page with a full-width title, a hyphenated line break, a false hyphen, and a
+      repeated running header.
+- [ ] **A8. GATE.** Run the extractor over five real PDFs of different shapes — a two-column
+      paper with figures and equations, a single-column preprint, a report with tables, a
+      PDF-of-a-book with an outline, a scanned document — dump plain text, and read all five.
+      _Acceptance: each of the four digital outputs is readable prose in reading order, with
+      no interleaved columns, no running headers inline, and no equation glyph-soup. The scan
+      yields near-zero characters. **Record the result in NOTES.md**, including what was
+      wrong and what was accepted, whether or not it passes._
+
+#### B. The spine, and the generated EPUB
+
+- [ ] **B1.** Section detection per PDF.md §4's fallback ladder: PDF outline → detected
+      headings → whole document if under 40 pages → fixed 10-page groups.
+      ⚠️ **The spine unit is a section, never a page.** Page-as-section turns a 30-page paper
+      into a 30-chapter book whose scan and digest are meaningless.
+      ⚠️ Outline destinations are page-anchored; a section beginning one-third down a page
+      splits that page's text at the heading, never rounds to the page boundary.
+- [ ] **B2.** Generate `LIBRARY_DIR/<id>.reflow.epub` — valid `container.xml`, an OPF whose
+      spine is in reading order, embedded figure images, and stable `section-000.xhtml`
+      hrefs. Byte-reproducible for a given (pdf, extractor version): no timestamps, no random
+      ids, no map-iteration-order in the output. Regenerate rather than fail if it is missing
+      at read time.
+- [ ] **B3.** ⚠️ Emit a real EPUB 3 **nav document** with one entry per section. A nav-less
+      generated EPUB renders correctly and breaks `toc.ts`, `ChapterNav`, the chapter ticks
+      and the percent mapping — it will look like four unrelated bugs.
+- [ ] **B4.** Section titles into `metadata.chapterTitles`, keyed by `String(spineIndex)`,
+      by the same route `extractChapterTitles` already uses.
+- [ ] **B5.** A test that generates an EPUB from a fixture PDF and parses it back with the
+      existing `extractEpub` — the round trip must produce the same section count and the
+      same text as the extractor emitted directly.
+
+#### C. Import, identity, and re-extraction
+
+- [ ] **C1.** `EXTRACTOR_VERSION` as a single integer constant in
+      `server/src/library/pdf/version.ts`. PDF resource id is
+      `sha256(pdfBytes ‖ ":" ‖ EXTRACTOR_VERSION)` (PDF.md §2).
+      ⚠️ **EPUB identity does not change** — `importEpub` keeps `sha256(bytes)`. Do not
+      unify the two; EPUB ids are already in live databases.
+- [ ] **C2.** `importPdf` alongside `importEpub`, writing `format: 'pdf'`, the `.pdf` and
+      `.reflow.epub` files, and `resource_text` rows — same file-before-transaction ordering
+      `importResource.ts` already uses, and the same rollback on failure.
+- [ ] **C3.** The resource file route serves `<id>.reflow.epub` for a `format: 'pdf'`
+      resource with `text_layer = 1`, and `<id>.pdf` when `text_layer = 0`.
+- [ ] **C4.** `DeskPage.tsx`'s picker accepts `.pdf` as well as `.epub` (`accept` attribute
+      **and** the drop handler — they are separate paths), and the empty-state copy updates.
+      ⚠️ The **server-side guard is a third path**: `routes/resources.ts`'s
+      `originalname.toLowerCase().endsWith(".epub")` check rejects every PDF before it
+      reaches `importPdf`. All three change together or the feature looks broken in a way
+      the client can't explain.
+- [ ] **C5.** **PDF import runs as a job; EPUB import stays synchronous** (PDF.md §2.1).
+      `JobKindSchema` gains `"pdf-import"`; `POST /api/resources` returns a `jobId` for a
+      PDF and the finished `Resource` for an EPUB; progress reports per page so the tray can
+      show "page 12 of 30". A 400-page PDF must not block the single-process server, which
+      would block *reading* for the length of the import.
+      ⚠️ Do not make EPUB import a job too — it is instant, the Desk's optimistic flow
+      depends on the synchronous route, and that is unrelated work hiding inside this
+      milestone.
+- [ ] **C6.** Designed failure states per PDF.md §2.1: `encrypted_pdf` for a
+      password-protected file and `invalid_pdf` for a corrupt one, each with its own Desk
+      message. ⚠️ A PDF with no text layer is **not** a failure — it imports as a scan (§E).
+- [ ] **C7.** `server/src/cli/reanchorPdf.ts` — `reanchor <oldId> <newId>` re-locates every
+      highlight by quote + prefix/suffix using the existing `findAnchorInText`/`locateAnchor`,
+      moves the resolved ones with their threads, notes, tags and panel positions, and reports
+      resolved/unresolved counts. **No UI.** A reader must never trigger a re-extraction.
+      _Acceptance: import a PDF, highlight five passages, bump `EXTRACTOR_VERSION`, re-import,
+      run the CLI, and confirm the highlights appear on the new resource with their threads
+      intact — and that the old resource is untouched._
+
+#### D. Document kinds
+
+- [ ] **D1.** `resources.kind TEXT NOT NULL DEFAULT 'prose'`, backfilling every existing row
+      to `'prose'`. Values: `prose` | `document` — **genre only**. Set at import: EPUB →
+      `prose`, PDF → `document`.
+      ⚠️ **"Scanned" is not a kind.** It is a separate axis:
+      `resources.text_layer INTEGER NOT NULL DEFAULT 1`, set to 0 by §E2's detection. Genre
+      and "has a text layer" are independent — a scanned novel is a real thing the day OCR
+      arrives — and a `scan` value in the kind enum would be a kind with no schema to
+      select, contradicting settled decision 18's own rule.
+- [ ] **D2.** `build.ts` gains a second prompt/schema pair for `document` per PDF.md §5 —
+      chapter: `summary`, `contributions`, `methods`, `findings`, `limitations`, `themes`,
+      `title`; book: `synopsis`, `keyClaims`, `methods`, `themes`. Zod-validated like the
+      existing pair.
+      ⚠️ **`kind` selects a prompt/schema pair and nothing else.** The job machinery, the
+      substrate, the thematic layer, the scan, the context ladder and the vault compiler are
+      unchanged. The thematic layer is already genre-neutral and gets no variant.
+- [ ] **D3.** A `document` produces an empty `cast`; audio falls back to M21 single-voice.
+      No new audio path, no change to `computeCastHash`.
+- [ ] **D4.** `kind` is settable by the reader in the book's settings, both directions —
+      a PDF of a novel and an EPUB of a textbook both exist.
+- [ ] **D5.** Changing `kind` does not invalidate a stored digest. The renderer keys off the
+      stored object's fields, not off today's `kind`.
+      _Acceptance: a book digested as `prose`, then switched to `document`, still displays its
+      existing digest with characters; the next chapter run produces the document shape._
+- [ ] **D6.** Copy: "Digest Plot" → **"Summarise"**, and the pairing reads
+      **Summarise / Analyse Themes** in both the reading pane and the Digest. Six strings:
+      `DigestPage.tsx`'s Analyse submenu label, chapter-badge `title`, and failure notice;
+      `ReaderView.tsx`'s `digestCluster`. ⚠️ **No column, job kind, API field or stored JSON
+      key is renamed.**
+
+#### E. The empty-book paths
+
+- [ ] **E1.** ⚠️ A `text_layer = 0` resource imports with **zero `resource_text` rows**, and the digest, scan,
+      search, audio and context routes all currently assume at least one section exists. Give
+      each an explicit empty path returning an empty result, each with a test that passes a
+      resource with no text rows. **This is the most likely source of M39 crash bugs.**
+- [ ] **E2.** Scan detection per PDF.md §6 — per *document*, not per page: `text_layer = 0`
+      when >50% of pages yield under 100 extracted characters. A digital paper with a
+      scanned appendix is still a digital paper.
+- [ ] **E3.** The Desk card and the reader strip say plainly "No text layer — preview only.
+      OCR isn't supported yet." rather than showing controls that do nothing. In M39 a scan
+      has no reader at all — opening it explains why. The preview arrives in M41 §D.
+
+_Acceptance for M39: import a two-column paper, and it reads in the existing reading pane
+with its figures in place, its sections as chapters, a working TOC, highlights that anchor
+and survive a reload, an inline LLM answer grounded in the paper, a `document`-shaped
+chapter summary, and a digest whose scan bands are sections rather than pages._
+
+---
+
+### M40 — The renderer seam, and continuous scroll
+
+Scoped 2026-09-03; §C added the same day at the operator's request. **Binding spec:
+`docs/marginalia/PDF.md` §7.** Depends on M39 (do not start before M39 §A's gate has
+passed — a native pane over a bad extractor hides the problem behind a picture of the page).
+
+**Why it exists:** CLAUDE.md's engineering discipline has named `ResourceRenderer` as one
+of four narrow seams since the beginning, and **it does not exist** — grep returns zero
+hits and the reading pane is epub.js top to bottom. M40 is where that stops being a claim
+and becomes code.
+
+**§C is the milestone's user-visible half**, and it is why the seam earns a milestone
+rather than being folded into M41 as prep. A seam validated by one new implementation is
+weakly validated; a scrolling reflowable surface and a fixed-page image surface are
+genuinely different consumers, and building the first one is what proves the interface
+before M41 depends on it. ⚠️ §C reopens PRODUCT.md's "pagination won" — deliberately; see
+PDF.md §7.4 and decisions.md 2026-09-03 (later).
+
+#### A. Extract before you add — a pure refactor
+
+Measured 2026-09-03: `ReaderView.tsx` is **4,750 lines with 116 `useState`/`useRef`** —
+`docs/REFACTORING.md`'s textbook "long *and* stateful" outlier, about to receive risky
+work, which is that document's own highest-value timing.
+
+- [ ] **A1.** Define `ResourceRenderer`, `Locator` and `RendererCapabilities` per PDF.md
+      §7.2, in `web/src/reader/renderer/`.
+- [ ] **A2.** Lift the epub.js-specific rendering out of `ReaderView` into `EpubRenderer`
+      behind that interface. ⚠️ **Behaviour changes nowhere.** REFACTORING.md: fix bugs
+      before or after, never during. If something breaks after this, it must be
+      unambiguous that the restructuring broke it.
+- [ ] **A3.** ⚠️ **`ReaderView` must not fork.** The strip, margin rail, annotation
+      lifecycle, threads, ask flow, audio transport and nav cluster stay in one place and
+      stay format-blind. Only the pane's inner rendering is behind the seam. Two copies of
+      a 4,750-line component is the worst outcome available in this arc, and it is what
+      happens by default if this section is skipped "for now".
+- [ ] **A4.** No epub.js type crosses the boundary — `Rendition`, `Contents`, `EpubCFI` are
+      internal to `EpubRenderer`. A `grep -rn "from \"epubjs\"" web/src` outside
+      `renderer/epub/` returns nothing.
+- [ ] **A5.** The chrome asks `capabilities`, never the format. ⚠️ A
+      `if (format === 'pdf')` anywhere in `ReaderView` is this seam being bypassed. The
+      spread toggle, margin slider, font-size control and page fold each hide on a
+      capability being false.
+      _Acceptance: reading an EPUB is indistinguishable from M39 — highlights, fold, spread,
+      margins, audio follow, find bar, all verified live, not just by tests._
+
+#### B. The anchor model, amended
+
+- [ ] **B1.** Resolution order becomes CFI (EPUB only) → text search → `(sectionIndex,
+      offset, length)` → unanchored (PDF.md §7.3). ⚠️ A **reordering, not a replacement**:
+      the CFI stays step 1 for EPUB and EPUB anchoring behaviour does not change.
+- [ ] **B2.** Update `SPEC.md`'s anchoring rule and the header comment of
+      `anchorResolution.ts`, both of which currently say the CFI is *the* primary anchor.
+      ⚠️ A comment is a claim; do not leave one that outlived its code.
+- [ ] **B3.** ⚠️ **`highlights.cfi` is `TEXT NOT NULL`** (`migrations.ts:51`) and a PDF
+      highlight has no CFI. SQLite cannot relax `NOT NULL` in place: this needs a table
+      rebuild (create, copy, drop, rename) in **its own migration version**, with a test
+      that round-trips a populated database. This is the riskiest migration in the arc —
+      `highlights` is the table everything references.
+- [ ] **B4.** ⚠️ **`reading_state.location` is a CFI too** (`migrations.ts:41`) and is easy
+      to miss because it is not on the `highlights` table. **No migration** — it is already
+      TEXT — but it needs a serialization convention: write a `SerializedLocator`, and
+      **accept a bare CFI on read**, because every row written before M40 is one. A position
+      parser that assumes a CFI throws on the first PDF, or silently reopens a book at
+      chapter 1.
+- [ ] **B5.** ⚠️ `resource_locations` (the `book.locations.save()` blob, migration 19)
+      stays epub.js-specific. Correct for reflowed PDFs — they *are* EPUBs — and meaningless
+      for the native pane, whose `bookPercent` comes from `resource_text` offsets. Do not
+      generalise the blob.
+
+#### C. Continuous scroll — a second way to read an EPUB
+
+Per PDF.md §7.4. ⚠️ Reopens a settled decision (PRODUCT.md: "pagination won"). It is a
+**second reading mode with its own affordances, not a toggle** — every reader effect since
+M10 assumes pages.
+
+- [ ] **C1.** `flow: "scrolled-doc"` with `manager: "default"` — per-section scroll, **not**
+      the continuous cross-chapter manager. The ruling and its reasoning are PDF.md §7.4;
+      decisions.md 2026-07-29 explicitly left this choice open and required it be made
+      before building. ⚠️ Do not substitute the continuous manager because it sounds more
+      like "continuous scroll" — it dissolves the chapter boundary that M17's digest unit,
+      decision 8a's spoiler mask, and M32's chapter-end prompt are all built on.
+- [ ] **C2.** **One `EpubRenderer` with a `flow` construction option, not two classes.**
+      Marks, CFI handling, selection and theming are shared; only layout differs.
+- [ ] **C3.** The capability profile of PDF.md §7.4's table: `advance: "scroll"`, and
+      `spread`/`pageFold`/`pageNumbers` false. The strip, the spread toggle and the fold
+      hide themselves off those capabilities — **no new conditional in `ReaderView` keyed
+      on the mode**.
+- [ ] **C4.** ⚠️ The M11 turn zones and M20 drag-to-peel are **unbound, not merely
+      hidden**. A pointer handler still attached over a scrolling surface eats the scroll
+      gesture, and it will present as "scrolling feels broken", not as a leftover handler.
+- [ ] **C5.** Progress readout: **book %** unchanged from `book.locations`, plus a new
+      **chapter %** from `scrollTop / (scrollHeight - clientHeight)` of the section
+      container. ⚠️ **Not** from `location.start.displayed.page/.total` — that is what
+      `pageNumber.ts`'s `"chapter"` mode reads today and it is a paginated measure that
+      does not mean what its name suggests under `scrolled-doc`. Measure the scroll.
+- [ ] **C6.** Reading position saves on a **debounced** scroll, through the existing
+      `PUT /:id/position` path, so reading, listening and both modes never lose each
+      other's place. ⚠️ Undebounced, this runs hot for the whole session.
+- [ ] **C7.** ⚠️ Annotation panels follow their marks. `ThreadPanel`'s `panelDx`/`panelDy`
+      are offsets from the mark's anchor rect, which now moves continuously — this is what
+      §B's `markRect` and a `relocated` on scroll exist for. Throttle to animation frames.
+      Without it, panels detach from their highlights on the first scroll and it will look
+      like a `ThreadPanel` bug.
+- [ ] **C8.** M32's chapter-end prompt fires from `sectionEnd` — "scrolled to the bottom of
+      the section" — **once per arrival**, not on every scroll event while at the bottom.
+- [ ] **C9.** The mode is a reader setting, remembered per book, and reachable from the
+      reader strip. Reduced-motion and keyboard paths are acceptance criteria, not polish
+      (DESIGN.md; settled decision 15's spirit).
+      _Acceptance, driven live in the app, not inferred from tests: read a real EPUB in
+      scroll mode from one chapter into the next; highlight while scrolling; confirm the
+      panel stays on its mark; confirm book % and chapter % both move sensibly and that
+      chapter % resets at a chapter boundary; close and reopen and land where you left;
+      switch to paginated and back and confirm the same position; confirm audio follow
+      scrolls to the spoken sentence; confirm the fold, spread and page numbers are absent
+      rather than broken._
+
+#### D. The PDF renderer, headless
+
+- [ ] **D1.** `PdfRenderer` implementing the interface: pdf.js canvas + text layer,
+      `advance: "image"`, `spread`/`fontScale`/`margins`/`pageFold`/`pageNumbers` false.
+- [ ] **D2.** Selection via the text layer's real DOM Ranges, so `getSelectionContext`
+      works unchanged.
+- [ ] **D3.** Highlight painting from text-layer Range client rects into absolutely
+      positioned divs. ⚠️ `marks-pane` is CFI-keyed and is **not** reused here.
+- [ ] **D4.** Not routed to from any UI yet. M41 turns it on.
+      _Acceptance: a test mounts `PdfRenderer` over a fixture PDF, makes a selection, paints
+      a mark, and round-trips a `Locator` — with no route in the app reaching it._
+
+---
+
+### M41 — Reading a PDF as itself
+
+Scoped 2026-09-03. **Binding spec: `docs/marginalia/PDF.md` §6, §7.4.** Depends on M40.
+
+**Why it exists:** for a paper the figures, layout and typesetting often *are* the
+content, and reflow loses the page. This is the operator's Option 2: read the PDF as a
+PDF, keep every inline LLM feature.
+
+**Verification:** entirely live. Every section here is a reading surface, and §A2's
+cross-mode highlight identity is the kind of thing that passes a unit test and fails on a
+real paper. Drive it with the same five PDFs from M39 §A8.
+
+#### A. The mode switch
+
+- [ ] **A1.** A `format: 'pdf'` resource opens in reflow or native, remembered per book.
+      The switch is in the reader strip, and is absent for an EPUB.
+- [ ] **A2.** ⚠️ Highlights are **shared between the two modes**, not duplicated — both
+      resolve the same `Locator` against the same `resource_text`. A highlight made in
+      reflow appears in native and back.
+      _Acceptance: highlight in reflow, switch to native, and the mark is on the right words
+      of the right page — and vice versa._
+
+#### B. Chrome parity
+
+- [ ] **B1.** Threads, notes, tags, the ask flow, Define, the glossary and the Digest all
+      work in native mode with no format-specific branch — they act on highlights, which are
+      already format-neutral after M40 §B.
+- [ ] **B2.** The find bar over native: text search against `resource_text` with
+      text-layer rect painting.
+- [ ] **B3.** Audio sentence-follow tinting re-expressed over text-layer rects.
+- [ ] **B4.** ⚠️ The M20/M27 page fold does **not** apply to fixed pages and must not be
+      faked. `capabilities.pageFold = false` hides it; page turn is plain page-to-page.
+
+#### C. Zoom and navigation
+
+- [ ] **C1.** Fit-width / fit-page / free zoom, and page navigation that keeps the reading
+      position in sync with the same path reflow uses — reading, listening and both modes
+      must never lose each other's place.
+
+#### D. The scan preview
+
+- [ ] **D1.** A `text_layer = 0` resource opens in native mode with
+      `capabilities.textSelection = false`: pages, navigation, zoom, and nothing else. The
+      preview is not a special case — it is the native pane with one capability off.
+- [ ] **D2.** The strip states why the LLM controls are absent rather than disabling them
+      silently.
+      _Acceptance: a scanned PDF opens, pages turn, zoom works, and no control is shown that
+      cannot act._
+
+---
+
 ## Parked (post-v1.5) — recorded so they aren't relitigated
 
 - LLM note supplementation: a pass that reviews highlight notes/tags, responds
@@ -2727,7 +3084,10 @@ labeled choices, and a reader always knows what angle a theme run will take befo
   to power concept-level search across the library. "LLM proposes, code disposes."
   (decisions.md 2026-07-19)
 - Vault-concept filtering on the scan (depends on the above).
-- Notepad v2 "drift" brainstorm surface; sound design; PDF/Markdown formats.
+- Notepad v2 "drift" brainstorm surface; sound design; Markdown format.
+  _(PDF was parked here until 2026-09-03, when it was scoped as **M39–M41** — see
+  decisions.md that date and `docs/marginalia/PDF.md`. No longer parked. Markdown
+  remains parked and is unrelated to that arc.)_
   _(The `claudeAgent` subscription provider was parked here on 2026-07-17 but was
   un-parked and shipped on 2026-07-19 — see that decisions.md entry and
   `server/src/llm/claudeAgent.ts`. No longer parked.)_
@@ -2762,14 +3122,15 @@ not milestones — do not start them from this list.**
   with the numeric readout remaining the canonical keyboard path. Trap: a torch drawn
   inside M18's warped base layer must be positioned through the **same barrel mapping**
   as the heat bands, or the beam points somewhere other than where it lands.
-- **A scrolling manuscript mode** (decisions.md 2026-07-29). ⚠️ Reopens a settled
-  decision — PRODUCT.md records that pagination won in M2. The cost is not the
-  scrolling: **every reader effect since M10 assumes pages** (snapshot turns,
-  drag-to-peel, the M20 fold, turn zones, spread, the margin-vs-gutter model), so this
-  is a *second reading mode with its own affordances*, not a toggle. Highlights and
-  anchoring carry over (they are CFI/text-based); little else does. Decide between
-  epub.js's per-section `scrolled-doc` and a genuinely continuous manager **before**
-  building — they are different products.
+- **A scrolling manuscript mode** — **scheduled 2026-09-03 as M40 §C.** No longer a
+  future arc. The analysis recorded here still stands and moved to `docs/marginalia/PDF.md`
+  §7.4: it reopens PRODUCT.md's "pagination won", it is a second reading mode rather than a
+  toggle because every reader effect since M10 assumes pages, and highlights/anchoring carry
+  over while almost nothing else does. The question this entry left open — per-section
+  `flow: "scrolled-doc"` versus the continuous cross-chapter manager — **is now decided in
+  favour of per-section**, on the grounds that the app is chapter-shaped in four places that
+  infinite scroll would dissolve. What changed to make it buildable is M40's renderer seam:
+  in July this meant another branch inside `ReaderView`; now it is a capability profile.
 - **A speed reader (RSVP)**, framed as accessibility (decisions.md 2026-07-29). Must
   reuse M21's sentence/word segmenter rather than growing a second chunker, and must save
   position through the existing reading-position path so reading, listening, and

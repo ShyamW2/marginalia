@@ -17,10 +17,14 @@ session — your job is disciplined execution, not redesign.
 3. `docs/marginalia/TASKS.md` — ordered task list with acceptance criteria
 4. `docs/marginalia/PRODUCT.md` — product context (background)
 5. `docs/decisions.md` — the entry your milestone names (M11–M16 → 2026-07-20;
-   M14–M18 → 2026-07-27). It resolves the "make it feel like X" notes into rules;
-   don't re-derive them.
-6. `docs/marginalia/DESIGN.md` (binding for M7+) and, for M17+ only,
-   `docs/marginalia/AUDIO.md` (binding for the audio subsystem)
+   M14–M18 → 2026-07-27; M39–M41 → 2026-09-03, both entries). It resolves the "make it
+   feel like X" notes into rules; don't re-derive them.
+6. `docs/marginalia/DESIGN.md` (binding for M7+); for M17+ only,
+   `docs/marginalia/AUDIO.md` (binding for the audio subsystem); and for **M39–M41 only,
+   `docs/marginalia/PDF.md` (binding)** — read it in full before the first task, not
+   section by section as you reach them. Its traps are cross-cutting: §2 governs resource
+   identity, §4 the spine, and §7 the renderer seam, and getting §4 wrong is not visible
+   until the digest and scan are built on top of it.
 
 **How to work:**
 - Find the first unchecked task in TASKS.md and do exactly that task. Small, focused
