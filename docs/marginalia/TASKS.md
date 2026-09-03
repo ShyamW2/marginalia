@@ -3240,27 +3240,74 @@ work, which is that document's own highest-value timing.
 
 #### B. The anchor model, amended
 
-- [ ] **B1.** Resolution order becomes CFI (EPUB only) → text search → `(sectionIndex,
+- [x] **B1.** Resolution order becomes CFI (EPUB only) → text search → `(sectionIndex,
       offset, length)` → unanchored (PDF.md §7.3). ⚠️ A **reordering, not a replacement**:
       the CFI stays step 1 for EPUB and EPUB anchoring behaviour does not change.
-- [ ] **B2.** Update `SPEC.md`'s anchoring rule and the header comment of
+      _Done: `resolveAnchor` (`anchorResolution.ts`) gains the `"offset"` status between
+      `"fallback"` and `"unanchored"`; `EpubRenderer.resolveHighlightsForSection` wires
+      `highlight.offset`/`.length` through and shares the same `rangeFromTextOffsets` →
+      `attachOwnedMark` path the text-search branch already used. Reachable now because
+      `offset`/`length` (migration 32) are exposed on `HighlightSchema`/`HighlightRow` for
+      the first time — the column comment's own "nothing renders this yet" stops being
+      true here. Four new test cases in `anchorResolution.test.ts` cover the step and its
+      precedence under the text-search fallback._
+- [x] **B2.** Update `SPEC.md`'s anchoring rule and the header comment of
       `anchorResolution.ts`, both of which currently say the CFI is *the* primary anchor.
       ⚠️ A comment is a claim; do not leave one that outlived its code.
-- [ ] **B3.** ⚠️ **`highlights.cfi` is `TEXT NOT NULL`** (`migrations.ts:51`) and a PDF
+      _Done: `anchorResolution.ts`'s header, SPEC.md's "Anchoring rule" prose and its API
+      table line, and CLAUDE.md's now-stale "ResourceRenderer is aspirational until M40"
+      line (M40 §A already shipped it). SPEC.md's migration-001 schema-block comments
+      (`-- epub.js CFI...`) deliberately left as-is — that block is explicitly "never
+      edited retroactively"; the amendment lives in the prose around it and in CLAUDE.md
+      settled decision 17(d), which was already the authoritative statement._
+- [x] **B3.** ⚠️ **`highlights.cfi` is `TEXT NOT NULL`** (`migrations.ts:51`) and a PDF
       highlight has no CFI. SQLite cannot relax `NOT NULL` in place: this needs a table
       rebuild (create, copy, drop, rename) in **its own migration version**, with a test
       that round-trips a populated database. This is the riskiest migration in the arc —
       `highlights` is the table everything references.
-- [ ] **B4.** ⚠️ **`reading_state.location` is a CFI too** (`migrations.ts:41`) and is easy
+      _Done: migration 41. Found live rather than assumed: `DROP TABLE highlights` throws
+      "FOREIGN KEY constraint failed" under `foreign_keys=ON` while other tables still
+      reference it, even with nothing inserting/updating a child row mid-rebuild —
+      confirmed by testing SQLite's real behaviour, not by trusting the first pass's
+      reasoning about it. `db.ts`'s `runMigrations` gained a `requiresForeignKeysOff`
+      migration flag (the pragma is a no-op inside the transaction every migration already
+      runs in, so the toggle has to happen one layer up); `foreign_key_check` runs both
+      inside the migration's own transaction (a violation rolls the whole rebuild back
+      atomically) and again after commit as an independent second check. Round-trip test
+      in `db.test.ts` seeds a fully-populated legacy row plus one row in every table that
+      references `highlights(id)` (threads, thread_anchors, highlight_tags,
+      highlight_themes) and asserts all of it survives untouched, a fresh `cfi: null` row
+      succeeds, and `foreign_key_check` stays clean. **Verified live against the
+      operator's real database**, not just the test: `tsx watch` auto-restarted on these
+      file saves mid-session and applied the migration on its own before this was
+      deliberately triggered — caught immediately, confirmed clean (`user_version` 41,
+      `integrity_check` "ok", `foreign_key_check` empty, all 207 highlights/82 threads/176
+      thread_anchors/24 messages intact) before proceeding, with a consistent pre-migration
+      backup taken as a safety net regardless. Live-driven afterward on a real book (Kafka
+      on the Shore, 25 real highlights): all resolve and paint correctly._
+- [x] **B4.** ⚠️ **`reading_state.location` is a CFI too** (`migrations.ts:41`) and is easy
       to miss because it is not on the `highlights` table. **No migration** — it is already
       TEXT — but it needs a serialization convention: write a `SerializedLocator`, and
       **accept a bare CFI on read**, because every row written before M40 is one. A position
       parser that assumes a CFI throws on the first PDF, or silently reopens a book at
       chapter 1.
-- [ ] **B5.** ⚠️ `resource_locations` (the `book.locations.save()` blob, migration 19)
+      _Done: `serializeLocator`/`parseSerializedLocator` (landed in `renderer/types.ts` in
+      §A, wired up here). `ReaderView`'s position-save call now emits the wrapped JSON
+      form; the initial-load read runs the saved `position.location` (and a jump-target's
+      CFI) through the same `Locator` construction path via `parseSerializedLocator`,
+      accepting a legacy bare CFI or the new form indifferently. No server change — the
+      schema comment was updated for honesty, but `location` was already opaque
+      `TEXT`/`z.string()` on both sides. **Verified live**: a real book's position record
+      round-tripped through the new JSON form on both the initial load and a subsequent
+      page turn, with the correct spineIndex/percent threaded through each time._
+- [x] **B5.** ⚠️ `resource_locations` (the `book.locations.save()` blob, migration 19)
       stays epub.js-specific. Correct for reflowed PDFs — they *are* EPUBs — and meaningless
       for the native pane, whose `bookPercent` comes from `resource_text` offsets. Do not
       generalise the blob.
+      _Done: confirmed by reading — `EpubRenderer.ensureLocations()` (§A) still owns this
+      table's one read/write pair (`fetchCachedLocations`/`saveCachedLocations`, moved
+      verbatim from `ReaderView.tsx`), unchanged by §B. Nothing to generalise; noted here
+      only to close the loop._
 
 #### C. Continuous scroll — a second way to read an EPUB
 

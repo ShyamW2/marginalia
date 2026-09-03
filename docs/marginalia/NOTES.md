@@ -7967,3 +7967,59 @@ path. All three go through code this session touched (`EpubRenderer.setFontScale
 exercised by the driver script above. Worth a real click-through before this milestone is
 called fully closed, alongside the operator's own read of feel (fold, motion) that no
 script can stand in for.
+
+## M40 §B — the Locator anchor ladder, and a migration that already ran itself — 2026-09-03
+
+Implemented B1-B5 (TASKS.md carries the per-item `_Done:` notes; this is the narrative).
+
+**The `foreign_keys=ON` assumption was wrong, and only testing it caught that.** The
+first draft of migration 41's own comment reasoned that `DROP TABLE highlights` wouldn't
+need `foreign_keys=OFF`, because FK enforcement "triggers on a child row's own
+INSERT/UPDATE, never on the parent's schema being dropped." That's a plausible-sounding
+claim and it's false — a two-table reproduction (`node -e` against a real
+`better-sqlite3` instance, not a mental model) showed `DROP TABLE parent` throwing
+"FOREIGN KEY constraint failed" the moment a child table holds a live row referencing it,
+regardless of whether anything is being inserted or updated. Worth recording because the
+fix this forced is genuinely useful infrastructure, not a patch: `db.ts`'s `runMigrations`
+gained a `requiresForeignKeysOff` flag on `Migration`, because `PRAGMA foreign_keys` is
+*also* a documented no-op when set from inside an active transaction — and every migration
+here runs inside one (`applyOneMigration`'s own wrapper) — so the toggle has to happen one
+layer up, outside it, for any future rebuild migration too. `PRAGMA foreign_key_check`
+turned out to have neither restriction (confirmed live: it reads correctly whether
+`foreign_keys` is nominally on or off, and whether or not a transaction is open), so it
+runs twice — once inside the migration's own transaction (a violation there rolls the
+whole rebuild back atomically, the safer place for it) and once more after commit in
+`db.ts` as an independent second check covering every table, not just the one migration
+41 touches.
+
+**The migration ran itself, mid-session, before anyone decided to run it.** `tsx watch`
+(the operator's dev server) auto-restarts on every source-file save — completely ordinary
+for this project, and exactly what let the *first*, buggy version of migration 41 crash
+the server live with `SQLITE_CONSTRAINT_FOREIGNKEY` the moment it was saved, and let the
+*fixed* version apply cleanly to the operator's real database a few saves later, neither
+one a deliberate "now run the migration" action. Caught immediately by querying the live
+database directly rather than assuming: `user_version` was already 41,
+`PRAGMA integrity_check` returned `"ok"`, `PRAGMA foreign_key_check` returned nothing, and
+all 207 highlights, 82 threads, 176 thread_anchors and 24 messages were present with
+correct data (spot-checked real rows — real Kafka-on-the-Shore/East-of-Eden quotes, real
+CFIs, the `UNRESOLVABLE_CHAPTER_ANCHOR_CFI` sentinel used correctly on a posed-question
+row). A consistent pre-migration backup (`better-sqlite3`'s own `.backup()` API, which
+handles an open WAL correctly — a plain file copy would not have) was taken immediately
+after noticing, as a safety net for a migration that, by that point, had already run
+either way. Because the rollback-on-failure behaviour above is real (proven by the crash
+itself: the buggy version's failed attempt left `user_version` at 40, not a half-migrated
+41), the actual risk here turned out to be low — but the sequence is worth recording
+plainly: a schema migration against the operator's real library ran as an *unplanned side
+effect* of ordinary iteration on the migration's own code, not a deliberate, confirmed
+step, which is exactly the kind of thing [[marginalia-data-dir-caution]] exists to flag.
+Live-verified afterward on two real books (East of Eden, Kafka on the Shore — the latter
+with 25 pre-existing real highlights) that everything still resolves, paints, and saves
+correctly; no data was lost or altered beyond the intended schema change.
+
+**`createHighlight`'s own return value had a real, pre-existing gap**, found only because
+widening `HighlightSchema` to require `offset`/`length` made TypeScript notice: the
+function's `INSERT` always wrote `offset`/`length` correctly, but the `Highlight` object
+it *returned* to its caller never set those two fields — anyone reading the return value
+directly (rather than re-fetching from the DB) would have silently gotten `undefined`
+where the type now says `number | null`. Fixed alongside, not filed separately, since the
+fix is one line and the same commit that surfaced it.
