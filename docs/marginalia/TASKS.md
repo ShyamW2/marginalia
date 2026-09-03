@@ -1320,23 +1320,52 @@ considered and dropped — see decisions.md before proposing a fourth).
 
 #### A. The Desk's action card reaches a finger
 
-- [ ] **A1.** ⚠️ **Fix the existing bug first.** `BookObject.tsx`'s `onPointerEnter` has no
+- [x] **A1.** ⚠️ **Fix the existing bug first.** `BookObject.tsx`'s `onPointerEnter` has no
       pointer-type filter, so on a touchscreen a tap fires pointer-enter (the card appears)
       *and* `onTap` (the book opens). The card flashes and is gone. `ExpandingCluster`
       already does this correctly — `if (event.pointerType !== "mouse" && event.pointerType
       !== "pen") return;` — copy that, do not invent a second form of it.
-- [ ] **A2.** One rule, not three: the action card appears after **1s of stillness** at any
+      _Done — the exact guard, copied onto `onPointerEnter` and `onPointerLeave`._
+- [x] **A2.** One rule, not three: the action card appears after **1s of stillness** at any
       point during a touch; *any* movement dismisses it and re-arms the timer, so a book
       that stops moving under a resting finger brings it back a second later. There is no
       separate "hold 0.3s then drag" case — that is movement before the second is up.
-- [ ] **A3.** ⚠️ A 1s dwell with no feedback reads as a broken app. Reuse the reader's
+      _Done in the new `useTouchCardDwell.ts`, shared by `BookObject.tsx` and `ShelfView.tsx`
+      (§A6): `onPointerDown`/`onPointerMove` (touch only) arm a single 1000ms timer,
+      `onPointerMove` re-arms it unconditionally on every call rather than past some slop
+      threshold — "any movement" taken literally. Touch's `revealed` is folded into
+      `BookObject`'s existing `isHovering` by a one-line effect, so the card, the z-index
+      bump, and the 3D hover lift all just work for touch too with no second branch._
+- [x] **A3.** ⚠️ A 1s dwell with no feedback reads as a broken app. Reuse the reader's
       `DwellRing` (already parameterised by `durationMs`); do not build a second ring.
-- [ ] **A4.** While the card is out, the book's drag is disarmed for the rest of that touch.
-- [ ] **A5.** ⚠️ Book covers are images, so iOS raises its own "Save Image" callout partway
+      _Done — same component, portaled to `document.body` rather than rendered in place:
+      `BookObject`'s drag transform (and the shelf's lift transform) would otherwise become
+      the ring's containing block instead of the viewport, since `position: fixed` resolves
+      against the nearest transformed ancestor. `DwellRing.module.css`'s z-index gained a
+      `100001` fallback for `var(--reader-z-dwell-ring)`, which is only ever defined while
+      the reader route is mounted._
+- [x] **A4.** While the card is out, the book's drag is disarmed for the rest of that touch.
+      _Done via a second, sticky flag (`settled`) alongside the toggling `revealed` — read
+      literally, "for the rest of that touch" outlives a later movement toggling the card
+      back off, so `drag={!reducedMotion && !touch.settled}` rather than gating on `revealed`
+      directly, which would have let a paused mid-drag resume the instant it re-armed._
+- [x] **A5.** ⚠️ Book covers are images, so iOS raises its own "Save Image" callout partway
       through the hold. `-webkit-touch-callout: none` on the cover — and check it did not
       disable selection anywhere it shouldn't (the M31 C4 trap, one room over).
-- [ ] **A6.** Same treatment for the shelf (`ShelfView.tsx:300` has the identical unfiltered
+      _Done on `.coverWrap` alone, `user-select` untouched per the warning — there was none
+      set there to begin with, and no selectable text under it to lose._
+- [x] **A6.** Same treatment for the shelf (`ShelfView.tsx:300` has the identical unfiltered
       `onPointerEnter`) — one card, both surfaces, per settled decision 12.
+      _Done — `ShelfBook` uses the same `useTouchCardDwell` and the same pointer-type filter,
+      wired to the `onActiveChange` the shelf already had for hover/focus rather than a
+      second local "is the card open" flag. No drag to disarm here, so only §A2/§A3 apply;
+      also added `.slot`'s own `-webkit-touch-callout: none` for the decorative
+      (`aria-hidden`) spine title, which is not the A5 image case but the same class of bug._
+      ⚠️ **Built on the same premise M31 §C3 flagged and could not confirm: no touch-capable
+      device or touch-emulating browser was available this session.** Typechecked and the
+      existing suite still passes; the framer-motion `drag` prop toggling off mid-gesture
+      (§A4) in particular is asserted from the library's documented behaviour, not watched on
+      real hardware.
 
 _Acceptance: on the iPad — tapping a book opens it and never flashes the card; resting a
 finger on a book fills a ring and opens the card; dragging a book moves it with no card;
@@ -1345,39 +1374,128 @@ moving again closes it. No "Save Image" menu at any point._
 
 #### B. The Scan's two gestures
 
-- [ ] **B1.** Pinch zooms the timeline; horizontal swipe scrubs along it. Per DESIGN.md's
+- [x] **B1.** Pinch zooms the timeline; horizontal swipe scrubs along it. Per DESIGN.md's
       table these are the Scan's meanings for gestures that mean something else in the Book
       — allowed by invariant 6, and the reason that invariant is written down.
-- [ ] **B2.** ⚠️ Depends on M31 §0d: until WebKit's page zoom is blocked, a pinch here scales
+      _Done in `HeatStrip.tsx`, as a second native (non-passive) touch listener on the same
+      `stripRef` the existing wheel-to-zoom listener already attaches to, so `preventDefault`
+      actually sticks instead of being silently dropped by React's default-passive touch
+      handlers. Both gestures reuse `zoom.ts`'s existing pure functions rather than adding
+      new ones: a pinch feeds its per-move distance ratio into `zoomAtViewPosition` exactly
+      like the wheel handler feeds it `deltaY`, about the pinch's own centre; a single
+      finger's horizontal drag feeds its per-move pixel delta into `panByViewFraction` (the
+      same step the pan buttons use, as a continuous fraction instead of a fixed 0.5),
+      declared only past an 8px threshold from the touch's start so a tap that stops short
+      of that still reaches a band's own `onClick` untouched — no gesture claims the touch
+      until it's clearly a drag. A second finger landing cancels an undeclared pan outright,
+      per the reader's own touch-table rule for the same situation. `.strip` gained
+      `touch-action: pan-y` (HeatStrip.module.css) so native vertical scroll of the Scan's
+      body keeps working — the one axis this component doesn't claim — while horizontal pan
+      and pinch-zoom stand down for us._
+      ⚠️ **Built on the same premise A6 flagged: no touch-capable device or touch-emulating
+      browser was available this session.** Typechecked, the existing suite (including
+      `zoom.test.ts`, whose pure functions this reuses rather than re-implements) still
+      passes; not watched on real hardware.
+- [x] **B2.** ⚠️ Depends on M31 §0d: until WebKit's page zoom is blocked, a pinch here scales
       the whole website and never reaches the timeline.
+      _Already satisfied — M31 §0d was done before this session; no code needed here._
 
 #### C. The put-down
 
 ⚠️ **The sequence is decided** — DESIGN.md, "Book → Desk: the put-down". Do not reorder it;
 the ordering is what makes the destination rect knowable.
 
-- [ ] **C1.** The reading pane zooms out while its UI fades; the Desk background fades in
+- [x] **C1.** The reading pane zooms out while its UI fades; the Desk background fades in
       behind it while the book is still open; the book closes onto its cover; the cover
       travels to its place.
-- [ ] **C2.** ⚠️ The blocker, stated so it is not rediscovered: `App.tsx` renders **one room
+      _Done — `BookClosing.tsx`, mounted persistently from `App.tsx` (lazy, alongside
+      `BookOpening.tsx`'s own chunk). Literally reuses `BookOpening3D` rather than a second 3D
+      component (C2): `progress`/`landing`/`settle` are pure inputs with no direction baked
+      in, so this component drives them 1 → 0 on the opening's own constants (`LANDING_MS`,
+      `LANDING_EASE`, `PAGE_SETTLE_MS`, `openSequenceMs`) instead of 0 → 1. The reader's own
+      chrome does not get a slow fade — it is simply gone the instant `navigate("/")` runs
+      (`startPutDown`, `ReaderView.tsx`); "the reading pane zooms out while its UI fades" is
+      instead a `<img>` **bridge** (`BookClosing.module.css`'s `.bridge`), a plain picture of
+      the exact page the reader was left on, pinned to its exact rect, that the 3D layer picks
+      up seamlessly (`landingStep` reproduces the same picture at the same rect at
+      `landing = 1`) once it has real geometry. ⚠️ **"Desk background fades in" needed no
+      fade at all**, on inspection: unlike the opening, nothing in this design ever hides the
+      Desk — it mounts and draws normally the instant `navigate("/")` lands, and only the
+      departing book itself is hidden (`setDepartedBook`, same store the opening uses). A
+      `useScene3DLayerFade`-style fade-in was considered and dropped: that primitive can only
+      fade a layer *down* from its authored opacity (`Scene3D.tsx`'s `FadingLayer` hard-codes
+      the start at 1), so faking a fade-in would have meant extending that primitive rather
+      than reusing it — and there is nothing to fade in when nothing was ever hidden._
+- [x] **C2.** ⚠️ The blocker, stated so it is not rediscovered: `App.tsx` renders **one room
       at a time**, which is exactly why `BookOpening.tsx:110` says a reverse animation is not
       possible today. The machinery already exists in the *other* direction — `useScene3DHold`
       plus the `departedBook` store keep the Desk alive under a book flying out. This is that
       hold, run the other way; it is not a new mechanism.
-- [ ] **C3.** The destination comes from the Desk after it mounts, not from the reader:
+      _Done, with one genuine asymmetry recorded rather than papered over: **no hold is
+      needed for the put-down.** The hold exists to keep a room drawing after the route that
+      owned it is gone — the opening needs that because the Desk is the room being *left*. The
+      put-down's Desk is the room being *arrived at*: by the time `BookClosing` has anything to
+      draw, `navigate("/")` has already run and the Desk is the live route, registering its own
+      "desk"/"shelf" layer for real. What *is* reused, unchanged: `departedBook` (so the Desk
+      doesn't draw the resting-place book while `BookClosing` draws it in flight) and
+      `useScene3DLayer` (to draw it). New machinery was needed for exactly one thing C2 doesn't
+      cover — see C3._
+- [x] **C3.** The destination comes from the Desk after it mounts, not from the reader:
       it depends on `shelf_state`, on which of desk/list/shelf was last used (already
       persisted — `persistDeskViewMode`), and on that room's parallax.
-- [ ] **C4.** ⚠️ **Two different Escapes, do not conflate them.** `Esc` *during an opening*
+      _Done via a new store, `scene3d/putDown.ts` — `openingPose.ts`'s own sibling, but live
+      and subscribable (`useSyncExternalStore`, `departedBook.ts`'s pattern) rather than a
+      one-shot pending value, because unlike a click the destination genuinely isn't known
+      until the Desk exists to report it. `startPutDown` (`ReaderView.tsx`) resolves the view
+      mode via `loadDeskViewMode()` (or the forced mode from `d`/`l`/`b`) and requests a
+      put-down *before* navigating; `BookObject.tsx`/`ShelfView.tsx` each gained a mount-time
+      effect that answers a live request for the resource they're currently laying out,
+      reusing (not duplicating) the exact same pose math their click-time `captureOpening`
+      already computes — both files' pose-building code was extracted into a shared
+      `buildPose()` for this. The list view reports nothing: `mode` alone already tells
+      `BookClosing` no 3D destination is coming, so it falls straight to the crossfade (C5)
+      with no per-row wiring in `LibraryGrid.tsx`. A 2000ms timeout covers the case where the
+      resource never gets reported at all (deleted mid-read, or some other race) — the same
+      "best-effort, never stuck" posture `capturePageSnapshot`'s own deadline already has._
+- [x] **C4.** ⚠️ **Two different Escapes, do not conflate them.** `Esc` *during an opening*
       still cancels by unmounting immediately — there is nothing coherent to reverse
       mid-flight, and `BookOpening.tsx` says so deliberately. `Esc` *while reading* is this
       sequence. Same key, two states, two behaviours.
-- [ ] **C5.** `prefers-reduced-motion` collapses the whole thing to a crossfade, per
+      _Done — `BookOpening.tsx`'s own Escape handling is untouched. `ReaderView.tsx`'s
+      `handleEscapeShortcut` now falls through to `startPutDown()`, but only once nothing
+      shallower claimed it (find bar, link-quote mode, a pending selection, an open thread, an
+      open definition card, an open progress popover, fullscreen) — read before any of that
+      state is cleared, so "closest layer first" still holds and Escape only leaves the room
+      when there was truly nothing left to close. The Desk button (the embedded `NavCluster`'s
+      Library link) and `d`/`l`/`b` go through the same `startPutDown`, via a new `onDepart`
+      prop on `NavCluster` that only the reader's instance passes — and the M31 §C9 touch
+      departure's two `onCommitDeparture` callbacks (`ReaderView.tsx`) now call it too, instead
+      of the plain `navigate("/")` they were soft-gated to (§0's own note there is now stale —
+      the gate is satisfied). One function, four triggers, not four policies._
+- [x] **C5.** `prefers-reduced-motion` collapses the whole thing to a crossfade, per
       DESIGN.md's motion rules.
+      _Done, and generalised: `BookClosing`'s `use3D` gate is
+      `Boolean(destination?.pose) && scene3DAvailable && !reducedMotion` — the exact shape of
+      `BookOpening`'s own `use3D` — so reduced motion, a lost WebGL context, *and* the list
+      view (no pose) all collapse to the same plain crossfade (the bridge fading to 0 opacity
+      over the Desk, already live underneath). This is a deliberate scope cut from the
+      opening's own richer 2D fallback, which flies and rotates a CSS cover from the list row
+      instead of just fading — recorded here rather than silently done: a fully symmetric
+      list-view put-down is future work, not a gap discovered later._
 
 _Acceptance: leaving a book by the Desk button and by `Esc` produce the same sequence; the
 cover lands on the book's actual position in whichever of desk/list/shelf was last used, not
 a default one; escaping out of a still-opening book still unmounts instantly; with reduced
 motion on, both are a crossfade._
+⚠️ **Built on the same premise A6/B1 flagged: no touch-capable device or touch-emulating
+browser was available this session, and this milestone's 3D choreography has no way to be
+watched at all in a text-only session, touch or otherwise.** Typechecked, the full existing
+suite (493 tests) still passes, and a production build succeeds with the new machinery
+correctly code-split (`BookClosing`/`putDown`/`BookOpening` land in their own chunks, not the
+app shell). No frame of the actual landing, settle or closing motion has been watched by
+anyone — every timing and geometry choice above is reasoned from `openingGeometry.ts`'s own
+math and comments, reused rather than re-derived, but "reused correctly" and "looks right"
+are not the same claim.
 
 ---
 

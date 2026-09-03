@@ -3,6 +3,35 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-03 (later, before the continuous-scroll entry below) — The put-down's asymmetry with the opening
+
+M33 §C, implementation session. TASKS.md's own C2 says the put-down must reuse the
+opening's hold/`departedBook` machinery "run the other way", which held for
+`departedBook` and `useScene3DLayer` but not for `useScene3DHold` itself: the hold exists
+to keep a *departed* room drawing after its route is gone, and the put-down's Desk is the
+room being *arrived at* — by the time there's anything to draw, `navigate("/")` has
+already run and the Desk is the live route, registering its own layer for real. No hold
+is used; recorded so a future session doesn't go looking for why it's missing.
+
+**"The Desk background fades in" needed no fade.** Unlike the opening, nothing in this
+design ever hides the Desk — it mounts and draws normally the instant the route changes,
+and only the departing book is hidden (`setDepartedBook`). `Scene3D.tsx`'s
+`useScene3DLayerFade` can only fade a layer *down* from its authored opacity (the curve is
+hard-coded to start at 1), so a fade-in would have meant extending that primitive; skipped
+rather than built, since there is nothing to fade in when nothing was ever hidden.
+
+**A new live store, not a second one-shot handoff.** `openingPose.ts`'s pending-value
+pattern (click time → route mount) doesn't fit: the put-down's destination isn't knowable
+until the Desk exists to report it. `scene3d/putDown.ts` is `departedBook.ts`'s
+`useSyncExternalStore` pattern instead — `BookObject`/`ShelfView` answer a live request
+once they've laid the book out, reusing their existing click-time pose math rather than a
+second copy of it.
+
+**Scope cut: the list view (and reduced motion, and a lost 3D context) all collapse to one
+plain crossfade**, not the opening's own richer 2D fly-and-rotate fallback. Recorded as a
+deliberate cut, not a gap found later — a fully symmetric list-view put-down is future
+work.
+
 ## 2026-09-01 (post-M37) — three bug fixes, and a recurring staleness bug worth naming
 
 **The tasks tray's SSE stream now reconnects and has a heartbeat.** Found live on the
