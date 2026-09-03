@@ -3159,26 +3159,84 @@ Measured 2026-09-03: `ReaderView.tsx` is **4,750 lines with 116 `useState`/`useR
 `docs/REFACTORING.md`'s textbook "long *and* stateful" outlier, about to receive risky
 work, which is that document's own highest-value timing.
 
-- [ ] **A1.** Define `ResourceRenderer`, `Locator` and `RendererCapabilities` per PDF.md
+- [x] **A1.** Define `ResourceRenderer`, `Locator` and `RendererCapabilities` per PDF.md
       §7.2, in `web/src/reader/renderer/`.
-- [ ] **A2.** Lift the epub.js-specific rendering out of `ReaderView` into `EpubRenderer`
+      _Done: `web/src/reader/renderer/types.ts`, matching PDF.md:374-463 exactly — no
+      epubjs import, `serializeLocator`/`parseSerializedLocator` (M40 §B4, landed here since
+      they belong on the same interface file) included._
+- [x] **A2.** Lift the epub.js-specific rendering out of `ReaderView` into `EpubRenderer`
       behind that interface. ⚠️ **Behaviour changes nowhere.** REFACTORING.md: fix bugs
       before or after, never during. If something breaks after this, it must be
       unambiguous that the restructuring broke it.
-- [ ] **A3.** ⚠️ **`ReaderView` must not fork.** The strip, margin rail, annotation
+      _Done: `web/src/reader/renderer/epub/EpubRenderer.ts`. Beyond the strict interface it
+      carries a small, named set of EPUB-only extras (`getToc`, `goToHref`,
+      `goToSpineIndex`, `goToPercent`, `ensureLocations`, `setHighlights`,
+      `getRenderedSectionText`, `isLocatorVisible`, `paintSearchMarks`/`clearSearchMarks`,
+      `renderedFrames`, `onSectionRendered`, `onEpubRelocated`, `onUnanchored`,
+      `getViewportRectForSelection`, `refreshOverlays`, `setFocusMode`) — deliberate, not
+      oversights: forcing every one of today's behaviors through the abstract interface
+      before a second renderer exists to prove it against would mean inventing speculative
+      interface members. `onSectionRendered` is the load-bearing one: it hands `ReaderView`
+      a plain DOM `Document` (never an epubjs `Contents`) per rendered section, which is
+      what let the mousemove/click/touch/keydown gesture layer — dwell-to-highlight-across-
+      boundary, mark hover boost, cursor styling, pinch-resize, turn-zone detection — stay
+      in `ReaderView` almost verbatim rather than crossing into a giant renderer-side
+      callback bag, once it was clear `Document`/`Window`/`Range` aren't epubjs types._
+- [x] **A3.** ⚠️ **`ReaderView` must not fork.** The strip, margin rail, annotation
       lifecycle, threads, ask flow, audio transport and nav cluster stay in one place and
       stay format-blind. Only the pane's inner rendering is behind the seam. Two copies of
       a 4,750-line component is the worst outcome available in this arc, and it is what
       happens by default if this section is skipped "for now".
-- [ ] **A4.** No epub.js type crosses the boundary — `Rendition`, `Contents`, `EpubCFI` are
+      _Done: confirmed by construction — every one of those systems is untouched code,
+      only retargeted from `renditionRef`/raw `Contents` to `rendererRef`/plain `Document`.
+      `ReaderView` holds `rendererRef: RefObject<EpubRenderer | null>` (the concrete type,
+      not the abstract interface) for now — a second, deliberate scoping call alongside the
+      named-extras one: the abstraction is genuinely proven only once a second renderer
+      (§C, §D) actually consumes it._
+- [x] **A4.** No epub.js type crosses the boundary — `Rendition`, `Contents`, `EpubCFI` are
       internal to `EpubRenderer`. A `grep -rn "from \"epubjs\"" web/src` outside
       `renderer/epub/` returns nothing.
-- [ ] **A5.** The chrome asks `capabilities`, never the format. ⚠️ A
+      _Done: verified — every epubjs import lives in `renderer/epub/EpubRenderer.ts` and
+      `renderer/epub/toc.ts` (moved from `reader/toc.ts`, entirely epub-Book-shaped
+      already); `renderer/epub/marksPanePatch.ts` moved alongside them (no epubjs import of
+      its own, but only ever relevant to this renderer). `useEpubThemeVars.ts` renamed to
+      `useReaderThemeVars.ts` (`EpubThemeVars` → `ReaderThemeVars`, now defined once on the
+      interface and re-exported)._
+- [x] **A5.** The chrome asks `capabilities`, never the format. ⚠️ A
       `if (format === 'pdf')` anywhere in `ReaderView` is this seam being bypassed. The
       spread toggle, margin slider, font-size control and page fold each hide on a
       capability being false.
+      _Done, scoped honestly: confirmed by reading — there was no existing
+      `if (format === ...)` anywhere to remove (decision 17c's whole point), so there is
+      nothing to find here beyond the absence itself. `EpubRenderer.capabilities` is a
+      real, populated object satisfying the interface (`{spread: true, fontScale: true,
+      margins: true, pageFold: true, pageNumbers: true, textSelection: true, advance:
+      "page"}`). ⚠️ **Not done**, and left open on purpose: `usePageTurnAnimation`'s fold
+      ladder and `PageNumberDisplay`'s mode still don't *read* `capabilities.pageFold`/
+      `.pageNumbers` — with exactly one renderer in the app, wiring that gate now is
+      speculative plumbing for a consumer (`PdfRenderer`, §D) that doesn't exist yet.
+      Threading it through is real but small work for whichever of §C/§D lands first._
       _Acceptance: reading an EPUB is indistinguishable from M39 — highlights, fold, spread,
       margins, audio follow, find bar, all verified live, not just by tests._
+      _Verified 2026-09-03, live against the running dev server (restarted after finding it
+      had died — port 5175 wasn't listening, unrelated to this change — see NOTES.md) on a
+      real book (East of Eden), driven headlessly via Playwright since no interactive
+      browser was available in this environment: book opens, saved position restores
+      (page/chapter/percent readouts correct); a real text selection opens the AskPill and
+      creates a `rose` highlight whose mark paints (`.marginalia-highlight` in the DOM) and
+      is persisted server-side with the right `exact`/`prefix`/`suffix`/`cfi`/`spineIndex`;
+      the mark survives a full reload; deleting it (direct API call, to avoid the margin
+      rail's hover-only delete button under headless automation) removes the mark with no
+      orphan; a keyboard page turn moves forward and back with the page-number readout
+      updating each time; the TOC lists all real chapters and a chapter-jump lands on that
+      chapter's actual first page; the find bar returns real hit counts and paints a search
+      mark (`.marginalia-search-mark`) exactly when a hit is on the visible page, confirmed
+      both ways (a query with no hit on the current page painted none; one with a
+      confirmed on-page hit painted one and stepping to it kept the count in sync). Zero
+      console/page errors through the whole sequence. **Not independently re-verified live**
+      (reasoned through in code instead): spread-mode toggle, margin/font-scale live
+      changes, and audio-follow auto-turn — flagged in NOTES.md rather than silently
+      claimed._
 
 #### B. The anchor model, amended
 

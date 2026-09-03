@@ -7869,3 +7869,101 @@ SQLite file directly — a worse outcome than leaving this owed, given [[margina
 standing warning about exactly that kind of edit. Logged in Blockers ("M39 §E3") alongside
 a suggested fix (a disposable `LIBRARY_DIR`/`DB_PATH` for session-local live-driving) that
 would help every future PDF-arc session hit the same wall.
+
+## M40 §A — EpubRenderer, and the dead server found along the way — 2026-09-03
+
+Implemented A1-A5 (TASKS.md carries the per-item `_Done:` notes; this is the narrative).
+`web/src/reader/renderer/types.ts` is the `ResourceRenderer` interface exactly as PDF.md
+§7.2 prescribes it; `web/src/reader/renderer/epub/EpubRenderer.ts` is the implementation,
+~900 lines pulled out of `ReaderView.tsx` (4,807 → roughly 3,600, not yet re-measured
+precisely). `web/src/reader/toc.ts` and `marksPanePatch.ts` moved under `renderer/epub/`
+alongside it; `useEpubThemeVars.ts` renamed to `useReaderThemeVars.ts`.
+
+**The boundary the plan assumed turned out to be wrong, and the fix was smaller than the
+first fear.** The plan (written before reading the actual `rendition.on("mousemove"/
+"click"/...)` handler bodies) expected "epub.js stuff moves, chrome stays" to split
+cleanly. It doesn't: those handlers are epub.js *registrations* whose *bodies* are almost
+entirely chrome logic (the M19.6 dwell-across-a-page-boundary gesture, the M16 mark hover
+boost, M20.7 cursor styling, M31 C's pinch-resize and touch state machine) that happens to
+need iframe-to-viewport coordinate math only the mounted renderer can do. The fix, once
+found: `Document`, `Window`, `Range`, `Touch`/`TouchList`, `MouseEvent`, `KeyboardEvent` are
+all **standard DOM types, not epubjs types** — so `EpubRenderer.onSectionRendered` can hand
+`ReaderView` a plain `{document, sectionIndex}` per rendered section (epub.js destroys the
+old iframe/document on every section change, so there's nothing to detach and no stale
+state to carry — the exact same reasoning the shipped `attachTouchHandlers` already relied
+on, just not yet generalized to the other four handlers), and `ReaderView` attaches its
+*own* listeners directly, keeping essentially 100% of its existing dwell/hover/cursor/pinch
+logic verbatim. Only the things that are genuinely epub.js-shaped — a highlight's CFI
+resolution ladder, the tint, search-mark painting, TOC/locations, page-number geometry —
+actually needed to cross into the renderer. This is recorded because the first instinct
+(a big renderer-side "host callbacks" bag, the mousemove logic moving wholesale into
+`EpubRenderer`) would have worked but built the wrong shape — a `PdfRenderer` has none of
+this gesture layer (PDF.md §7.5), so baking it into the renderer's own constructor would
+have been over-fitting the seam to one consumer's internals. Asked the operator directly
+before committing to either shape; chose the fuller extraction (below) once the
+`Document`-crossing design made it cheap.
+
+**The named exceptions.** `EpubRenderer` carries a small set of EPUB-only extras beyond the
+strict interface — `getToc`, `goToHref`/`goToSpineIndex`/`goToPercent`, `ensureLocations`,
+`setHighlights`, `getRenderedSectionText`, `isLocatorVisible`, `paintSearchMarks`/
+`clearSearchMarks`, `renderedFrames`, `onSectionRendered`/`onEpubRelocated`/`onUnanchored`,
+`getViewportRectForSelection`, `refreshOverlays`, `setFocusMode`. Each is named for exactly
+one thing today's `ReaderView` still needs that the interface (deliberately) doesn't carry
+— TOC and search are explicitly "not in the interface" per PDF.md §7.2's own list, and the
+rest (chapter page numbers from epub.js's manager geometry, the audio-tint visibility
+check, viewport rect for the selection pill) have no format-neutral shape yet because
+nothing but EPUB has needed one. `ReaderView` holds `rendererRef` typed as the *concrete*
+`EpubRenderer`, not the abstract interface, for the same reason — PDF.md's own words, "a
+seam validated by one implementation is weakly validated," cut both ways: forcing
+interface-only consumption before §C or §D exists to prove it against would mean guessing
+at members a second renderer might not even want.
+
+**`markRect`'s implementation was a genuine finding, not a refactor.** Nothing today
+queries a highlight's live on-screen rect (`ThreadPanel` positions off a static captured
+`top` + a persisted drag offset), so this was new code. marks-pane's `Highlight.bind()`
+copies every key of the `data` object `attachOwnedMark` already passes (`{highlightId}`)
+onto the mark's own SVG group via `element.dataset[attr] = data[attr]` — confirmed by
+reading `marks-pane`'s source (`node_modules/.../marks-pane/src/marks.js`) rather than
+guessing — so the group already carries `data-highlight-id` for free, and `markRect` is a
+one-line `querySelector`. Not exercised by any live consumer yet; §C (scroll) is what makes
+it load-bearing (PDF.md §7.2).
+
+**A dead server, found while trying to verify live.** The operator's `tsx watch` process
+(pid 255543, up since 2026-09-01 per `ps`) was still running but not listening on its port
+— every `/api/*` request 500'd through Vite's proxy, and the Desk read "Your library is
+empty" instead of erroring honestly. Confirmed before touching anything: no server code
+was edited this session, so this predates M40 entirely — most likely the same
+"better-sqlite3 ABI crash kills the server silently" class [[marginalia-two-machine-setup]]
+already names, or the process surviving a host reboot as an orphan with its listening
+socket gone. Restarted cleanly (`kill` the dead pid, fresh `tsx watch` with output
+captured) — the fresh process bound port 5175 immediately with no errors in the log, so
+whatever killed the listener didn't reproduce. Vite itself (port 5173) was never touched;
+it had been serving the (broken) shell the whole time.
+
+**No interactive browser or `chromium-cli` in this environment** — verified instead with a
+short Playwright driver script (`chromium.launch` directly, since only `chromium-cli`'s
+underlying library was present, under `.ds-sync/node_modules`, not the CLI wrapper itself)
+against the operator's real library. On East of Eden: book opens, saved position restores
+correctly (page/chapter/percent all correct on load); a real text selection (`Range` set
+programmatically + a dispatched `mouseup`, since headless double-click didn't reliably
+produce a native selection) opened the AskPill and created a real `rose` highlight; its
+mark painted (`.marginalia-highlight` in the DOM) and round-tripped through a full reload;
+deleting it left no orphaned mark; a keyboard page turn moved forward and back with the
+page-number readout tracking; the TOC listed all 40-odd real chapters and a chapter-jump
+landed on that chapter's actual opening line; the find bar's search-mark painting was
+confirmed both ways — a query with a hit on the current page painted one search mark
+(`.marginalia-search-mark`) and stepping to it kept the "N of M" readout in sync, a query
+with no on-page hit painted none, both correct rather than the second being an unnoticed
+gap. Zero console/page errors through the whole sequence, and the test highlight was
+deleted afterward (direct API call for the delete itself — the margin rail's own delete
+button is hover-reveal-only per M30's design and headless automation has no hover state,
+so `DELETE /api/highlights/:id` stood in for clicking it; the *creation* path did go
+through the real UI).
+
+**Not independently verified live**, reasoned through in the code instead: the spread-mode
+toggle, a live margin/font-scale change, and audio-follow's auto-turn-on-tint-invisible
+path. All three go through code this session touched (`EpubRenderer.setFontScale`/
+`setMargins`, the `isLocatorVisible` split of the old inline visibility check) but weren't
+exercised by the driver script above. Worth a real click-through before this milestone is
+called fully closed, alongside the operator's own read of feel (fold, motion) that no
+script can stand in for.
