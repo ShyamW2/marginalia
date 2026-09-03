@@ -2748,7 +2748,7 @@ by a person.
 
 #### A. The extractor, and the gate
 
-- [ ] **A0.** Dependencies: `pdfjs-dist` (Node build) and **`@napi-rs/canvas`** — chosen
+- [x] **A0.** Dependencies: `pdfjs-dist` (Node build) and **`@napi-rs/canvas`** — chosen
       over node-canvas for its prebuilt N-API binaries (no node-gyp, no per-ABI rebuild), the
       property `better-sqlite3` lacks and that has already cost this repo silent server
       deaths across the Mac/Linux split. Install and confirm `page.render()` produces a PNG
@@ -2756,28 +2756,65 @@ by a person.
       ⚠️ **Rasterization degrades, never fails the import.** Canvas missing or throwing →
       extraction continues text-only, the caption still enters `resource_text`, the
       `<figure>` is omitted rather than half-written, and it logs once.
-- [ ] **A1.** `server/src/library/pdf/` — extract text from a PDF with `pdfjs-dist` (Node
+      _Done 2026-09-03: confirmed live on Linux (Node 24) — `getTextContent()` items carry
+      `transform`/`width`/`height`/`fontName`, `page.render()` via `@napi-rs/canvas`
+      produced a real PNG, no node-gyp. ⛔ **Mac (Node 20) confirmation still owed** — this
+      session had no access to it; see NOTES.md Blockers "M39 §A0"._
+- [x] **A1.** `server/src/library/pdf/` — extract text from a PDF with `pdfjs-dist` (Node
       build), server-side, matching where `epub.ts` already lives. Everything derives from
       `getTextContent()` items' `transform`/`width`/`height`/`fontName`; no heuristic may
       depend on the order items happen to arrive in.
-- [ ] **A2.** Header/footer removal per PDF.md §3.1. ⚠️ The test is band position **and**
+      _Done: `extract.ts` orchestrates headerFooter → columns → lines → equations/figures →
+      rasterize into `PdfPageContent[]`, plus outline extraction. Rasterization degrades per
+      the ⚠️ above (`rasterize.ts` catches and warns once, never throws)._
+- [x] **A2.** Header/footer removal per PDF.md §3.1. ⚠️ The test is band position **and**
       digit-stripped repetition across ≥3 pages. Position alone eats a paper's title and
       its first heading on page 1.
-- [ ] **A3.** Column detection per PDF.md §3.2 — bimodal left-edge histogram, ≥5% page-width
+      _Done: `headerFooter.ts`. Verified live at the §A8 gate against a 3-page fixture — a
+      repeated header and digit-stripped page-number footer both stripped, a page-1 title
+      and heading that appear once did not._
+- [x] **A3.** Column detection per PDF.md §3.2 — bimodal left-edge histogram, ≥5% page-width
       gap, ≥25% of items per mode; single column is the default and the fallback.
       ⚠️ An item wider than 70% of page width (title block, abstract, full-width figure) is
       emitted in y-order outside the column sort, or the title lands mid-introduction.
-- [ ] **A4.** Line assembly, de-hyphenation and paragraph breaks per PDF.md §3.3.
+      _Done: `columns.ts` (`detectColumns` + `orderPageItems`, the latter banding the page at
+      each full-width item's y so a full-width figure mid-column interrupts rather than
+      trailing after both columns). A sparser first draft of the §A8 fixture tripped the
+      ≥25%-of-items floor into false-single-column (a title/abstract's short wrapped lines
+      diluting the ratio on an unrealistically small page); resolved by fixing the fixture's
+      density to match a real paper's proportions, not the code — see NOTES.md "M39 §A —
+      the extractor, and what the §A8 gate actually found" for why that was the right call._
+- [x] **A4.** Line assembly, de-hyphenation and paragraph breaks per PDF.md §3.3.
       ⚠️ Never de-hyphenate before a capital or a digit — "Fourier-Transform" and "GPT-4"
       are not line breaks.
-- [ ] **A5.** Equation bands are detected and rasterized, never reconstructed (PDF.md §3.4).
+      _Done: `lines.ts` (`groupLines` + `linesToText`). **One real bug found and fixed at the
+      §A8 gate**: the paragraph-break "indent" check used one global modal left edge across
+      the whole page, so a two-column page's second column — a different legitimate left
+      edge — broke into one paragraph per line. Fixed by segmenting at backward y-jumps
+      (exactly the column/band boundaries `columns.ts` already produces) and computing the
+      modal edge and line-spacing median per segment. Detail and the fix's reasoning in
+      NOTES.md "M39 §A", bug 1._
+- [x] **A5.** Equation bands are detected and rasterized, never reconstructed (PDF.md §3.4).
       Nothing enters `resource_text` for one.
-- [ ] **A6.** Figure/table regions are detected by whitespace bounds + a caption matching
+      _Done: `equations.ts` (`detectEquationBands`) + `blocks.ts` wiring the band into one
+      `equation` raster block, its lines removed from the text stream. Rasterization via
+      `rasterize.ts`'s page-cache + crop, degrading to `image: null` on failure per A0's ⚠️._
+- [x] **A6.** Figure/table regions are detected by whitespace bounds + a caption matching
       `/^(Fig(ure)?|Table|Algorithm|Chart|Scheme)\.?\s*\d+/i`, rasterized at 2× to PNG.
       ⚠️ The image never enters `resource_text`; the caption always does.
-- [ ] **A7.** Unit tests over synthetic `getTextContent()` fixtures for A2–A4: a two-column
+      _Done: `figures.ts` (`detectFigureRegions`) — SPEC-GAP noted in-code: the region's
+      horizontal extent is approximated as the full page width rather than the caption's own
+      column (cheap; costs an occasionally-oversized crop, never a text error, since the
+      image never enters `resource_text`). Found at the §A8 gate: a genuinely textual table
+      (its rows real extracted text) can still match the caption regex and trigger a
+      spurious nearby image — cosmetic, the table's own text is never removed — noted in
+      NOTES.md rather than fixed now, see "M39 §A", accepted findings._
+- [x] **A7.** Unit tests over synthetic `getTextContent()` fixtures for A2–A4: a two-column
       page, a page with a full-width title, a hyphenated line break, a false hyphen, and a
       repeated running header.
+      _Done: 25 unit tests across `headerFooter.test.ts`, `columns.test.ts`, `lines.test.ts`,
+      `equations.test.ts`, `figures.test.ts`, `blocks.test.ts` — all five named cases plus
+      column/equation/figure edge cases. Green._
 - [ ] **A8. GATE.** Run the extractor over five real PDFs of different shapes — a two-column
       paper with figures and equations, a single-column preprint, a report with tables, a
       PDF-of-a-book with an outline, a scanned document — dump plain text, and read all five.
@@ -2785,6 +2822,16 @@ by a person.
       no interleaved columns, no running headers inline, and no equation glyph-soup. The scan
       yields near-zero characters. **Record the result in NOTES.md**, including what was
       wrong and what was accepted, whether or not it passes._
+      ⚠️ **Left unchecked on purpose — this is a provisional pass, not the real gate.** No
+      real PDFs were available in this environment; run 2026-09-03 against five
+      synthetic-but-structurally-real PDFs built with `pdfkit`, with the operator's explicit
+      sign-off on the substitution before starting (asked directly, since building the
+      fixtures myself and then judging their own output is exactly the blind spot this gate
+      exists to catch). It still caught two real bugs (A3/A4 above), which is why §B was
+      allowed to proceed on it rather than waiting — but the acceptance criterion asks for
+      **real** PDFs specifically, and that pass is still owed. Full writeup, both fixes, and
+      the findings that turned out to be fixture artifacts: NOTES.md "M39 §A — the extractor,
+      and what the §A8 gate actually found". Tracked in NOTES.md Blockers "M39 §A8".
 
 #### B. The spine, and the generated EPUB
 
