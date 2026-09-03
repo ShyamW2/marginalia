@@ -25,6 +25,8 @@ function seedBook(db: ReturnType<typeof createDb>) {
     title: "A Book",
     author: "An Author",
     format: "epub",
+    kind: "prose",
+    textLayer: true,
     metadata: {},
     importedAt: new Date().toISOString(),
   };

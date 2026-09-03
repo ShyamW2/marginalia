@@ -23,8 +23,17 @@ export type LLMProviderId = z.infer<typeof LLMProviderIdSchema>;
 // Resource (an imported book)
 // ---------------------------------------------------------------------------
 
-export const ResourceFormatSchema = z.enum(["epub"]);
+// M39 §C adds "pdf" — a PDF resource's id is sha256(pdfBytes ‖
+// EXTRACTOR_VERSION), never sha256(bytes) alone (PDF.md §2); EPUB identity
+// is unchanged.
+export const ResourceFormatSchema = z.enum(["epub", "pdf"]);
 export type ResourceFormat = z.infer<typeof ResourceFormatSchema>;
+
+// M39 §D / settled decision 18: genre only, selects a digest prompt/schema
+// pair in build.ts and nothing else. NOT where "scanned" lives — see
+// `textLayer` below.
+export const ResourceKindSchema = z.enum(["prose", "document"]);
+export type ResourceKind = z.infer<typeof ResourceKindSchema>;
 
 export const ResourceMetadataSchema = z
   .object({
@@ -45,10 +54,22 @@ export const ResourceSchema = z.object({
   title: z.string(),
   author: z.string().nullable(),
   format: ResourceFormatSchema,
+  kind: ResourceKindSchema,
+  // M39 §D1/§6: independent of `kind` — a scanned novel is still `prose`
+  // with no text layer. True for every EPUB and every digital PDF; false
+  // only for a PDF that failed the >50%-of-pages scan test (PDF.md §6).
+  textLayer: z.boolean(),
   metadata: ResourceMetadataSchema,
   importedAt: z.string(), // ISO 8601
 });
 export type Resource = z.infer<typeof ResourceSchema>;
+
+/** PUT /api/resources/:id/kind body (M39 §D4: reader-settable, both
+ * directions — a PDF of a novel and an EPUB of a textbook both exist). */
+export const UpdateResourceKindBodySchema = z.object({
+  kind: ResourceKindSchema,
+});
+export type UpdateResourceKindBody = z.infer<typeof UpdateResourceKindBodySchema>;
 
 // ---------------------------------------------------------------------------
 // Shelf state (M8 — the Desk's freeform workspace)
@@ -1461,6 +1482,10 @@ export type UpdateShowThematicQuotesBody = z.infer<typeof UpdateShowThematicQuot
 
 // M21 adds "audio-render" (rendering one spine section's sentence audio);
 // M22 adds "cast-scan" (pass 1: ensure/resume the digest, then assign voices).
+// M39 §C5 adds "pdf-import" (PDF.md §2.1: PDF extraction walks every page,
+// detects columns and rasterizes regions, so it runs through the job
+// registry like every other long-running operation — EPUB import stays
+// synchronous, it's cheap enough not to need this).
 export const JobKindSchema = z.enum([
   "digest",
   "thematic",
@@ -1468,6 +1493,7 @@ export const JobKindSchema = z.enum([
   "theme-distillation",
   "audio-render",
   "cast-scan",
+  "pdf-import",
 ]);
 export type JobKind = z.infer<typeof JobKindSchema>;
 

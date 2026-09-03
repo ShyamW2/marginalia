@@ -5,6 +5,7 @@ import type {
   ChapterQuestion,
   DigestChapterStatus,
   DigestStatus,
+  ResourceKind,
   ScanBookTheme,
   ThematicStatus,
 } from "@marginalia/shared";
@@ -59,6 +60,27 @@ async function fetchDigestStatus(
   } catch {
     return { ok: false, notFound: false };
   }
+}
+
+// M39 §D4 (PDF.md §5, settled decision 18): `kind` is reader-settable, both
+// directions — a PDF of a novel and an EPUB of a textbook both exist.
+async function fetchResourceKind(resourceId: string): Promise<ResourceKind | null> {
+  try {
+    const res = await fetch(`/api/resources/${resourceId}`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as { kind: ResourceKind };
+    return body.kind;
+  } catch {
+    return null;
+  }
+}
+
+async function putResourceKind(resourceId: string, kind: ResourceKind): Promise<void> {
+  await fetch(`/api/resources/${resourceId}/kind`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind }),
+  });
 }
 
 async function fetchBookThemes(resourceId: string): Promise<ScanBookTheme[]> {
@@ -144,6 +166,9 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
   const [taggingJobId, setTaggingJobId] = useState<string | null>(null);
   const [taggingError, setTaggingError] = useState<string | null>(null);
   const [bookThemes, setBookThemes] = useState<ScanBookTheme[]>([]);
+  // M39 §D4: fetched once on mount; null until the fetch resolves, so the
+  // toggle simply doesn't render rather than guessing a default.
+  const [kind, setKind] = useState<ResourceKind | null>(null);
   const [distillJobId, setDistillJobId] = useState<string | null>(null);
   const [distillError, setDistillError] = useState<string | null>(null);
   // M35 §G1 (renamed M38 §B1 — the range now scopes both Plot and Themes,
@@ -226,8 +251,10 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     setChapterPickerOpen(false);
     setAnalyseOpen(false);
     setSynopsisExpanded(false);
+    setKind(null);
     load();
     loadAudio();
+    fetchResourceKind(id).then(setKind);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -542,6 +569,17 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     navigate(`/scan/${id}`, { state: { background } });
   }
 
+  // M39 §D4: optimistic — flips immediately, PUTs in the background. Never
+  // touches a stored digest (settled decision 18/§D5): this only changes
+  // what the *next* run produces.
+  function handleToggleKind() {
+    setKind((prev) => {
+      const next: ResourceKind = prev === "document" ? "prose" : "document";
+      void putResourceKind(id, next);
+      return next;
+    });
+  }
+
   /** M38 §A3/§A4: opens a chapter's own page — resets the quotes panel
    * (only ever meaningful for whichever chapter is now open) and closes
    * the chapter picker if it was left open. */
@@ -732,7 +770,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
     const audioRendered = audioByIndex.get(c.spineIndex)?.rendered ?? false;
     return (
       <div className={styles.chapterCellBadges} aria-hidden="true">
-        <span className={`${styles.chapterBadge} ${c.digested ? styles.chapterBadgeOn : ""}`} title="Plot digest">
+        <span className={`${styles.chapterBadge} ${c.digested ? styles.chapterBadgeOn : ""}`} title="Summary">
           P
         </span>
         <span className={`${styles.chapterBadge} ${analyzed ? styles.chapterBadgeOn : ""}`} title="Thematic analysis">
@@ -765,6 +803,24 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
         <Link to={`/read/${id}`} className={styles.backLink}>
           Open book
         </Link>
+        {/* M39 §D4: reader-settable, both directions — a PDF of a novel and
+            an EPUB of a textbook both exist, so this is never gated on
+            `format`. Renders once the fetch resolves; a stored digest is
+            unaffected either way (§D5). */}
+        {kind !== null && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleToggleKind}
+            title={
+              kind === "document"
+                ? "Digested as a document (paper/report shape) — click to switch to prose"
+                : "Digested as prose (a story) — click to switch to document"
+            }
+          >
+            {kind === "document" ? "Document" : "Prose"}
+          </Button>
+        )}
       </div>
 
       {notFound && <p>Couldn't load the digest for this book.</p>}
@@ -913,7 +969,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                         checked={analysePlotChecked}
                         onChange={(e) => setAnalysePlotChecked(e.target.checked)}
                       />
-                      Plot
+                      Summarise
                     </label>
                     <label className={styles.analyseOption}>
                       <input
@@ -921,7 +977,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                         checked={analyseThemesChecked}
                         onChange={(e) => setAnalyseThemesChecked(e.target.checked)}
                       />
-                      Themes
+                      Analyse Themes
                     </label>
                     {analyseThemesChecked && (
                       <>
@@ -997,7 +1053,7 @@ export function DigestPage({ resourceId: id }: DigestPageProps) {
                 </Button>
               )}
             </div>
-            {plotError && <p className={styles.pausedNotice}>Plot digest failed: {plotError}</p>}
+            {plotError && <p className={styles.pausedNotice}>Summary failed: {plotError}</p>}
             {thematicError && <p className={styles.pausedNotice}>Thematic analysis failed: {thematicError}</p>}
             {taggingError && <p className={styles.pausedNotice}>Theme tagging failed: {taggingError}</p>}
             {distillError && <p className={styles.pausedNotice}>Theme consolidation failed: {distillError}</p>}

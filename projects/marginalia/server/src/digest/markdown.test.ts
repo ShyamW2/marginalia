@@ -27,6 +27,8 @@ const resource: Resource = {
   title: "Test Book",
   author: "Test Author",
   format: "epub",
+  kind: "prose",
+  textLayer: true,
   metadata: { chapterTitles: { "0": "The Beginning" } },
   importedAt: new Date().toISOString(),
 };

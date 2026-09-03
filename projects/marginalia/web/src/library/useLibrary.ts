@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { ResourceSummary } from "@marginalia/shared";
 import { formatPublishSummary, runPublish } from "./publish.js";
+import { useJobs } from "../jobs/JobsContext.js";
 
 export interface UploadItem {
   id: string;
@@ -10,10 +11,15 @@ export interface UploadItem {
   error?: string;
 }
 
+function isImportableFile(fileName: string): boolean {
+  const lower = fileName.toLowerCase();
+  return lower.endsWith(".epub") || lower.endsWith(".pdf");
+}
+
 function parseErrorMessage(responseText: string): string {
   try {
     const body = JSON.parse(responseText) as { error?: string };
-    if (body.error === "unsupported_format") return "Only .epub files are supported";
+    if (body.error === "unsupported_format") return "Only .epub and .pdf files are supported";
     if (body.error === "file_too_large") return "That file is over the 200MB import limit";
     if (body.error) return body.error;
   } catch {
@@ -36,10 +42,25 @@ export function useLibrary() {
   const [toast, setToast] = useState<{ message: string; tone: "success" | "error" } | null>(null);
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { jobs, registerStarted } = useJobs();
+  // M39 §C5: a PDF import runs as a job, not the synchronous upload path
+  // below — this tracks which finished `pdf-import` jobs have already
+  // triggered a refetch, so the effect below doesn't re-fetch every time an
+  // unrelated job update re-renders this hook.
+  const settledPdfImportIds = useRef(new Set<string>());
 
   useEffect(() => {
     fetchResources();
   }, []);
+
+  useEffect(() => {
+    for (const job of jobs) {
+      if (job.kind !== "pdf-import" || job.status === "running") continue;
+      if (settledPdfImportIds.current.has(job.id)) continue;
+      settledPdfImportIds.current.add(job.id);
+      if (job.status === "completed") fetchResources();
+    }
+  }, [jobs]);
 
   async function fetchResources() {
     try {
@@ -54,7 +75,7 @@ export function useLibrary() {
 
   function importFiles(files: FileList | File[]) {
     for (const file of Array.from(files)) {
-      if (!file.name.toLowerCase().endsWith(".epub")) {
+      if (!isImportableFile(file.name)) {
         setUploads((prev) => [
           ...prev,
           {
@@ -62,7 +83,7 @@ export function useLibrary() {
             fileName: file.name,
             progress: 0,
             status: "error",
-            error: "Only .epub files are supported",
+            error: "Only .epub and .pdf files are supported",
           },
         ]);
         continue;
@@ -88,6 +109,22 @@ export function useLibrary() {
       );
     };
     xhr.onload = () => {
+      // M39 §C5: a PDF import returns a jobId rather than the finished
+      // resource — the byte upload is done, but extraction is still
+      // running. Hand off to the tasks tray (already generic across job
+      // kinds) instead of the upload list, which only ever tracked the
+      // transfer itself.
+      if (xhr.status === 202) {
+        setUploads((prev) => prev.filter((u) => u.id !== id));
+        try {
+          const { jobId } = JSON.parse(xhr.responseText) as { jobId: string };
+          registerStarted({ id: jobId, kind: "pdf-import", resourceId: null, resourceTitle: file.name });
+        } catch {
+          // Malformed response — the job still runs server-side and will
+          // show up in the tray's next poll regardless.
+        }
+        return;
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         setUploads((prev) => prev.filter((u) => u.id !== id));
         fetchResources();

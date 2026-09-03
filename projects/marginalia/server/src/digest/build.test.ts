@@ -9,9 +9,10 @@ import {
   splitIntoChunks,
   withNetworkRetry,
 } from "./build.js";
-import { getBookDigestSnapshot, getChapterDigest, getDigestRun, listChapterDigests } from "./store.js";
+import { getBookDigest, getBookDigestSnapshot, getChapterDigest, getDigestRun, listChapterDigests } from "./store.js";
 import type { Resource } from "@marginalia/shared";
 import type { ResourceTextSection } from "../library/store.js";
+import { setResourceKind } from "../library/store.js";
 
 function makeResource(overrides: Partial<Resource> = {}): Resource {
   return {
@@ -19,6 +20,8 @@ function makeResource(overrides: Partial<Resource> = {}): Resource {
     title: "Test Book",
     author: "Test Author",
     format: "epub",
+    kind: "prose",
+    textLayer: true,
     metadata: {},
     importedAt: new Date().toISOString(),
     ...overrides,
@@ -179,6 +182,113 @@ describe("runDigest", () => {
 
     const bookRow = db.prepare("SELECT synopsis FROM book_digests WHERE resource_id = ?").get(resource.id) as { synopsis: string };
     expect(bookRow.synopsis).toContain("hope and loss");
+    db.close();
+  });
+
+  // M39 §D2/§D3 (PDF.md §5, settled decision 18): a `document`-kind resource
+  // uses the paper-shaped prompt/schema pair — never asks for characters/
+  // cast — and its book-level reduce still lands with an empty cast so
+  // audio's existing single-voice fallback applies with no new code path.
+  it("uses the document-kind prompt/schema pair and stores an empty cast", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource({ format: "pdf", kind: "document" });
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [
+      { spineIndex: 0, href: "a", text: "Section one text." },
+      { spineIndex: 1, href: "b", text: "Section two text." },
+    ];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider((req) => {
+      // A document-kind chapter part's schema must never ask for a
+      // "characters" field, and a document-kind reduce's must never ask
+      // for a "cast" field (PDF.md §5's whole reason this pair exists).
+      expect(req.instructions).not.toMatch(/"characters"/);
+      expect(req.instructions).not.toMatch(/"cast"/);
+      if (req.input.includes("Section one")) {
+        return {
+          summary: "It introduces a new method",
+          contributions: ["a new method"],
+          methods: "surveyed prior work",
+          findings: ["it works"],
+          limitations: "small sample",
+          themes: ["methodology"],
+          title: "Intro",
+        };
+      }
+      if (req.input.includes("Section two")) {
+        return {
+          summary: "It applies the method elsewhere",
+          contributions: ["an application"],
+          methods: "applied the method",
+          findings: ["it generalizes"],
+          limitations: "single domain",
+          themes: ["application"],
+          title: "Results",
+        };
+      }
+      return {
+        synopsis: "A paper about a new method and its application.",
+        keyClaims: ["the method works", "it generalizes"],
+        methods: "survey plus application",
+        themes: ["methodology", "application"],
+      };
+    });
+
+    const run = await runDigest(db, provider, resource, sections, 0, 1);
+    expect(run.status).toBe("completed");
+
+    const chapters = listChapterDigests(db, resource.id);
+    expect(chapters).toHaveLength(2);
+    expect(chapters[0].characters).toEqual([]);
+    expect(chapters[0].documentFields).toEqual({
+      contributions: ["a new method"],
+      methods: "surveyed prior work",
+      findings: ["it works"],
+      limitations: "small sample",
+    });
+
+    const bookRow = db
+      .prepare(`SELECT synopsis, "cast", narrator_gender, document_fields FROM book_digests WHERE resource_id = ?`)
+      .get(resource.id) as { synopsis: string; cast: string; narrator_gender: string; document_fields: string };
+    expect(bookRow.synopsis).toContain("new method and its application");
+    expect(JSON.parse(bookRow.cast)).toEqual([]);
+    expect(bookRow.narrator_gender).toBe("unknown");
+    expect(JSON.parse(bookRow.document_fields)).toEqual({
+      keyClaims: ["the method works", "it generalizes"],
+      methods: "survey plus application",
+    });
+    db.close();
+  });
+
+  // M39 §D5 (settled decision 18): "changing kind does not invalidate an
+  // existing digest... a stored digest is displayed with whatever shape it
+  // was built with." A stored digest's own reads (`listChapterDigests`,
+  // `getBookDigest`) never consult `resources.kind` — this locks that in.
+  it("a stored prose digest survives switching the resource's kind unchanged", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Chapter one text." }];
+    seedSections(db, resource.id, sections);
+
+    const provider = makeProvider((req) =>
+      req.input.includes("Chapter one")
+        ? { summary: "Ch1 happens", themes: ["hope"], characters: ["Alice"] }
+        : { synopsis: "A book about hope.", cast: [{ name: "Alice", description: "protagonist" }], narratorGender: "female", themes: ["hope"] },
+    );
+    await runDigest(db, provider, resource, sections, 0, 0);
+
+    const chapterBefore = getChapterDigest(db, resource.id, 0);
+    const bookBefore = getBookDigest(db, resource.id);
+
+    setResourceKind(db, resource.id, "document");
+
+    expect(getChapterDigest(db, resource.id, 0)).toEqual(chapterBefore);
+    expect(getBookDigest(db, resource.id)).toEqual(bookBefore);
+    // Still fiction-shaped — "document" going forward doesn't rewrite it.
+    expect(getChapterDigest(db, resource.id, 0)?.characters).toEqual(["Alice"]);
+    expect(getBookDigest(db, resource.id)?.cast).toHaveLength(1);
     db.close();
   });
 
@@ -544,6 +654,50 @@ describe("maybeRefreshBookDigestSnapshot", () => {
     expect(snapshot?.synopsis).toBe("safe synopsis");
     expect(snapshot?.upToSpineIndex).toBe(1);
     expect(seenChapterNumbers).toEqual([0, 1]);
+    db.close();
+  });
+
+  // M39 §D2: this snapshot must use the same prompt/schema pair the run
+  // that produced its chapters used — the bug this guards against is the
+  // snapshot silently asking a `document` resource's own chapters for a
+  // cast/narrator every time GET /:id/digest opens.
+  it("uses the document-kind reduce for a document resource, never asking for a cast", async () => {
+    const db = createDb(":memory:");
+    const resource = makeResource({ format: "pdf", kind: "document" });
+    seedResource(db, resource);
+    const sections: ResourceTextSection[] = [{ spineIndex: 0, href: "a", text: "Section one text." }];
+    seedSections(db, resource.id, sections);
+    await runDigest(
+      db,
+      makeProvider((req) =>
+        req.input.includes("Section one")
+          ? {
+              summary: "It introduces a method",
+              contributions: [],
+              methods: "",
+              findings: [],
+              limitations: "",
+              themes: [],
+              title: "Intro",
+            }
+          : { synopsis: "s", keyClaims: [], methods: "", themes: [] },
+      ),
+      resource,
+      sections,
+      0,
+      0,
+    );
+
+    const snapshotProvider = makeProvider((req) => {
+      expect(req.instructions).not.toMatch(/"cast"/);
+      return { synopsis: "safe synopsis", keyClaims: ["a claim"], methods: "m", themes: [] };
+    });
+    await maybeRefreshBookDigestSnapshot(db, snapshotProvider, resource, 0);
+
+    const snapshot = getBookDigestSnapshot(db, resource.id);
+    expect(snapshot?.synopsis).toBe("safe synopsis");
+    expect(snapshot?.cast).toEqual([]);
+    expect(snapshot?.narratorGender).toBe("unknown");
     db.close();
   });
 

@@ -135,6 +135,17 @@ async function extractOutline(doc: PdfjsDocument): Promise<PdfOutlineEntry[]> {
   return entries;
 }
 
+export interface ExtractPdfOptions {
+  /** M39 §C5: PDF import runs as a job (PDF.md §2.1) — checked once per
+   * page, between the (cheap) text-content pass and the (potentially slow,
+   * rasterizing) per-page pass below, so a cancelled import stops promptly
+   * rather than finishing every remaining page first. */
+  signal?: AbortSignal;
+  /** Reported once per page during the per-page pass, so the job's progress
+   * can read "page 12 of 30" instead of an indeterminate spinner. */
+  onPage?: (current: number, total: number) => void;
+}
+
 /**
  * PDF.md §3: extracts every page's text (headers/footers stripped, columns
  * resolved, equations and figures rasterized out) plus the document's
@@ -142,7 +153,8 @@ async function extractOutline(doc: PdfjsDocument): Promise<PdfOutlineEntry[]> {
  * failing the import (§3 ⚠️) — a machine without a working canvas still
  * gets readable text, just without pictures.
  */
-export async function extractPdf(buffer: Buffer): Promise<ExtractedPdf> {
+export async function extractPdf(buffer: Buffer, options: ExtractPdfOptions = {}): Promise<ExtractedPdf> {
+  const { signal, onPage } = options;
   const doc = await loadDocument(buffer);
 
   const pageProxies: PdfjsPage[] = [];
@@ -180,6 +192,9 @@ export async function extractPdf(buffer: Buffer): Promise<ExtractedPdf> {
   let shortPageCount = 0;
 
   for (const pageItems of stripped) {
+    if (signal?.aborted) throw new Error("Cancelled");
+    onPage?.(pageItems.pageIndex + 1, stripped.length);
+
     const ordered = orderPageItems(pageItems.items, pageItems.width);
     const lines = groupLines(ordered);
 

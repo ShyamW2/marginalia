@@ -111,7 +111,7 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".epub"
+        accept=".epub,.pdf"
         multiple
         className={styles.hiddenInput}
         onChange={(event) => {
@@ -226,7 +226,7 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
       ) : (
         <div className={styles.empty}>
           <div className={styles.emptyTitle}>Your library is empty</div>
-          <p>Drag an .epub here, or use the file picker, to start reading.</p>
+          <p>Drag an .epub or .pdf here, or use the file picker, to start reading.</p>
           <Button
             variant="solid"
             className={styles.emptyImport}

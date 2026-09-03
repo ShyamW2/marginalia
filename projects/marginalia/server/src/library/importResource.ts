@@ -33,6 +33,8 @@ export function importEpub(db: Database.Database, buffer: Buffer): Resource {
     title: extracted.title,
     author: extracted.author,
     format: "epub",
+    kind: "prose",
+    textLayer: true,
     metadata: extracted.metadata,
     importedAt,
   };

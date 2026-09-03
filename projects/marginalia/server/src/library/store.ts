@@ -14,6 +14,8 @@ interface ResourceRow {
   file_path: string;
   metadata: string;
   imported_at: string;
+  kind: string;
+  text_layer: number;
 }
 
 function rowToResource(row: ResourceRow): Resource {
@@ -22,9 +24,23 @@ function rowToResource(row: ResourceRow): Resource {
     title: row.title,
     author: row.author,
     format: row.format as Resource["format"],
+    kind: row.kind as Resource["kind"],
+    textLayer: row.text_layer !== 0,
     metadata: JSON.parse(row.metadata),
     importedAt: row.imported_at,
   };
+}
+
+/** M39 §D4: `kind` is reader-settable in both directions (a PDF of a novel,
+ * an EPUB of a textbook). Never touches a stored digest — settled decision
+ * 18/§D5: a digest renders from the fields it was built with, not from
+ * today's `kind`. */
+export function setResourceKind(
+  db: Database.Database,
+  resourceId: string,
+  kind: Resource["kind"],
+): void {
+  db.prepare("UPDATE resources SET kind = ? WHERE id = ?").run(kind, resourceId);
 }
 
 export function getResourceById(

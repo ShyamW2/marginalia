@@ -166,6 +166,25 @@ export function setHighlightOffset(
   db.prepare(`UPDATE highlights SET "offset" = ?, length = ? WHERE id = ?`).run(offset, length, id);
 }
 
+/** M39 §C7 (PDF.md §2's migration path): repoints one highlight at a
+ * *different* resource — the extractor-version upgrade case, where a
+ * highlight's exact/prefix/suffix text is unchanged but its resource id,
+ * spine index and in-section offset are not. Threads, tags, notes and panel
+ * position all live on this same row (or key off `highlight_id`
+ * unchanged), so this one write moves all of them for free; the old CFI is
+ * left as-is (almost certainly stale against the new reflow EPUB) since the
+ * anchor model already falls back to exact+prefix+suffix when a CFI fails
+ * to resolve (settled decision 11 / CLAUDE.md's anchoring discipline). */
+export function reanchorHighlightToResource(
+  db: Database.Database,
+  id: string,
+  target: { resourceId: string; spineIndex: number; offset: number; length: number },
+): void {
+  db.prepare(
+    `UPDATE highlights SET resource_id = ?, spine_index = ?, "offset" = ?, length = ? WHERE id = ?`,
+  ).run(target.resourceId, target.spineIndex, target.offset, target.length, id);
+}
+
 /**
  * M35 §D4/§D5a: every anchor of a thread, resolved to its own highlight row
  * and ordered in *reading* order — spine index, then in-chapter offset —

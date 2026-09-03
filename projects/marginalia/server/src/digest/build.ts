@@ -14,6 +14,8 @@ import {
   putBookDigestSnapshot,
   putChapterDigest,
   putDigestRun,
+  type BookDocumentFields,
+  type ChapterDocumentFields,
   type DigestRun,
 } from "./store.js";
 import { getLookahead } from "./lookahead.js";
@@ -90,6 +92,30 @@ const BookReduceSchema = z.object({
 });
 type BookReduce = z.infer<typeof BookReduceSchema>;
 
+// M39 §D2 (PDF.md §5, settled decision 18): a `document`-kind resource's
+// own prompt/schema pair — "characters"/"cast" produce noise for a paper,
+// so this asks for the fields a paper's own shape actually has instead.
+// Selects nothing else: the chunking/hierarchical-reduce machinery below is
+// shared verbatim with the `prose` path.
+const DocumentPartSchema = z.object({
+  summary: z.string(),
+  contributions: z.array(z.string()).max(8),
+  methods: z.string(),
+  findings: z.array(z.string()).max(8),
+  limitations: z.string(),
+  themes: z.array(z.string()).max(8),
+  title: z.string(),
+});
+type DocumentPart = z.infer<typeof DocumentPartSchema>;
+
+const DocumentReduceSchema = z.object({
+  synopsis: z.string(),
+  keyClaims: z.array(z.string()).max(12),
+  methods: z.string(),
+  themes: z.array(z.string()).max(12),
+});
+type DocumentReduce = z.infer<typeof DocumentReduceSchema>;
+
 const CHAPTER_PART_INSTRUCTIONS = `You are building a compact digest of a book, one chapter at a time, for a
 reader who wants a grounded summary without re-reading the whole book.
 
@@ -137,6 +163,55 @@ Respond with a single JSON object with exactly these keys:
 - "ageHint": "child" | "young" | "adult" | "old" | "unknown"
 - "description": one line describing them
 - "lineCountHint": "many" (a major character with a lot of dialogue) or "few"
+
+Return only the JSON object, no other text.`;
+
+const DOCUMENT_PART_INSTRUCTIONS = `You are building a compact digest of a scientific/technical document, one
+section at a time, for a reader who wants a grounded summary without
+re-reading the whole thing. This is a paper or report, not a story — do not
+invent characters or a narrative.
+
+Respond with a single JSON object with exactly these keys:
+{
+  "summary": "a few sentences summarizing what this section covers",
+  "contributions": ["what this section contributes or claims, at most 8"],
+  "methods": "a few sentences on the method(s) used in this section, or empty if none",
+  "findings": ["concrete results or findings stated in this section, at most 8"],
+  "limitations": "a few sentences on limitations/caveats stated in this section, or empty if none",
+  "themes": ["short theme or topic names, at most 8"],
+  "title": "a short, specific, descriptive title for this section (a few words, not a full sentence)"
+}
+
+Return only the JSON object, no other text.`;
+
+const DOCUMENT_MERGE_INSTRUCTIONS = `You are merging several partial summaries of ONE section of a scientific/
+technical document (it was too long to summarize in a single pass, so it
+was split into consecutive parts) into one coherent section digest.
+
+Respond with a single JSON object with exactly these keys:
+{
+  "summary": "a few sentences summarizing the whole section, combining the parts",
+  "contributions": ["contributions/claims, at most 8, deduplicated"],
+  "methods": "a few sentences on the method(s), combining the parts, or empty if none",
+  "findings": ["findings, at most 8, deduplicated"],
+  "limitations": "a few sentences on limitations, combining the parts, or empty if none",
+  "themes": ["short theme or topic names, at most 8, deduplicated"],
+  "title": "a short, specific, descriptive title for the whole section (a few words, not a full sentence)"
+}
+
+Return only the JSON object, no other text.`;
+
+const DOCUMENT_REDUCE_INSTRUCTIONS = `You are producing a document-level digest from a set of section summaries
+of one scientific/technical document (a paper or report — not a story; do
+not invent characters, a cast or a narrator).
+
+Respond with a single JSON object with exactly these keys:
+{
+  "synopsis": "a few paragraphs summarizing the document as a whole, in reading order",
+  "keyClaims": ["the document's main claims/contributions overall, at most 12, deduplicated"],
+  "methods": "a few sentences summarizing the method(s) used across the document",
+  "themes": ["short theme/topic names for the document overall, at most 12, deduplicated"]
+}
 
 Return only the JSON object, no other text.`;
 
@@ -258,6 +333,86 @@ async function digestChapter(
   }
 }
 
+// M39 §D2: the `document`-kind mirrors of `extractChapterPart`/
+// `mergeChapterParts`/`digestChapter` above — same chunking, retry and
+// re-split behaviour, a different prompt/schema pair.
+async function extractDocumentPart(
+  provider: LLMProvider,
+  title: string,
+  author: string | null,
+  sectionLabelText: string,
+  partText: string,
+  partIndex: number,
+  partCount: number,
+  signal?: AbortSignal,
+): Promise<DocumentPart> {
+  const header = author ? `${title} by ${author}` : title;
+  const partSuffix = partCount > 1 ? ` (part ${partIndex + 1} of ${partCount})` : "";
+  return provider.extract({
+    instructions: DOCUMENT_PART_INSTRUCTIONS,
+    input: `${header}\n\n${sectionLabelText}${partSuffix}:\n\n${partText}`,
+    schema: DocumentPartSchema,
+    signal,
+  });
+}
+
+async function mergeDocumentParts(
+  provider: LLMProvider,
+  sectionLabelText: string,
+  parts: DocumentPart[],
+  signal?: AbortSignal,
+): Promise<DocumentPart> {
+  const input = parts
+    .map(
+      (p, i) =>
+        `Part ${i + 1} title: ${p.title}\nPart ${i + 1} summary: ${p.summary}\n` +
+        `Contributions: ${p.contributions.join(", ")}\nMethods: ${p.methods}\n` +
+        `Findings: ${p.findings.join(", ")}\nLimitations: ${p.limitations}\nThemes: ${p.themes.join(", ")}`,
+    )
+    .join("\n\n");
+  return provider.extract({
+    instructions: DOCUMENT_MERGE_INSTRUCTIONS,
+    input: `${sectionLabelText} — ${parts.length} parts to merge:\n\n${input}`,
+    schema: DocumentPartSchema,
+    signal,
+  });
+}
+
+async function digestDocumentSection(
+  provider: LLMProvider,
+  contextTokens: number,
+  title: string,
+  author: string | null,
+  sectionLabelText: string,
+  text: string,
+  signal?: AbortSignal,
+): Promise<DocumentPart | null> {
+  const budgetChars = contextTokens * MAP_BUDGET_FRACTION * CHARS_PER_TOKEN;
+
+  async function attempt(maxChars: number): Promise<DocumentPart> {
+    const chunks = splitIntoChunks(text, maxChars);
+    const parts: DocumentPart[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      parts.push(
+        await extractDocumentPart(provider, title, author, sectionLabelText, chunks[i], i, chunks.length, signal),
+      );
+    }
+    return chunks.length === 1 ? parts[0] : mergeDocumentParts(provider, sectionLabelText, parts, signal);
+  }
+
+  try {
+    return await attempt(budgetChars);
+  } catch (err) {
+    if (!(err instanceof LLMError) || err.code !== "context_too_large") throw err;
+    try {
+      return await attempt(budgetChars / 2);
+    } catch (err2) {
+      if (err2 instanceof LLMError && err2.code === "context_too_large") return null;
+      throw err2;
+    }
+  }
+}
+
 async function reduceBatch(
   provider: LLMProvider,
   title: string,
@@ -327,6 +482,71 @@ export async function reduceBookDigest(
     });
   }
   return reduceBookDigest(provider, contextTokens, title, author, intermediate, signal);
+}
+
+// M39 §D2: the `document`-kind mirror of `reduceBatch`/`reduceBookDigest`
+// above — same hierarchical-batching shape, a different prompt/schema pair,
+// and no "Characters:" line (a section's own `characters` field is always
+// empty for a document, per `runDigest` below). An intermediate batch's
+// `keyClaims`/`methods` don't carry forward into the next reduction level —
+// the same lossy compression the prose path already accepts for its own
+// `cast` at that stage, and it only ever triggers for a document long
+// enough to exceed one reduce call's budget.
+async function reduceDocumentBatch(
+  provider: LLMProvider,
+  title: string,
+  author: string | null,
+  sections: { spineIndex: number; summary: string; themes: string[] }[],
+  signal?: AbortSignal,
+): Promise<DocumentReduce> {
+  const header = author ? `${title} by ${author}` : title;
+  const input = sections
+    .map((s) => `Section ${s.spineIndex}: ${s.summary}\nThemes: ${s.themes.join(", ")}`)
+    .join("\n\n");
+  return provider.extract({
+    instructions: DOCUMENT_REDUCE_INSTRUCTIONS,
+    input: `${header}\n\n${input}`,
+    schema: DocumentReduceSchema,
+    signal,
+  });
+}
+
+export async function reduceDocumentDigest(
+  provider: LLMProvider,
+  contextTokens: number,
+  title: string,
+  author: string | null,
+  sections: { spineIndex: number; summary: string; themes: string[] }[],
+  signal?: AbortSignal,
+): Promise<DocumentReduce> {
+  const budgetChars = contextTokens * MAP_BUDGET_FRACTION * CHARS_PER_TOKEN;
+  const totalChars = sections.reduce((sum, s) => sum + s.summary.length, 0);
+
+  if (sections.length <= 1 || totalChars <= budgetChars) {
+    return reduceDocumentBatch(provider, title, author, sections, signal);
+  }
+
+  const batches: (typeof sections)[] = [];
+  let current: typeof sections = [];
+  let currentLen = 0;
+  for (const s of sections) {
+    if (currentLen + s.summary.length > budgetChars && current.length > 0) {
+      batches.push(current);
+      current = [s];
+      currentLen = s.summary.length;
+    } else {
+      current.push(s);
+      currentLen += s.summary.length;
+    }
+  }
+  if (current.length > 0) batches.push(current);
+
+  const intermediate: typeof sections = [];
+  for (const batch of batches) {
+    const result = await reduceDocumentBatch(provider, title, author, batch, signal);
+    intermediate.push({ spineIndex: batch[0].spineIndex, summary: result.synopsis, themes: result.themes });
+  }
+  return reduceDocumentDigest(provider, contextTokens, title, author, intermediate, signal);
 }
 
 export interface DigestPreflight {
@@ -431,6 +651,49 @@ export async function runDigest(
     // there stale for the whole call (decisions.md 2026-08-12 ruling 2).
     onProgress?.(current, total, chapterUiLabel);
     try {
+      // M39 §D2/settled decision 18: `kind` selects a prompt/schema pair
+      // and nothing else — everything else in this loop (chunking, retry,
+      // progress, failure tracking, coverage) is shared verbatim.
+      if (resource.kind === "document") {
+        const part = await withNetworkRetry(
+          () =>
+            digestDocumentSection(
+              provider,
+              contextTokens,
+              resource.title,
+              resource.author,
+              chapterLabel,
+              section.text,
+              signal,
+            ),
+          signal,
+        );
+        if (part === null) {
+          failedSpineIndices.add(section.spineIndex);
+          current++;
+          continue;
+        }
+        const documentFields: ChapterDocumentFields = {
+          contributions: part.contributions,
+          methods: part.methods,
+          findings: part.findings,
+          limitations: part.limitations,
+        };
+        putChapterDigest(db, {
+          resourceId: resource.id,
+          spineIndex: section.spineIndex,
+          summary: part.summary,
+          themes: part.themes,
+          characters: [],
+          title: part.title,
+          documentFields,
+          sourceHash: hashText(section.text),
+        });
+        failedSpineIndices.delete(section.spineIndex);
+        current++;
+        continue;
+      }
+
       const part = await withNetworkRetry(
         () =>
           digestChapter(
@@ -456,6 +719,7 @@ export async function runDigest(
         themes: part.themes,
         characters: part.characters,
         title: part.title,
+        documentFields: null,
         sourceHash: hashText(section.text),
       });
       failedSpineIndices.delete(section.spineIndex);
@@ -480,17 +744,38 @@ export async function runDigest(
     // 2026-08-12 ruling 2).
     onProgress?.(current, total, "Composing the book digest");
     try {
-      const reduced = await withNetworkRetry(
-        () => reduceBookDigest(provider, contextTokens, resource.title, resource.author, allChapters, signal),
-        signal,
-      );
-      putBookDigest(db, {
-        resourceId: resource.id,
-        synopsis: reduced.synopsis,
-        cast: reduced.cast,
-        narratorGender: reduced.narratorGender,
-        themes: reduced.themes,
-      });
+      // M39 §D2/§D3: a `document` book reduce asks for `keyClaims`/`methods`,
+      // never `cast`/`narratorGender` — stored as an empty cast so audio
+      // falls back to M21 single-voice narration with no new audio path
+      // (settled decision 18).
+      if (resource.kind === "document") {
+        const reduced = await withNetworkRetry(
+          () => reduceDocumentDigest(provider, contextTokens, resource.title, resource.author, allChapters, signal),
+          signal,
+        );
+        const documentFields: BookDocumentFields = { keyClaims: reduced.keyClaims, methods: reduced.methods };
+        putBookDigest(db, {
+          resourceId: resource.id,
+          synopsis: reduced.synopsis,
+          cast: [],
+          narratorGender: "unknown",
+          themes: reduced.themes,
+          documentFields,
+        });
+      } else {
+        const reduced = await withNetworkRetry(
+          () => reduceBookDigest(provider, contextTokens, resource.title, resource.author, allChapters, signal),
+          signal,
+        );
+        putBookDigest(db, {
+          resourceId: resource.id,
+          synopsis: reduced.synopsis,
+          cast: reduced.cast,
+          narratorGender: reduced.narratorGender,
+          themes: reduced.themes,
+          documentFields: null,
+        });
+      }
     } catch (err) {
       if (err instanceof LLMError && err.code === "rate_limit") {
         const resumesAt = new Date(
@@ -537,6 +822,29 @@ export async function maybeRefreshBookDigestSnapshot(
   const existing = getBookDigestSnapshot(db, resource.id);
   if (existing && existing.upToSpineIndex >= frontier) return;
   if (!provider) return;
+
+  // M39 §D2: this snapshot must use the same prompt/schema pair `runDigest`
+  // used to build the chapters it's reducing — calling the `prose` reduce
+  // against a `document` resource would silently ask a paper's own chapters
+  // for a cast/narrator every time GET /:id/digest opens.
+  if (resource.kind === "document") {
+    const reduced = await reduceDocumentDigest(
+      provider,
+      provider.capabilities().contextTokens,
+      resource.title,
+      resource.author,
+      chaptersInBookmark,
+    );
+    putBookDigestSnapshot(db, {
+      resourceId: resource.id,
+      upToSpineIndex: frontier,
+      synopsis: reduced.synopsis,
+      cast: [],
+      narratorGender: "unknown",
+      themes: reduced.themes,
+    });
+    return;
+  }
 
   const reduced = await reduceBookDigest(
     provider,

@@ -10,6 +10,7 @@ const KIND_LABEL: Record<Job["kind"], string> = {
   "theme-distillation": "Theme distillation",
   "audio-render": "Rendering audio",
   "cast-scan": "Casting",
+  "pdf-import": "Importing PDF",
 };
 
 function summary(job: Job): string {

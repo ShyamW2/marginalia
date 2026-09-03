@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import PDFDocument from "pdfkit";
-import { extractPdf } from "./extract.js";
+import { extractPdf, PdfInvalidError } from "./extract.js";
 import { blocksToText } from "./lines.js";
 
 /** Builds a small real PDF in memory via pdfkit — an end-to-end fixture for
@@ -66,5 +66,30 @@ describe("extractPdf", () => {
     const result = await extractPdf(buffer);
 
     expect(result.isScan).toBe(false);
+  });
+
+  // M39 §C6 (PDF.md §2.1): "Corrupt or not actually a PDF" is a designed
+  // failure state (`invalid_pdf`), not an unhandled crash.
+  it("throws PdfInvalidError for bytes that aren't a real PDF", async () => {
+    await expect(extractPdf(Buffer.from("this is not a pdf"))).rejects.toBeInstanceOf(PdfInvalidError);
+  });
+
+  it("reports per-page progress and stops promptly when aborted", async () => {
+    const buffer = await buildFixturePdf();
+    const seen: number[][] = [];
+
+    const controller = new AbortController();
+    const promise = extractPdf(buffer, {
+      signal: controller.signal,
+      onPage: (current, total) => {
+        seen.push([current, total]);
+        if (current === 1) controller.abort();
+      },
+    });
+
+    await expect(promise).rejects.toThrow();
+    expect(seen[0]).toEqual([1, 3]);
+    // Aborted after page 1 — the loop must not have gone on to page 2 or 3.
+    expect(seen).toHaveLength(1);
   });
 });

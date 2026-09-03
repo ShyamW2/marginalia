@@ -16,6 +16,8 @@ function makeResource(overrides: Partial<Resource> = {}): Resource {
     title: "Test Book",
     author: "Test Author",
     format: "epub",
+    kind: "prose",
+    textLayer: true,
     metadata: {},
     importedAt: new Date().toISOString(),
     ...overrides,

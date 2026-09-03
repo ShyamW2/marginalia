@@ -1,5 +1,21 @@
 import type Database from "better-sqlite3";
 
+/** M39 §D2 (PDF.md §5): the fields a `document`-kind chapter/book digest
+ * produces that a `prose` one doesn't. Null on every `prose` row (the
+ * overwhelming majority, and every row that predates this column) — see
+ * migration 40's own comment on why this is one JSON column rather than
+ * four/two new ones. */
+export interface ChapterDocumentFields {
+  contributions: string[];
+  methods: string;
+  findings: string[];
+  limitations: string;
+}
+export interface BookDocumentFields {
+  keyClaims: string[];
+  methods: string;
+}
+
 export interface ChapterDigest {
   resourceId: string;
   spineIndex: number;
@@ -10,6 +26,7 @@ export interface ChapterDigest {
    * chapters digested before this column existed — there is no backfill,
    * they just show the positional fallback until re-digested. */
   title: string | null;
+  documentFields?: ChapterDocumentFields | null;
   sourceHash: string;
   generatedAt: string;
 }
@@ -31,6 +48,7 @@ export interface BookDigest {
   cast: BookDigestCastMember[];
   narratorGender: "female" | "male" | "unknown";
   themes: string[];
+  documentFields?: BookDocumentFields | null;
   generatedAt: string;
 }
 
@@ -55,6 +73,7 @@ interface ChapterDigestRow {
   themes: string;
   characters: string;
   title: string | null;
+  document_fields: string | null;
   source_hash: string;
   generated_at: string;
 }
@@ -67,6 +86,7 @@ function rowToChapterDigest(row: ChapterDigestRow): ChapterDigest {
     themes: JSON.parse(row.themes),
     characters: JSON.parse(row.characters),
     title: row.title,
+    documentFields: row.document_fields ? JSON.parse(row.document_fields) : null,
     sourceHash: row.source_hash,
     generatedAt: row.generated_at,
   };
@@ -106,11 +126,11 @@ export function putChapterDigest(
   const generatedAt = new Date().toISOString();
   db.prepare(
     `INSERT INTO chapter_digests
-       (resource_id, spine_index, summary, themes, characters, title, source_hash, generated_at)
-     VALUES (@resourceId, @spineIndex, @summary, @themes, @characters, @title, @sourceHash, @generatedAt)
+       (resource_id, spine_index, summary, themes, characters, title, document_fields, source_hash, generated_at)
+     VALUES (@resourceId, @spineIndex, @summary, @themes, @characters, @title, @documentFields, @sourceHash, @generatedAt)
      ON CONFLICT(resource_id, spine_index) DO UPDATE SET
        summary = @summary, themes = @themes, characters = @characters, title = @title,
-       source_hash = @sourceHash, generated_at = @generatedAt`,
+       document_fields = @documentFields, source_hash = @sourceHash, generated_at = @generatedAt`,
   ).run({
     resourceId: digest.resourceId,
     spineIndex: digest.spineIndex,
@@ -118,6 +138,7 @@ export function putChapterDigest(
     themes: JSON.stringify(digest.themes),
     characters: JSON.stringify(digest.characters),
     title: digest.title,
+    documentFields: digest.documentFields ? JSON.stringify(digest.documentFields) : null,
     sourceHash: digest.sourceHash,
     generatedAt,
   });
@@ -130,6 +151,7 @@ interface BookDigestRow {
   cast: string;
   narrator_gender: string;
   themes: string;
+  document_fields: string | null;
   generated_at: string;
 }
 
@@ -140,6 +162,7 @@ function rowToBookDigest(row: BookDigestRow): BookDigest {
     cast: JSON.parse(row.cast),
     narratorGender: row.narrator_gender as BookDigest["narratorGender"],
     themes: JSON.parse(row.themes),
+    documentFields: row.document_fields ? JSON.parse(row.document_fields) : null,
     generatedAt: row.generated_at,
   };
 }
@@ -160,17 +183,18 @@ export function putBookDigest(
 ): BookDigest {
   const generatedAt = new Date().toISOString();
   db.prepare(
-    `INSERT INTO book_digests (resource_id, synopsis, cast, narrator_gender, themes, generated_at)
-     VALUES (@resourceId, @synopsis, @cast, @narratorGender, @themes, @generatedAt)
+    `INSERT INTO book_digests (resource_id, synopsis, cast, narrator_gender, themes, document_fields, generated_at)
+     VALUES (@resourceId, @synopsis, @cast, @narratorGender, @themes, @documentFields, @generatedAt)
      ON CONFLICT(resource_id) DO UPDATE SET
        synopsis = @synopsis, cast = @cast, narrator_gender = @narratorGender,
-       themes = @themes, generated_at = @generatedAt`,
+       themes = @themes, document_fields = @documentFields, generated_at = @generatedAt`,
   ).run({
     resourceId: digest.resourceId,
     synopsis: digest.synopsis,
     cast: JSON.stringify(digest.cast),
     narratorGender: digest.narratorGender,
     themes: JSON.stringify(digest.themes),
+    documentFields: digest.documentFields ? JSON.stringify(digest.documentFields) : null,
     generatedAt,
   });
   return { ...digest, generatedAt };

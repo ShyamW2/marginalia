@@ -4088,7 +4088,7 @@ export function ReaderView({
           disabled={currentSpineIndex === null || digestChapterJobId !== null}
           onClick={handleDigestChapter}
         >
-          {digestChapterJobId ? "Digesting…" : digestChapterResult ?? "Digest Plot"}
+          {digestChapterJobId ? "Summarising…" : digestChapterResult ?? "Summarise"}
         </Button>
         <Button
           variant="ghost"

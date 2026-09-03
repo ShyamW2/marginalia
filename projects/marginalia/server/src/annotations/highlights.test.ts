@@ -8,6 +8,7 @@ import {
   listHighlightsForThread,
   listHighlightsMissingOffset,
   listHighlightsWithThreadsForResource,
+  reanchorHighlightToResource,
   setHighlightNote,
   setHighlightOffset,
   setHighlightPanelOffset,
@@ -524,6 +525,62 @@ describe("highlights store", () => {
 
       setHighlightOffset(db, missing.id, 7, 3);
       expect(listHighlightsMissingOffset(db, resourceId)).toHaveLength(0);
+      db.close();
+    });
+  });
+
+  // M39 §C7 (PDF.md §2's migration path): reanchoring a highlight across an
+  // extractor-version upgrade.
+  describe("reanchorHighlightToResource", () => {
+    it("moves a highlight's resource/spine/offset in place, carrying its thread, note, tags and panel position for free", () => {
+      const db = createDb(":memory:");
+      const oldResourceId = seedResource(db, "old-res");
+      const newResourceId = seedResource(db, "new-res");
+
+      const highlight = createHighlight(db, {
+        resourceId: oldResourceId,
+        exact: "quote",
+        prefix: "pre",
+        suffix: "suf",
+        cfi: "epubcfi(/6/4!/4/2)",
+        spineIndex: 0,
+        kind: "rose",
+        offset: 5,
+        length: 5,
+      });
+      setHighlightNote(db, highlight.id, "a note");
+      setHighlightPanelOffset(db, highlight.id, 12, -4);
+      const thread = createThread(db, highlight.id);
+
+      reanchorHighlightToResource(db, highlight.id, {
+        resourceId: newResourceId,
+        spineIndex: 3,
+        offset: 40,
+        length: 5,
+      });
+
+      const moved = getHighlightById(db, highlight.id);
+      expect(moved).toMatchObject({
+        resourceId: newResourceId,
+        spineIndex: 3,
+        exact: "quote",
+        note: "a note",
+        panelDx: 12,
+        panelDy: -4,
+      });
+      // offset/length aren't part of the `Highlight` domain type (see this
+      // file's own comment on `HighlightMissingOffset`) — check the row.
+      const row = db.prepare(`SELECT "offset", length FROM highlights WHERE id = ?`).get(highlight.id) as {
+        offset: number;
+        length: number;
+      };
+      expect(row).toEqual({ offset: 40, length: 5 });
+
+      // The thread never moved rows at all — it keys off highlight_id,
+      // which didn't change — so it's still exactly where it was.
+      expect(getThreadById(db, thread.id)?.highlightId).toBe(highlight.id);
+      expect(listHighlightsForResource(db, oldResourceId)).toHaveLength(0);
+      expect(listHighlightsForResource(db, newResourceId).map((h) => h.id)).toEqual([highlight.id]);
       db.close();
     });
   });

@@ -923,4 +923,35 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    // M39 §D1 (PDF.md §5/§6, settled decision 18): two independent axes on
+    // `resources`, neither one a "scanned" kind value. `kind` is genre-only
+    // (prose | document), selecting a digest prompt/schema pair in build.ts
+    // and nothing else; `text_layer` is "does this resource have extracted
+    // text at all", set to 0 only by a PDF that fails §6's >50%-of-pages
+    // scan test. SQLite backfills every existing row to the column DEFAULT
+    // on ADD COLUMN, so every pre-existing resource (all EPUBs) becomes
+    // 'prose' / text_layer=1 for free — exactly the D1 backfill this asks
+    // for, with no separate UPDATE needed.
+    version: 39,
+    sql: `
+      ALTER TABLE resources ADD COLUMN kind TEXT NOT NULL DEFAULT 'prose';
+      ALTER TABLE resources ADD COLUMN text_layer INTEGER NOT NULL DEFAULT 1;
+    `,
+  },
+  {
+    // M39 §D2 (PDF.md §5): a `document`-kind chapter/book digest produces
+    // fields a `prose` one doesn't (contributions/methods/findings/
+    // limitations; keyClaims/methods) — stored as one nullable JSON column
+    // per table rather than four/two new columns each, since exactly one of
+    // "prose digest" or "document digest" shape applies to a given row and
+    // nothing here is ever queried by an individual field. NULL for every
+    // `prose` digest (the overwhelming majority, and every row that
+    // predates this column).
+    version: 40,
+    sql: `
+      ALTER TABLE chapter_digests ADD COLUMN document_fields TEXT;
+      ALTER TABLE book_digests ADD COLUMN document_fields TEXT;
+    `,
+  },
 ];
