@@ -122,53 +122,70 @@ export function BookActionCard({
       style={edgeShift ? { transform: `translateX(calc(-50% + ${edgeShift}px))` } : undefined}
     >
       <div className={styles.title}>{resource.title}</div>
-      <div className={styles.meta}>
-        {resource.author && <span>{resource.author}</span>}
-        <span>{relativeLastRead(resource.lastReadAt)}</span>
-        <span>
-          {resource.threadCount} thread{resource.threadCount === 1 ? "" : "s"}
-        </span>
-        <span>
-          {resource.highlightCount} highlight{resource.highlightCount === 1 ? "" : "s"}
-        </span>
-      </div>
+      {resource.textLayer ? (
+        <div className={styles.meta}>
+          {resource.author && <span>{resource.author}</span>}
+          <span>{relativeLastRead(resource.lastReadAt)}</span>
+          <span>
+            {resource.threadCount} thread{resource.threadCount === 1 ? "" : "s"}
+          </span>
+          <span>
+            {resource.highlightCount} highlight{resource.highlightCount === 1 ? "" : "s"}
+          </span>
+        </div>
+      ) : (
+        // M39 §E3 (PDF.md §6): a scan has no text layer — nothing here
+        // (author aside) is meaningful without one, so say plainly why
+        // instead of a row of zeros.
+        <div className={styles.meta}>
+          <span>No text layer — preview only. OCR isn't supported yet.</span>
+        </div>
+      )}
       {/* The same control system as the reader's own action row
           (ReaderActionsCluster) — IconButton plus the same icon components — so
           a control means the same thing on both surfaces (settled decision 12).
           `stopPropagation` stays on every one: without it the card's own click
           also opens the book (the Desk's `onTap`, the shelf's slot click),
           caught live on the Desk. */}
+      {/* M39 §E3 (PDF.md §6): with zero `resource_text` rows there's nothing
+          for any of Digest/Scan/Listen to show or narrate — omitted rather
+          than three controls that open onto an empty surface, same call as
+          LibraryGrid's for "Listen". */}
       <div className={styles.actions}>
-        <IconButton
-          variant="ghost"
-          size="sm"
-          icon={<BrainIcon size={16} />}
-          label="Read digest"
-          onClick={(e) => {
-            e.stopPropagation();
-            openDigest(e);
-          }}
-        />
-        <IconButton
-          variant="ghost"
-          size="sm"
-          icon={<MagnifierIcon size={16} />}
-          label="Open scan"
-          onClick={(e) => {
-            e.stopPropagation();
-            openScan(e);
-          }}
-        />
-        <IconButton
-          variant="ghost"
-          size="sm"
-          icon={<PlayIcon size={16} />}
-          label="Listen"
-          onClick={(e) => {
-            e.stopPropagation();
-            openListen(e);
-          }}
-        />
+        {resource.textLayer && (
+          <>
+            <IconButton
+              variant="ghost"
+              size="sm"
+              icon={<BrainIcon size={16} />}
+              label="Read digest"
+              onClick={(e) => {
+                e.stopPropagation();
+                openDigest(e);
+              }}
+            />
+            <IconButton
+              variant="ghost"
+              size="sm"
+              icon={<MagnifierIcon size={16} />}
+              label="Open scan"
+              onClick={(e) => {
+                e.stopPropagation();
+                openScan(e);
+              }}
+            />
+            <IconButton
+              variant="ghost"
+              size="sm"
+              icon={<PlayIcon size={16} />}
+              label="Listen"
+              onClick={(e) => {
+                e.stopPropagation();
+                openListen(e);
+              }}
+            />
+          </>
+        )}
         <IconButton
           variant="ghost"
           size="sm"

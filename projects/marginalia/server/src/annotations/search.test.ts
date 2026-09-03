@@ -42,6 +42,14 @@ describe("searchResource", () => {
     expect(searchResource(db, "res-1", "   ")).toEqual([]);
   });
 
+  // M39 §E1 (PDF.md §6): a scan (text_layer = 0) imports with zero
+  // `resource_text` rows — searchResource assumed at least one section
+  // existed. Locks in the empty path: an empty array, not a thrown error.
+  it("returns an empty array for a resource with no resource_text rows, rather than throwing", () => {
+    seedResource(db, "res-1");
+    expect(searchResource(db, "res-1", "anything")).toEqual([]);
+  });
+
   it("finds every occurrence of a book-text phrase, case-insensitively, ordered by position", () => {
     seedResource(db, "res-1");
     seedSection(db, "res-1", 0, "The Target appears here. Later the target appears again.");

@@ -322,3 +322,26 @@ describe("resolveContext — M34 §D transparency", () => {
     db.close();
   });
 });
+
+describe("resolveContext — M39 §E1: a resource with no resource_text rows", () => {
+  // A scan has zero sections, so no highlight can ever exist to ask a
+  // question from in real use — but resolveContext (and the builders under
+  // it: buildOffContext/buildContext/buildDigestContext) took an
+  // already-resolved highlight and never itself checked that its section
+  // existed. Locks in that every rung degrades to an empty book context
+  // rather than throwing, in case a stale highlight or a future direct
+  // caller ever gets here with one anyway.
+  it.each(["off", "digest", "full"] as const)("%s rung: no sections, no thrown error", (depth) => {
+    const db = createDb(":memory:");
+    const resource = makeResource();
+    seedResource(db, resource);
+    setContextLadderDepth(db, resource.id, depth);
+    const highlight = makeHighlight({ spineIndex: 0 });
+
+    const resolved = resolveContext(db, fakeProvider, resource, highlight);
+
+    expect(resolved.contextDepth).toBe(depth);
+    expect(resolved.bookContext.length).toBeGreaterThan(0);
+    db.close();
+  });
+});

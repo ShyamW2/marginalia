@@ -41,6 +41,19 @@ describe("buildScanData", () => {
     expect(buildScanData(db, "missing")).toBeUndefined();
   });
 
+  // M39 §E1 (PDF.md §6): a scan (text_layer = 0) imports with zero
+  // `resource_text` rows — buildScanData assumed at least one section
+  // existed. Locks in the empty path: real (empty) data, not a thrown error.
+  it("returns an empty scan for a resource with no resource_text rows, rather than throwing", () => {
+    seedResource(db, "res-1");
+
+    const data = buildScanData(db, "res-1")!;
+    expect(data.chapters).toEqual([]);
+    expect(data.highlights).toEqual([]);
+    expect(data.totalHighlights).toBe(0);
+    expect(data.book).toEqual({ hasDigest: false, themeVocabulary: [], bookThemes: [], chapters: [] });
+  });
+
   it("computes chapter tick positions from spine section lengths, numbered 1-based", () => {
     seedResource(db, "res-1");
     seedSection(db, "res-1", 0, "a".repeat(30));

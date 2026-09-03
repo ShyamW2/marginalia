@@ -68,6 +68,59 @@ describe("extractPdf", () => {
     expect(result.isScan).toBe(false);
   });
 
+  // M39 §E2 (PDF.md §6): "more than 50% of pages yield fewer than 100
+  // extracted characters" — the actual detection, not just "every page has
+  // text" above. A page with no `.text()` call at all is pdfkit's own stand-in
+  // for a scanned (image-only) page: pdfjs's `getTextContent()` genuinely
+  // returns zero items for it, the same shape a real scanned page produces.
+  it("is flagged as a scan when more than half the pages yield under 100 characters", async () => {
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const finished = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+
+    // Page 1: real text. Pages 2-4: blank (image-only in a real scan).
+    doc.fontSize(12).text("This is the one digital page in an otherwise scanned document.", 50, 120, { width: 495 });
+    doc.addPage();
+    doc.addPage();
+    doc.addPage();
+    doc.end();
+    const buffer = await finished;
+
+    const result = await extractPdf(buffer);
+
+    expect(result.isScan).toBe(true);
+  });
+
+  // The other half of "per-document, not per-page": a handful of blank pages
+  // in an otherwise-digital paper (a scanned appendix, a blank divider) must
+  // not flip the whole document to scan-only preview mode.
+  it("is not flagged as a scan when only a minority of pages are blank", async () => {
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const finished = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+
+    for (const body of [
+      "The first real page of this paper, with enough prose in this paragraph to read as a " +
+        "genuine body page rather than a caption or a stray fragment of a line.",
+      "The second real page, continuing the discussion from the previous one at some length, so " +
+        "that a reader skimming the extracted text can tell the pages apart from a blank one.",
+      "The third and final real page, wrapping up the paper's short argument with a closing " +
+        "paragraph that is, again, long enough to look like real, substantial body text.",
+    ]) {
+      doc.fontSize(12).text(body, 50, 120, { width: 495 });
+      doc.addPage();
+    }
+    // One blank page (e.g. a scanned appendix) — 1 of 4, well under half.
+    doc.end();
+    const buffer = await finished;
+
+    const result = await extractPdf(buffer);
+
+    expect(result.isScan).toBe(false);
+  });
+
   // M39 §C6 (PDF.md §2.1): "Corrupt or not actually a PDF" is a designed
   // failure state (`invalid_pdf`), not an unhandled crash.
   it("throws PdfInvalidError for bytes that aren't a real PDF", async () => {

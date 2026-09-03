@@ -141,8 +141,7 @@ function currentCastHash(db: ReturnType<typeof getDb>, resourceId: string): stri
   return computeCastHash(ttsEngine, narratorVoice, row.voiceMode, cast);
 }
 
-function buildAudioState(resourceId: string): AudioState {
-  const db = getDb();
+export function buildAudioState(db: ReturnType<typeof getDb>, resourceId: string): AudioState {
   const row = getAudioState(db, resourceId);
   const castHash = currentCastHash(db, resourceId);
   const spineIndices = getResourceTextSections(db, resourceId).map((s) => s.spineIndex);
@@ -162,7 +161,7 @@ audioRouter.get("/:id/audio", (req, res) => {
     res.status(404).json({ error: "resource_not_found" });
     return;
   }
-  res.json(AudioStateSchema.parse(buildAudioState(resource.id)));
+  res.json(AudioStateSchema.parse(buildAudioState(db, resource.id)));
 });
 
 /** M22.5 G: the Digest's "what's rendered" column — per-section byte size
@@ -200,7 +199,7 @@ audioRouter.put("/:id/audio", (req, res) => {
     return;
   }
   updateAudioState(db, resource.id, parsed.data);
-  res.json(AudioStateSchema.parse(buildAudioState(resource.id)));
+  res.json(AudioStateSchema.parse(buildAudioState(db, resource.id)));
 });
 
 audioRouter.delete("/:id/audio", async (req, res) => {

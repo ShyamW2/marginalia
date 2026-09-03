@@ -56,23 +56,30 @@ export function LibraryGrid({ resources, publishingId, onPublish, listeningEngag
           </Link>
           <div className={styles.cardFooter}>
             <span className={styles.cardMeta}>
-              {resource.highlightCount > 0
-                ? `${resource.highlightCount} highlight${resource.highlightCount === 1 ? "" : "s"}`
-                : "No highlights yet"}
+              {/* M39 §E3 (PDF.md §6): a scan has zero resource_text rows, so
+                  neither the highlight count nor "Listen" (no text, nothing
+                  to narrate) means anything for it — say so plainly instead. */}
+              {!resource.textLayer
+                ? "No text layer — preview only. OCR isn't supported yet."
+                : resource.highlightCount > 0
+                  ? `${resource.highlightCount} highlight${resource.highlightCount === 1 ? "" : "s"}`
+                  : "No highlights yet"}
             </span>
             <div className={styles.cardActions}>
               {/* M21 "Listen" (AUDIO.md: "the list view remains the
                   canonical keyboard/screen-reader path") — a real button,
                   not a div with a click handler, per DESIGN.md's
                   accessibility rule for the desk tool this mirrors. */}
-              <Button
-                variant="ghost"
-                size="sm"
-                className={styles.listenButton}
-                onClick={() => navigate(`/read/${resource.id}`, { state: { listenOnOpen: true } })}
-              >
-                Listen
-              </Button>
+              {resource.textLayer && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={styles.listenButton}
+                  onClick={() => navigate(`/read/${resource.id}`, { state: { listenOnOpen: true } })}
+                >
+                  Listen
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"

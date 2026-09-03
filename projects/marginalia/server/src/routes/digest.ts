@@ -74,7 +74,7 @@ function parseRevealedIndices(raw: unknown): Set<number> {
   );
 }
 
-function buildDigestStatus(
+export function buildDigestStatus(
   db: ReturnType<typeof getDb>,
   resourceId: string,
   revealedSpineIndices: Set<number>,

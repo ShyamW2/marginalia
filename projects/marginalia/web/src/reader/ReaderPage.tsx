@@ -271,6 +271,21 @@ export function ReaderPage({
     );
   }
 
+  // M39 §E3 (PDF.md §6): a scan has no reader at all in this milestone — the
+  // native pane's preview mode is M41 §D, not built yet. Opening one explains
+  // why rather than mounting `ReaderView`, which would otherwise try to load
+  // a `.reflow.epub` that was never generated (importPdf.ts skips it for a
+  // scan) and fail in ways that don't say what's actually going on.
+  if (resource && !resource.textLayer) {
+    return (
+      <div className={styles.page}>
+        <h1 className={styles.noTextLayerTitle}>{resource.title}</h1>
+        <p>No text layer — preview only. OCR isn't supported yet.</p>
+        <Link to="/">Back to library</Link>
+      </div>
+    );
+  }
+
   async function handlePublish() {
     if (!resource) return;
     setPublishing(true);
