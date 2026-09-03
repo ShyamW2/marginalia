@@ -17,6 +17,7 @@ import type { PdfBlock, PdfLine } from "./types.js";
  */
 export function buildPageBlocks(
   lines: PdfLine[],
+  pageIndex: number,
   pageWidth: number,
   pageHeight: number,
   equationImages: (Buffer | null)[],
@@ -47,20 +48,20 @@ export function buildPageBlocks(
 
     const equation = equationAt.get(i);
     if (equation) {
-      blocks.push({ kind: "equation", image: equation.image, y: equation.band.y });
+      blocks.push({ kind: "equation", image: equation.image, y: equation.band.y, page: pageIndex });
       continue;
     }
 
     const figuresAbove = (figuresByLineIndex.get(i) ?? []).filter((f) => f.region.side === "above");
     for (const f of figuresAbove) {
-      blocks.push({ kind: "figure", image: f.image, caption: f.region.caption, y: f.region.y1 });
+      blocks.push({ kind: "figure", image: f.image, caption: f.region.caption, y: f.region.y1, page: pageIndex });
     }
 
     blocks.push({ kind: "line", line: lines[i] });
 
     const figuresBelow = (figuresByLineIndex.get(i) ?? []).filter((f) => f.region.side === "below");
     for (const f of figuresBelow) {
-      blocks.push({ kind: "figure", image: f.image, caption: f.region.caption, y: f.region.y0 });
+      blocks.push({ kind: "figure", image: f.image, caption: f.region.caption, y: f.region.y0, page: pageIndex });
     }
   }
 

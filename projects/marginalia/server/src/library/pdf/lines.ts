@@ -154,19 +154,23 @@ function paragraphsInSegment(lines: PdfLine[]): string[] {
   return paragraphs;
 }
 
-/** PDF.md §3.3: turns grouped lines into paragraph text (see
+/** PDF.md §3.3: turns grouped lines into paragraph strings (see
  *  `splitAtBackwardJumps` and `paragraphsInSegment` for the two rules that
  *  build it — a backward y-jump always breaks, everything else is judged
- *  relative to its own segment). */
-export function linesToText(lines: PdfLine[]): string {
-  if (lines.length === 0) return "";
+ *  relative to its own segment). Exposed separately from `linesToText` so
+ *  the generated EPUB (B2) can emit one `<p>` per paragraph rather than a
+ *  single blob of text. */
+export function linesToParagraphs(lines: PdfLine[]): string[] {
+  if (lines.length === 0) return [];
 
-  const paragraphs = splitAtBackwardJumps(lines).flatMap(paragraphsInSegment);
-
-  return paragraphs
+  return splitAtBackwardJumps(lines)
+    .flatMap(paragraphsInSegment)
     .map((p) => p.replace(/\s+/g, " ").trim())
-    .filter((p) => p.length > 0)
-    .join("\n\n");
+    .filter((p) => p.length > 0);
+}
+
+export function linesToText(lines: PdfLine[]): string {
+  return linesToParagraphs(lines).join("\n\n");
 }
 
 /** A page's blocks reduced to prose: `line` blocks go through `linesToText`;

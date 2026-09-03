@@ -34,7 +34,7 @@ describe("buildPageBlocks", () => {
       ...[item("After the equation.", 40, 660)],
     ]);
 
-    const blocks = buildPageBlocks(lines, PAGE_WIDTH, PAGE_HEIGHT, [null], []);
+    const blocks = buildPageBlocks(lines, 0, PAGE_WIDTH, PAGE_HEIGHT, [null], []);
 
     const kinds = blocks.map((b) => b.kind);
     expect(kinds).toEqual(["line", "equation", "line"]);
@@ -51,7 +51,7 @@ describe("buildPageBlocks", () => {
     ]);
     const image = Buffer.from("fake-png");
 
-    const blocks = buildPageBlocks(lines, PAGE_WIDTH, PAGE_HEIGHT, [], [image]);
+    const blocks = buildPageBlocks(lines, 0, PAGE_WIDTH, PAGE_HEIGHT, [], [image]);
 
     const kinds = blocks.map((b) => b.kind);
     // figure sits "above" its caption line, per figures.test.ts's equivalent case.
@@ -68,7 +68,7 @@ describe("buildPageBlocks", () => {
   it("produces only line blocks, in order, for a page with no equations or figures", () => {
     const lines = groupLines([item("Just one line.", 40, 700)]);
 
-    const blocks = buildPageBlocks(lines, PAGE_WIDTH, PAGE_HEIGHT, [], []);
+    const blocks = buildPageBlocks(lines, 0, PAGE_WIDTH, PAGE_HEIGHT, [], []);
 
     expect(blocks).toEqual([{ kind: "line", line: lines[0] }]);
   });

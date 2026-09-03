@@ -203,7 +203,14 @@ export async function extractPdf(buffer: Buffer): Promise<ExtractedPdf> {
       ),
     );
 
-    const blocks = buildPageBlocks(lines, pageItems.width, pageItems.height, equationImages, figureImages);
+    const blocks = buildPageBlocks(
+      lines,
+      pageItems.pageIndex,
+      pageItems.width,
+      pageItems.height,
+      equationImages,
+      figureImages,
+    );
     pages.push({ pageIndex: pageItems.pageIndex, width: pageItems.width, height: pageItems.height, blocks });
   }
 

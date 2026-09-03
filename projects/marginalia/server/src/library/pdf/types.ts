@@ -40,6 +40,9 @@ export interface PdfRasterBlock {
    *  alt/figcaption when the generated EPUB is built (B2). */
   caption?: string;
   y: number;
+  /** The source page — PDF.md §3.5's `images/fig-p<page>-<n>.png` naming,
+   *  applied when the generated EPUB embeds it (B2). */
+  page: number;
 }
 
 export type PdfBlock = { kind: "line"; line: PdfLine } | PdfRasterBlock;
