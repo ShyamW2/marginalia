@@ -6240,6 +6240,27 @@ ink.
   by LaTeX/hyperref or an office suite is more likely to use `/XYZ`, which is what carries
   a real y-coordinate for the "split a page at its heading" rule to use.
 
+  **Added 2026-09-03 (§C/§D pass), same root cause — no real PDF corpus in this session:**
+  §C4/§C5's client wiring (drop/pick a real PDF, watch the tray show "extracting page N of
+  M", confirm the resource lands on the Desk); §C6's `encrypted_pdf` path (no encrypted-PDF
+  fixture exists — `pdfkit` can't produce one; the `PdfPasswordError` mapping itself is a
+  two-line `instanceof` check, low-risk but genuinely untested); §C7's `reanchorPdf` CLI run
+  against two real imports a version apart (unit-tested at the `reanchorHighlightToResource`
+  store level, per NOTES.md "M39 §C/§D", but the script and its acceptance criterion —
+  import, highlight five passages, bump `EXTRACTOR_VERSION`, re-import, run the CLI — are
+  not). All four need the same real-PDF-plus-live-driving session this item already asks for.
+
+- **M39 §D2 — a `document`-kind digest has no reading surface yet.** `contributions`/
+  `methods`/`findings`/`limitations`/`keyClaims` are produced, validated, and persisted
+  (`build.ts`'s document-kind pipeline, migration 40's `document_fields` column) but
+  `routes/digest.ts`'s response schema doesn't carry them and no page renders them — see
+  NOTES.md "M39 §C/§D" for why this was left out of D2's own scope rather than built
+  unasked. A `document` book's Digest today shows exactly what a `prose` book's does minus
+  characters/cast, which is honest but not the point of the feature. Needs its own task:
+  probably a `DigestChapterStatusSchema`/`BookDigestStatusSchema` extension plus a rendering
+  decision (a document-specific card shape? inline additions to the existing one?) — a
+  design call, not an implementation one.
+
 ## M24.5 §1-3 — distillation, the colour ramp, and library-wide matching — 2026-08-18
 
 ### Why the distillation pass reads analyses, not just theme strings
@@ -7699,3 +7720,62 @@ directly, which is a real form of coverage, but not the same as having watched t
 produce an actual `.reflow.epub` and read it — the same caveat §A8's NOTES.md entry
 records for the extractor itself applies here: **the real gate, with a real long paper or
 book-length PDF, is still owed** before this ships.
+
+## M39 §C/§D — import as a job, the migration path, and the document schema pair — 2026-09-03
+
+Implemented all of §C (import/identity/re-extraction, C1–C7) and §D (document kinds,
+D1–D6). Server: `importPdf.ts`, migrations 39/40, `extract.ts`'s `{signal, onPage}`,
+`routes/resources.ts`'s job-based PDF POST + three-way `GET /:id/file`,
+`reanchorHighlightToResource` + `cli/reanchorPdf.ts`, and `build.ts`'s full document-kind
+mirror of the map/reduce pipeline. Client: `useLibrary.ts`/`DeskPage.tsx` accept `.pdf`,
+the tray/toast `KIND_LABEL` maps, a Prose/Document toggle on `DigestPage.tsx`, and the
+"Summarise" copy pass. 531 server tests + 493 web tests green (up from 520/493 at the top
+of this session). TASKS.md carries a `_Done: ..._` note per
+item with its own caveats; this entry is the narrative and the two things worth flagging
+beyond what's in TASKS.md.
+
+**A real bug found by writing the test for D2, not by driving anything live.** Before this
+pass, `maybeRefreshBookDigestSnapshot` — the spoiler-safe snapshot `GET /:id/digest`
+refreshes in the background on every open — called `reduceBookDigest` (the `prose` reduce)
+unconditionally, with no branch on `resource.kind`. A `document` resource's chapters would
+have been silently fed into a prompt asking for a cast and a narrator gender the moment
+anyone opened its Digest page, producing a `book_digest_snapshots` row shaped nothing like
+what `runDigest`'s own (correctly kind-branched) final reduce had just written to
+`book_digests`. Caught only because the test for "the snapshot must use the same
+prompt/schema pair the run used" was written deliberately rather than assumed — the same
+lesson §B's NOTES.md entry already drew about unit tests verifying the rule you wrote, not
+the rule the rest of the system actually needed.
+
+**Where `document`-kind digest content doesn't reach a reader yet.** D2 asked for a second
+prompt/schema pair in `build.ts` and nothing else; that's what's built, plus the one
+`document_fields` JSON column per table needed to persist it at all (chosen over four/two
+new columns since exactly one of the two shapes ever applies to a row, and nothing queries
+an individual field). `summary`/`themes`/`title`/`synopsis` are the same columns both kinds
+share, so those already render for a `document` book with zero UI changes. But
+`contributions`/`methods`/`findings`/`limitations`/`keyClaims` — the fields that make a
+document digest actually worth having over the prose one — are stored and round-trip
+(asserted in `build.test.ts`) and stop there: `routes/digest.ts`'s response schema doesn't
+carry them, and no page renders them. Building that reading surface wasn't in D2's own
+scope, and inventing one unasked felt like more scope creep than the task warranted — but
+it means a `document` digest today is functionally "a prose digest with an empty cast,"
+which is honest per D3/decision 18 but not yet the point of the feature. Worth its own
+task before this arc is called done.
+
+**D4's toggle placement was a judgment call.** TASKS.md says "settable ... in the book's
+settings," and there is no book-settings surface in this codebase to put it in — the
+closest existing precedent (`ContextLadderToggle.tsx`'s lookahead/show-thematic-quotes
+pills) lives in the reading pane's control cluster, not a settings panel. Put a small
+Prose/Document toggle on `DigestPage.tsx`'s header instead, since that's where every other
+kind-adjacent control (`Analyse`, the chapter badges) already lives. Reasonable, but a
+design pass could easily land it somewhere else (the reading pane cluster, a per-book
+settings sheet that doesn't exist yet) — don't treat the placement as settled by this
+session.
+
+**What's genuinely unverified**, consistent with the pattern §A/§B already established
+(no real PDFs in this environment): §C4/§C5's client wiring (accept a real PDF drop,
+watch the tray show "extracting page N of M", confirm the resource lands on the Desk);
+§C6's `encrypted_pdf` path (no encrypted-PDF fixture — `pdfkit` can't produce one, and the
+mapping is a two-line `instanceof` check, low-risk but untested); §C7's actual CLI run
+against two real imports a version apart. All tracked in Blockers below, folded into the
+existing "the real gate is still owed" item rather than duplicating it, since they're the
+same root cause (no real PDF corpus in this session).

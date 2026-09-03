@@ -2909,23 +2909,41 @@ gap as A8)._
 
 #### C. Import, identity, and re-extraction
 
-- [ ] **C1.** `EXTRACTOR_VERSION` as a single integer constant in
+- [x] **C1.** `EXTRACTOR_VERSION` as a single integer constant in
       `server/src/library/pdf/version.ts`. PDF resource id is
       `sha256(pdfBytes ‖ ":" ‖ EXTRACTOR_VERSION)` (PDF.md §2).
       ⚠️ **EPUB identity does not change** — `importEpub` keeps `sha256(bytes)`. Do not
       unify the two; EPUB ids are already in live databases.
-- [ ] **C2.** `importPdf` alongside `importEpub`, writing `format: 'pdf'`, the `.pdf` and
+      _Done: `importPdf.ts`'s `hashPdfBuffer` — `sha256(pdfBytes).update(":" + EXTRACTOR_VERSION)`.
+      `importEpub`'s own `hashBuffer` untouched. Unit-tested against the formula directly._
+- [x] **C2.** `importPdf` alongside `importEpub`, writing `format: 'pdf'`, the `.pdf` and
       `.reflow.epub` files, and `resource_text` rows — same file-before-transaction ordering
       `importResource.ts` already uses, and the same rollback on failure.
-- [ ] **C3.** The resource file route serves `<id>.reflow.epub` for a `format: 'pdf'`
+      _Done: `server/src/library/importPdf.ts`. A scan (`isScan`) skips the reflow EPUB and
+      every `resource_text` row entirely (§6's "zero rows", not a partial one) — `kind` is
+      still set (`'document'`, unused until OCR). No direct test of the file-writing/rollback
+      path itself, same as `importEpub` (never had one either — both write into the real
+      `LIBRARY_DIR`/singleton db, which no test in this repo touches); covered by
+      `hashPdfBuffer`'s own tests plus live driving, per M39's acceptance note._
+- [x] **C3.** The resource file route serves `<id>.reflow.epub` for a `format: 'pdf'`
       resource with `text_layer = 1`, and `<id>.pdf` when `text_layer = 0`.
-- [ ] **C4.** `DeskPage.tsx`'s picker accepts `.pdf` as well as `.epub` (`accept` attribute
+      _Done: `routes/resources.ts`'s `GET /:id/file`, three-way branch (epub / pdf+scan /
+      pdf+text-layer). `importPdf.ts`'s `ensureReflowEpubPath` regenerates the derived EPUB
+      from the stored `.pdf` + current extractor when missing, per §2's "regenerate rather
+      than fail." No route-level test — this repo has none for `resources.ts` at all (only
+      `threads.test.ts` exists under `routes/`); live-verify serving a real reflow EPUB._
+- [x] **C4.** `DeskPage.tsx`'s picker accepts `.pdf` as well as `.epub` (`accept` attribute
       **and** the drop handler — they are separate paths), and the empty-state copy updates.
       ⚠️ The **server-side guard is a third path**: `routes/resources.ts`'s
       `originalname.toLowerCase().endsWith(".epub")` check rejects every PDF before it
       reaches `importPdf`. All three change together or the feature looks broken in a way
       the client can't explain.
-- [ ] **C5.** **PDF import runs as a job; EPUB import stays synchronous** (PDF.md §2.1).
+      _Done: `accept=".epub,.pdf"` and `useLibrary.ts`'s shared `importFiles`/`isImportableFile`
+      feed both the picker and the drop handler (one validation path, not two) — the
+      empty-state copy now reads ".epub or .pdf". Server guard branches on extension in
+      `POST /api/resources` (§C5). ⚠️ **Not yet live-driven** — TASKS.md's own note that M39
+      "is not a headless milestone" for this section applies; still owed._
+- [x] **C5.** **PDF import runs as a job; EPUB import stays synchronous** (PDF.md §2.1).
       `JobKindSchema` gains `"pdf-import"`; `POST /api/resources` returns a `jobId` for a
       PDF and the finished `Resource` for an EPUB; progress reports per page so the tray can
       show "page 12 of 30". A 400-page PDF must not block the single-process server, which
@@ -2933,20 +2951,46 @@ gap as A8)._
       ⚠️ Do not make EPUB import a job too — it is instant, the Desk's optimistic flow
       depends on the synchronous route, and that is unrelated work hiding inside this
       milestone.
-- [ ] **C6.** Designed failure states per PDF.md §2.1: `encrypted_pdf` for a
+      _Done: `extractPdf` gains `{signal, onPage}` (checked/reported once per page, between
+      the cheap text pass and the per-page rasterizing one) — `extract.test.ts` covers both
+      the reporting and prompt abort. The resource id is a pure hash of bytes already in
+      hand, so the job's `resourceId` is known before extraction starts. Client hand-off:
+      `useLibrary.ts` treats a 202 as "byte upload done, extraction still running" and calls
+      the already-generic `registerStarted` — the tray/toast needed no new code beyond the
+      `KIND_LABEL` maps (`TasksTray.tsx`, `JobToastStack.tsx`) TypeScript's own exhaustiveness
+      check forced. EPUB's synchronous route is untouched. Not live-driven — see C4's note._
+- [x] **C6.** Designed failure states per PDF.md §2.1: `encrypted_pdf` for a
       password-protected file and `invalid_pdf` for a corrupt one, each with its own Desk
       message. ⚠️ A PDF with no text layer is **not** a failure — it imports as a scan (§E).
-- [ ] **C7.** `server/src/cli/reanchorPdf.ts` — `reanchor <oldId> <newId>` re-locates every
+      _Done: `PdfPasswordError`/`PdfInvalidError` already existed in `extract.ts` (from §A);
+      `routes/resources.ts`'s `pdfImportErrorMessage` maps them to PDF.md's exact reader-
+      facing sentences, surfaced through the pdf-import job's `error` field (the tray already
+      renders "Failed — <error>" — no new UI needed). `extract.test.ts` covers `invalid_pdf`
+      (garbage bytes). **Not covered: a real encrypted-PDF fixture** — `pdfkit` (this repo's
+      only PDF-fixture generator) has no encryption support, and hand-crafting one wasn't
+      attempted; the mapping itself is a two-line `instanceof` check, low-risk, but genuinely
+      unexercised by any test. Tracked as owed alongside the real-PDF gate in NOTES.md._
+- [x] **C7.** `server/src/cli/reanchorPdf.ts` — `reanchor <oldId> <newId>` re-locates every
       highlight by quote + prefix/suffix using the existing `findAnchorInText`/`locateAnchor`,
       moves the resolved ones with their threads, notes, tags and panel positions, and reports
       resolved/unresolved counts. **No UI.** A reader must never trigger a re-extraction.
       _Acceptance: import a PDF, highlight five passages, bump `EXTRACTOR_VERSION`, re-import,
       run the CLI, and confirm the highlights appear on the new resource with their threads
       intact — and that the old resource is untouched._
+      _Done: `annotations/highlights.ts`'s `reanchorHighlightToResource` — one `UPDATE` of
+      `resource_id`/`spine_index`/`offset`/`length` on the existing row, which is what carries
+      threads/tags/notes/panel-position for free (they key off `highlight_id`, or live on the
+      row itself; nothing keys off `resource_id`). The stale CFI is left as-is on purpose —
+      the anchor model's own text-first fallback (decision 11, CLAUDE.md) is what resolves it
+      in the new EPUB. Unit-tested at the store level (moves the row, thread stays attached,
+      old resource ends up empty). **The CLI script itself and the five-real-highlights
+      acceptance criterion are not live-verified** — this repo has no test for any CLI script
+      (`backfillOffsets.ts` has none either), and running it needs two real imported PDFs a
+      version apart, which this session didn't have._
 
 #### D. Document kinds
 
-- [ ] **D1.** `resources.kind TEXT NOT NULL DEFAULT 'prose'`, backfilling every existing row
+- [x] **D1.** `resources.kind TEXT NOT NULL DEFAULT 'prose'`, backfilling every existing row
       to `'prose'`. Values: `prose` | `document` — **genre only**. Set at import: EPUB →
       `prose`, PDF → `document`.
       ⚠️ **"Scanned" is not a kind.** It is a separate axis:
@@ -2954,26 +2998,71 @@ gap as A8)._
       and "has a text layer" are independent — a scanned novel is a real thing the day OCR
       arrives — and a `scan` value in the kind enum would be a kind with no schema to
       select, contradicting settled decision 18's own rule.
-- [ ] **D2.** `build.ts` gains a second prompt/schema pair for `document` per PDF.md §5 —
+      _Done: migration 39. SQLite backfills every existing row to the column `DEFAULT` on
+      `ADD COLUMN`, so every pre-existing EPUB becomes `prose`/`text_layer=1` with no separate
+      `UPDATE` — asserted directly in `store.test.ts`. `setResourceKind` for §D4._
+- [x] **D2.** `build.ts` gains a second prompt/schema pair for `document` per PDF.md §5 —
       chapter: `summary`, `contributions`, `methods`, `findings`, `limitations`, `themes`,
       `title`; book: `synopsis`, `keyClaims`, `methods`, `themes`. Zod-validated like the
       existing pair.
       ⚠️ **`kind` selects a prompt/schema pair and nothing else.** The job machinery, the
       substrate, the thematic layer, the scan, the context ladder and the vault compiler are
       unchanged. The thematic layer is already genre-neutral and gets no variant.
-- [ ] **D3.** A `document` produces an empty `cast`; audio falls back to M21 single-voice.
+      _Done: `DocumentPartSchema`/`DocumentReduceSchema` + their own instructions, and full
+      mirrors of the chunking/retry/hierarchical-reduce machinery
+      (`extractDocumentPart`/`mergeDocumentParts`/`digestDocumentSection`,
+      `reduceDocumentBatch`/`reduceDocumentDigest`) — deliberately **duplicated** rather than
+      parametrizing the existing `prose` functions, so the already-shipping prose path is
+      literally untouched rather than threaded through new conditionals. `runDigest` branches
+      on `resource.kind` once per chapter and once at the final reduce; storage is one new
+      nullable `document_fields` JSON column per table (migration 40) — `summary`/`themes`/
+      `title`/`synopsis` are the *same* columns both kinds already used, so `routes/digest.ts`'s
+      response shape needed no change for those. **Found and fixed in the same pass**:
+      `maybeRefreshBookDigestSnapshot` (the spoiler-safe snapshot `GET /:id/digest` refreshes
+      in the background) called the `prose` reduce unconditionally — for a `document`
+      resource this would have silently asked a paper's own chapters for a cast/narrator on
+      every open. Branches the same way now; test locks it in.
+      ⚠️ **Spec gap, not fixed here**: `contributions`/`methods`/`findings`/`limitations`/
+      `keyClaims` are stored and round-trip (tests below), but **not yet exposed through
+      `GET /:id/digest`'s response schema or rendered anywhere** — D2's own wording scopes
+      this to `build.ts`, and the reading surface for a document-shaped digest is undecided
+      (a new DigestPage layout? inline in the existing chapter cards?). A `document` book's
+      summary/themes/title already display today through the fields it shares with `prose`.
+- [x] **D3.** A `document` produces an empty `cast`; audio falls back to M21 single-voice.
       No new audio path, no change to `computeCastHash`.
-- [ ] **D4.** `kind` is settable by the reader in the book's settings, both directions —
+      _Done: `runDigest`'s document branch stores `cast: []`, `narratorGender: 'unknown'`.
+      No audio code changed — `audio/attribution.ts`'s existing `cast.length === 0 →
+      allNarrator()` and `audio_state`'s existing `voiceMode` default (`'single'`) already do
+      exactly this for any resource with no cast, which is what this decision predicted._
+- [x] **D4.** `kind` is settable by the reader in the book's settings, both directions —
       a PDF of a novel and an EPUB of a textbook both exist.
-- [ ] **D5.** Changing `kind` does not invalidate a stored digest. The renderer keys off the
+      _Done: `PUT /api/resources/:id/kind` + `setResourceKind`, tested at the store level.
+      **UI placement is a judgment call, not a spec'd location** — no "book settings" surface
+      exists yet in this codebase to slot into, so it's a small Prose/Document toggle on
+      `DigestPage.tsx`'s header row (fetches current `kind` via `GET /:id`, flips optimistically
+      via the new route). Reasonable given the Digest is where every other kind-adjacent
+      control already lives, but worth a design pass rather than treating the placement as
+      settled. Not live-driven._
+- [x] **D5.** Changing `kind` does not invalidate a stored digest. The renderer keys off the
       stored object's fields, not off today's `kind`.
       _Acceptance: a book digested as `prose`, then switched to `document`, still displays its
       existing digest with characters; the next chapter run produces the document shape._
-- [ ] **D6.** Copy: "Digest Plot" → **"Summarise"**, and the pairing reads
+      _Done: true by construction — `getChapterDigest`/`getBookDigest`/`listChapterDigests`
+      never read `resources.kind`, only `resource.kind` (the JS value `runDigest` was called
+      with) selects the prompt/schema pair for the *next* run. `build.test.ts` locks in the
+      acceptance criterion literally: digest as prose, `setResourceKind` to `document`, assert
+      both rows byte-identical to before._
+- [x] **D6.** Copy: "Digest Plot" → **"Summarise"**, and the pairing reads
       **Summarise / Analyse Themes** in both the reading pane and the Digest. Six strings:
       `DigestPage.tsx`'s Analyse submenu label, chapter-badge `title`, and failure notice;
       `ReaderView.tsx`'s `digestCluster`. ⚠️ **No column, job kind, API field or stored JSON
       key is renamed.**
+      _Done: `DigestPage.tsx` — submenu checkbox "Plot"→"Summarise", "Themes"→"Analyse Themes",
+      chapter-badge `title` "Plot digest"→"Summary", failure notice "Plot digest failed"→
+      "Summary failed". `ReaderView.tsx`'s `digestCluster` button "Digest Plot"→"Summarise"
+      (and its in-flight "Digesting…"→"Summarising…" for the same pairing, not separately
+      asked for but left inconsistent otherwise). No column/job-kind/API-field/JSON-key
+      touched — grepped for stray "Digest Plot"/"Plot digest" test references, none exist._
 
 #### E. The empty-book paths
 
