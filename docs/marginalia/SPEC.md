@@ -125,11 +125,18 @@ CREATE TABLE settings (
 );
 ```
 
-**Anchoring rule:** the CFI range is the primary anchor (resources are immutable, so it
-cannot rot). `exact`/`prefix`/`suffix` are the fallback: if CFI resolution fails at
-render time, search the spine item's text for `prefix + exact + suffix`, then `exact`
-alone; if still not found, show the highlight in the margin rail as "unanchored" rather
-than dropping it. Anchoring resolution logic gets unit tests.
+**Anchoring rule** (amended 2026-09-03, M40 §B — CLAUDE.md settled decision 17(d) is the
+authoritative statement of this; the schema block above is migration 001's own historical
+comments and is not rewritten to match): the format-neutral `Locator` —
+`(sectionIndex, offset, length)` — is the primary anchor, with the CFI demoted to an
+EPUB-only fast path, because a format with no CFI (PDF) cannot follow a CFI-primary rule.
+Resolution order: (1) the CFI, if present and it resolves — EPUB only, unchanged behaviour
+and unchanged speed; (2) search the spine item's text for `prefix + exact + suffix`, then
+`exact` alone; (3) the stored `(offset, length)` against the section's current text; (4) if
+none resolve, show the highlight in the margin rail as "unanchored" rather than dropping
+it. An offset **code computed** by locating text cannot rot — the resource is immutable on
+import — so this is settled decision 11 being followed, not bent. Anchoring resolution
+logic gets unit tests.
 
 **Additive migrations (M7+).** The schema above is migration 001 and is never edited
 retroactively. Later milestones add numbered additive migrations, defined per-milestone
@@ -147,7 +154,7 @@ with proper status codes.
 | `GET /api/resources` | library list (id, title, author, imported_at, highlight/thread counts) |
 | `GET /api/resources/:id` | single resource metadata |
 | `GET /api/resources/:id/file` | raw epub bytes (for epub.js in the browser) |
-| `GET /api/resources/:id/position` / `PUT` | reading position (CFI) |
+| `GET /api/resources/:id/position` / `PUT` | reading position (opaque `SerializedLocator` string — a bare CFI on a legacy row, JSON thereafter; M40 §B4) |
 | `GET /api/resources/:id/highlights` | all highlights + their thread summaries for render |
 | `POST /api/highlights` | `{resourceId, exact, prefix, suffix, cfi, spineIndex}` → highlight |
 | `DELETE /api/highlights/:id` | also deletes its thread/messages (cascade in code) |
@@ -370,7 +377,8 @@ LLM proposes, code disposes — the model returns JSON; only our code touches fi
 ## Testing & verification
 
 - Unit tests (vitest) required for: anchoring resolution (CFI fail → text search
-  fallback), context builder windowing + determinism, concept matching, vault path
+  fallback → stored offset/length fallback, M40 §B), context builder windowing +
+  determinism, concept matching, vault path
   safety, SSE stream parsing of the OpenAI-compat provider (against a mocked stream).
 - Every milestone in TASKS.md ends with a manual verification step ("drive the app")
   — do it with a real EPUB. Keep 2–3 public-domain EPUBs in `projects/marginalia/

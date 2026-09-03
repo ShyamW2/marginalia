@@ -28,6 +28,8 @@ interface HighlightRow {
   definition_source: string;
   anchor_source: string;
   origin: string;
+  offset: number | null;
+  length: number | null;
   created_at: string;
 }
 
@@ -50,6 +52,9 @@ function rowToHighlight(row: HighlightRow): Highlight {
     panelHeight: row.panel_height,
     definition: row.definition,
     definitionSource: row.definition_source as DefinitionSource,
+    // M40 §B: starts rendering the offset/length migration 32 already stores.
+    offset: row.offset,
+    length: row.length,
     createdAt: row.created_at,
   };
 }
@@ -103,6 +108,8 @@ export function createHighlight(
     panelHeight: null, // matches panel_height's implicit NULL default
     definition: "", // matches the highlights.definition column's DEFAULT ''
     definitionSource: "", // matches definition_source's DEFAULT ''
+    offset: input.offset ?? null,
+    length: input.length ?? null,
     createdAt: new Date().toISOString(),
   };
 

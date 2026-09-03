@@ -58,7 +58,7 @@ import { coverLayoutId } from "../library/coverLayoutId.js";
 import { ChromeSlotPortal } from "../app/chromeSlot.js";
 import { DEFAULT_KIND_LABELS, hoverFillOpacity, kindLabelsFromSettings } from "./highlightKinds.js";
 import { EpubRenderer, HIGHLIGHT_MARK_CLASS } from "./renderer/epub/EpubRenderer.js";
-import type { Locator } from "./renderer/types.js";
+import { parseSerializedLocator, serializeLocator, type Locator } from "./renderer/types.js";
 import { FindBar } from "./FindBar.js";
 import { useSearchHits } from "../search/useSearchHits.js";
 import { hitsForSection, stepFindCursor } from "../search/findCursor.js";
@@ -2545,9 +2545,12 @@ export function ReaderView({
         if (info.cfi) {
           window.clearTimeout(saveTimerRef.current);
           saveTimerRef.current = window.setTimeout(() => {
+            // M40 §B4: writes the new SerializedLocator form — a legacy bare
+            // CFI is still valid on *read* (parseSerializedLocator), but
+            // every write from here on emits the wrapped form.
             savePosition(
               resourceId,
-              info.cfi!,
+              serializeLocator({ sectionIndex: info.spineIndex, offset: 0, length: 0, cfi: info.cfi! }),
               info.spineIndex,
               typeof info.percent === "number" ? info.percent * 100 : null,
             );
@@ -2596,11 +2599,18 @@ export function ReaderView({
         // than catching a failure, so handing it one here would risk
         // crashing epub.js's navigation. Fall back to the saved position
         // instead; the thread panel below still opens regardless.
-        const displayCfi =
-          jumpTarget && jumpTarget.cfi !== UNRESOLVABLE_CHAPTER_ANCHOR_CFI ? jumpTarget.cfi : (position?.location ?? undefined);
+        // M40 §B4: `position.location` is a SerializedLocator — a bare CFI
+        // on any row saved before this milestone, the wrapped form on every
+        // row saved after it; `parseSerializedLocator` accepts both.
+        const displayLocator: Locator | undefined =
+          jumpTarget && jumpTarget.cfi !== UNRESOLVABLE_CHAPTER_ANCHOR_CFI
+            ? { sectionIndex: 0, offset: 0, length: 0, cfi: jumpTarget.cfi }
+            : position?.location
+              ? parseSerializedLocator(position.location)
+              : undefined;
 
-        if (displayCfi) {
-          await renderer.goTo({ sectionIndex: 0, offset: 0, length: 0, cfi: displayCfi });
+        if (displayLocator) {
+          await renderer.goTo(displayLocator);
         }
         if (cancelled) return;
         setStatus("ready");

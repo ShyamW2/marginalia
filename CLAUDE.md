@@ -292,10 +292,10 @@ doc), never by drift.
   ask → answer → publish to vault) before widening any layer.
 
 ### Engineering discipline
-- **One narrow seam per subsystem.** `LLMProvider`, `ResourceRenderer` (per format —
-  ⚠️ **aspirational until M40**: as of 2026-09-03 it does not exist in the code, and the
-  reading pane is epub.js top to bottom; M40 §A creates it, see settled decision 17),
-  `AnnotationStore`, `VaultCompiler`. New formats and providers are new implementations,
+- **One narrow seam per subsystem.** `LLMProvider`, `ResourceRenderer` (per format — real
+  as of M40 §A, 2026-09-03: `web/src/reader/renderer/`, `EpubRenderer` the first
+  implementation; see settled decision 17), `AnnotationStore`, `VaultCompiler`. New formats
+  and providers are new implementations,
   not new call sites.
 - **Anchors follow the W3C Web Annotation model**: exact quote + prefix/suffix context +
   position (CFI for EPUB) as fallback. Anchoring logic gets real unit tests — it is the

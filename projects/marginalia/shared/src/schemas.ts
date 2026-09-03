@@ -104,7 +104,12 @@ export type ResourceSummary = z.infer<typeof ResourceSummarySchema>;
 
 export const ReadingPositionSchema = z.object({
   resourceId: z.string(),
-  location: z.string(), // epub.js CFI
+  // M40 §B4: an opaque SerializedLocator — a bare epub.js CFI on any row
+  // saved before this milestone, a wrapped `{sectionIndex, offset, length,
+  // cfi?}` JSON string on every row saved after it. The server never parses
+  // this either way (SPEC: no renderer server-side); only the client's
+  // `parseSerializedLocator` needs to know both shapes exist.
+  location: z.string(),
   // M17: client-resolved spine index + whole-book percent at `location`,
   // null on rows saved before M17 or when epub.js couldn't resolve them yet
   // (e.g. locations not generated). Lets the LLM context builder warn
@@ -152,7 +157,12 @@ export const AnchorSchema = z.object({
   exact: z.string().min(1),
   prefix: z.string().max(64),
   suffix: z.string().max(64),
-  cfi: z.string().min(1), // epub.js CFI range — primary anchor
+  // M40 §B: an EPUB-only fast path now, not the primary anchor — see
+  // `Locator` (web/src/reader/renderer/types.ts) and SPEC.md's amended
+  // "Anchoring rule". Still required here: nothing creates a highlight
+  // without a real CFI yet (that's M41's PdfRenderer). `highlights.cfi`
+  // itself is nullable at the DB layer as of migration 41.
+  cfi: z.string().min(1),
   spineIndex: z.number().int().nonnegative(),
 });
 export type Anchor = z.infer<typeof AnchorSchema>;
@@ -228,6 +238,15 @@ export const HighlightSchema = AnchorSchema.extend({
   // than a table of its own. See migration 26.
   definition: z.string(),
   definitionSource: DefinitionSourceSchema,
+  // M35 §A1 (migration 32): where `exact` was located in the section's own
+  // text at creation — null on a legacy row never backfilled, or one whose
+  // text genuinely isn't findable. Server-computed, never client-supplied
+  // (settled decision 11), so this is absent from `CreateHighlightBodySchema`
+  // below — only the read shape carries it. M40 §B is what starts rendering
+  // it: the client-side anchor ladder's third step, after the CFI and a
+  // prefix/exact/suffix text search both fail.
+  offset: z.number().int().nonnegative().nullable(),
+  length: z.number().int().positive().nullable(),
   createdAt: z.string(),
 });
 export type Highlight = z.infer<typeof HighlightSchema>;

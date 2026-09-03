@@ -79,4 +79,54 @@ describe("resolveAnchor", () => {
     });
     expect(result).toEqual({ status: "unanchored" });
   });
+
+  // M40 §B: the offset/length step, reachable only when the CFI is broken,
+  // the text search also fails (drifted prefix/suffix and a since-edited
+  // exact string, say), and the caller has a stored Locator to fall back to.
+  describe("the offset/length step (M40 §B)", () => {
+    const drifted = { prefix: "gone ", exact: "nowhere", suffix: " gone" };
+    const sectionTextForOffset = "xxxxxtargetxxxxx";
+
+    it("resolves via the stored offset/length when the CFI is broken and text search fails", () => {
+      const result = resolveAnchor({
+        tryCfi: () => null,
+        sectionText: sectionTextForOffset,
+        anchor: drifted,
+        offset: 5,
+        length: 6,
+      });
+      expect(result).toEqual({ status: "offset", start: 5, end: 11 });
+    });
+
+    it("prefers the text-search fallback over the offset step when both would resolve", () => {
+      const result = resolveAnchor({
+        tryCfi: () => null,
+        sectionText,
+        anchor, // resolves via findAnchorInText — see the "falls back" case above
+        offset: 0,
+        length: 3,
+      });
+      expect(result.status).toBe("fallback");
+    });
+
+    it("flags unanchored when the stored offset/length no longer fits the current section text", () => {
+      const result = resolveAnchor({
+        tryCfi: () => null,
+        sectionText: sectionTextForOffset,
+        anchor: drifted,
+        offset: 5,
+        length: 999,
+      });
+      expect(result).toEqual({ status: "unanchored" });
+    });
+
+    it("flags unanchored when offset/length are absent, same as before this milestone", () => {
+      const result = resolveAnchor({
+        tryCfi: () => null,
+        sectionText: "nothing relevant in this section",
+        anchor: drifted,
+      });
+      expect(result).toEqual({ status: "unanchored" });
+    });
+  });
 });

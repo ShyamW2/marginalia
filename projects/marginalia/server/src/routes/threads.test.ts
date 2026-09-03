@@ -57,6 +57,8 @@ function makeHighlight(overrides: Partial<Highlight> = {}): Highlight {
     panelDy: 0,
     panelWidth: null,
     panelHeight: null,
+    offset: null,
+    length: null,
     definition: "",
     definitionSource: "",
     createdAt: new Date().toISOString(),

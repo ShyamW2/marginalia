@@ -24,6 +24,8 @@ function highlight(overrides: Partial<HighlightWithThread>): HighlightWithThread
     panelDy: 0,
     panelWidth: null,
     panelHeight: null,
+    offset: null,
+    length: null,
     definition: "",
     definitionSource: "",
     createdAt: new Date(2026, 0, seq).toISOString(),

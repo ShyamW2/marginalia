@@ -766,11 +766,10 @@ export class EpubRenderer implements ResourceRenderer {
   }
 
   /** Resolves this section's highlights against its now-rendered document:
-   * CFI first, falling back to a prefix/exact/suffix text search, per the
-   * anchoring rule (PDF.md §7.3's step 3, the offset/length fallback, lands
-   * in M40 §B). Each highlight is resolved once — epub.js's Annotations
-   * store re-attaches marks to every future render of the same section on
-   * its own. */
+   * CFI first, then a prefix/exact/suffix text search, then the stored
+   * offset/length, per the anchoring rule (M40 §B, PDF.md §7.3). Each
+   * highlight is resolved once — epub.js's Annotations store re-attaches
+   * marks to every future render of the same section on its own. */
   private resolveHighlightsForSection(contents: Contents): void {
     const sectionText = contents.document.body.textContent ?? "";
     const candidates = this.highlights.filter(
@@ -785,12 +784,16 @@ export class EpubRenderer implements ResourceRenderer {
         tryCfi: () => (highlight.cfi ? (contents.range(highlight.cfi) as unknown as RangeLike) : null),
         sectionText,
         anchor: highlight,
+        offset: highlight.offset,
+        length: highlight.length,
       });
 
       if (result.status === "cfi" && highlight.cfi) {
         this.attachOwnedMark(highlight.id, highlight.cfi, highlight.kind);
-      } else if (result.status === "fallback") {
-        const range = rangeFromTextOffsets(contents.document, result.match.start, result.match.end);
+      } else if (result.status === "fallback" || result.status === "offset") {
+        const start = result.status === "fallback" ? result.match.start : result.start;
+        const end = result.status === "fallback" ? result.match.end : result.end;
+        const range = rangeFromTextOffsets(contents.document, start, end);
         if (range) {
           this.attachOwnedMark(highlight.id, contents.cfiFromRange(range), highlight.kind);
         } else {

@@ -19,6 +19,8 @@ function highlight(overrides: Partial<HighlightWithThread> = {}): HighlightWithT
     panelDy: 0,
     panelWidth: null,
     panelHeight: null,
+    offset: null,
+    length: null,
     definition: "",
     definitionSource: "",
     createdAt: "2026-01-01T00:00:00.000Z",
