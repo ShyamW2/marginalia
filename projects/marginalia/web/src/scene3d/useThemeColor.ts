@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 /**
  * One CSS custom property, read as a colour string and kept in sync with the
  * theme — three.js can't see the stylesheet, so anything it paints with a
- * themed colour needs its own reactive read (`reader/useEpubThemeVars.ts` does
+ * themed colour needs its own reactive read (`reader/useReaderThemeVars.ts` does
  * the same job for the epub iframe).
  *
  * ⚠️ Read before the stylesheet has applied — or in a test environment with no

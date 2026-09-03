@@ -42,7 +42,7 @@ function readDeskColors(): DeskThemeColors {
 
 /**
  * The CSS custom properties the desk's 3D surface materials need, kept in
- * sync the same way `reader/useEpubThemeVars.ts` does for the epub iframe:
+ * sync the same way `reader/useReaderThemeVars.ts` does for the epub iframe:
  * three.js can't see the stylesheet either, so it needs its own reactive read
  * of the same values.
  */

@@ -1,25 +1,11 @@
 import { useEffect, useState } from "react";
 import type { HighlightKind } from "@marginalia/shared";
 import { HIGHLIGHT_KINDS } from "./highlightKinds.js";
+import type { ReaderThemeVars } from "./renderer/types.js";
 
-export interface EpubThemeVars {
-  bg: string;
-  text: string;
-  accent: string;
-  fontSerif: string;
-  highlight: string;
-  highlightActive: string;
-  border: string;
-  /** Reference hue per highlight kind (docs/marginalia/DESIGN.md). */
-  kindColors: Record<HighlightKind, string>;
-  /** The theme actually in effect right now — resolved via `color-scheme`,
-   * which theme.css sets explicitly for both the "paper"/"ink" override and
-   * the prefers-color-scheme fallback, so this always matches what's on
-   * screen regardless of which path produced it. */
-  colorScheme: "light" | "dark";
-}
+export type { ReaderThemeVars };
 
-function readVars(): EpubThemeVars {
+function readVars(): ReaderThemeVars {
   const style = getComputedStyle(document.documentElement);
   const v = (name: string) => style.getPropertyValue(name).trim();
   const kindColors = Object.fromEntries(
@@ -39,14 +25,19 @@ function readVars(): EpubThemeVars {
 }
 
 /**
- * Tracks the resolved paper/ink theme's CSS custom properties so the epub.js
- * iframe — which can't see our stylesheet — can be kept in sync with the
- * chrome outside it. Re-reads on explicit theme choice changes (data-theme
+ * Tracks the resolved paper/ink theme's CSS custom properties so the reading
+ * pane — which can't see our stylesheet (an epub.js iframe today; any future
+ * renderer's own surface tomorrow) — can be kept in sync with the chrome
+ * outside it. Re-reads on explicit theme choice changes (data-theme
  * attribute) and on system prefers-color-scheme changes (the "system" theme
  * choice).
+ *
+ * Renamed from `useEpubThemeVars`/`EpubThemeVars` (M40 §A, PDF.md §7.2): a
+ * type with a format in its name cannot sit on the format-neutral renderer
+ * seam. Content is unchanged.
  */
-export function useEpubThemeVars(): EpubThemeVars {
-  const [vars, setVars] = useState<EpubThemeVars>(readVars);
+export function useReaderThemeVars(): ReaderThemeVars {
+  const [vars, setVars] = useState<ReaderThemeVars>(readVars);
 
   useEffect(() => {
     const update = () => setVars(readVars());

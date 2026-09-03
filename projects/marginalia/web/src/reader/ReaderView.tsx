@@ -9,11 +9,6 @@ import {
   type MutableRefObject,
   type RefObject,
 } from "react";
-import ePub from "epubjs";
-import type { Book, Contents, Location, Rendition } from "epubjs";
-// M24.1 B: side-effect only — patches marks-pane's shared Highlight
-// prototype before any mark is drawn. See marksPanePatch.ts.
-import "./marksPanePatch.js";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -50,7 +45,7 @@ import { useOpenSettings } from "../settings/useOpenSettings.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { KeyCapAnchor } from "../shortcuts/KeyCap.js";
-import { useEpubThemeVars, type EpubThemeVars } from "./useEpubThemeVars.js";
+import { useReaderThemeVars } from "./useReaderThemeVars.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { AudioTransportIcon } from "./AudioTransportIcon.js";
 import { Button } from "../controls/Button.js";
@@ -61,16 +56,9 @@ import { BrainIcon, FullscreenIcon, MagnifierIcon, PublishIcon, ScanIcon, TrayIc
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { ChromeSlotPortal } from "../app/chromeSlot.js";
-import { resolveAnchor, type RangeLike } from "./anchorResolution.js";
-import { getSelectionContext, rangeFromTextOffsets } from "./selectionContext.js";
-import {
-  audioTintStyle,
-  DEFAULT_KIND_LABELS,
-  hoverFillOpacity,
-  kindLabelsFromSettings,
-  markStyleForKind,
-  searchMarkStyle,
-} from "./highlightKinds.js";
+import { DEFAULT_KIND_LABELS, hoverFillOpacity, kindLabelsFromSettings } from "./highlightKinds.js";
+import { EpubRenderer, HIGHLIGHT_MARK_CLASS } from "./renderer/epub/EpubRenderer.js";
+import type { Locator } from "./renderer/types.js";
 import { FindBar } from "./FindBar.js";
 import { useSearchHits } from "../search/useSearchHits.js";
 import { hitsForSection, stepFindCursor } from "../search/findCursor.js";
@@ -101,7 +89,7 @@ import { AnnotationsOverview } from "./AnnotationsOverview.js";
 import { DefinitionCard, type DefinitionCardState } from "./DefinitionCard.js";
 import { DeleteConfirmDialog } from "./DeleteConfirmDialog.js";
 import { Glossary, glossaryEntries, isGlossaryEntry, type GlossarySortMode } from "./Glossary.js";
-import { buildToc, chapterAtPercent, chapterStops as deriveChapterStops, currentChapter as deriveCurrentChapter, type TocEntry } from "./toc.js";
+import { chapterAtPercent, chapterStops as deriveChapterStops, currentChapter as deriveCurrentChapter, type TocEntry } from "./renderer/epub/toc.js";
 import { ChapterNav } from "./ChapterNav.js";
 import { ProgressPopover } from "./ProgressPopover.js";
 import { PageNumberDisplay } from "./PageNumberDisplay.js";
@@ -113,22 +101,11 @@ import {
   type BookPageMap,
 } from "./bookPages.js";
 import {
-  chapterPageFromGeometry,
-  installTurnFix,
-  readTurnGeometry,
-  shownSectionIndex,
-  type PaginatedManager,
-} from "./pageTurn.js";
-import {
-  computeReaderGap,
   DECLARE_SWIPE_PX,
   declaredTurnDirection,
   isDepartureSwipe,
   pinchFontScale,
   READER_MARGIN_PX,
-  READER_TARGET_COLUMN_WIDTH,
-  SPREAD_GUTTER,
-  SPREAD_MIN_WIDTH,
   turnZoneForVisibleX,
 } from "./readerGeometry.js";
 import { HINGE_ARC_RADIUS_MODE, usePageTurnAnimation } from "./usePageTurnAnimation.js";
@@ -159,15 +136,6 @@ async function fetchQueryRoleConfigured(): Promise<boolean> {
 }
 
 const POSITION_SAVE_DEBOUNCE_MS = 600;
-const LOCATIONS_CHAR_STEP = 1600;
-const SELECTION_CONTEXT_MAX_LEN = 64;
-const HIGHLIGHT_MARK_CLASS = "marginalia-highlight";
-// M24: the find bar's own mark class — never shares cfiOwnersRef's highlight
-// ownership bookkeeping (a search mark and a highlight mark can legitimately
-// coexist at the same CFI, same precedent as AUDIO_TINT_MARK_CLASS below)
-// and is cleared as a whole rather than diffed, so a repaint is always
-// "remove everything this class owns, then draw the current set".
-const SEARCH_MARK_CLASS = "marginalia-search-mark";
 // M19.6 "hover emphasises without obscuring" (decisions.md 2026-07-30): the
 // original bug was switching to mix-blend-mode: normal at a near-opaque fill,
 // which turns the wash into paint. Every pass since has stayed in the kind's
@@ -192,108 +160,8 @@ const SCRUB_KEYBOARD_STEP_PERCENT = 1;
  * the response-length slider's bug happened elsewhere). */
 const PROGRESS_DRAG_PX_PER_PERCENT = 6;
 
-// epub.js's View typings don't expose the `contents` it renders, though it
-// exists at runtime (see managers/views/iframe.js) — narrow just that.
-interface ViewWithContents {
-  contents: Contents;
-}
-
-// epub.js's bundled RenditionOptions typings omit `gap`, though the runtime
-// supports it (layout.js reads `this.settings.gap`) — see the SPEC-GAP
-// comment at the renderTo() call below for why it's needed at all.
-interface RenditionOptionsWithGap {
-  width: string;
-  height: string;
-  flow: string;
-  manager: string;
-  spread: string;
-  minSpreadWidth: number;
-  allowScriptedContent: boolean;
-  gap: number;
-}
-
-/** epub.js ships no types for its view manager — see pageTurn.ts's own note. */
-function managerOf(rendition: Rendition | null): PaginatedManager | undefined {
-  return (rendition as unknown as { manager?: PaginatedManager } | null)?.manager;
-}
-
-/**
- * Re-measures every highlight overlay against the text it is anchored to.
- *
- * M19.6 operator feedback round 4: the highlight rects are SVG in the *parent*
- * document (marks-pane; NOTES.md M2/M3), positioned from
- * `range.getClientRects()` at the moment the mark is drawn. marks-pane only
- * ever redraws them from its own `Pane.render()`, and epub.js only calls that
- * from `reframe()` — i.e. only when the view's expanded pixel size changes. So
- * any reflow that re-breaks lines *without* changing the total expanded width
- * leaves every overlay frozen at coordinates that no longer describe any text.
- *
- * Measured live, 2026-07-30 (Kafka on the Shore): nudging the iframe's body
- * font-size, with the view's width unchanged at 2050px throughout, moved the
- * " weigh" text from (370.55, 701.72) to (882.75, 0) while its rect stayed at
- * (370.55, 701.72) — an overlay sitting on unrelated text one line below the
- * passage, which is exactly what the operator photographed. A subsequent
- * window resize did *not* repair it, because the expanded width still hadn't
- * changed.
- *
- * Real triggers in this app, all of which now call this: the deferred
- * `themes.fontSize()` once the settings fetch resolves, the gap/column-width
- * recompute behind a margin or text-size change, and web fonts finishing
- * loading after first paint.
- */
-function refreshHighlightOverlays(rendition: Rendition | null): void {
-  const manager = managerOf(rendition);
-  if (!manager) return;
-  const views = manager.views as unknown as {
-    forEach?: (fn: (view: { pane?: { render(): void } }) => void) => void;
-  };
-  views.forEach?.((view) => {
-    view.pane?.render();
-  });
-}
-
-function applyTheme(rendition: Rendition, vars: EpubThemeVars): void {
-  rendition.themes.register("app", {
-    "html, body": {
-      background: `${vars.bg} !important`,
-      color: `${vars.text} !important`,
-      // M31 C2: epub.js forwards touchstart/move/end `{ passive: true }`
-      // (epubjs/src/contents.js), so `preventDefault()` on the forwarded
-      // event is always a no-op — the real suppression of native panning has
-      // to come from CSS. `none`, not `pan-y`: the paginated column layout
-      // never scrolls on its own, so there is nothing native left to permit,
-      // and our own touchstart/move/end listeners (attached straight to this
-      // document — the other half of C2) own both the horizontal swipe and
-      // the vertical departure gesture from here.
-      "touch-action": "none !important",
-    },
-    body: {
-      "font-family": `${vars.fontSerif} !important`,
-      "line-height": "1.65 !important",
-      // Real page margin comes from the `gap` render option (see
-      // computeReaderGap / the SPEC-GAP comment at renderTo below) —
-      // epub.js overwrites body padding with its own inline `!important` on
-      // every layout pass, so this rule only matters for the brief
-      // pre-layout flash and any non-paginated fallback rendering.
-      padding: "0 3rem !important",
-      // M31 C4: suppress iOS's "Save/Copy/Look Up" callout on a long-press
-      // *without* touching selection — `user-select: none` would kill
-      // selection outright and pass in a desktop emulator, which is exactly
-      // the mistake to avoid (TASKS.md). `text` is the platform default; it
-      // is stated explicitly so nothing here can be read as an accidental
-      // `none`.
-      "-webkit-touch-callout": "none !important",
-      "user-select": "text !important",
-    },
-    a: { color: `${vars.accent} !important` },
-    "::selection": { background: `${vars.highlightActive} !important` },
-    [`.${HIGHLIGHT_MARK_CLASS}`]: {
-      background: `${vars.highlight} !important`,
-      cursor: "pointer",
-    },
-  });
-  rendition.themes.select("app");
-}
+// epub.js-specific rendering (mount/theme/marks/navigation) lives entirely in
+// `EpubRenderer` (M40 §A, PDF.md §7) — see ./renderer/epub/EpubRenderer.ts.
 
 /**
  * M31 C: one touch state machine, wired up at two independent attachment
@@ -547,31 +415,6 @@ function savePosition(
   });
 }
 
-// M19.6 "page numbers, book-wide and stable": the cached `book.locations
-// .save()` blob, opaque past this point — the server never parses it (SPEC:
-// no EPUB renderer server-side). Null means "never generated for this
-// resource", not an error; the caller falls back to generate().
-async function fetchCachedLocations(resourceId: string): Promise<string | null> {
-  try {
-    const res = await fetch(`/api/resources/${resourceId}/locations`);
-    if (!res.ok) return null;
-    const data = (await res.json()) as { locations: string | null };
-    return data.locations;
-  } catch {
-    return null;
-  }
-}
-
-function saveCachedLocations(resourceId: string, locations: string): void {
-  fetch(`/api/resources/${resourceId}/locations`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ locations }),
-  }).catch(() => {
-    // best-effort — worst case this book regenerates locations next open
-  });
-}
-
 interface ChapterMeta {
   /** Per-section "how much text does this hold" weight — see below. */
   weights: Map<number, number>;
@@ -679,7 +522,6 @@ interface PendingSelection {
   prefix: string;
   suffix: string;
   spineIndex: number;
-  contents: Contents;
   left: number;
   top: number;
 }
@@ -848,59 +690,21 @@ export function ReaderView({
   // reader margin further in; measuring the fold from *that* is what drew
   // the canvas a margin off its own content.
   const pageClipRef = useRef<HTMLDivElement>(null);
-  const renditionRef = useRef<Rendition | null>(null);
-  // M12 scrub dial / chapter nav need direct book access (locations,
-  // navigation, spine) outside the load effect's own closure.
-  const bookRef = useRef<Book | null>(null);
+  // M40 §A: the epub.js-specific renderer (mount/theme/marks/navigation) —
+  // everything that used to be `renditionRef`/`bookRef`/`currentCfiRef`/
+  // `currentSpineIndexRef`/`currentContentsRef`/`tintCfiRef`/
+  // `searchMarkCfisRef`/`attachedCfiRef`/`cfiOwnersRef` is now this one
+  // object's own internal bookkeeping — see EpubRenderer.ts.
+  const rendererRef = useRef<EpubRenderer | null>(null);
+  // M32 A: the spine index the reader was on just before the current
+  // relocation — comparing the two is how "just crossed a chapter boundary
+  // forward" is told apart from every other kind of relocation. Was
+  // currentSpineIndexRef's own read-before-overwrite; now its own ref since
+  // that one no longer exists (folded into EpubRenderer).
+  const previousSpineIndexRef = useRef<number | null>(null);
   const saveTimerRef = useRef<number | undefined>(undefined);
-  // M16 bug fix (margin/gap changes not reaching the page live): epub.js's
-  // `manager.updateLayout()` recomputes column geometry but does not
-  // reposition the iframe's own scroll offset for it — the old pixel offset
-  // now lands mid-column under the new gap, rendering two column-halves at
-  // once (confirmed live: a real margin change corrupted the visible page
-  // into a split-column smear, even though the underlying CSS gap/padding
-  // had already updated correctly). A remount fixes it by re-`display()`ing
-  // the current CFI, which is exactly what handleContainerResize below does
-  // manually. Kept current via handleRelocated rather than reading
-  // `rendition.currentLocation()` synchronously, which can be mid-flight.
-  const currentCfiRef = useRef<string | null>(null);
-  // Same story, for the spine index — handleSectionRepaginated needs to know
-  // which section the reader is in without being a render dependency.
-  const currentSpineIndexRef = useRef<number | null>(null);
-  // M21: the live epub.js Contents for whatever section is currently
-  // rendered — the audio tint effect needs its DOM text to resolve a
-  // playing sentence's char range, and it fires from a separate effect
-  // outside the book-loading effect below, so it can't just close over the
-  // `contents` handleRendered receives.
-  const currentContentsRef = useRef<Contents | null>(null);
-  // The CFI the audio tint mark currently sits at, if any — tracked
-  // separately from cfiOwnersRef (real highlights) since exactly one tint
-  // is ever live and it is never co-owned.
-  const tintCfiRef = useRef<string | null>(null);
-  // M24 A: the distinct CFIs the find bar currently has marks painted at —
-  // a Set, not one entry per hit index, since two hits can legitimately
-  // collapse onto the same CFI (see paintSearchMarksForSection's own
-  // comment) and each CFI must only ever be cleared once.
-  const searchMarkCfisRef = useRef<Set<string>>(new Set());
   const highlightsRef = useRef<HighlightWithThread[]>([]);
-  const resolvedIdsRef = useRef<Set<string>>(new Set());
-  // Tracks the CFI each highlight's mark was actually attached at, which can
-  // differ from the stored anchor when it was resolved via the text-search
-  // fallback (a re-anchored CFI) rather than the original CFI resolving
-  // clean — deleting must remove the mark at whichever CFI is really there.
-  const attachedCfiRef = useRef<Map<string, string>>(new Map());
-  // Two different highlights can legitimately resolve to the identical CFI
-  // (e.g. asking a second question on the exact same selection). epub.js's
-  // View keys its internal highlight/mark tracking by the raw CFI string and
-  // unconditionally creates a new SVG mark on every `annotations.highlight()`
-  // call for that CFI without checking for an existing one — so attaching
-  // twice at the same CFI leaves an orphaned, untracked, unremovable mark
-  // that no future remove/re-tint call can ever reach. This map tracks which
-  // highlightIds currently share a CFI (insertion order = ownership order);
-  // only the first ("owner") ever gets a real epub.js-level mark, and
-  // ownership transfers to the next co-owner if the owner is deleted.
-  const cfiOwnersRef = useRef<Map<string, string[]>>(new Map());
-  const themeVars = useEpubThemeVars();
+  const themeVars = useReaderThemeVars();
   // M20 step 3 (decisions.md 2026-08-03): unlike spreadMode, which is a prop
   // because epub.js needs it at `renderTo` time, the transition is read at
   // *turn* time — so it is local state seeded from the settings fetch and
@@ -922,7 +726,7 @@ export function ReaderView({
     turnPageSlideToSectionGuarded,
     handleGrabPointerDown,
   } = usePageTurnAnimation({
-    renditionRef,
+    rendererRef,
     containerRef,
     cardRef: pageClipRef,
     stageRef: marginWrapperRef,
@@ -947,15 +751,11 @@ export function ReaderView({
   // depends on `toc`/`currentSpineIndex` render state, not stable across
   // the load effect's single run.
   const chapterJumpRef = useRef<(direction: "prev" | "next") => void>(() => {});
-  // Same story again, for the M16 readerFontScale effect below — fontScale
-  // changes the target column width without ever changing the container's
-  // own box size, so nothing would otherwise tell the ResizeObserver-driven
-  // gap recompute inside the book-loading effect to re-run.
-  const applyGapForWidthRef = useRef<() => void>(() => {});
-  // The book-loading effect below is set up once per resourceId and
-  // deliberately excludes themeVars from its deps (see the comment near its
-  // end) — attachHighlightMark, defined inside that effect, reads the
-  // *current* theme through this ref rather than a stale closure value.
+  // The hover-boost code in `handleContentMouseMove` is defined once at
+  // component scope (not inside the book-loading effect, unlike before M40
+  // §A) but still shouldn't need `themeVars` as a dependency of anything —
+  // this ref is the same "read the current theme without churn" pattern as
+  // `focusModeRef`/`cursorStyleRef` elsewhere in this file.
   const themeVarsRef = useRef(themeVars);
   useEffect(() => {
     themeVarsRef.current = themeVars;
@@ -1389,17 +1189,19 @@ export function ReaderView({
   // steps 2, 7, 8 and 9 all on occurrence #1.
   const goToFindHit = useCallback(
     async (hit: SearchHit, index: number) => {
-      let contents = currentContentsRef.current;
-      if (!contents || contents.sectionIndex !== hit.spineIndex) {
+      const renderer = rendererRef.current;
+      if (!renderer) return;
+      let loc = renderer.currentLocation();
+      if (!loc || loc.sectionIndex !== hit.spineIndex) {
         await turnPageSlideToSectionGuarded(hit.spineIndex);
-        contents = currentContentsRef.current;
+        loc = renderer.currentLocation();
       }
-      if (!contents) return;
-      const match = locateSectionHits(contents).find((entry) => entry.index === index)?.match;
+      if (!loc) return;
+      const sectionText = renderer.getRenderedSectionText(hit.spineIndex);
+      if (sectionText === null) return;
+      const match = locateSectionHits(sectionText, hit.spineIndex).find((entry) => entry.index === index)?.match;
       if (!match) return; // no longer resolvable live — skip silently, same philosophy as the audio tint
-      const range = rangeFromTextOffsets(contents.document, match.start, match.end);
-      if (!range) return;
-      await renditionRef.current?.display(contents.cfiFromRange(range));
+      await renderer.goTo({ sectionIndex: hit.spineIndex, offset: match.start, length: match.end - match.start });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [turnPageSlideToSectionGuarded],
@@ -1649,7 +1451,7 @@ export function ReaderView({
   // when the pointer leaves the stage entirely from the *parent* document's
   // side (a plain onPointerLeave on the container — mousemove inside the
   // iframe never fires for that).
-  const lastContentsWithCursorRef = useRef<Contents | null>(null);
+  const lastContentsWithCursorRef = useRef<Document | null>(null);
   // M16 "highlights pop on hover": the mark whose inline style is currently
   // boosted past its normal kind wash, so it can be un-boosted the moment
   // the cursor leaves it (or the stage entirely) without re-querying the DOM.
@@ -1698,13 +1500,10 @@ export function ReaderView({
     setPaperHover(armed);
   }
 
-  /** Every rendered section's contents. ⚠️ epub.js's own `.d.ts` says this
-   * returns one `Contents`; the implementation returns an array (one per
-   * rendered view), and in a spread there can be two. */
-  function renderedContents(): Contents[] {
-    const result = renditionRef.current?.getContents() as unknown;
-    if (Array.isArray(result)) return result as Contents[];
-    return result ? [result as Contents] : [];
+  /** Every rendered section's document — EPUB-only (`EpubRenderer.renderedFrames`,
+   * up to two in spread mode), never an epubjs `Contents` past this boundary. */
+  function renderedFrames(): { document: Document; frameElement: HTMLElement | null }[] {
+    return rendererRef.current?.renderedFrames() ?? [];
   }
 
   /** The ink test for a point in the *parent* document's coordinates.
@@ -1728,11 +1527,10 @@ export function ReaderView({
     ) {
       return false;
     }
-    for (const contents of renderedContents()) {
-      const frame = contents.document.defaultView?.frameElement as HTMLElement | null | undefined;
-      if (!frame) continue;
-      const rect = frame.getBoundingClientRect();
-      if (pointIsOverInk(contents.document, viewportX - rect.left, viewportY - rect.top)) {
+    for (const frame of renderedFrames()) {
+      if (!frame.frameElement) continue;
+      const rect = frame.frameElement.getBoundingClientRect();
+      if (pointIsOverInk(frame.document, viewportX - rect.left, viewportY - rect.top)) {
         return true;
       }
     }
@@ -1744,7 +1542,7 @@ export function ReaderView({
    * `pointer-events` on the element that is currently holding pointer capture
    * is not something to find out about live. */
   function updatePointerOverPaper(
-    contents: Contents | null,
+    doc: Document | null,
     local: { x: number; y: number } | null,
     viewport: { x: number; y: number },
   ) {
@@ -1760,8 +1558,8 @@ export function ReaderView({
       return;
     }
     const overInk =
-      contents && local
-        ? pointIsOverInk(contents.document, local.x, local.y)
+      doc && local
+        ? pointIsOverInk(doc, local.x, local.y)
         : pointerOverInkAt(viewport.x, viewport.y);
     setGrabSurfaceArmed(!overInk);
   }
@@ -1793,9 +1591,21 @@ export function ReaderView({
    * on a different path entirely. */
   function hasLiveSelection(): boolean {
     if (pendingSelectionRef.current) return true;
-    return renderedContents().some((contents) =>
-      Boolean(contents.window.getSelection()?.toString()),
+    return renderedFrames().some((frame) =>
+      Boolean(frame.document.defaultView?.getSelection()?.toString()),
     );
+  }
+
+  /** Clears the native browser selection in whichever rendered section holds
+   * it — replaces the direct `pendingSelection.contents.window.getSelection()
+   * ?.removeAllRanges()` calls a raw epubjs `Contents` handle used to make
+   * possible; `PendingSelection` no longer carries one (M40 §A). Only one
+   * section can have a live selection at a time, so clearing every rendered
+   * one is equivalent to clearing "the" one that has it. */
+  function clearNativeSelection() {
+    for (const frame of renderedFrames()) {
+      frame.document.defaultView?.getSelection()?.removeAllRanges();
+    }
   }
 
   function handleGrabSurfacePointerDown(event: React.PointerEvent<HTMLDivElement>) {
@@ -1962,120 +1772,12 @@ export function ReaderView({
     setPaperHover(false);
     cancelDwell();
     if (lastContentsWithCursorRef.current) {
-      lastContentsWithCursorRef.current.document.body.style.cursor = "";
+      lastContentsWithCursorRef.current.body.style.cursor = "";
     }
     // A hidden mark must stay hidden on hover (TASKS.md M16 acceptance) —
     // clear any in-progress hover boost the instant focus mode engages.
     clearMarkHover();
   }, [focusMode]);
-
-  // Attach a mark for `highlightId` at `cfi`, but only actually create an
-  // epub.js-level mark for the first highlight to claim a given CFI (see
-  // cfiOwnersRef above) — later co-owners are tracked but stay invisible,
-  // since a second mark at an identical position would just orphan.
-  function attachOwnedMark(highlightId: string, cfi: string, kind: HighlightKind) {
-    attachedCfiRef.current.set(highlightId, cfi);
-    const owners = cfiOwnersRef.current.get(cfi) ?? [];
-    const alreadyOwned = owners.length > 0;
-    if (!owners.includes(highlightId)) owners.push(highlightId);
-    cfiOwnersRef.current.set(cfi, owners);
-    if (alreadyOwned) return;
-    // M24.1 C, the other half of the rule stated in paintSearchMarksForSection:
-    // epub.js's annotation store is keyed by `cfiRange + type`, and a search
-    // mark is type "highlight" too — so adding this one on top of a search
-    // mark at the identical CFI would evict *it* from the store and strand
-    // its rect in the pane, unremovable. Take the CFI back first; the search
-    // mark is repainted from the result set whenever the bar next changes,
-    // and declines this CFI while a highlight owns it.
-    if (searchMarkCfisRef.current.has(cfi)) {
-      renditionRef.current?.annotations.remove(cfi, "highlight");
-      searchMarkCfisRef.current.delete(cfi);
-    }
-    renditionRef.current?.annotations.highlight(
-      cfi,
-      { highlightId },
-      undefined,
-      HIGHLIGHT_MARK_CLASS,
-      markStyleForKind(kind, themeVarsRef.current, focusModeRef.current),
-    );
-  }
-
-  function isMarkOwner(highlightId: string, cfi: string): boolean {
-    return cfiOwnersRef.current.get(cfi)?.[0] === highlightId;
-  }
-
-  // Detach highlightId's claim on cfi. If it wasn't the visible owner, the
-  // mark belongs to someone else and stays untouched. If it was the owner
-  // and other highlights still share the CFI, ownership transfers to the
-  // next one — remove and re-attach so the mark's data points at a highlight
-  // that still exists rather than the one just deleted.
-  function detachOwnedMark(
-    highlightId: string,
-    cfi: string,
-    remainingHighlights: HighlightWithThread[],
-  ) {
-    const owners = cfiOwnersRef.current.get(cfi) ?? [];
-    const wasOwner = owners[0] === highlightId;
-    const nextOwners = owners.filter((id) => id !== highlightId);
-
-    if (!wasOwner) {
-      cfiOwnersRef.current.set(cfi, nextOwners);
-      return;
-    }
-
-    renditionRef.current?.annotations.remove(cfi, "highlight");
-
-    if (nextOwners.length === 0) {
-      cfiOwnersRef.current.delete(cfi);
-      return;
-    }
-
-    cfiOwnersRef.current.set(cfi, nextOwners);
-    const newOwner = remainingHighlights.find((h) => h.id === nextOwners[0]);
-    if (!newOwner) return;
-    renditionRef.current?.annotations.highlight(
-      cfi,
-      { highlightId: newOwner.id },
-      undefined,
-      HIGHLIGHT_MARK_CLASS,
-      markStyleForKind(newOwner.kind, themeVarsRef.current, focusModeRef.current),
-    );
-  }
-
-  // M21: the playing sentence's mark — a distinct class from
-  // HIGHLIGHT_MARK_CLASS (never shares cfiOwnersRef's ownership bookkeeping;
-  // exactly one tint is ever live, and it's ephemeral, not a real highlight
-  // a click should open a thread on).
-  const AUDIO_TINT_MARK_CLASS = "marginalia-audio-tint";
-  function setAudioTint(cfi: string | null) {
-    if (tintCfiRef.current === cfi) return;
-    if (tintCfiRef.current) {
-      renditionRef.current?.annotations.remove(tintCfiRef.current, "highlight");
-    }
-    tintCfiRef.current = cfi;
-    if (cfi) {
-      renditionRef.current?.annotations.highlight(
-        cfi,
-        {},
-        undefined,
-        AUDIO_TINT_MARK_CLASS,
-        audioTintStyle(themeVarsRef.current, focusModeRef.current),
-      );
-    }
-  }
-
-  // M24 A: the find bar's marks. Cleared and repainted as a whole rather
-  // than diffed — cheap enough at find-bar scale, and much simpler than
-  // reconciling which marks moved when the cursor steps or the section
-  // changes. A search mark stacking with a real highlight's own mark at the
-  // identical CFI is correct, not a collision (same precedent as the audio
-  // tint above): the passage genuinely is both.
-  function clearSearchMarks() {
-    for (const cfi of searchMarkCfisRef.current) {
-      renditionRef.current?.annotations.remove(cfi, "highlight");
-    }
-    searchMarkCfisRef.current.clear();
-  }
 
   /**
    * M24.1 C: where this section's hits actually are, in the live DOM's own
@@ -2090,10 +1792,13 @@ export function ReaderView({
    * An **annotation** hit keeps `findAnchorInText`: it anchors to a
    * highlight, there is exactly one of that highlight, and the forgiving
    * fallback is precisely what it exists for.
+   *
+   * M40 §A: takes the section's own text and spine index directly — the
+   * live epubjs `Contents` this used to read them off lives only inside
+   * `EpubRenderer` now (`getRenderedSectionText`).
    */
-  function locateSectionHits(contents: Contents) {
-    const sectionText = contents.document.body.textContent ?? "";
-    const inSection = hitsForSection(findHitsRef.current, contents.sectionIndex);
+  function locateSectionHits(sectionText: string, sectionIndex: number) {
+    const inSection = hitsForSection(findHitsRef.current, sectionIndex);
     const locatedText = locateTextHits(
       sectionText,
       inSection.filter(({ hit }) => hit.source === "text"),
@@ -2108,56 +1813,31 @@ export function ReaderView({
     return located;
   }
 
-  function paintSearchMarksForSection(contents: Contents | null) {
-    clearSearchMarks();
-    if (!contents || !findOpenRef.current) return;
-    // ⚠️ Two different hits can resolve to the identical CFI (adjacent or
-    // overlapping occurrences) — epub.js creates a second, unreachable
-    // orphan mark if `.highlight()` is called twice for one CFI, the exact
-    // bug cfiOwnersRef exists to prevent for real highlights (found live,
-    // 2026-08-16: closing the bar left orphaned marks behind — TASKS.md's
-    // "zero residual marks" acceptance failed until this deduped). At most
-    // one mark per distinct CFI; the current hit wins the style if it
-    // collides with a non-current one.
-    //
-    // ⚠️ The same collision, across mark *kinds*, is why a mark could
-    // survive with no hit behind it (TASKS.md M24.1 C, "no mark without a
-    // hit"). epub.js keys its annotation store by `cfiRange + type`
-    // (epubjs/lib/annotations.js `add`: `hash = encodeURI(cfiRange + type)`)
-    // and both kinds are type "highlight", so a search mark painted at a
-    // CFI a *highlight* already occupies evicts that highlight from the
-    // store while leaving its rect in the pane — where no later `remove()`
-    // can reach it, because the hash it would look up now belongs to the
-    // search mark. Clearing the search marks then leaves the highlight's
-    // orphaned rect behind for good: a mark on text that is not a hit and
-    // that stepping never visits.
-    //
-    // It is not a rare coincidence either: an annotation hit (a note or a
-    // thread message matching) anchors to its highlight, so its CFI *is*
-    // that highlight's CFI, every time. The highlight is the durable mark
-    // and keeps the CFI; the search mark stands down there. Nothing is lost
-    // visually — that passage is already marked, which is what a highlight
-    // is — and `attachOwnedMark` enforces the same rule in the other
-    // direction, for a highlight made while the find bar is open.
-    const currentByCfi = new Map<string, boolean>();
-    for (const { index, match } of locateSectionHits(contents)) {
-      const range = rangeFromTextOffsets(contents.document, match.start, match.end);
-      if (!range) continue;
-      const cfi = contents.cfiFromRange(range);
-      if (cfiOwnersRef.current.has(cfi)) continue;
-      const isCurrent = index === findCursorIndexRef.current;
-      currentByCfi.set(cfi, isCurrent || (currentByCfi.get(cfi) ?? false));
+  // M24 A: repaints the find bar's marks for `sectionIndex` —
+  // `EpubRenderer.paintSearchMarks` does the actual CFI resolution and
+  // painting (and the "don't steal a CFI a real highlight owns" rule); this
+  // only locates the hits against the live text. `sectionIndex` is passed
+  // explicitly rather than read off `renderer.currentLocation()`, since the
+  // section-rendered call site (below) fires before a same-tick relocation
+  // is guaranteed to have updated it.
+  function repaintSearchMarks(sectionIndex: number | null) {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    if (!findOpenRef.current || sectionIndex === null) {
+      renderer.clearSearchMarks();
+      return;
     }
-    for (const [cfi, isCurrent] of currentByCfi) {
-      searchMarkCfisRef.current.add(cfi);
-      renditionRef.current?.annotations.highlight(
-        cfi,
-        {},
-        undefined,
-        SEARCH_MARK_CLASS,
-        searchMarkStyle(themeVarsRef.current, isCurrent, focusModeRef.current),
-      );
+    const sectionText = renderer.getRenderedSectionText(sectionIndex);
+    if (sectionText === null) {
+      renderer.clearSearchMarks();
+      return;
     }
+    const located = locateSectionHits(sectionText, sectionIndex).map(({ index, match }) => ({
+      index,
+      start: match.start,
+      end: match.end,
+    }));
+    renderer.paintSearchMarks(located, findCursorIndexRef.current);
   }
 
   // M21: resolves the playing sentence to a DOM range and tints it, and
@@ -2167,31 +1847,32 @@ export function ReaderView({
   // it can freely depend on player.currentSegment/turnTick without
   // re-running the whole book setup on every sentence.
   useEffect(() => {
+    const renderer = rendererRef.current;
     const segment = player.currentSegment;
-    if (!segment) {
-      setAudioTint(null);
+    if (!renderer || !segment) {
+      renderer?.setTint(null);
       return;
     }
 
-    const contents = currentContentsRef.current;
-    if (!contents || contents.sectionIndex !== segment.spineIndex) {
+    const loc = renderer.currentLocation();
+    if (!loc || loc.sectionIndex !== segment.spineIndex) {
       // The visible page hasn't caught up to this section yet — jump
       // straight there rather than leaving the tint on stale, wrong-section
-      // text. A direct `display()` jump (turnPageSlideToSectionGuarded), not
-      // a chain of single-page turns: the target can be many pages from
-      // wherever the reader is currently sitting in the old section (a
-      // deliberate chapter skip in particular), and walking there one
-      // `turnPageSlide` step per `relocated` event is what produced the
-      // reported "keeps jumping forward and back constantly" — each step
-      // re-triggered this effect, racing a concurrent manual turn (see that
-      // helper's own comment).
+      // text. A direct jump (turnPageSlideToSectionGuarded), not a chain of
+      // single-page turns: the target can be many pages from wherever the
+      // reader is currently sitting in the old section (a deliberate
+      // chapter skip in particular), and walking there one `turnPageSlide`
+      // step per `relocated` event is what produced the reported "keeps
+      // jumping forward and back constantly" — each step re-triggered this
+      // effect, racing a concurrent manual turn (see that helper's own
+      // comment).
       //
       // M22.6 C: `detached` gates this specific jump, and only this one —
       // the reader asked to look elsewhere while the voice keeps going. The
       // tint still clears above regardless (never lie about where the voice
-      // actually is), and `handleRelocated` is what flips `detached` back
-      // off once the view and the voice agree again.
-      setAudioTint(null);
+      // actually is), and the epubRelocated handler is what flips `detached`
+      // back off once the view and the voice agree again.
+      renderer.setTint(null);
       if (audioAutoTurnPagesRef.current && !detached) {
         followJumpActiveRef.current = true;
         void turnPageSlideToSectionGuarded(segment.spineIndex).finally(() => {
@@ -2201,53 +1882,35 @@ export function ReaderView({
       return;
     }
 
-    const sectionText = contents.document.body.textContent ?? "";
+    const sectionText = renderer.getRenderedSectionText(segment.spineIndex);
+    if (sectionText === null) {
+      renderer.setTint(null);
+      return;
+    }
     // AUDIO.md: "the manifest's char range -> text search in the section
-    // contents" — an exact-text search against the *live* DOM, not a
-    // recomputed offset, since epub.js's rendered text can differ slightly
-    // from resource_text's raw extraction (collapsed whitespace etc.). No
-    // prefix/suffix: the sentence itself is almost always unique enough
-    // within one section, and findAnchorInText already degrades gracefully
-    // (see below) rather than throwing on a false match.
+    // contents" — an exact-text search against the *live* rendered text, not
+    // a recomputed offset, since epub.js's rendered text can differ
+    // slightly from resource_text's raw extraction (collapsed whitespace
+    // etc.). No prefix/suffix: the sentence itself is almost always unique
+    // enough within one section, and findAnchorInText already degrades
+    // gracefully (see below) rather than throwing on a false match.
     const match = findAnchorInText(sectionText, { exact: segment.text, prefix: "", suffix: "" });
     if (!match) {
       // AUDIO.md: "a sentence that can't be resolved is skipped silently —
       // audio keeps playing; a missing tint is a blemish, a stall is a
       // broken product." Nothing else to do here.
-      setAudioTint(null);
+      renderer.setTint(null);
       return;
     }
-    const range = rangeFromTextOffsets(contents.document, match.start, match.end);
-    if (!range) {
-      setAudioTint(null);
-      return;
-    }
-    setAudioTint(contents.cfiFromRange(range));
+    const tintLoc: Locator = { sectionIndex: segment.spineIndex, offset: match.start, length: match.end - match.start };
+    renderer.setTint(tintLoc);
 
     if (audioAutoTurnPagesRef.current) {
-      // epub.js's paginated flow lays the whole section out in one very
-      // wide iframe and reveals the current page by shifting *the iframe
-      // element itself* within a viewport-sized, overflow-clipped
-      // container (see handleContentClick's own comment on this same
-      // trick) — confirmed live: the iframe's own `innerWidth` was 26708px
-      // for a normal-looking single page, so checking a range's rect
-      // against the iframe's viewport is meaningless (nearly everything in
-      // the section reads as "visible"). The real visible window is
-      // `containerRef`; translate through the iframe element's own
-      // position first, exactly like handleContentClick/MouseMove do.
-      const iframeEl = contents.document.defaultView?.frameElement as HTMLElement | null;
-      const container = containerRef.current;
-      if (iframeEl && container) {
-        const iframeRect = iframeEl.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-        const rangeRect = range.getBoundingClientRect();
-        const left = iframeRect.left + rangeRect.left - containerRect.left;
-        const right = iframeRect.left + rangeRect.right - containerRect.left;
-        const top = iframeRect.top + rangeRect.top - containerRect.top;
-        const bottom = iframeRect.top + rangeRect.bottom - containerRect.top;
-        const visible = right > 0 && left < containerRect.width && bottom > 0 && top < containerRect.height;
-        if (!visible) void turnPageSlideGuarded("next");
-      }
+      // M40 §A: `isLocatorVisible` does the iframe/container rect math
+      // (epub.js lays the whole section out in one very wide iframe and
+      // reveals the current page by shifting the iframe element itself —
+      // see EpubRenderer's own comment) that used to live inline here.
+      if (!renderer.isLocatorVisible(tintLoc)) void turnPageSlideGuarded("next");
     }
     // `detached` is a real dependency (not just read through a ref, unlike
     // audioAutoTurnPagesRef): re-engaging must re-run this effect so the
@@ -2266,7 +1929,7 @@ export function ReaderView({
   // findOpen check is what actually guarantees zero residual marks the
   // instant Escape/× fires, not incidentally.
   useEffect(() => {
-    paintSearchMarksForSection(currentContentsRef.current);
+    repaintSearchMarks(rendererRef.current?.currentLocation()?.sectionIndex ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findHits, findCursorIndex, findOpen]);
 
@@ -2305,6 +1968,10 @@ export function ReaderView({
 
   useEffect(() => {
     highlightsRef.current = highlights;
+    // M40 §A: EpubRenderer resolves a section's highlights against its own
+    // rendered document (CFI/text-search ladder) using this list — it needs
+    // to stay current for the exact same reason highlightsRef itself does.
+    rendererRef.current?.setHighlights(highlights);
   }, [highlights]);
 
   useEffect(() => {
@@ -2341,6 +2008,367 @@ export function ReaderView({
     });
   }, []);
 
+  // M19.6 "clicking a highlight never turns the page": shared by the click
+  // handler below and the hover boost further down — marks-pane draws every
+  // mark `pointer-events: none` (its own library default, not ours; see
+  // NOTES.md M16), so native hit-testing of a click's `target` can never see
+  // a mark either. Both need the exact same geometric rect-vs-viewport-point
+  // test, so it lives once here.
+  function findMarkAtViewportPoint(viewportX: number, viewportY: number): SVGElement | null {
+    const container = containerRef.current;
+    if (!container) return null;
+    const rects = container.querySelectorAll<SVGRectElement>(
+      `.${HIGHLIGHT_MARK_CLASS} rect`,
+    );
+    for (const rect of rects) {
+      const r = rect.getBoundingClientRect();
+      if (viewportX >= r.left && viewportX <= r.right && viewportY >= r.top && viewportY <= r.bottom) {
+        return rect.closest<SVGElement>(`.${HIGHLIGHT_MARK_CLASS}`);
+      }
+    }
+    return null;
+  }
+
+  /**
+   * ⚠️ **M31 A1: a click never turns a page.** Left in place, not trimmed
+   * for tidiness (DESIGN.md, "The pointer contract"; decisions.md
+   * 2026-08-27). What is left is the two jobs that were never about
+   * turning: don't swallow a real link, and dismiss a pending pill.
+   *
+   * M40 §A: `doc` is the rendered section's own plain `Document` — the
+   * epub.js `Contents` this used to receive lives only inside `EpubRenderer`
+   * now (`onSectionRendered`).
+   */
+  function handleContentClick(event: MouseEvent, doc: Document) {
+    const target = event.target as HTMLElement | null;
+    // Old Gutenberg-style markup often has unclosed `<a id="...">` bookmark
+    // anchors (no href) that end up wrapping whole chapters per lenient
+    // HTML parsing — only treat *navigable* links as click-through targets.
+    if (target?.closest("a[href]")) return;
+    if (doc.defaultView?.getSelection()?.toString()) return;
+    // M35 §G4: while the mode is active, `pendingSelection` alone *is* the
+    // pending "add this selection?" confirm (see the banner's `pendingExact`)
+    // — clearing it here already dismisses that confirm, nothing extra
+    // needed. A pending "link this existing highlight?" confirm isn't tied
+    // to `pendingSelection` at all, so it's untouched by this click.
+    setPendingSelection(null);
+  }
+
+  // The forwarded mousemove does three jobs at once: the iframe's own
+  // cursor, the mark hover boost, and M19.6's dwell. Since M31 A3 it also
+  // feeds the ink/paper answer that drives the grab surface — this is the
+  // half of that stream that fires while the surface is standing aside
+  // (`pointer-events: none` over ink); `handleStagePointerMove` in the
+  // parent document is the other half. Between them they cover the page,
+  // and neither can cover it alone: events inside the sandboxed iframe
+  // never bubble out, and the outer margin is not inside the iframe.
+  function handleContentMouseMove(event: MouseEvent, doc: Document) {
+    const iframeEl = doc.defaultView?.frameElement as HTMLElement | null | undefined;
+    const container = containerRef.current;
+    if (!iframeEl || !container) return;
+
+    const iframeRect = iframeEl.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    const viewportX = iframeRect.left + event.clientX;
+    const viewportY = iframeRect.top + event.clientY;
+    const visibleX = viewportX - containerRect.left;
+    const zone = focusModeRef.current
+      ? null
+      : turnZoneForVisibleX(visibleX, containerRect.width);
+
+    // M31 A3: the surface steps aside over ink and takes the page back over
+    // paper. Fed the *iframe's* own coordinates here — this handler only
+    // ever fires for a point inside it — rather than re-deriving them.
+    updatePointerOverPaper(
+      doc,
+      { x: event.clientX, y: event.clientY },
+      { x: viewportX, y: viewportY },
+    );
+
+    // M20.7 "per-room cursors" — precedence, written down per the
+    // TASKS.md warning. ⚠️ **M31 A6 removed the first rung**: the
+    // directional `w-resize`/`e-resize` a turn zone used to force is gone,
+    // because clicking a turn zone no longer turns and an affordance may not
+    // outlive its gesture (invariant 5). Over paper the reader now gets the
+    // grab surface's own `cursor: grab`, which is a parent-document element
+    // and needs nothing written in here. What remains: (1) cursorStyle
+    // "custom" shows the reader's own accent — a fine nib, i.e. an explicit
+    // `text` cursor — but only while a selection actually exists in this
+    // section, per DESIGN.md ("Cursor may switch to a fine I-beam/nib
+    // during selection, nothing more"); (2) otherwise the inline style is
+    // cleared so the iframe's native default applies untouched, which is
+    // also exactly what "system" gets everywhere in this room.
+    const hasSelection = Boolean(doc.defaultView?.getSelection()?.toString());
+    lastContentsWithCursorRef.current = doc;
+    doc.body.style.cursor = cursorStyleRef.current === "custom" && hasSelection ? "text" : "";
+
+    // M16 "highlights pop on hover": marks-pane's SVG overlay is
+    // pointer-events:none (its own library default), so real CSS :hover
+    // can never reach it; native hit-testing skips straight through to
+    // the iframe underneath. Detected here instead, via the same
+    // forwarded-mousemove coordinates already used for the turn-zone
+    // cursor above and the same geometric test handleContentClick uses
+    // (findMarkAtViewportPoint, defined alongside it above) — a plain
+    // inline-style boost on the matched element, cleared on the next
+    // non-matching move.
+    if (!focusModeRef.current) {
+      const hit = findMarkAtViewportPoint(viewportX, viewportY);
+      if (hit !== hoveredMarkElRef.current) {
+        clearMarkHover();
+        if (hit) {
+          // Lift the mark to its kind colour at full strength — matching the
+          // presence of the `::selection` wash you see while a passage is
+          // still freshly selected, which is what the operator asked hover
+          // to look like. See hoverFillOpacity for why ink stops short.
+          // markStyleForKind puts fill/fill-opacity/mix-blend-mode on the
+          // `.marginalia-highlight` group itself, not the child `<rect>`, so
+          // this inline override on the group is what wins.
+          hit.style.fillOpacity = String(
+            hoverFillOpacity(themeVarsRef.current.colorScheme),
+          );
+          hoveredMarkElRef.current = hit;
+        }
+      }
+    }
+
+    // M19.6 "highlight across a page boundary": armed only while a real
+    // drag-selection is in progress (button down + a non-empty window
+    // selection) *and* the cursor sits in a turn zone. Re-arms itself on
+    // whatever zone the cursor is in this tick — dwellZoneRef !== zone
+    // covers both "just entered a zone" and "completeDwell just cleared
+    // it after a turn, still holding at the edge" the same way.
+    // Operator feedback round 4: being *in* the turn zone is not enough. A
+    // selection dragged down the middle of a paragraph passes through the
+    // zone long before it has taken everything on the page, and the turn
+    // that followed read as a stray swipe. The gesture now also requires the
+    // cursor to be past the end of the page's text — further right than its
+    // last word, or below its last line (see cursorPastPageText).
+    if (isPointerDownInContentRef.current && zone && !focusModeRef.current) {
+      const hasActiveSelection = Boolean(doc.defaultView?.getSelection()?.toString());
+      const pastEdge = cursorPastPageText(
+        zone,
+        doc,
+        { x: event.clientX, y: event.clientY },
+        {
+          left: containerRect.left - iframeRect.left,
+          right: containerRect.right - iframeRect.left,
+          top: Math.max(0, containerRect.top - iframeRect.top),
+          bottom: Math.min(iframeRect.height, containerRect.bottom - iframeRect.top),
+        },
+      );
+      if (hasActiveSelection && pastEdge) {
+        if (dwellZoneRef.current !== zone) {
+          startDwell(zone, viewportX, viewportY);
+        } else {
+          setDwellRing((prev) => (prev && !prev.refused ? { ...prev, x: viewportX, y: viewportY } : prev));
+        }
+      } else if (dwellZoneRef.current) {
+        cancelDwell();
+      }
+    } else if (dwellZoneRef.current) {
+      cancelDwell();
+    }
+
+    // M24.7 §G: the same forwarded mousemove wakes the immersive pebble.
+    // The M14 retrospective (NOTES.md "M14") is why this still needs its
+    // own branch rather than relying on the window-level listener alone:
+    // that listener only ever fires for the parent-document dead zone
+    // (above/below/beside the iframe) — it never sees pointer movement
+    // that stays inside the sandboxed epub.js iframe, which is most of a
+    // fullscreen reader's pointer activity.
+    if (fullscreenModeRef.current) wakePebble();
+  }
+
+  // M19.6 "highlight across a page boundary": DWELL_DURATION_MS matches
+  // the task's own "~2s" acceptance; REFUSAL_FLASH_MS is a quick,
+  // legible "no" — long enough to register, short enough not to feel
+  // like a second dwell.
+  function startDwell(zone: "prev" | "next", x: number, y: number) {
+    dwellZoneRef.current = zone;
+    dwellKeyRef.current += 1;
+    setDwellRing({ dwellKey: dwellKeyRef.current, x, y, refused: false });
+    dwellTimerRef.current = window.setTimeout(() => {
+      completeDwell(zone);
+    }, DWELL_DURATION_MS);
+  }
+
+  function completeDwell(zone: "prev" | "next") {
+    dwellTimerRef.current = undefined;
+    const displayed = displayedPageRef.current;
+    if (!displayed) {
+      cancelDwell();
+      return;
+    }
+
+    // ⚠️ Not re-derived here — decisions.md 2026-07-30 later's own
+    // diagnostic (this task's required precondition) confirmed live that
+    // rendition.next()/prev() across a section boundary destroys the
+    // selection outright (a fresh iframe document). Refuse *before*
+    // calling it, rather than calling it and discovering the selection
+    // is gone — the existing selection must stay intact.
+    const atSectionEnd = zone === "next" && displayed.page >= displayed.total;
+    const atSectionStart = zone === "prev" && displayed.page <= 1;
+    if (atSectionEnd || atSectionStart) {
+      dwellZoneRef.current = null;
+      setDwellRing((prev) => (prev ? { ...prev, refused: true } : prev));
+      window.setTimeout(() => setDwellRing(null), REFUSAL_FLASH_MS);
+      return;
+    }
+
+    // No curl/slide animation on purpose: those swap in a rasterized
+    // snapshot mid-turn, which would visually cover the very selection
+    // this gesture exists to keep continuing under the reader's cursor.
+    // A plain, immediate renderer call keeps the live DOM (and the
+    // native selection anchored to it) visible throughout.
+    const turn = zone === "next" ? rendererRef.current?.next() : rendererRef.current?.prev();
+    void turn?.then(() => {
+      // Still holding at the edge with a live selection — the very next
+      // mousemove re-arms a fresh dwell for the next page on its own
+      // (dwellZoneRef is cleared here, so that arming logic doesn't see
+      // a stale zone and skip it); no self-rescheduling timer needed.
+      dwellZoneRef.current = null;
+      setDwellRing(null);
+    });
+  }
+
+  function handleContentMouseDown() {
+    isPointerDownInContentRef.current = true;
+  }
+
+  function handleContentMouseUp() {
+    isPointerDownInContentRef.current = false;
+    cancelDwell();
+  }
+
+  // The shared shortcut registry (useShortcuts, above) only ever sees
+  // window-level keydowns — the reading pane's own iframe is a separate
+  // document, so a keypress inside it never bubbles to window at all. This
+  // forwards exactly the same set of keys, via the exact same handlers, from
+  // the section's own "keydown" — the one bit of unavoidable duplication
+  // between the two paths.
+  function handleIframeKeydown(event: KeyboardEvent) {
+    const target = event.target as HTMLElement | null;
+    const isTyping =
+      target?.tagName === "TEXTAREA" ||
+      target?.tagName === "INPUT" ||
+      target?.isContentEditable;
+
+    if (isTyping) return;
+
+    if (event.key === "ArrowLeft") {
+      if (event.shiftKey) handleSkipSentencePrevShortcut();
+      else handleArrowLeftShortcut();
+    } else if (event.key === "ArrowRight") {
+      if (event.shiftKey) handleSkipSentenceNextShortcut();
+      else handleArrowRightShortcut();
+    } else if (event.key === " ") handleSpaceShortcut(event);
+    else if (event.key === "[") handleChapterPrevShortcut();
+    else if (event.key === "]") handleChapterNextShortcut();
+    else if (event.key === "Escape") handleEscapeShortcut();
+    else if (event.key.toLowerCase() === "f" && (event.metaKey || event.ctrlKey) && !event.altKey) {
+      // M24: Cmd/Ctrl+F, forwarded the same way every other reader
+      // shortcut crosses the iframe boundary — see useShortcuts above for
+      // why this needs its own branch rather than the shared registry.
+      event.preventDefault();
+      handleFindShortcut();
+    } else if (
+      event.key.toLowerCase() === "f" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      // M24.7 §G: fullscreen is plain "f" now (decisions.md 2026-08-22) —
+      // a different axis from focus mode ("n"), hiding different things
+      // and composing independently.
+      toggleFullscreen();
+    } else if (
+      event.key.toLowerCase() === "n" &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      handleFocusModeShortcut();
+    }
+  }
+
+  // M31 C: the iframe-content half of the touch state machine — see the big
+  // comment above `TouchGestureState` (module scope) for why this cannot be
+  // epub.js's own forwarded touch events: those are `{ passive: true }`
+  // (epubjs/src/contents.js), so `preventDefault()` on them is always a
+  // no-op; C2's own fix is a raw, non-passive listener straight on the
+  // section's own document, which is what this is. Fresh per rendered
+  // section, deliberately: a new section is a genuinely new iframe/document
+  // (epub.js destroys the old one), so there is nothing to detach and no
+  // stale state to carry over — the old listeners and their
+  // `TouchGestureState` simply go with it.
+  function attachTouchHandlers(doc: Document) {
+    const state = freshTouchGestureState();
+
+    function toViewport(clientX: number, clientY: number) {
+      const frame = doc.defaultView?.frameElement as HTMLElement | null | undefined;
+      if (!frame) return { x: clientX, y: clientY };
+      const rect = frame.getBoundingClientRect();
+      return { x: rect.left + clientX, y: rect.top + clientY };
+    }
+
+    function callbacks(): TouchGestureCallbacks {
+      return {
+        hasLiveSelection,
+        isEditingSomewhere,
+        isMidTurn: () => gestureActiveRef.current,
+        getPageHeight: () => pageClipRef.current?.getBoundingClientRect().height ?? 0,
+        toViewport,
+        fontScale: () => fontScaleRef.current,
+        onCommitTurn: (direction) => turnPageRef.current(direction),
+        onCommitDeparture: () => {
+          if (hasLiveSelection() || isEditingSomewhere() || gestureActiveRef.current) return;
+          startPutDown();
+        },
+        onTap: () => {
+          if (fullscreenModeRef.current) wakePebble();
+        },
+        onPinchPreview: (scale, viewportX, viewportY) => {
+          setPinchInstrument({
+            scale,
+            x: Math.min(Math.max(viewportX, 60), window.innerWidth - 60),
+            y: Math.max(viewportY - 100, 40),
+          });
+        },
+        onPinchCommit: (scale) => setReaderFontScale(scale),
+        onPinchEnd: () => setPinchInstrument(null),
+      };
+    }
+
+    doc.addEventListener(
+      "touchstart",
+      (event) => handleTouchStart(state, event.touches, callbacks()),
+      { passive: true },
+    );
+    doc.addEventListener(
+      "touchmove",
+      (event) => {
+        if (handleTouchMove(state, event.touches, callbacks())) event.preventDefault();
+      },
+      { passive: false },
+    );
+    doc.addEventListener("touchend", () => handleTouchEnd(state, callbacks()), {
+      passive: true,
+    });
+    doc.addEventListener(
+      "touchcancel",
+      () => handleTouchCancel(state, callbacks()),
+      { passive: true },
+    );
+  }
+
+  /**
+   * M40 §A (PDF.md §7): constructs and mounts the `EpubRenderer`, subscribes
+   * to every event `ReaderView`'s chrome needs, and once `mount()` resolves
+   * (the book has opened), fetches the resource-level data (position,
+   * highlights, chapter meta) that used to live inside epub.js's own
+   * `book.ready.then(...)`. Replaces the ~950-line book-loading effect this
+   * milestone extracted `EpubRenderer` out of.
+   */
   useEffect(() => {
     if (!containerRef.current || !marginWrapperRef.current) return;
     let cancelled = false;
@@ -2351,7 +2379,7 @@ export function ReaderView({
     setBookPage(null);
     sectionWeightRef.current = null;
     bookPageMapRef.current = null;
-    currentSpineIndexRef.current = null;
+    previousSpineIndexRef.current = null;
     setToc([]);
     setChapterNumbers(null);
     setSectionSpans(null);
@@ -2362,860 +2390,197 @@ export function ReaderView({
     setPendingSelection(null);
     setExpandedThread(null);
     highlightsRef.current = [];
-    resolvedIdsRef.current = new Set();
-    attachedCfiRef.current = new Map();
-    cfiOwnersRef.current = new Map();
 
-    // M19.6 "the skipped last page of a chapter" (decisions.md 2026-07-30,
-    // established cause — not re-derived here): epub.js's DefaultViewManager
-    // decides "scroll one more page" vs. "advance to the next section" by
-    // comparing `container.offsetWidth + layout.delta` against
-    // `container.scrollWidth`. `offsetWidth` is integer-rounded; `delta` is a
-    // float derived from the stage width epub.js measured — a fractional
-    // measurement makes `offsetWidth` overshoot `delta` by up to a pixel, the
-    // comparison fails one page early, and the section advances, skipping the
-    // last page. Pinning `containerRef.current` — the exact element passed to
-    // `renderTo` below, which is what epub.js measures as `container` — to an
-    // explicit *integer* pixel width (not the CSS `width: 100%` its stylesheet
-    // uses, which is exactly the kind of layout that lands on a fractional
-    // value) closes the gap at the source instead of intercepting turns.
-    // Measured from marginWrapperRef, never from containerRef's own box —
-    // once pinned, containerRef's box no longer reflects the *available*
-    // space, only whatever we last told it to be.
-    // Bug found live-testing the page-number task below (not part of the
-    // original last-page-skip fix's own acceptance criteria, which never
-    // checked for overflow): `wrapper.clientWidth` is marginWrapper's own
-    // *border-box* width, which — since marginWrapper is where the margin
-    // padding lives — includes that padding rather than the content area
-    // inside it. Pinning containerRef to that full width, while containerRef
-    // still starts flush against the left padding edge as a normal-flow
-    // child, pushed its right edge past marginWrapper's own right edge by
-    // exactly the horizontal padding, i.e. by the margin itself — epub.js
-    // then paginated to fill that too-wide box and the right margin's worth
-    // of text ran off the page, clipped by .pageClip. Must subtract the
-    // padding to get the actual content width available.
-    function pinContainerWidth(): number {
-      const wrapper = marginWrapperRef.current;
-      const container = containerRef.current;
-      if (!wrapper || !container) return 0;
-      const computed = getComputedStyle(wrapper);
-      const horizontalPadding =
-        Number.parseFloat(computed.paddingLeft) + Number.parseFloat(computed.paddingRight);
-      const integerWidth = Math.floor(wrapper.clientWidth - horizontalPadding);
-      container.style.width = `${integerWidth}px`;
-      return integerWidth;
-    }
-    const initialWidth = pinContainerWidth();
+    const renderer = new EpubRenderer();
+    rendererRef.current = renderer;
 
-    // Our file route has no .epub extension for epub.js to sniff from the
-    // URL, so it would otherwise be treated as an unpacked directory of
-    // book files rather than a single archive to fetch and unzip.
-    const book: Book = ePub(`/api/resources/${resourceId}/file`, {
-      openAs: "epub",
-    });
-    bookRef.current = book;
-    const rendition = book.renderTo(containerRef.current, {
-      width: "100%",
-      height: "100%",
-      flow: "paginated",
-      manager: "default",
-      // M12: "auto" lets epub.js show two facing pages once the stage is at
-      // least minSpreadWidth wide, falling back to one page below it — its
-      // own built-in behavior, not something this code re-implements.
-      spread: spreadMode,
-      minSpreadWidth: SPREAD_MIN_WIDTH,
-      allowScriptedContent: false,
-      // SPEC-GAP: M11 "page spacing" asked for margin via the theme's body
-      // padding, but epub.js's own column layout (contents.columns() in
-      // its default manager) recomputes and re-applies inline
-      // `padding-left/right: <gap/2>px !important` on every render/resize —
-      // an inline !important always wins over a stylesheet !important, so
-      // theme-set body padding is silently discarded the moment epub.js
-      // lays out a section. Passing `gap` here is what actually reaches the
-      // page edge: with it set, epub.js skips its own auto-gap formula
-      // (floor(width/12), see layout.js) and uses this value instead, split
-      // evenly left/right — see computeReaderGap above. The same value also
-      // becomes the native CSS column-gap between the two visible leaves in
-      // spread mode, which is why computeReaderGap picks a much narrower
-      // number once a spread is actually showing (SPREAD_GUTTER).
-      gap: computeReaderGap(initialWidth, spreadMode, fontScaleRef.current),
-    } as RenditionOptionsWithGap);
-    renditionRef.current = rendition;
-
-    // M19.6 operator feedback round 4 (decisions.md 2026-07-30 later still):
-    // take over the "scroll one more page vs. advance the section" decision
-    // from epub.js, whose own comparison is an exact equality on the
-    // second-to-last page of every section and loses it to sub-pixel scroll
-    // rounding at any fractional browser zoom — the skipped last page.
-    // pageTurn.ts carries the measurements. Installed on the manager, so
-    // every caller (footer buttons, arrow keys, turn zones, the
-    // highlight-across-a-boundary dwell) is covered at once.
-    //
-    // Awaits `started`, not `renderTo`: epub.js builds the manager inside
-    // `Rendition#init`, which only runs once the book has finished opening, so
-    // `rendition.manager` is still undefined when renderTo returns (found the
-    // hard way — installing there is a silent no-op and the skip survives).
-    void rendition.started.then(() => {
-      if (cancelled) return;
-      installTurnFix(managerOf(rendition));
-      managerOf(rendition)?.on?.("resize", handleSectionRepaginated);
-    });
-
-    applyTheme(rendition, themeVars);
-    // M16 "reading text size": fontScaleRef is still 1 (default) here if the
-    // settings fetch hasn't resolved yet — self-corrects moments later via
-    // the dedicated readerFontScale effect below, same "brief flash to
-    // default" timing already accepted for readerMargin's own mount race.
-    rendition.themes.fontSize(`${Math.round(fontScaleRef.current * 100)}%`);
-
-    // computeReaderGap's result only fits the container's width at mount —
-    // re-derive it whenever that width actually changes, whether from a
-    // window resize or (M14) a margin-setting change repainting the
-    // marginWrapper's padding — a ResizeObserver on containerRef itself
-    // catches both for free, unlike the window "resize" event this replaced
-    // (which only ever fired for the former). Two epub.js internals quirks
-    // make this more than "set gap, call resize()": (1) the manager's own
-    // `settings` is a one-time shallow *copy* of `rendition.settings`
-    // (`extend()` in epubjs/utils/core.js copies property values at
-    // construction, not a live reference) — mutating `rendition.settings.gap`
-    // later never reaches the manager, so the manager's own settings object
-    // must be mutated directly; (2) the public `Rendition.resize()` no-ops
-    // when the outer stage size hasn't changed since its last layout, which
-    // would swallow this update on anything other than a genuine size
-    // change — calling the manager's `updateLayout()` directly re-lays-out
-    // unconditionally instead.
-    let lastGapWidth = initialWidth;
-    let redisplayTimer: number | undefined;
-    // Shared by real container resizes (below) and, since fontScale changes
-    // the target column width without changing the container's own box size
-    // at all, the dedicated readerFontScale effect further down — exposed
-    // via applyGapRef, same "reach into this effect from outside" pattern as
-    // turnPageRef/chapterJumpRef.
-    function applyGapForWidth(width: number) {
-      const manager = (
-        rendition as unknown as { manager?: { settings: { gap?: number }; updateLayout?: () => void } }
-      ).manager;
-      if (!manager) return;
-      manager.settings.gap = computeReaderGap(width, spreadMode, fontScaleRef.current);
-      manager.updateLayout?.();
-
-      // M19.6 operator feedback: every page count in the map (bookPages.ts)
-      // was measured under the layout that's about to change (font size or
-      // margin) — stale the moment the gap changes. Dropped, not migrated:
-      // the debounced re-display below re-measures the current section within
-      // ~120ms and rebuilds the map from it. The book total legitimately
-      // changes here; the operator changed the text size, and holding the old
-      // total would be the lie.
-      bookPageMapRef.current = null;
-
-      // M16 bug fix: `updateLayout()` recomputes column geometry (confirmed
-      // live via computed styles — gap/padding update correctly, instantly)
-      // but leaves the iframe's own scroll offset untouched, so anywhere
-      // past the first page the old pixel offset now lands mid-column under
-      // the new width — the reader visibly renders two column-halves at
-      // once. Re-`display()`ing the current CFI is the documented
-      // known-good fix (it's what a remount does). Debounced briefly so a
-      // continuous window drag-resize settles once instead of re-displaying
-      // on every intermediate tick.
-      window.clearTimeout(redisplayTimer);
-      redisplayTimer = window.setTimeout(() => {
-        // The new column width re-breaks lines; if the section still expands
-        // to the same pixel width, epub.js never re-renders the marks pane and
-        // every highlight overlay is left describing text that has moved. See
-        // refreshHighlightOverlays. After the re-display settles, not before.
-        const settled = currentCfiRef.current
-          ? rendition.display(currentCfiRef.current)
-          : Promise.resolve();
-        void settled.then(() => refreshHighlightOverlays(rendition));
-      }, 120);
-    }
-    // Observes marginWrapperRef, not containerRef — containerRef's own box
-    // is now the thing this pins, so observing it directly would mean
-    // reacting to our own writes rather than to real available-space
-    // changes (a window resize, or a margin-setting repaint of
-    // marginWrapper's padding).
-    function handleContainerResize() {
-      const width = pinContainerWidth();
-      if (Math.abs(width - lastGapWidth) < 1) return;
-      lastGapWidth = width;
-      applyGapForWidth(width);
-    }
-    applyGapForWidthRef.current = () => {
-      applyGapForWidth(pinContainerWidth());
-    };
-    const resizeObserver = new ResizeObserver(handleContainerResize);
-    resizeObserver.observe(marginWrapperRef.current);
-
-    function markUnanchored(highlightId: string) {
-      setUnanchoredIds((prev) => {
-        if (prev.has(highlightId)) return prev;
-        const next = new Set(prev);
-        next.add(highlightId);
-        return next;
-      });
-    }
-
-    // Resolves this section's highlights against its now-rendered document:
-    // CFI first, falling back to a prefix/exact/suffix text search, per the
-    // SPEC anchoring rule. Each highlight is resolved once — epub.js's
-    // Annotations store re-attaches marks to every future render of the same
-    // section on its own, no need to redo the search.
-    function resolveHighlightsForSection(contents: Contents) {
-      const sectionText = contents.document.body.textContent ?? "";
-      const candidates = highlightsRef.current.filter(
-        (h) =>
-          h.spineIndex === contents.sectionIndex &&
-          !resolvedIdsRef.current.has(h.id),
-      );
-
-      for (const highlight of candidates) {
-        resolvedIdsRef.current.add(highlight.id);
-
-        const result = resolveAnchor<RangeLike>({
-          tryCfi: () => contents.range(highlight.cfi) as unknown as RangeLike,
-          sectionText,
-          anchor: highlight,
+    const unsubscribers: (() => void)[] = [];
+    unsubscribers.push(
+      renderer.onUnanchored((highlightId) => {
+        setUnanchoredIds((prev) => {
+          if (prev.has(highlightId)) return prev;
+          const next = new Set(prev);
+          next.add(highlightId);
+          return next;
         });
-
-        if (result.status === "cfi") {
-          attachOwnedMark(highlight.id, highlight.cfi, highlight.kind);
-        } else if (result.status === "fallback") {
-          const range = rangeFromTextOffsets(
-            contents.document,
-            result.match.start,
-            result.match.end,
-          );
-          if (range) {
-            attachOwnedMark(highlight.id, contents.cfiFromRange(range), highlight.kind);
-          } else {
-            markUnanchored(highlight.id);
+      }),
+    );
+    unsubscribers.push(
+      renderer.on("selected", ({ text, prefix, suffix, locator }) => {
+        const rect = renderer.getViewportRectForSelection();
+        const stage = stageRef.current;
+        if (!rect || !stage) return;
+        // ⚠️ M31 B2, confirmed by reading the stack rather than by
+        // guessing: `AskPill` is `position: absolute` and renders as a
+        // **direct child of `.stage`** (outside `.pageClip`, so a panel can
+        // roam past the page's own edge), so `.stage` is its containing
+        // block and the only box these numbers may be measured against.
+        const stageRect = stage.getBoundingClientRect();
+        const rawLeft = rect.left + rect.width / 2 - stageRect.left;
+        const rawTop = rect.top - stageRect.top;
+        setPendingSelection({
+          cfi: locator.cfi ?? "",
+          exact: text,
+          prefix,
+          suffix,
+          spineIndex: locator.sectionIndex,
+          // Clamp so a selection right at the edge of the visible page
+          // can't push the pill (which renders above the selection)
+          // off-screen.
+          left: Math.min(Math.max(rawLeft, 40), stageRect.width - 40),
+          top: Math.max(rawTop, 40),
+        });
+      }),
+    );
+    unsubscribers.push(
+      renderer.on("markClicked", (highlightId) => {
+        // M35 §G4: "select/add highlight" mode intercepts a mark click
+        // before it ever opens a panel — `linkQuoteModeRef` (not the
+        // `linkQuoteMode` state) because this handler is registered once
+        // per mount and would otherwise see the value from that render
+        // forever.
+        const mode = linkQuoteModeRef.current;
+        if (mode) {
+          if (!mode.allowExistingHighlightClick) {
+            setLinkQuoteError("Existing highlights can't be added from here — select new text instead.");
+            return;
           }
-        } else {
-          markUnanchored(highlight.id);
-        }
-      }
-    }
-
-    // M19.6 operator feedback round 4: the chapter page comes from the
-    // container's own geometry, rounded (pageTurn.ts), not from epub.js's
-    // `location.start.displayed`. epub.js derives that with
-    // `Math.floor(start / pageWidth)` where `start` is a difference of two
-    // getBoundingClientRect floats — zero tolerance at exactly the page
-    // boundaries it is asked about, so a negative sub-pixel error reports one
-    // page too few. Reading the geometry directly also drops the spread-divisor
-    // conversion entirely: `layout.delta` is already the width of one whole
-    // page view, spread or not.
-    //
-    // Returns whether it managed to publish a page-derived percentage, so the
-    // caller knows whether to fall back to the character-based one.
-    // Idempotent: called on every relocate, and again whenever a section
-    // re-paginates under us (see handleSectionRepaginated).
-    function publishPageNumbers(spineIndex: number): boolean {
-      const manager = managerOf(rendition);
-      if (!manager?.container) return false;
-      const chapter = chapterPageFromGeometry(readTurnGeometry(manager));
-      setDisplayedPage(chapter);
-
-      // Book-wide page count + percentage (bookPages.ts): built once from the
-      // section weights and then only refined in place, so neither the total
-      // nor a page number already shown moves as chapters are crossed.
-      const weights = sectionWeightRef.current;
-      if (!weights) return false;
-      const existing = bookPageMapRef.current;
-      bookPageMapRef.current = existing
-        ? recordMeasuredPages(existing, spineIndex, chapter.total)
-        : buildBookPageMap(weights, spineIndex, chapter.total);
-      const map = bookPageMapRef.current;
-      const info = map ? lookupBookPage(map, spineIndex, chapter.page) : null;
-      if (!info) return false;
-      setBookPage(info);
-      setProgressPercent(Math.round((info.page / info.total) * 100));
-      return true;
-    }
-
-    // A section can re-paginate a beat *after* it first renders — see
-    // reassertLanding in pageTurn.ts, which repairs the reader's *position*
-    // when that happens. This repairs the *numbers*: epub.js never re-reports
-    // the location for a re-pagination, so the footer was left describing a
-    // pagination that no longer existed ("page 7 of 7" of a section that had
-    // just become 6 pages long).
-    //
-    // Deliberately not keyed off currentSpineIndexRef: the resize fires
-    // *before* the relocate that would update it, so that guard rejected every
-    // real case (measured — the handler never once ran). The manager's own
-    // "which section am I showing" is the authoritative answer. On the next
-    // frame rather than inline, so it reads the geometry after every other
-    // listener on this event — reassertLanding's among them — has had its say.
-    function handleSectionRepaginated(section: unknown) {
-      const manager = managerOf(rendition);
-      const index = (section as { index?: number } | null | undefined)?.index;
-      if (!manager || typeof index !== "number") return;
-      if (index !== shownSectionIndex(manager)) return;
-      requestAnimationFrame(() => {
-        if (cancelled) return;
-        publishPageNumbers(index);
-        // A re-pagination re-breaks every line in the section, which is exactly
-        // when the highlight overlays go stale — and epub.js only re-renders
-        // the marks pane when the view's *pixel size* changes, which a
-        // re-pagination to the same expanded width does not do.
-        refreshHighlightOverlays(rendition);
-      });
-    }
-
-    function handleRelocated(location: Location) {
-      // M32 A: captured before the ref below overwrites it — the signal for
-      // "the reader just crossed a chapter boundary" is comparing this
-      // relocation's index against the one *before* it, forward only (a
-      // backward jump, e.g. re-reading, never counts as "finishing" a
-      // chapter). See checkChapterEndQuestions.
-      const previousSpineIndex = currentSpineIndexRef.current;
-      currentCfiRef.current = location.start.cfi;
-      currentSpineIndexRef.current = location.start.index;
-      if (previousSpineIndex !== null && location.start.index > previousSpineIndex) {
-        void checkChapterEndQuestions(previousSpineIndex);
-      }
-      setAtStart(Boolean(location.atStart));
-      setAtEnd(Boolean(location.atEnd));
-      setCurrentSpineIndex(location.start.index);
-      // M21: the audio tint/auto-turn effect needs to know "a page just
-      // turned" even *within* the same spine section (currentSpineIndex
-      // alone wouldn't change) — a plain counter is the cheapest signal.
-      setTurnTick((t) => t + 1);
-
-      // M22.6 C: every relocation — a manual turn, a chapter-nav/TOC jump,
-      // or the follow-the-voice effect's own corrective jump — comes through
-      // here, so this is the one place that can tell them apart. Landing
-      // exactly on the sounding section re-engages (however it happened);
-      // landing anywhere else *without* the follow jump being the one doing
-      // it means the reader just navigated away on purpose.
-      const sounding = playerRef.current.currentSegment;
-      if (sounding) {
-        if (location.start.index === sounding.spineIndex) setDetached(false);
-        else if (!followJumpActiveRef.current) setDetached(true);
-      }
-      const pct = location.start.percentage;
-
-      const usedPageBasedPercent = publishPageNumbers(location.start.index);
-      if (!usedPageBasedPercent && typeof pct === "number") {
-        setProgressPercent(Math.round(pct * 100));
-      }
-
-      window.clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = window.setTimeout(() => {
-        savePosition(
-          resourceId,
-          location.start.cfi,
-          location.start.index,
-          typeof pct === "number" ? pct * 100 : null,
-        );
-      }, POSITION_SAVE_DEBOUNCE_MS);
-    }
-    rendition.on("relocated", handleRelocated);
-
-    // M31 C: the iframe-content half of the touch state machine — see the
-    // big comment above `TouchGestureState` (ReaderView.tsx, module scope)
-    // for why this cannot be `rendition.on("touchstart"/...)`. epub.js does
-    // forward those, but `{ passive: true }` (epubjs/src/contents.js), so
-    // `preventDefault()` on the forwarded event is always a no-op; C2's own
-    // fix is a raw, non-passive listener straight on `contents.document`,
-    // which is what this is. Fresh per rendered section, deliberately: a new
-    // section is a genuinely new iframe/document (epub.js destroys the old
-    // one), so there is nothing to detach and no stale state to carry over —
-    // the old listeners and their `TouchGestureState` simply go with it.
-    function attachTouchHandlers(contents: Contents) {
-      const state = freshTouchGestureState();
-
-      function toViewport(clientX: number, clientY: number) {
-        const frame = contents.document.defaultView?.frameElement as HTMLElement | null | undefined;
-        if (!frame) return { x: clientX, y: clientY };
-        const rect = frame.getBoundingClientRect();
-        return { x: rect.left + clientX, y: rect.top + clientY };
-      }
-
-      function callbacks(): TouchGestureCallbacks {
-        return {
-          hasLiveSelection,
-          isEditingSomewhere,
-          isMidTurn: () => gestureActiveRef.current,
-          getPageHeight: () => pageClipRef.current?.getBoundingClientRect().height ?? 0,
-          toViewport,
-          fontScale: () => fontScaleRef.current,
-          onCommitTurn: (direction) => turnPageRef.current(direction),
-          onCommitDeparture: () => {
-            if (hasLiveSelection() || isEditingSomewhere() || gestureActiveRef.current) return;
-            startPutDown();
-          },
-          onTap: () => {
-            if (fullscreenModeRef.current) wakePebble();
-          },
-          onPinchPreview: (scale, viewportX, viewportY) => {
-            setPinchInstrument({
-              scale,
-              x: Math.min(Math.max(viewportX, 60), window.innerWidth - 60),
-              y: Math.max(viewportY - 100, 40),
-            });
-          },
-          onPinchCommit: (scale) => setReaderFontScale(scale),
-          onPinchEnd: () => setPinchInstrument(null),
-        };
-      }
-
-      contents.document.addEventListener(
-        "touchstart",
-        (event) => handleTouchStart(state, event.touches, callbacks()),
-        { passive: true },
-      );
-      contents.document.addEventListener(
-        "touchmove",
-        (event) => {
-          if (handleTouchMove(state, event.touches, callbacks())) event.preventDefault();
-        },
-        { passive: false },
-      );
-      contents.document.addEventListener("touchend", () => handleTouchEnd(state, callbacks()), {
-        passive: true,
-      });
-      contents.document.addEventListener(
-        "touchcancel",
-        () => handleTouchCancel(state, callbacks()),
-        { passive: true },
-      );
-    }
-
-    function handleRendered(_section: unknown, view: unknown) {
-      const contents = (view as ViewWithContents).contents;
-      if (!contents) return;
-      currentContentsRef.current = contents;
-      resolveHighlightsForSection(contents);
-      paintSearchMarksForSection(contents);
-      attachTouchHandlers(contents);
-
-      // The section's fonts may still be loading at this point; when they
-      // land, the text re-breaks at the same expanded width and every overlay
-      // in it is silently left behind (see refreshHighlightOverlays). Awaiting
-      // the iframe document's own FontFaceSet is the one signal for that.
-      void contents.document.fonts?.ready.then(() => {
-        refreshHighlightOverlays(rendition);
-      });
-    }
-    rendition.on("rendered", handleRendered);
-
-    function handleSelected(cfiRange: string, contents: Contents) {
-      const selection = contents.window.getSelection();
-      if (!selection || selection.rangeCount === 0) return;
-      const range = selection.getRangeAt(0);
-      if (range.collapsed) return;
-      const exact = range.toString();
-      if (!exact.trim()) return;
-
-      const { prefix, suffix } = getSelectionContext(
-        contents.document,
-        range,
-        SELECTION_CONTEXT_MAX_LEN,
-      );
-
-      const iframeEl = contents.document.defaultView?.frameElement as
-        | HTMLElement
-        | null
-        | undefined;
-      // ⚠️ M31 B2, confirmed by reading the stack rather than by guessing:
-      // `AskPill` is `position: absolute` and renders as a **direct child of
-      // `.stage`** (outside `.pageClip`, so a panel can roam past the page's
-      // own edge), so `.stage` is its containing block and the only box these
-      // numbers may be measured against. They used to be measured against
-      // `.epubContainer` — which is inset from `.stage` by `.marginWrapper`'s
-      // padding, i.e. by the reader's *margin setting*. The pill was therefore
-      // drawn short of the selection by exactly that margin, up and to the
-      // left, and moved further off the more generous the margin got. That is
-      // part of why it kept landing in the turn zone.
-      const stage = stageRef.current;
-      if (!iframeEl || !stage) return;
-
-      const iframeRect = iframeEl.getBoundingClientRect();
-      const stageRect = stage.getBoundingClientRect();
-      const rangeRect = range.getBoundingClientRect();
-
-      const rawLeft =
-        iframeRect.left + rangeRect.left + rangeRect.width / 2 - stageRect.left;
-      const rawTop = iframeRect.top + rangeRect.top - stageRect.top;
-
-      setPendingSelection({
-        cfi: cfiRange,
-        exact,
-        prefix,
-        suffix,
-        spineIndex: contents.sectionIndex,
-        contents,
-        // Clamp so a selection right at the edge of the visible page can't
-        // push the pill (which renders above the selection) off-screen.
-        left: Math.min(Math.max(rawLeft, 40), stageRect.width - 40),
-        top: Math.max(rawTop, 40),
-      });
-    }
-    rendition.on("selected", handleSelected);
-
-    function handleMarkClicked(_cfiRange: string, data: { highlightId?: string }) {
-      if (!data.highlightId) return;
-
-      // M35 §G4: "select/add highlight" mode intercepts a mark click before
-      // it ever opens a panel — `linkQuoteModeRef` (not the `linkQuoteMode`
-      // state) because this handler is registered once per rendition mount
-      // and would otherwise see the value from that render forever.
-      const mode = linkQuoteModeRef.current;
-      if (mode) {
-        if (!mode.allowExistingHighlightClick) {
-          setLinkQuoteError("Existing highlights can't be added from here — select new text instead.");
-          return;
-        }
-        const clicked = highlightsRef.current.find((h) => h.id === data.highlightId);
-        if (!clicked || clicked.id === mode.primaryHighlightId) return;
-        const clickedThreadId = clicked.thread?.id ?? null;
-        if (clickedThreadId !== null || clicked.primaryHighlightId !== null) {
-          setLinkQuoteError(
-            clickedThreadId === mode.threadId
-              ? "This quote is already part of this annotation."
-              : "This quote already belongs to a different annotation.",
-          );
-          return;
-        }
-        setLinkQuoteError(null);
-        setLinkQuoteConfirm({ kind: "highlight", highlightId: clicked.id, exact: clicked.exact });
-        return;
-      }
-
-      // A click on a highlight mark also fires as a content 'click' below —
-      // handleContentClick's own mark hit-test (M19.6) is what keeps that
-      // from also turning the page. Clicking a highlight expands its thread.
-      // M35 §D3: a click on a non-primary anchor resolves to the thread's
-      // primary — the one annotation, not a second one on this passage.
-      const highlightId = resolveOpenHighlightId(highlightsRef.current, data.highlightId);
-      setExpandedThread({ highlightId, top: DEFAULT_THREAD_PANEL_TOP, initialAnchorHighlightId: data.highlightId });
-    }
-    rendition.on("markClicked", handleMarkClicked);
-
-    // M19.6 "clicking a highlight never turns the page": shared by the
-    // click handler below and the hover boost further down — marks-pane
-    // draws every mark `pointer-events: none` (its own library default, not
-    // ours; see NOTES.md M16), so native hit-testing of a click's `target`
-    // can never see a mark either. Both need the exact same geometric
-    // rect-vs-viewport-point test, so it lives once here.
-    function findMarkAtViewportPoint(viewportX: number, viewportY: number): SVGElement | null {
-      const container = containerRef.current;
-      if (!container) return null;
-      const rects = container.querySelectorAll<SVGRectElement>(
-        `.${HIGHLIGHT_MARK_CLASS} rect`,
-      );
-      for (const rect of rects) {
-        const r = rect.getBoundingClientRect();
-        if (viewportX >= r.left && viewportX <= r.right && viewportY >= r.top && viewportY <= r.bottom) {
-          return rect.closest<SVGElement>(`.${HIGHLIGHT_MARK_CLASS}`);
-        }
-      }
-      return null;
-    }
-
-    /**
-     * ⚠️ **M31 A1: a click never turns a page.** This handler used to end by
-     * translating the click into container space, asking
-     * `turnZoneForVisibleX` which edge band it fell in, and turning — and that
-     * is retired deliberately, not trimmed for tidiness. A click-turn band
-     * wide enough to hit is a band wide enough to swallow the start of a
-     * highlight, and no redivision of the page fixes it: the two gestures
-     * overlap by nature (DESIGN.md, "The pointer contract"; decisions.md
-     * 2026-08-27). Page turns now come from `←`/`→`, the foot's `‹ ›`, and a
-     * drag on paper.
-     *
-     * ⚠️ `turnZoneForVisibleX` itself survives and is still imported — it is
-     * the region M19.6's dwell listens in (invariant 4), not a click target.
-     * Deleting it silently removes highlighting across a page boundary.
-     *
-     * What is left is the two jobs that were never about turning: don't
-     * swallow a real link, and dismiss a pending pill.
-     */
-    function handleContentClick(event: MouseEvent, contents: Contents) {
-      const target = event.target as HTMLElement | null;
-      // Old Gutenberg-style markup often has unclosed `<a id="...">` bookmark
-      // anchors (no href) that end up wrapping whole chapters per lenient
-      // HTML parsing — only treat *navigable* links as click-through targets.
-      if (target?.closest("a[href]")) return;
-      if (contents.window.getSelection()?.toString()) return;
-      // M35 §G4: while the mode is active, `pendingSelection` alone *is* the
-      // pending "add this selection?" confirm (see the banner's `pendingExact`)
-      // — clearing it here already dismisses that confirm, nothing extra
-      // needed. A pending "link this existing highlight?" confirm isn't tied
-      // to `pendingSelection` at all, so it's untouched by this click.
-      setPendingSelection(null);
-    }
-    rendition.on("click", handleContentClick);
-
-    // The forwarded mousemove does three jobs at once: the iframe's own
-    // cursor, the mark hover boost, and M19.6's dwell. Since M31 A3 it also
-    // feeds the ink/paper answer that drives the grab surface — this is the
-    // half of that stream that fires while the surface is standing aside
-    // (`pointer-events: none` over ink); `handleStagePointerMove` in the
-    // parent document is the other half. Between them they cover the page,
-    // and neither can cover it alone: events inside the sandboxed iframe
-    // never bubble out, and the outer margin is not inside the iframe.
-    function handleContentMouseMove(event: MouseEvent, contents: Contents) {
-      const iframeEl = contents.document.defaultView?.frameElement as
-        | HTMLElement
-        | null
-        | undefined;
-      const container = containerRef.current;
-      if (!iframeEl || !container) return;
-
-      const iframeRect = iframeEl.getBoundingClientRect();
-      const containerRect = container.getBoundingClientRect();
-      const viewportX = iframeRect.left + event.clientX;
-      const viewportY = iframeRect.top + event.clientY;
-      const visibleX = viewportX - containerRect.left;
-      const zone = focusModeRef.current
-        ? null
-        : turnZoneForVisibleX(visibleX, containerRect.width);
-
-      // M31 A3: the surface steps aside over ink and takes the page back over
-      // paper. Fed the *iframe's* own coordinates here — this handler only
-      // ever fires for a point inside it — rather than re-deriving them.
-      updatePointerOverPaper(
-        contents,
-        { x: event.clientX, y: event.clientY },
-        { x: viewportX, y: viewportY },
-      );
-
-      // M20.7 "per-room cursors" — precedence, written down per the
-      // TASKS.md warning. ⚠️ **M31 A6 removed the first rung**: the
-      // directional `w-resize`/`e-resize` a turn zone used to force is gone,
-      // because clicking a turn zone no longer turns and an affordance may not
-      // outlive its gesture (invariant 5). Over paper the reader now gets the
-      // grab surface's own `cursor: grab`, which is a parent-document element
-      // and needs nothing written in here. What remains: (1) cursorStyle
-      // "custom" shows the reader's own accent — a fine nib, i.e. an explicit
-      // `text` cursor — but only while a selection actually exists in this
-      // section, per DESIGN.md ("Cursor may switch to a fine I-beam/nib
-      // during selection, nothing more"); (2) otherwise the inline style is
-      // cleared so the iframe's native default applies untouched, which is
-      // also exactly what "system" gets everywhere in this room.
-      const hasSelection = Boolean(contents.window.getSelection()?.toString());
-      lastContentsWithCursorRef.current = contents;
-      contents.document.body.style.cursor =
-        cursorStyleRef.current === "custom" && hasSelection ? "text" : "";
-
-      // M16 "highlights pop on hover": marks-pane's SVG overlay is
-      // pointer-events:none (its own library default), so real CSS :hover
-      // can never reach it; native hit-testing skips straight through to
-      // the iframe underneath. Detected here instead, via the same
-      // forwarded-mousemove coordinates already used for the turn-zone
-      // cursor above and the same geometric test handleContentClick uses
-      // (findMarkAtViewportPoint, defined alongside it above) — a plain
-      // inline-style boost on the matched element, cleared on the next
-      // non-matching move.
-      if (!focusModeRef.current) {
-        const hit = findMarkAtViewportPoint(viewportX, viewportY);
-        if (hit !== hoveredMarkElRef.current) {
-          clearMarkHover();
-          if (hit) {
-            // Lift the mark to its kind colour at full strength — matching the
-            // presence of the `::selection` wash you see while a passage is
-            // still freshly selected, which is what the operator asked hover
-            // to look like. See hoverFillOpacity for why ink stops short.
-            // markStyleForKind puts fill/fill-opacity/mix-blend-mode on the
-            // `.marginalia-highlight` group itself, not the child `<rect>`, so
-            // this inline override on the group is what wins.
-            hit.style.fillOpacity = String(
-              hoverFillOpacity(themeVarsRef.current.colorScheme),
+          const clicked = highlightsRef.current.find((h) => h.id === highlightId);
+          if (!clicked || clicked.id === mode.primaryHighlightId) return;
+          const clickedThreadId = clicked.thread?.id ?? null;
+          if (clickedThreadId !== null || clicked.primaryHighlightId !== null) {
+            setLinkQuoteError(
+              clickedThreadId === mode.threadId
+                ? "This quote is already part of this annotation."
+                : "This quote already belongs to a different annotation.",
             );
-            hoveredMarkElRef.current = hit;
+            return;
           }
+          setLinkQuoteError(null);
+          setLinkQuoteConfirm({ kind: "highlight", highlightId: clicked.id, exact: clicked.exact });
+          return;
         }
-      }
 
-      // M19.6 "highlight across a page boundary": armed only while a real
-      // drag-selection is in progress (button down + a non-empty window
-      // selection) *and* the cursor sits in a turn zone. Re-arms itself on
-      // whatever zone the cursor is in this tick — dwellZoneRef !== zone
-      // covers both "just entered a zone" and "completeDwell just cleared
-      // it after a turn, still holding at the edge" the same way.
-      // Operator feedback round 4: being *in* the turn zone is not enough. A
-      // selection dragged down the middle of a paragraph passes through the
-      // zone long before it has taken everything on the page, and the turn
-      // that followed read as a stray swipe. The gesture now also requires the
-      // cursor to be past the end of the page's text — further right than its
-      // last word, or below its last line (see cursorPastPageText).
-      if (isPointerDownInContentRef.current && zone && !focusModeRef.current) {
-        const hasActiveSelection = Boolean(contents.window.getSelection()?.toString());
-        const pastEdge = cursorPastPageText(
-          zone,
-          contents.document,
-          { x: event.clientX, y: event.clientY },
-          {
-            left: containerRect.left - iframeRect.left,
-            right: containerRect.right - iframeRect.left,
-            top: Math.max(0, containerRect.top - iframeRect.top),
-            bottom: Math.min(iframeRect.height, containerRect.bottom - iframeRect.top),
-          },
-        );
-        if (hasActiveSelection && pastEdge) {
-          if (dwellZoneRef.current !== zone) {
-            startDwell(zone, viewportX, viewportY);
-          } else {
-            setDwellRing((prev) => (prev && !prev.refused ? { ...prev, x: viewportX, y: viewportY } : prev));
+        // A click on a highlight mark also fires as a content 'click' too —
+        // handleContentClick's own mark hit-test (M19.6) is what keeps that
+        // from also turning the page. Clicking a highlight expands its
+        // thread. M35 §D3: a click on a non-primary anchor resolves to the
+        // thread's primary — the one annotation, not a second one on this
+        // passage.
+        const resolvedId = resolveOpenHighlightId(highlightsRef.current, highlightId);
+        setExpandedThread({ highlightId: resolvedId, top: DEFAULT_THREAD_PANEL_TOP, initialAnchorHighlightId: highlightId });
+      }),
+    );
+    unsubscribers.push(
+      renderer.onSectionRendered(({ document: doc, sectionIndex }) => {
+        attachTouchHandlers(doc);
+        doc.addEventListener("click", (event) => handleContentClick(event, doc));
+        doc.addEventListener("mousemove", (event) => handleContentMouseMove(event, doc));
+        doc.addEventListener("mousedown", handleContentMouseDown);
+        doc.addEventListener("mouseup", handleContentMouseUp);
+        doc.addEventListener("keydown", (event) => handleIframeKeydown(event as KeyboardEvent));
+        repaintSearchMarks(sectionIndex);
+      }),
+    );
+    unsubscribers.push(
+      renderer.onEpubRelocated((info) => {
+        // Shared by a real relocation and a repagination-only update — see
+        // publishPageNumbers' old comment (now EpubRenderer.computeChapterPage):
+        // idempotent, called on both.
+        if (info.chapterPage) {
+          setDisplayedPage(info.chapterPage);
+          const weights = sectionWeightRef.current;
+          if (weights) {
+            const existing = bookPageMapRef.current;
+            bookPageMapRef.current = existing
+              ? recordMeasuredPages(existing, info.spineIndex, info.chapterPage.total)
+              : buildBookPageMap(weights, info.spineIndex, info.chapterPage.total);
+            const map = bookPageMapRef.current;
+            const pageInfo = map ? lookupBookPage(map, info.spineIndex, info.chapterPage.page) : null;
+            if (pageInfo) {
+              setBookPage(pageInfo);
+              setProgressPercent(Math.round((pageInfo.page / pageInfo.total) * 100));
+            } else if (info.kind === "relocated" && typeof info.percent === "number") {
+              setProgressPercent(Math.round(info.percent * 100));
+            }
+          } else if (info.kind === "relocated" && typeof info.percent === "number") {
+            setProgressPercent(Math.round(info.percent * 100));
           }
-        } else if (dwellZoneRef.current) {
-          cancelDwell();
+        } else if (info.kind === "relocated" && typeof info.percent === "number") {
+          setProgressPercent(Math.round(info.percent * 100));
         }
-      } else if (dwellZoneRef.current) {
-        cancelDwell();
-      }
 
-      // M24.7 §G: the same forwarded mousemove wakes the immersive pebble.
-      // The M14 retrospective (NOTES.md "M14") is why this still needs its
-      // own branch rather than relying on the window-level listener alone:
-      // that listener only ever fires for the parent-document dead zone
-      // (above/below/beside the iframe) — it never sees pointer movement
-      // that stays inside the sandboxed epub.js iframe, which is most of a
-      // fullscreen reader's pointer activity.
-      if (fullscreenModeRef.current) wakePebble();
-    }
-    rendition.on("mousemove", handleContentMouseMove);
+        if (info.kind !== "relocated") return;
 
-    // M19.6 "highlight across a page boundary": DWELL_DURATION_MS matches
-    // the task's own "~2s" acceptance; REFUSAL_FLASH_MS is a quick,
-    // legible "no" — long enough to register, short enough not to feel
-    // like a second dwell.
-    function startDwell(zone: "prev" | "next", x: number, y: number) {
-      dwellZoneRef.current = zone;
-      dwellKeyRef.current += 1;
-      setDwellRing({ dwellKey: dwellKeyRef.current, x, y, refused: false });
-      dwellTimerRef.current = window.setTimeout(() => {
-        completeDwell(zone);
-      }, DWELL_DURATION_MS);
-    }
+        // M32 A: captured before it's overwritten below — the signal for
+        // "the reader just crossed a chapter boundary" is comparing this
+        // relocation's index against the one *before* it, forward only (a
+        // backward jump, e.g. re-reading, never counts as "finishing" a
+        // chapter). See checkChapterEndQuestions.
+        const previousSpineIndex = previousSpineIndexRef.current;
+        previousSpineIndexRef.current = info.spineIndex;
+        if (previousSpineIndex !== null && info.spineIndex > previousSpineIndex) {
+          void checkChapterEndQuestions(previousSpineIndex);
+        }
+        setAtStart(info.atStart);
+        setAtEnd(info.atEnd);
+        setCurrentSpineIndex(info.spineIndex);
+        // M21: the audio tint/auto-turn effect needs to know "a page just
+        // turned" even *within* the same spine section (currentSpineIndex
+        // alone wouldn't change) — a plain counter is the cheapest signal.
+        setTurnTick((t) => t + 1);
 
-    function completeDwell(zone: "prev" | "next") {
-      dwellTimerRef.current = undefined;
-      const displayed = displayedPageRef.current;
-      if (!displayed) {
-        cancelDwell();
-        return;
-      }
+        // M22.6 C: every relocation — a manual turn, a chapter-nav/TOC jump,
+        // or the follow-the-voice effect's own corrective jump — comes
+        // through here, so this is the one place that can tell them apart.
+        // Landing exactly on the sounding section re-engages (however it
+        // happened); landing anywhere else *without* the follow jump being
+        // the one doing it means the reader just navigated away on purpose.
+        const sounding = playerRef.current.currentSegment;
+        if (sounding) {
+          if (info.spineIndex === sounding.spineIndex) setDetached(false);
+          else if (!followJumpActiveRef.current) setDetached(true);
+        }
 
-      // ⚠️ Not re-derived here — decisions.md 2026-07-30 later's own
-      // diagnostic (this task's required precondition) confirmed live that
-      // rendition.next()/prev() across a section boundary destroys the
-      // selection outright (a fresh iframe document). Refuse *before*
-      // calling it, rather than calling it and discovering the selection
-      // is gone — the existing selection must stay intact.
-      const atSectionEnd = zone === "next" && displayed.page >= displayed.total;
-      const atSectionStart = zone === "prev" && displayed.page <= 1;
-      if (atSectionEnd || atSectionStart) {
-        dwellZoneRef.current = null;
-        setDwellRing((prev) => (prev ? { ...prev, refused: true } : prev));
-        window.setTimeout(() => setDwellRing(null), REFUSAL_FLASH_MS);
-        return;
-      }
+        if (info.cfi) {
+          window.clearTimeout(saveTimerRef.current);
+          saveTimerRef.current = window.setTimeout(() => {
+            savePosition(
+              resourceId,
+              info.cfi!,
+              info.spineIndex,
+              typeof info.percent === "number" ? info.percent * 100 : null,
+            );
+          }, POSITION_SAVE_DEBOUNCE_MS);
+        }
+      }),
+    );
 
-      // No curl/slide animation on purpose: those swap in a rasterized
-      // snapshot mid-turn, which would visually cover the very selection
-      // this gesture exists to keep continuing under the reader's cursor.
-      // A plain, immediate rendition call keeps the live DOM (and the
-      // native selection anchored to it) visible throughout.
-      const turn = zone === "next" ? renditionRef.current?.next() : renditionRef.current?.prev();
-      void turn?.then(() => {
-        // Still holding at the edge with a live selection — the very next
-        // mousemove re-arms a fresh dwell for the next page on its own
-        // (dwellZoneRef is cleared here, so that arming logic doesn't see
-        // a stale zone and skip it); no self-rescheduling timer needed.
-        dwellZoneRef.current = null;
-        setDwellRing(null);
-      });
-    }
-
-    function handleContentMouseDown() {
-      isPointerDownInContentRef.current = true;
-    }
-    rendition.on("mousedown", handleContentMouseDown);
-
-    function handleContentMouseUp() {
-      isPointerDownInContentRef.current = false;
-      cancelDwell();
-    }
-    rendition.on("mouseup", handleContentMouseUp);
-    // A drag started inside the iframe can end with the pointer released
-    // over the parent document's own chrome (margin, footer, rail) — the
-    // forwarded "mouseup" above only ever fires for a release *inside* the
-    // iframe content, so this is the same belt-and-braces window-level
-    // fallback M10's drag-to-peel and M12's scrub dial already rely on.
-    window.addEventListener("mouseup", handleContentMouseUp);
-
-    // The shared shortcut registry (useShortcuts, above) only ever sees
-    // window-level keydowns — epub.js's own iframe is a separate document,
-    // so a keypress inside it never bubbles to window at all. This forwards
-    // exactly the same set of keys, via the exact same handlers, from
-    // epub.js's own "keydown" event (which it re-emits from inside the
-    // iframe for precisely this reason) — the one bit of unavoidable
-    // duplication between the two paths.
-    function handleIframeKeydown(event: KeyboardEvent) {
-      const target = event.target as HTMLElement | null;
-      const isTyping =
-        target?.tagName === "TEXTAREA" ||
-        target?.tagName === "INPUT" ||
-        target?.isContentEditable;
-
-      if (isTyping) return;
-
-      if (event.key === "ArrowLeft") {
-        if (event.shiftKey) handleSkipSentencePrevShortcut();
-        else handleArrowLeftShortcut();
-      } else if (event.key === "ArrowRight") {
-        if (event.shiftKey) handleSkipSentenceNextShortcut();
-        else handleArrowRightShortcut();
-      } else if (event.key === " ") handleSpaceShortcut(event);
-      else if (event.key === "[") handleChapterPrevShortcut();
-      else if (event.key === "]") handleChapterNextShortcut();
-      else if (event.key === "Escape") handleEscapeShortcut();
-      else if (event.key.toLowerCase() === "f" && (event.metaKey || event.ctrlKey) && !event.altKey) {
-        // M24: Cmd/Ctrl+F, forwarded the same way every other reader
-        // shortcut crosses the iframe boundary — see useShortcuts above for
-        // why this needs its own branch rather than the shared registry.
-        event.preventDefault();
-        handleFindShortcut();
-      } else if (
-        event.key.toLowerCase() === "f" &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.altKey
-      ) {
-        // M24.7 §G: fullscreen is plain "f" now (decisions.md 2026-08-22) —
-        // a different axis from focus mode ("n"), hiding different things
-        // and composing independently.
-        toggleFullscreen();
-      } else if (
-        event.key.toLowerCase() === "n" &&
-        !event.metaKey &&
-        !event.ctrlKey &&
-        !event.altKey
-      ) {
-        handleFocusModeShortcut();
-      }
-    }
-    rendition.on("keydown", handleIframeKeydown);
-
-    book.ready
+    void renderer
+      .mount(containerRef.current, { id: resourceId }, {
+        flow: "paginated",
+        spread: spreadMode,
+        fontScale: fontScaleRef.current,
+        marginPx: READER_MARGIN_PX[readerMargin],
+      })
       .then(async () => {
         if (cancelled) return;
-        const [position, resourceHighlights, cachedLocations, chapterMeta] = await Promise.all([
+        renderer.applyTheme(themeVars);
+        renderer.setFocusMode(focusModeRef.current);
+
+        const [position, resourceHighlights, chapterMeta] = await Promise.all([
           fetchPosition(resourceId),
           fetchHighlights(resourceId),
-          fetchCachedLocations(resourceId),
           fetchChapterMeta(resourceId),
         ]);
+        if (cancelled) return;
         if (chapterMeta) {
           sectionWeightRef.current = chapterMeta.weights;
           setChapterNumbers(chapterMeta.chapterNumbers);
           setSectionSpans(buildSectionSpans(chapterMeta.weights));
         }
-        if (cancelled) return;
         highlightsRef.current = resourceHighlights;
+        renderer.setHighlights(resourceHighlights);
         setHighlights(resourceHighlights);
 
         // M35 §D3: navigate to the *clicked* passage (a secondary anchor's
@@ -3227,14 +2592,16 @@ export function ReaderView({
           : undefined;
         // M19.5 posed-question anchors carry a deliberately-unparseable CFI
         // (see UNRESOLVABLE_CHAPTER_ANCHOR_CFI's own comment) — safe for the
-        // mark-rendering fallback, but rendition.display() parses a CFI
-        // directly rather than catching a failure, so handing it one here
-        // would risk crashing epub.js's navigation. Fall back to the saved
-        // position instead; the thread panel below still opens regardless.
-        const displayTarget =
-          jumpTarget && jumpTarget.cfi !== UNRESOLVABLE_CHAPTER_ANCHOR_CFI ? jumpTarget.cfi : undefined;
+        // mark-rendering fallback, but `goTo` parses a CFI directly rather
+        // than catching a failure, so handing it one here would risk
+        // crashing epub.js's navigation. Fall back to the saved position
+        // instead; the thread panel below still opens regardless.
+        const displayCfi =
+          jumpTarget && jumpTarget.cfi !== UNRESOLVABLE_CHAPTER_ANCHOR_CFI ? jumpTarget.cfi : (position?.location ?? undefined);
 
-        await rendition.display(displayTarget ?? position?.location ?? undefined);
+        if (displayCfi) {
+          await renderer.goTo({ sectionIndex: 0, offset: 0, length: 0, cfi: displayCfi });
+        }
         if (cancelled) return;
         setStatus("ready");
         onReady?.();
@@ -3247,31 +2614,14 @@ export function ReaderView({
           });
         }
 
-        // Locations let epub.js compute a whole-book percentage from a CFI
-        // (and, per M19.6, a stable book-wide page number); generating them
-        // is async, so the initial relocated event may fire before
-        // percentages are available — recompute once ready via
-        // reportLocation(). M12's table of contents also needs locations
-        // (chapter-start percents are derived from them, see toc.ts), so
-        // build it here too.
-        // M19.6 "page numbers, book-wide and stable": resources are
-        // immutable-on-import (settled decision 5), so a cached blob from a
-        // prior open can never rot — `load()` is synchronous and cheap
-        // (unlike `generate()`, which walks every section) and skips
-        // regenerating this book's locations ever again. Cache miss falls
-        // back to the original generate()-then-save() path.
-        if (cachedLocations) {
-          book.locations.load(cachedLocations);
-          rendition.reportLocation();
-          setToc(buildToc(book));
-        } else {
-          book.locations.generate(LOCATIONS_CHAR_STEP).then(() => {
-            if (cancelled) return;
-            rendition.reportLocation();
-            setToc(buildToc(book));
-            saveCachedLocations(resourceId, book.locations.save());
-          });
-        }
+        // Locations let the renderer compute a whole-book percentage from a
+        // CFI (and, per M19.6, a stable book-wide page number); M12's table
+        // of contents also needs them (chapter-start percents are derived
+        // from them, see toc.ts).
+        renderer.ensureLocations().then(() => {
+          if (cancelled) return;
+          setToc(renderer.getToc());
+        });
       })
       .catch(() => {
         if (cancelled) return;
@@ -3285,76 +2635,38 @@ export function ReaderView({
     return () => {
       cancelled = true;
       window.clearTimeout(saveTimerRef.current);
-      window.clearTimeout(redisplayTimer);
       window.clearTimeout(dwellTimerRef.current);
-      window.removeEventListener("mouseup", handleContentMouseUp);
-      resizeObserver.disconnect();
-      renditionRef.current = null;
-      bookRef.current = null;
-      rendition.destroy();
-      book.destroy();
+      for (const off of unsubscribers) off();
+      rendererRef.current = null;
+      renderer.destroy();
     };
     // themeVars intentionally excluded — handled by the effect below so
     // toggling the theme doesn't tear down and reload the whole book.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resourceId]);
 
+  // M40 §A: `EpubRenderer.applyTheme`/`setFocusMode` do their own full
+  // re-tint internally (every owned mark + the audio tint) — this effect
+  // used to do that work by hand against `renditionRef`.
   useEffect(() => {
-    if (!renditionRef.current) return;
-    applyTheme(renditionRef.current, themeVars);
+    rendererRef.current?.applyTheme(themeVars);
+  }, [themeVars]);
+  useEffect(() => {
+    rendererRef.current?.setFocusMode(focusMode);
+  }, [focusMode]);
 
-    // Re-tint every already-attached mark: fill-opacity/blend-mode differ
-    // between paper and ink (see highlightKinds.ts), so a highlight created
-    // under one theme must repaint when the user toggles to the other —
-    // and reading focus mode needs the same repaint to hide/reveal marks.
-    // annotations.highlight() doesn't update an existing mark in place —
-    // it stacks a new one — so each mark is removed and re-added. Only the
-    // mark's owner (see cfiOwnersRef) is touched — a co-owner sharing the
-    // same CFI has no epub.js-level mark of its own to re-tint.
-    for (const highlight of highlightsRef.current) {
-      const cfi = attachedCfiRef.current.get(highlight.id);
-      if (!cfi || !isMarkOwner(highlight.id, cfi)) continue;
-      renditionRef.current.annotations.remove(cfi, "highlight");
-      renditionRef.current.annotations.highlight(
-        cfi,
-        { highlightId: highlight.id },
-        undefined,
-        HIGHLIGHT_MARK_CLASS,
-        markStyleForKind(highlight.kind, themeVars, focusMode),
-      );
-    }
-
-    // M21: the audio tint gets the same re-tint-in-place treatment as a
-    // real highlight above — `f` must hide it exactly like any other
-    // annotation-layer effect (AUDIO.md).
-    if (tintCfiRef.current) {
-      renditionRef.current.annotations.remove(tintCfiRef.current, "highlight");
-      renditionRef.current.annotations.highlight(
-        tintCfiRef.current,
-        {},
-        undefined,
-        AUDIO_TINT_MARK_CLASS,
-        audioTintStyle(themeVars, focusMode),
-      );
-    }
-  }, [themeVars, focusMode]);
-
-  // M16 "reading text size": applied through the epub theme
-  // (`themes.fontSize`, which patches already-rendered content immediately —
-  // see the epub.js Themes#override source), plus the same gap-recompute +
+  // M16 "reading text size": applied through the renderer, which patches
+  // already-rendered content immediately, plus the same gap-recompute +
   // debounced re-display the margin-change bug fix above uses, since
   // fontScale moves the target column width without the container's own box
-  // size ever changing (so the ResizeObserver in the book-loading effect has
-  // nothing to fire on). Skipped on the very first mount before a rendition
+  // size ever changing. Skipped on the very first mount before a renderer
   // exists — the mount-time gap/fontSize calls already used whatever
   // fontScaleRef held at that point.
   useEffect(() => {
-    if (!renditionRef.current) return;
-    renditionRef.current.themes.fontSize(`${Math.round(readerFontScale * 100)}%`);
-    applyGapForWidthRef.current();
+    rendererRef.current?.setFontScale(readerFontScale);
   }, [readerFontScale]);
 
-  // M19.6 operator feedback round 4: `themes.fontSize()` above patches
+  // M19.6 operator feedback round 4: `setFontScale()` above patches
   // already-rendered content in place, which re-breaks its lines. When that
   // leaves the section's expanded width unchanged — which is most of the time,
   // since a page either fits or it doesn't — epub.js never re-renders the
@@ -3365,7 +2677,7 @@ export function ReaderView({
   // not touched the text size of at all. rAF: after the reflow, not during it.
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      refreshHighlightOverlays(renditionRef.current);
+      rendererRef.current?.refreshOverlays();
     });
     return () => cancelAnimationFrame(frame);
   }, [readerFontScale, readerMargin, readerPaneWidth, spreadMode]);
@@ -3436,7 +2748,7 @@ export function ReaderView({
   function jumpToChapter(direction: "prev" | "next") {
     const targetIndex = activeChapterStopIndex + (direction === "next" ? 1 : -1);
     const target = chapterStopsList[targetIndex];
-    if (target) void renditionRef.current?.display(target.href);
+    if (target) void rendererRef.current?.goToHref(target.href);
   }
 
   useEffect(() => {
@@ -3445,7 +2757,7 @@ export function ReaderView({
   }, [activeChapterStopIndex, chapterStopsList.length]);
 
   function handleTocSelect(entry: TocEntry) {
-    void renditionRef.current?.display(entry.href);
+    void rendererRef.current?.goToHref(entry.href);
   }
 
   async function handleDigestChapter() {
@@ -3535,11 +2847,7 @@ export function ReaderView({
    * (controls/Slider.tsx, M19.7) — this is what's left that's specific to
    * *this* control: turning a committed percent into an actual page turn. */
   function commitScrub(percent: number) {
-    const book = bookRef.current;
-    const rendition = renditionRef.current;
-    if (!book || !rendition) return;
-    const cfi = book.locations.cfiFromPercentage(percent / 100);
-    void rendition.display(cfi);
+    void rendererRef.current?.goToPercent(percent);
   }
 
   /** Creates a highlight from the pending selection and attaches its mark;
@@ -3561,11 +2869,14 @@ export function ReaderView({
     });
     if (created) {
       setHighlights((prev) => [...prev, created]);
-      resolvedIdsRef.current.add(created.id);
       // This CFI was just derived from the live, currently-rendered
       // document, so it's trusted without going through resolveAnchor again.
-      attachOwnedMark(created.id, created.cfi, created.kind);
-      pendingSelection.contents.window.getSelection()?.removeAllRanges();
+      rendererRef.current?.paintMark(
+        created.id,
+        { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi },
+        created.kind,
+      );
+      clearNativeSelection();
       if (openThread) {
         // Anchor the panel near the selection itself — the nicest, most
         // literal "visually anchored to the highlight" case (a fresh Ask).
@@ -3610,9 +2921,12 @@ export function ReaderView({
       return;
     }
     setHighlights((prev) => [...prev, created]);
-    resolvedIdsRef.current.add(created.id);
-    attachOwnedMark(created.id, created.cfi, created.kind);
-    pendingSelection.contents.window.getSelection()?.removeAllRanges();
+    rendererRef.current?.paintMark(
+      created.id,
+      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi },
+      created.kind,
+    );
+    clearNativeSelection();
     const top = pendingSelection.top;
     setPendingSelection(null);
 
@@ -3692,15 +3006,18 @@ export function ReaderView({
       spineIndex: pendingSelection.spineIndex,
       kind: "slate",
     });
-    pendingSelection.contents.window.getSelection()?.removeAllRanges();
+    clearNativeSelection();
     setPendingSelection(null);
     if (!created) {
       setLinkQuoteError("Couldn't create that highlight — try again.");
       return;
     }
     setHighlights((prev) => [...prev, created]);
-    resolvedIdsRef.current.add(created.id);
-    attachOwnedMark(created.id, created.cfi, created.kind);
+    rendererRef.current?.paintMark(
+      created.id,
+      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi },
+      created.kind,
+    );
 
     const result = await addThreadAnchor(mode.threadId, created.id);
     if (result.ok) {
@@ -3718,7 +3035,7 @@ export function ReaderView({
       setLinkQuoteConfirm(null);
       return;
     }
-    pendingSelection?.contents.window.getSelection()?.removeAllRanges();
+    clearNativeSelection();
     setPendingSelection(null);
   }
 
@@ -3737,7 +3054,7 @@ export function ReaderView({
    */
   async function handleDefine() {
     if (!pendingSelection) return;
-    const { exact, left, top, contents } = pendingSelection;
+    const { exact, left, top } = pendingSelection;
     const term = normalizeDefineTerm(exact);
 
     const created = await postHighlight({
@@ -3749,13 +3066,16 @@ export function ReaderView({
       spineIndex: pendingSelection.spineIndex,
       kind: "sage",
     });
-    contents.window.getSelection()?.removeAllRanges();
+    clearNativeSelection();
     setPendingSelection(null);
     if (!created) return;
 
     setHighlights((prev) => [...prev, created]);
-    resolvedIdsRef.current.add(created.id);
-    attachOwnedMark(created.id, created.cfi, created.kind);
+    rendererRef.current?.paintMark(
+      created.id,
+      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi },
+      created.kind,
+    );
     setDefinitionCard({ left, top, term, highlightId: created.id, result: null });
 
     const result = await requestDefinition(created.id);
@@ -3799,8 +3119,8 @@ export function ReaderView({
   // createHighlightFromSelection.
   async function handlePlayFromSelection() {
     if (!pendingSelection) return;
-    const { spineIndex, contents, exact, prefix, suffix } = pendingSelection;
-    const sectionText = contents.document.body.textContent ?? "";
+    const { spineIndex, exact, prefix, suffix } = pendingSelection;
+    const sectionText = rendererRef.current?.getRenderedSectionText(spineIndex) ?? "";
     const match = findAnchorInText(sectionText, { exact, prefix, suffix });
     let sentenceIndex = 0;
     if (match) {
@@ -3808,7 +3128,7 @@ export function ReaderView({
       if (manifest) sentenceIndex = resolveSegmentIndexForOffset(sectionText, match.start, manifest.segments);
     }
     player.playFrom(spineIndex, sentenceIndex);
-    contents.window.getSelection()?.removeAllRanges();
+    clearNativeSelection();
     setPendingSelection(null);
   }
 
@@ -3822,17 +3142,13 @@ export function ReaderView({
     const ok = await deleteHighlightRequest(highlight.id);
     if (!ok) return;
     setHighlights((prev) => prev.filter((h) => h.id !== highlight.id));
-    resolvedIdsRef.current.delete(highlight.id);
     setUnanchoredIds((prev) => {
       if (!prev.has(highlight.id)) return prev;
       const next = new Set(prev);
       next.delete(highlight.id);
       return next;
     });
-    const attachedCfi = attachedCfiRef.current.get(highlight.id) ?? highlight.cfi;
-    attachedCfiRef.current.delete(highlight.id);
-    const remaining = highlightsRef.current.filter((h) => h.id !== highlight.id);
-    detachOwnedMark(highlight.id, attachedCfi, remaining);
+    rendererRef.current?.removeMark(highlight.id);
     setExpandedThread((prev) => (prev?.highlightId === highlight.id ? null : prev));
     // M30 C: a card left open over a highlight that no longer exists would
     // offer an "Ask about this" that can't work.
@@ -3859,7 +3175,7 @@ export function ReaderView({
   }
 
   function handleNavigateToHighlight(highlight: HighlightWithThread) {
-    renditionRef.current?.display(highlight.cfi);
+    void rendererRef.current?.goTo({ sectionIndex: 0, offset: 0, length: 0, cfi: highlight.cfi });
   }
 
   /** M35 §D4: `< >` traversal inside an open ThreadPanel — moves the reader
@@ -3984,7 +3300,7 @@ export function ReaderView({
     // at — and so re-entry starts from a known state.
     setGrabSurfaceArmed(false);
     if (lastContentsWithCursorRef.current) {
-      lastContentsWithCursorRef.current.document.body.style.cursor = "";
+      lastContentsWithCursorRef.current.body.style.cursor = "";
     }
     clearMarkHover();
   }

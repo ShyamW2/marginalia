@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import type { Rendition } from "epubjs";
+import type { EpubRenderer } from "./renderer/epub/EpubRenderer.js";
 import {
   animate,
   useAnimationControls,
@@ -195,7 +195,7 @@ type TurnRenderer = "instant" | "slide" | "curl";
  * mode (M20 "spread-aware": the fold peels the near leaf only).
  */
 export interface PageTurnAnimationOptions {
-  renditionRef: RefObject<Rendition | null>;
+  rendererRef: RefObject<EpubRenderer | null>;
   containerRef: RefObject<HTMLDivElement | null>;
   /** The paper card — `.pageClip`, the box the fold canvas is positioned
    * inside and the sheet the reader actually sees. Every rect the fold works
@@ -217,7 +217,7 @@ export interface PageTurnAnimationOptions {
 }
 
 export function usePageTurnAnimation({
-  renditionRef,
+  rendererRef,
   containerRef,
   cardRef,
   stageRef,
@@ -527,11 +527,11 @@ export function usePageTurnAnimation({
   // has proven itself too slow on this device.
   const turnPageSlide = useCallback(
     async (direction: "prev" | "next") => {
-      const rendition = renditionRef.current;
-      if (!rendition) return;
+      const renderer = rendererRef.current;
+      if (!renderer) return;
       if (stageReducedMotion) {
-        if (direction === "prev") rendition.prev();
-        else rendition.next();
+        if (direction === "prev") void renderer.prev();
+        else void renderer.next();
         return;
       }
       const dx = direction === "next" ? -6 : 6;
@@ -540,8 +540,8 @@ export function usePageTurnAnimation({
         x: dx,
         transition: { duration: 0.09, ease: "easeOut" },
       });
-      if (direction === "prev") rendition.prev();
-      else rendition.next();
+      if (direction === "prev") void renderer.prev();
+      else void renderer.next();
       await stageControls.start({
         opacity: 1,
         x: 0,
@@ -572,23 +572,23 @@ export function usePageTurnAnimation({
   // bump gives the effect another chance once the lock clears.
   const turnPageSlideToSection = useCallback(
     async (spineIndex: number) => {
-      const rendition = renditionRef.current;
-      if (!rendition) return;
+      const renderer = rendererRef.current;
+      if (!renderer) return;
       if (stageReducedMotion) {
-        await rendition.display(spineIndex);
+        await renderer.goToSpineIndex(spineIndex);
         return;
       }
       await stageControls.start({
         opacity: 0.55,
         transition: { duration: 0.09, ease: "easeOut" },
       });
-      await rendition.display(spineIndex);
+      await renderer.goToSpineIndex(spineIndex);
       await stageControls.start({
         opacity: 1,
         transition: { duration: 0.13, ease: "easeOut" },
       });
     },
-    [stageControls, stageReducedMotion, renditionRef],
+    [stageControls, stageReducedMotion, rendererRef],
   );
 
   const withTurnLock = useCallback(async (work: () => Promise<void>) => {
@@ -622,8 +622,8 @@ export function usePageTurnAnimation({
   // on settle" falls out of the canvas unmounting when the fold completes.
   const turnPageCurl = useCallback(
     async (direction: "prev" | "next") => {
-      const rendition = renditionRef.current;
-      if (!rendition) return;
+      const renderer = rendererRef.current;
+      if (!renderer) return;
 
       const token = beginTurn();
       const card = await captureCard();
@@ -670,7 +670,7 @@ export function usePageTurnAnimation({
       // turn.
       try {
         await withDeadline(
-          direction === "prev" ? rendition.prev() : rendition.next(),
+          direction === "prev" ? renderer.prev() : renderer.next(),
           RENDITION_STEP_MS,
         );
         // Let epub.js actually paint the new section before revealing it —
@@ -728,8 +728,8 @@ export function usePageTurnAnimation({
    */
   const turnPageCardSlide = useCallback(
     async (direction: "prev" | "next") => {
-      const rendition = renditionRef.current;
-      if (!rendition) return;
+      const renderer = rendererRef.current;
+      if (!renderer) return;
 
       const card = await captureCardImage();
       if (!card) {
@@ -750,7 +750,7 @@ export function usePageTurnAnimation({
         applyStageOffset(slideOffsetPx(direction, cardWidth, 0));
 
         await withDeadline(
-          direction === "prev" ? rendition.prev() : rendition.next(),
+          direction === "prev" ? renderer.prev() : renderer.next(),
           RENDITION_STEP_MS,
         );
         await nextFrame();
@@ -768,7 +768,7 @@ export function usePageTurnAnimation({
         setSlide(null);
       }
     },
-    [turnProgress, turnPageSlide, captureCardImage, applyStageOffset, renditionRef],
+    [turnProgress, turnPageSlide, captureCardImage, applyStageOffset, rendererRef],
   );
 
   const turnPage = useCallback(
@@ -816,8 +816,8 @@ export function usePageTurnAnimation({
     ) => {
       const container = containerRef.current;
       const card = cardRef.current;
-      const activeRendition = renditionRef.current;
-      if (!container || !card || !activeRendition) return;
+      const renderer = rendererRef.current;
+      if (!container || !card || !renderer) return;
 
       turnLockRef.current = true;
       setGestureActive(true);
@@ -897,14 +897,7 @@ export function usePageTurnAnimation({
       // before advancing and restored by CFI rather than by a blind `prev()`
       // — at a section boundary epub.js's own step back does not always land
       // where the drag began (decisions.md 2026-08-03).
-      let startCfi: string | null = null;
-      try {
-        startCfi =
-          (activeRendition.currentLocation() as { start?: { cfi?: string } } | undefined)?.start
-            ?.cfi ?? null;
-      } catch {
-        startCfi = null;
-      }
+      const startCfi: string | null = renderer.currentLocation()?.cfi ?? null;
 
       /** Mounts whichever departing card this drag needs, and leaves the
        * screen looking exactly as it did — the snapshot is pixel-identical to
@@ -942,8 +935,8 @@ export function usePageTurnAnimation({
       const opened = openRenderer().then(async (mounted) => {
         if (!mounted) return;
         ready = true;
-        if (direction === "prev") await activeRendition.prev();
-        else await activeRendition.next();
+        if (direction === "prev") await renderer.prev();
+        else await renderer.next();
         advanced = true;
         // The stage now shows the destination spread; the sheet the reader
         // is holding has its real other side on it. The slide has no back
@@ -1021,10 +1014,10 @@ export function usePageTurnAnimation({
           // always land where the drag began (decisions.md 2026-08-03).
           const stepBack = () =>
             startCfi
-              ? activeRendition.display(startCfi)
+              ? renderer.goTo({ sectionIndex: 0, offset: 0, length: 0, cfi: startCfi })
               : direction === "prev"
-                ? activeRendition.next()
-                : activeRendition.prev();
+                ? renderer.next()
+                : renderer.prev();
 
           if (shouldCommit && useSlide) {
             await withDeadline(
@@ -1159,7 +1152,7 @@ export function usePageTurnAnimation({
       captureBackOfSheet,
       containerRef,
       cardRef,
-      renditionRef,
+      rendererRef,
       readOrigin,
     ],
   );

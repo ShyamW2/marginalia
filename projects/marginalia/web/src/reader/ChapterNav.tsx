@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import type { TocEntry } from "./toc.js";
+import type { TocEntry } from "./renderer/epub/toc.js";
 import { ChevronIcon } from "./ChevronIcon.js";
 import { IconButton } from "../controls/IconButton.js";
 import styles from "./ChapterNav.module.css";
