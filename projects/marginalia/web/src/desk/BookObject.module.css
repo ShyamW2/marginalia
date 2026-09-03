@@ -26,6 +26,13 @@
   border-radius: 6px;
   box-shadow: 0 2px 6px rgba(40, 30, 15, 0.18);
   transition: box-shadow var(--duration-standard) var(--ease-standard);
+  /* M33 §A5: the cover is an `<img>` (`BookCover`), so iOS raises its own
+     "Save Image" callout partway through the 1s dwell hold without this.
+     `user-select` is left alone on purpose — the M31 §C4 trap is pairing
+     this with `user-select: none`, which kills selection outright and only
+     looks like it worked in a desktop emulator. There is no selectable text
+     here to protect, so the callout suppression alone is the whole fix. */
+  -webkit-touch-callout: none;
 }
 
 .coverArtHidden {

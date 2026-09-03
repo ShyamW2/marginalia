@@ -7,17 +7,21 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { motionValue, type MotionValue } from "motion/react";
 import type { ResourceSummary } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { useScene3DAvailable, useScene3DLayer } from "../scene3d/Scene3D.js";
-import { setPendingOpeningPose } from "../scene3d/openingPose.js";
+import { setPendingOpeningPose, type OpeningPose } from "../scene3d/openingPose.js";
+import { reportPutDownDestination, usePutDownRequest } from "../scene3d/putDown.js";
 import { preloadReaderPage } from "../reader/preload.js";
 import { useSpinePalette } from "../scene3d/useSpinePalette.js";
+import { DwellRing } from "../reader/DwellRing.js";
 import { BookActionCard } from "./BookActionCard.js";
 import { ShelfScene3D, type ShelfBookPlacement } from "./ShelfScene3D.js";
 import { SHELF_HOVER_LIFT, layoutShelf, type ShelfSlot } from "./shelfLayout.js";
+import { TOUCH_DWELL_MS, useTouchCardDwell } from "./useTouchCardDwell.js";
 import styles from "./ShelfView.module.css";
 
 /** Clear space above the tallest book, where the action card floats. Sized for
@@ -129,13 +133,16 @@ export function ShelfView({ resources, publishingId, onPublish, listeningEngaged
    * recedes from it into −z, which is why the bounding box's centre is half a
    * depth *behind* the plane.
    */
-  const captureOpening = useCallback(
-    (slot: ShelfSlot) => {
+  /** The pose math alone, reused by `captureOpening` below (click time) and
+   * by the M33 §C put-down's own report effect on `ShelfBook` (mount time)
+   * — one seam computing a slotted book's pose, not two copies that can
+   * drift. */
+  const buildPose = useCallback(
+    (slot: ShelfSlot): OpeningPose | null => {
       const el = slotRefs.get(slot.resourceId);
-      if (!el) return;
-      setPendingOverlayOrigin(captureOverlayOrigin(el));
+      if (!el) return null;
       const rect = el.getBoundingClientRect();
-      setPendingOpeningPose({
+      return {
         surface: "shelf",
         // `Book3D` is authored cover-forward: the shelf stands it up and turns
         // it, so the book's own "width" is how far it recedes into the shelf
@@ -152,10 +159,35 @@ export function ShelfView({ resources, publishingId, onPublish, listeningEngaged
         // Spine to the camera, and upright: the shelf's own arrangement.
         yaw: Math.PI / 2,
         roll: 0,
-      });
+      };
     },
     [slotRefs, lifts],
   );
+
+  const captureOpening = useCallback(
+    (slot: ShelfSlot) => {
+      const el = slotRefs.get(slot.resourceId);
+      const pose = buildPose(slot);
+      if (!el || !pose) return;
+      setPendingOverlayOrigin(captureOverlayOrigin(el));
+      setPendingOpeningPose(pose);
+    },
+    [slotRefs, buildPose],
+  );
+
+  // M33 §C3: the shelf's own answer to a put-down in progress, the mirror of
+  // `captureOpening`'s click-time capture — see `BookObject.tsx`'s identical
+  // effect for the fuller comment.
+  const putDown = usePutDownRequest();
+  useEffect(() => {
+    if (putDown.resourceId === null || putDown.destination) return;
+    const slot = row.slots.find((s) => s.resourceId === putDown.resourceId);
+    const el = slot && slotRefs.get(slot.resourceId);
+    if (!slot || !el) return;
+    const pose = buildPose(slot);
+    if (!pose) return;
+    reportPutDownDestination(putDown.resourceId, { origin: captureOverlayOrigin(el), pose });
+  }, [putDown.resourceId, putDown.destination, row.slots, slotRefs, buildPose]);
 
   const open = useCallback(
     (slot: ShelfSlot) => {
@@ -265,6 +297,17 @@ function ShelfBook({
   // returning plain colour strings — no three.js type crosses into this
   // component (settled decision 14).
   const palette = useSpinePalette(slot.resourceId);
+  const touch = useTouchCardDwell();
+
+  // M33 §A1/§A2/§A6: the same touch treatment as `BookObject.tsx`'s cover,
+  // shared through `useTouchCardDwell` (one card, both surfaces — settled
+  // decision 12) — `onPointerEnter` below is filtered to mouse/pen exactly
+  // as the Desk's own is, and a completed touch dwell drives the same
+  // `onActiveChange` the shelf already listens to for hover and focus.
+  useEffect(() => {
+    onActiveChange(touch.revealed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [touch.revealed]);
 
   function handleKeyDown(event: KeyboardEvent) {
     if (event.key === "Enter" || event.key === " ") {
@@ -297,13 +340,24 @@ function ShelfBook({
         onActivate();
       }}
       onKeyDown={handleKeyDown}
-      onPointerEnter={() => {
+      onPointerDown={touch.onPointerDown}
+      onPointerMove={touch.onPointerMove}
+      onPointerUp={touch.onPointerUp}
+      onPointerCancel={touch.onPointerCancel}
+      onPointerEnter={(event) => {
+        // §A1: identical unfiltered bug as `BookObject.tsx` — a touchscreen
+        // tap fired this (the card flashed open) as well as the tap that
+        // opens the book. Touch earns the card from the dwell above instead.
+        if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
         onActiveChange(true);
         // See `preloadReaderPage`: the room fetched while the book is merely
         // pointed at, so the opening is continuous when it is clicked.
         void preloadReaderPage();
       }}
-      onPointerLeave={() => onActiveChange(false)}
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+        onActiveChange(false);
+      }}
       onFocus={() => {
         onActiveChange(true);
         void preloadReaderPage();
@@ -342,6 +396,21 @@ function ShelfBook({
           onCaptureOpening={onCaptureOpening}
         />
       )}
+
+      {/* §A3: portaled for the same reason as `BookObject.tsx` — the 3D
+          lift's transform on `.lifted .spine` would otherwise become this
+          ring's containing block instead of the viewport. */}
+      {touch.dwellRing &&
+        createPortal(
+          <DwellRing
+            key={touch.dwellRing.key}
+            x={touch.dwellRing.x}
+            y={touch.dwellRing.y}
+            durationMs={TOUCH_DWELL_MS}
+            refused={false}
+          />,
+          document.body,
+        )}
     </div>
   );
 }

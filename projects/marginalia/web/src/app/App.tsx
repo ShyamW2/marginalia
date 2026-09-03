@@ -35,6 +35,15 @@ const DigestOverlay = lazy(() =>
 const SettingsModal = lazy(() =>
   import("../settings/SettingsModal.js").then((m) => ({ default: m.SettingsModal })),
 );
+// M33 §C: split out with the rest of the reader's own machinery
+// (`BookOpening3D` and everything under it) rather than paid for by every
+// app load — the put-down is empty (renders null) until a departure
+// requests it, same "costs nothing outside a departure" as the store it
+// reads, but its dependency graph is not free to *parse* if it's bundled
+// eagerly.
+const BookClosingHost = lazy(() =>
+  import("../reader/BookClosing.js").then((m) => ({ default: m.BookClosingHost })),
+);
 
 interface NavigationState {
   /** Set when navigating to an overlay path (/settings, /scan/:id) from
@@ -251,6 +260,15 @@ export function App() {
                 )}
               </AnimatePresence>
             </main>
+            {/* M33 §C: persistent, not per-route — by the time a put-down
+                knows where it's going, the reader that started it has
+                already unmounted (`putDown.ts`'s own docstring on why this
+                can't be mounted from a room the way `BookOpening` is). Its
+                own store gates everything it renders, so it costs nothing
+                outside a departure. */}
+            <Suspense fallback={null}>
+              <BookClosingHost />
+            </Suspense>
             <JobToastStack />
           </div>
         </Scene3DProvider>

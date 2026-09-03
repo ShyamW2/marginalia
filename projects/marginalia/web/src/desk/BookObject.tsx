@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type WheelEvent } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { motion, type MotionValue, type PanInfo } from "motion/react";
 import type { CursorStyleChoice, ResourceSummary, ShelfState } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
-import { setPendingOpeningPose } from "../scene3d/openingPose.js";
+import { setPendingOpeningPose, type OpeningPose } from "../scene3d/openingPose.js";
+import { reportPutDownDestination, usePutDownRequest } from "../scene3d/putDown.js";
 import { preloadReaderPage } from "../reader/preload.js";
+import { DwellRing } from "../reader/DwellRing.js";
 import { BookActionCard } from "./BookActionCard.js";
+import { TOUCH_DWELL_MS, useTouchCardDwell } from "./useTouchCardDwell.js";
 import {
   BOOK_BASE_ELEVATION,
   BOOK_DRAG_LIFT,
@@ -90,6 +94,16 @@ export function BookObject({
   const dragDistance = useRef(0);
   const openedRef = useRef(false);
   const coverRef = useRef<HTMLDivElement>(null);
+  const touch = useTouchCardDwell();
+
+  // M33 §A2: touch has no hover, so a completed dwell stands in for it —
+  // everything downstream of `isHovering` (the card, the z-index bump, the
+  // 3D lift) then just works for touch too, with no separate branch. §A4's
+  // drag-disarm is `touch.settled`, kept apart from this because it must
+  // stay true even after a later movement toggles `revealed` back off.
+  useEffect(() => {
+    setIsHovering(touch.revealed);
+  }, [touch.revealed]);
 
   // M23 §B: the same reaction the 2D presentation gets from `whileHover`'s
   // few-px lift and `.lifted`'s deeper shadow, handed to the 3D layer as a
@@ -118,13 +132,16 @@ export function BookObject({
    * where height off the plane costs *no* screen displacement on the optical
    * axis and a fraction of a px away from it.
    */
-  function captureOpening() {
-    if (!coverRef.current) return;
-    setPendingOverlayOrigin(captureOverlayOrigin(coverRef.current));
+  /** The pose math alone, reused by `captureOpening` below (click time) and
+   * by the M33 §C put-down's own report effect (mount time, once this book
+   * is the one a departing reader is looking for) — one seam computing this
+   * book's pose, not two copies that can drift. */
+  function buildPose(): OpeningPose | null {
+    if (!coverRef.current) return null;
     const el = coverRef.current;
     const rect = el.getBoundingClientRect();
     const thickness = bookThickness(resource.id);
-    setPendingOpeningPose({
+    return {
       surface: "desk",
       width: el.offsetWidth,
       height: el.offsetHeight,
@@ -139,8 +156,36 @@ export function BookObject({
       // axis pointing at the viewer is counter-clockwise. `DeskScene3D` negates
       // the same value for the same reason.
       roll: -(position.rotation * Math.PI) / 180,
-    });
+    };
   }
+
+  function captureOpening() {
+    const pose = buildPose();
+    if (!pose || !coverRef.current) return;
+    setPendingOverlayOrigin(captureOverlayOrigin(coverRef.current));
+    setPendingOpeningPose(pose);
+  }
+
+  // M33 §C3: "the destination comes from the Desk after it mounts" — this
+  // book answers a put-down in progress the instant it has a real rect to
+  // offer, the mirror of `captureOpening`'s click-time capture above. Guarded
+  // on `!putDown.destination` so the first surface to lay this book out wins
+  // (only one of Desk/shelf/list is ever mounted for a given resource at
+  // once, so this is a safety net against a double report, not a real race).
+  const putDown = usePutDownRequest();
+  useEffect(() => {
+    if (putDown.resourceId !== resource.id || putDown.destination || !coverRef.current) return;
+    const pose = buildPose();
+    if (!pose) return;
+    reportPutDownDestination(resource.id, {
+      origin: captureOverlayOrigin(coverRef.current),
+      pose,
+    });
+    // `buildPose`/`position`/`lift` are all read fresh inside the effect body
+    // and `resource.id` covers the one thing that actually needs to retrigger
+    // this — a new put-down request naming a different (or the same) book.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [putDown.resourceId, putDown.destination]);
 
   function open() {
     if (openedRef.current) return;
@@ -235,7 +280,11 @@ export function BookObject({
       // live: a book dragged-to-front earlier hid the hover strip of a book
       // behind it).
       style={{ x, y, rotate: position.rotation, zIndex: isHovering ? 100_000 : zOrder }}
-      drag={!reducedMotion}
+      // §A4: once a touch has settled into a long-press (the card has been
+      // out at least once this touch), drag stays off for the rest of it —
+      // even after a later movement dismisses the card again — so it never
+      // resumes dragging out from under a card the reader is about to tap.
+      drag={!reducedMotion && !touch.settled}
       dragMomentum={false}
       dragElastic={0.12}
       // M20.7 verify (found live): a real drag followed by an immediate,
@@ -247,9 +296,13 @@ export function BookObject({
       // Resetting on every pointerdown, not just once a drag is recognized,
       // means each new gesture is measured from zero regardless of which
       // way it resolves.
-      onPointerDown={() => {
+      onPointerDown={(event) => {
         dragDistance.current = 0;
+        touch.onPointerDown(event);
       }}
+      onPointerMove={touch.onPointerMove}
+      onPointerUp={touch.onPointerUp}
+      onPointerCancel={touch.onPointerCancel}
       onDragStart={handleDragStart}
       onDrag={handleDrag}
       onDragEnd={handleDragEnd}
@@ -265,14 +318,19 @@ export function BookObject({
         if (target instanceof Element && target.closest("button")) return;
         if (dragDistance.current < DRAG_CLICK_THRESHOLD) open();
       }}
-      onPointerEnter={() => {
+      onPointerEnter={(event) => {
+        // §A1: unfiltered, a touchscreen tap fires this (the card appears)
+        // *and* `onTap` (the book opens) — the card flashes and is gone.
+        // Touch earns the card from `useTouchCardDwell` instead (§A2).
+        if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
         setIsHovering(true);
         // The room this book opens into, fetched while the pointer is still on
         // it — see `preloadReaderPage` for the gap this closes.
         void preloadReaderPage();
       }}
       onFocus={() => void preloadReaderPage()}
-      onPointerLeave={() => {
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
         setIsHovering(false);
         setCrownProgress(0);
       }}
@@ -332,6 +390,22 @@ export function BookObject({
           onCaptureOpening={captureOpening}
         />
       )}
+
+      {/* §A3: portaled — `position: fixed` would otherwise resolve against
+          this element's own `transform` (framer's x/y/rotate), not the
+          viewport, since a transformed ancestor is a containing block for
+          fixed descendants. */}
+      {touch.dwellRing &&
+        createPortal(
+          <DwellRing
+            key={touch.dwellRing.key}
+            x={touch.dwellRing.x}
+            y={touch.dwellRing.y}
+            durationMs={TOUCH_DWELL_MS}
+            refused={false}
+          />,
+          document.body,
+        )}
     </motion.div>
   );
 }

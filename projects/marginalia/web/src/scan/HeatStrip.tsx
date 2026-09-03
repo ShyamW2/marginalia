@@ -224,6 +224,118 @@ export function HeatStrip({
     return () => el.removeEventListener("wheel", handleWheel);
   }, []);
 
+  // M33 §B "the Scan's two gestures": pinch zooms about its own centre,
+  // exactly like the wheel handler above zooms about the cursor; a single
+  // finger's horizontal drag scrubs by feeding a continuous per-move
+  // fraction into `panByViewFraction` — the same step the pan buttons use,
+  // just driven by the finger instead of a fixed 0.5. Native
+  // `addEventListener` with `{ passive: false }` for the same reason as the
+  // wheel listener above: a passive touchmove's `preventDefault()` is
+  // silently dropped, so the page would scroll/native-pinch underneath the
+  // gesture instead of yielding to it. `.strip`'s `touch-action: pan-y`
+  // (HeatStrip.module.css) leaves native vertical scroll alone and hands us
+  // everything else.
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el) return;
+
+    const PAN_DECLARE_PX = 8;
+    let panId: number | null = null;
+    let panStartX = 0;
+    let panLastX = 0;
+    let panDeclared = false;
+    let pinchIds: [number, number] | null = null;
+    let pinchLastDist = 0;
+
+    function findTouch(touches: TouchList, id: number): Touch | null {
+      for (let i = 0; i < touches.length; i += 1) {
+        if (touches[i].identifier === id) return touches[i];
+      }
+      return null;
+    }
+
+    function viewPositionOf(clientX: number): number {
+      const rect = el!.getBoundingClientRect();
+      return rect.width > 0 ? (clientX - rect.left) / rect.width : 0.5;
+    }
+
+    function handleStart(event: TouchEvent) {
+      if (event.touches.length >= 2) {
+        // A second finger landing cancels an uncommitted pan outright — the
+        // same rule the reader's touch table states for its own gestures
+        // (DESIGN.md): it's the start of some other gesture, not a scrub.
+        panId = null;
+        panDeclared = false;
+        const [a, b] = event.touches;
+        pinchIds = [a.identifier, b.identifier];
+        pinchLastDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        return;
+      }
+      const t = event.touches[0];
+      if (!t) return;
+      panId = t.identifier;
+      panStartX = t.clientX;
+      panLastX = t.clientX;
+      panDeclared = false;
+    }
+
+    function handleMove(event: TouchEvent) {
+      if (pinchIds) {
+        const a = findTouch(event.touches, pinchIds[0]);
+        const b = findTouch(event.touches, pinchIds[1]);
+        if (!a || !b) return;
+        event.preventDefault();
+        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+        if (pinchLastDist > 0) {
+          const factor = dist / pinchLastDist;
+          const viewPosition = viewPositionOf((a.clientX + b.clientX) / 2);
+          setZoomState((z) => zoomAtViewPosition(z, factor, viewPosition));
+        }
+        pinchLastDist = dist;
+        return;
+      }
+      if (panId === null) return;
+      const t = findTouch(event.touches, panId);
+      if (!t) return;
+      if (!panDeclared) {
+        if (Math.abs(t.clientX - panStartX) < PAN_DECLARE_PX) return;
+        panDeclared = true;
+      }
+      event.preventDefault();
+      const dx = t.clientX - panLastX;
+      panLastX = t.clientX;
+      const rect = el!.getBoundingClientRect();
+      if (rect.width === 0) return;
+      // Content follows the finger (natural scrolling): dragging right
+      // reveals what was to the left, which is a *smaller* pan.
+      setZoomState((z) => panByViewFraction(z, -dx / rect.width));
+    }
+
+    function handleEnd(event: TouchEvent) {
+      if (pinchIds) {
+        const a = findTouch(event.touches, pinchIds[0]);
+        const b = findTouch(event.touches, pinchIds[1]);
+        if (!a || !b) pinchIds = null;
+        return;
+      }
+      if (event.touches.length === 0) {
+        panId = null;
+        panDeclared = false;
+      }
+    }
+
+    el.addEventListener("touchstart", handleStart, { passive: false });
+    el.addEventListener("touchmove", handleMove, { passive: false });
+    el.addEventListener("touchend", handleEnd, { passive: false });
+    el.addEventListener("touchcancel", handleEnd, { passive: false });
+    return () => {
+      el.removeEventListener("touchstart", handleStart);
+      el.removeEventListener("touchmove", handleMove);
+      el.removeEventListener("touchend", handleEnd);
+      el.removeEventListener("touchcancel", handleEnd);
+    };
+  }, []);
+
   /** Raw (unwarped) local point -> warped local point, in strip-relative px. */
   function warpLocal(xLocal: number, yLocal: number): { x: number; y: number } {
     if (warpGeometry.maxPull === 0) return { x: xLocal, y: yLocal };

@@ -30,6 +30,12 @@
   background: none;
   cursor: pointer;
   border-radius: 3px;
+  /* M33 §A6: the shelf's analogue of `BookObject.module.css`'s cover fix —
+     the spine title (`.spineTitle`) is decorative (`aria-hidden`), not real
+     selectable content, so suppressing the OS long-press callout here costs
+     nothing (unlike the M31 §C4 trap, there is no `user-select: text` this
+     would need to be paired with to avoid). */
+  -webkit-touch-callout: none;
 }
 
 .slot:focus-visible {

@@ -20,6 +20,14 @@
      no separate visibility check. */
   overflow: hidden;
   cursor: default;
+  /* M33 §B: "pinch zooms, horizontal swipe scrubs" — both handled by
+     HeatStrip's own touch listeners (non-passive, so preventDefault sticks),
+     so the browser's native horizontal pan and pinch-zoom must stand down
+     here or they fight the gesture instead of yielding to it. `pan-y` keeps
+     native vertical scroll of the popup working (the strip sits inside
+     ScanPage's scrollable body) — the one axis this component doesn't
+     claim for itself. */
+  touch-action: pan-y;
 }
 
 /* M18 "tighter bleed and a zoom" (decisions.md 2026-07-28), rebuilt M20.5

@@ -36,8 +36,12 @@ const OPEN_MS = 750;
 /** How long the printed spread is held before the landing pulls it onto the
  * pane. Short — it is a beat, not a pause: long enough to register that the
  * book in your hands is the page you are about to read, not long enough to
- * feel like waiting. */
-const PAGE_SETTLE_MS = 260;
+ * feel like waiting.
+ *
+ * Exported for `BookClosing.tsx` (M33 §C), which runs this same settle beat
+ * in reverse — the book relaxing back to its own proportions once it leaves
+ * the pane, right before it starts closing. */
+export const PAGE_SETTLE_MS = 260;
 
 // Anticlockwise about the spine (left) edge, "toward the viewer"
 // (decisions.md 2026-08-04): empirically, with `transformOrigin: "0% 50%"`,

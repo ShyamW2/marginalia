@@ -5,7 +5,10 @@
   position: fixed;
   transform: translate(-50%, -50%);
   pointer-events: none;
-  z-index: var(--reader-z-dwell-ring);
+  /* Falls back when rendered outside the reader (M33 §A3's touch dwell,
+     portaled from the Desk/shelf) where `--reader-z-dwell-ring` was never
+     defined — comfortably above `BookObject`'s own hover z-index (100_000). */
+  z-index: var(--reader-z-dwell-ring, 100001);
 }
 
 .track {

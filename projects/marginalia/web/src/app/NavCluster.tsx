@@ -61,6 +61,16 @@ interface NavClusterProps {
    * trying to read `location.state.background` off a location that isn't
    * really `/settings`. */
   onCloseSettings?: () => void;
+  /** M33 §C: the reader's embedded instance overrides "leaving to the
+   * Desk" — the Library link, and `d`/`l`/`b` — to run the put-down instead
+   * of a bare `navigate("/")`, the same sequence Esc-while-reading and the
+   * M31 touch departure now trigger (TASKS.md M33 C acceptance: "leaving a
+   * book by the Desk button and by Esc produce the same sequence"). Passed
+   * `mode` when a forced view mode was requested (`d`/`l`/`b`), or `undefined`
+   * for the plain Library link, which lands on whichever was last used.
+   * Absent everywhere else, where leaving to "/" already just means *being*
+   * on the Desk — there is nothing to reverse. */
+  onDepart?: (mode?: DeskViewMode) => void;
   className?: string;
 }
 
@@ -77,6 +87,7 @@ export function NavCluster({
   registersSlot = floating,
   settingsOpen,
   onCloseSettings,
+  onDepart,
   className,
 }: NavClusterProps) {
   const { choice, setChoice } = useTheme();
@@ -132,6 +143,14 @@ export function NavCluster({
   // entry, so it works the same whether the overlay is one level up
   // (Settings) or stacked deeper (Settings-over-Scan).
   function goToDesk(mode: DeskViewMode) {
+    // M33 §C: the reader's embedded instance runs the put-down instead —
+    // `onDepart` itself is what forces the mode (`ReaderView.tsx`'s
+    // `startPutDown`), so this plain bus emit + navigate is only for every
+    // other room, which is already the Desk or an overlay over it.
+    if (onDepart) {
+      onDepart(mode);
+      return;
+    }
     emitDeskViewMode(mode);
     if (location.pathname !== "/") navigate("/");
   }
@@ -163,6 +182,17 @@ export function NavCluster({
         )}
         aria-label="Library"
         title="Library"
+        // M33 §C: a plain click runs the put-down instead of the bare
+        // navigation the `<Link>` would otherwise do — kept as a real link
+        // (not a button) so a modified click (new tab, copy link) still
+        // works exactly as it always has; only the ordinary case detours
+        // through `onDepart`.
+        onClick={(event) => {
+          if (!onDepart) return;
+          if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+          event.preventDefault();
+          onDepart();
+        }}
       >
         <LibraryIcon />
       </Link>

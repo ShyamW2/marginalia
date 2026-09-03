@@ -83,6 +83,9 @@ import { resolveSegmentIndexForOffset } from "../audio/segmentLookup.js";
 import { CastingModal } from "../audio/CastingModal.js";
 import { captureOverlayOrigin, type OverlayOrigin } from "../controls/overlayOrigin.js";
 import { cursorPastPageText, pointIsOverInk } from "./pageTextEdge.js";
+import { capturePageSnapshot, snapshotInset } from "./pageSnapshot.js";
+import { requestPutDown, reportPutDownSnapshotImage } from "../scene3d/putDown.js";
+import { emitDeskViewMode, loadDeskViewMode, type DeskViewMode } from "../desk/deskViewBus.js";
 import { PageFold3D } from "./PageFold3D.js";
 import { FarLeafCover } from "./FarLeafCover.js";
 import { PageSlide } from "./PageSlide.js";
@@ -1467,15 +1470,47 @@ export function ReaderView({
   } = useFullscreenChrome();
   const { effectivePaneWidth, paneWidthDragging, handlePaneResizePointerDown } =
     useReaderPaneWidth(readerPaneWidth, setReaderPaneWidth, spreadMode, fullscreenMode);
-  // M31 C9: the departure swipe's own room navigation — plain, per TASKS.md's
-  // own allowance ("land it navigating plainly and say so in NOTES.md")
-  // while the put-down animation it's soft-gated on (M33 C) doesn't exist
-  // yet. `navigate("/")` with no mode emit is deliberate: `DeskPage` seeds
-  // its view from `loadDeskViewMode()` (deskViewBus.ts) when nothing tells
-  // it otherwise, which is already "whichever of desk/list/shelf was last
-  // used" — the exact thing this gesture is specified to land on — so this
-  // needs no bus emit of its own, unlike `d`/`l`/`b` which *force* a mode.
   const navigate = useNavigate();
+
+  // M33 §C: one shared trigger for every way to leave the reader for the
+  // Desk — the embedded NavCluster's Library link and its `d`/`l`/`b`
+  // (via `onDepart` below), Esc-while-reading (`handleEscapeShortcut`), and
+  // the M31 §C9 touch departure (`onCommitDeparture`, both callback sets) —
+  // so "leaving a book by the Desk button and by Esc produce the same
+  // sequence" (TASKS.md M33 C acceptance) is one function, not three
+  // policies that can drift apart. `forcedMode` is set only by `d`/`l`/`b`,
+  // which choose a view mode outright; every other trigger passes none,
+  // landing on whichever of desk/list/shelf was last used
+  // (`loadDeskViewMode`) — the same "no mode emit" reasoning the old plain
+  // `navigate("/")` relied on directly, kept exactly, just resolved a beat
+  // earlier so the put-down's destination request can carry it.
+  //
+  // The snapshot capture is fire-and-forget: `navigate("/")` runs
+  // immediately rather than waiting on it, because a departure that stalled
+  // for capturePageSnapshot's own budget (up to 700ms) would read as an
+  // unresponsive Escape/button press. `BookClosing.tsx`'s bridge tolerates
+  // the picture arriving a beat late — the same "a null result just means
+  // blank paper" fallback `BookOpening.tsx`'s own capture already leans on.
+  const startPutDown = useCallback(
+    (forcedMode?: DeskViewMode) => {
+      if (forcedMode) emitDeskViewMode(forcedMode);
+      const mode = forcedMode ?? loadDeskViewMode();
+      const stageEl = stageRef.current;
+      if (!stageEl) {
+        navigate("/");
+        return;
+      }
+      const rect = stageEl.getBoundingClientRect();
+      requestPutDown(resourceId, resourceTitle, mode, {
+        stage: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+        paneAspect: rect.height > 0 ? rect.width / rect.height : null,
+        spreadInset: snapshotInset(stageEl),
+      });
+      void capturePageSnapshot(stageEl).then((image) => reportPutDownSnapshotImage(resourceId, image));
+      navigate("/");
+    },
+    [resourceId, resourceTitle, navigate],
+  );
 
   // M19.7: the reader's shortcuts, as discrete handlers the shared registry
   // (useShortcuts) can dispatch by key — replacing the single monolithic
@@ -1515,12 +1550,33 @@ export function ReaderView({
       setLinkQuoteError(null);
       return;
     }
+    // M33 §C4: "Esc while reading" is the put-down — but only once nothing
+    // shallower has claimed it. Read before any of it is cleared below, so a
+    // reader with a pending selection, an open thread, an open definition,
+    // an open progress popover, or fullscreen still gets today's dismissal;
+    // Escape only falls through to leaving the room when there was truly
+    // nothing left to close (TASKS.md M33 C's own "closest layer first").
+    const hadSomethingToClose =
+      pendingSelection !== null ||
+      expandedThread !== null ||
+      definitionCard !== null ||
+      progressPopoverOpen ||
+      fullscreenModeRef.current;
     setPendingSelection(null);
     setExpandedThread(null);
     setDefinitionCard(null);
     setProgressPopoverOpen(false);
     if (fullscreenModeRef.current) toggleFullscreen();
-  }, [closeFindBar, toggleFullscreen]);
+    if (!hadSomethingToClose) startPutDown();
+  }, [
+    closeFindBar,
+    toggleFullscreen,
+    startPutDown,
+    pendingSelection,
+    expandedThread,
+    definitionCard,
+    progressPopoverOpen,
+  ]);
   const handleFocusModeShortcut = useCallback(() => {
     setFocusMode((prev) => {
       const next = !prev;
@@ -2687,7 +2743,7 @@ export function ReaderView({
           onCommitTurn: (direction) => turnPageRef.current(direction),
           onCommitDeparture: () => {
             if (hasLiveSelection() || isEditingSomewhere() || gestureActiveRef.current) return;
-            navigate("/");
+            startPutDown();
           },
           onTap: () => {
             if (fullscreenModeRef.current) wakePebble();
@@ -4284,6 +4340,7 @@ export function ReaderView({
               registersSlot
               settingsOpen={settingsOpen}
               onCloseSettings={onCloseSettings}
+              onDepart={startPutDown}
             />
             <ChromeSlotPortal>
               <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
