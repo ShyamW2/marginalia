@@ -52,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(40);
+    expect(version).toBe(41);
     db.close();
   });
 
@@ -292,12 +292,127 @@ describe("db migrations", () => {
       legacy.close();
 
       const db = createDb(tmpPath);
-      expect(db.pragma("user_version", { simple: true })).toBe(40);
+      expect(db.pragma("user_version", { simple: true })).toBe(41);
       expect(db.prepare("SELECT COUNT(*) AS n FROM thematic_digests").get()).toEqual({ n: 0 });
       expect(db.prepare("SELECT COUNT(*) AS n FROM book_themes").get()).toEqual({ n: 0 });
       expect(db.prepare("SELECT COUNT(*) AS n FROM theme_parents").get()).toEqual({ n: 0 });
       // Library-wide colour memory — never cleared by a per-resource rerun.
       expect(db.prepare("SELECT COUNT(*) AS n FROM canonical_themes").get()).toEqual({ n: 1 });
+      db.close();
+    } finally {
+      cleanupDbFile(tmpPath);
+    }
+  });
+
+  it("migration 041 rebuilds highlights with a nullable cfi, round-tripping every column and every referencing row", () => {
+    // M40 §B3: the first table-rebuild migration this codebase has needed
+    // (every prior one is additive). Seed a database at v40 with a fully
+    // populated highlights row and a full set of referencing rows in every
+    // table that points at highlights(id) — threads, thread_anchors,
+    // highlight_tags, highlight_themes — then reopen via createDb (applying
+    // only migration 41) and assert: the version advanced, the seeded row's
+    // every column round-trips unchanged (including a real, non-null cfi),
+    // a freshly inserted row with cfi: null succeeds (the whole point), and
+    // every referencing table still resolves — proving the rebuild didn't
+    // silently orphan a foreign key.
+    const tmpPath = tmpDbPath("highlights-nullable-cfi");
+    try {
+      const legacy = new BetterSqlite3(tmpPath);
+      for (const m of MIGRATIONS.filter((m) => m.version <= 40).sort((a, b) => a.version - b.version)) {
+        if (m.sql) legacy.exec(m.sql);
+        else m.run!(legacy);
+      }
+      legacy.pragma("user_version = 40");
+      const now = new Date().toISOString();
+      legacy
+        .prepare(
+          `INSERT INTO resources (id, title, author, format, file_path, metadata, imported_at)
+           VALUES ('res-1', 'Title', NULL, 'epub', '/tmp/x.epub', '{}', @now)`,
+        )
+        .run({ now });
+      legacy
+        .prepare(
+          `INSERT INTO highlights (
+             id, resource_id, exact, prefix, suffix, cfi, spine_index, created_at,
+             kind, importance, note, panel_dx, panel_dy, panel_width, panel_height,
+             definition, definition_source, anchor_source, "offset", length, origin
+           ) VALUES (
+             'h-1', 'res-1', 'the target quote', 'before ', ' after',
+             'epubcfi(/6/4!/4/2,/1:0,/1:10)', 0, @now,
+             'honey', 2, 'a note', 1.5, -2.5, 340, 200,
+             'a definition', 'dictionary', 'quote', 5, 10, 'reader'
+           )`,
+        )
+        .run({ now });
+      legacy
+        .prepare(`INSERT INTO threads (id, highlight_id, created_at) VALUES ('t-1', 'h-1', @now)`)
+        .run({ now });
+      legacy
+        .prepare(
+          `INSERT INTO thread_anchors (thread_id, highlight_id, ordinal) VALUES ('t-1', 'h-1', 0)`,
+        )
+        .run();
+      legacy.prepare(`INSERT INTO highlight_tags (highlight_id, tag) VALUES ('h-1', 'a-tag')`).run();
+      legacy
+        .prepare(`INSERT INTO highlight_themes (highlight_id, theme) VALUES ('h-1', 'a-theme')`)
+        .run();
+      legacy.close();
+
+      const db = createDb(tmpPath);
+      expect(db.pragma("user_version", { simple: true })).toBe(41);
+
+      const row = db.prepare("SELECT * FROM highlights WHERE id = 'h-1'").get() as Record<string, unknown>;
+      expect(row).toEqual({
+        id: "h-1",
+        resource_id: "res-1",
+        exact: "the target quote",
+        prefix: "before ",
+        suffix: " after",
+        cfi: "epubcfi(/6/4!/4/2,/1:0,/1:10)",
+        spine_index: 0,
+        created_at: now,
+        kind: "honey",
+        importance: 2,
+        note: "a note",
+        panel_dx: 1.5,
+        panel_dy: -2.5,
+        panel_width: 340,
+        panel_height: 200,
+        definition: "a definition",
+        definition_source: "dictionary",
+        anchor_source: "quote",
+        offset: 5,
+        length: 10,
+        origin: "reader",
+      });
+
+      // The whole point: a PDF highlight has no CFI.
+      expect(() =>
+        db
+          .prepare(
+            `INSERT INTO highlights (id, resource_id, exact, prefix, suffix, cfi, spine_index, created_at)
+             VALUES ('h-2', 'res-1', 'quote', '', '', NULL, 0, @now)`,
+          )
+          .run({ now }),
+      ).not.toThrow();
+      expect(db.prepare("SELECT cfi FROM highlights WHERE id = 'h-2'").get()).toEqual({ cfi: null });
+
+      // Every referencing table still resolves h-1 — the rebuild didn't
+      // orphan a foreign key.
+      expect(
+        db.prepare("SELECT highlight_id FROM threads WHERE id = 't-1'").get(),
+      ).toEqual({ highlight_id: "h-1" });
+      expect(
+        db.prepare("SELECT thread_id, highlight_id FROM thread_anchors WHERE thread_id = 't-1'").get(),
+      ).toEqual({ thread_id: "t-1", highlight_id: "h-1" });
+      expect(db.prepare("SELECT tag FROM highlight_tags WHERE highlight_id = 'h-1'").get()).toEqual({
+        tag: "a-tag",
+      });
+      expect(
+        db.prepare("SELECT theme FROM highlight_themes WHERE highlight_id = 'h-1'").get(),
+      ).toEqual({ theme: "a-theme" });
+      expect(db.pragma("foreign_key_check")).toEqual([]);
+
       db.close();
     } finally {
       cleanupDbFile(tmpPath);
@@ -314,7 +429,7 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(40);
+      expect(second.pragma("user_version", { simple: true })).toBe(41);
       second.close();
     } finally {
       cleanupDbFile(tmpPath);
@@ -343,7 +458,7 @@ describe("db migrations", () => {
       legacy.close();
 
       const repaired = createDb(tmpPath);
-      expect(repaired.pragma("user_version", { simple: true })).toBe(40);
+      expect(repaired.pragma("user_version", { simple: true })).toBe(41);
       const columnsAfter = repaired.prepare("PRAGMA table_info(resource_ai_settings)").all() as { name: string }[];
       expect(columnsAfter.some((c) => c.name === "show_thematic_quotes")).toBe(true);
       repaired.close();
@@ -361,7 +476,7 @@ describe("db migrations", () => {
       // ("duplicate column name") from migration 37 re-adding a column
       // migration 36 already added correctly.
       const reopened = createDb(tmpPath);
-      expect(reopened.pragma("user_version", { simple: true })).toBe(40);
+      expect(reopened.pragma("user_version", { simple: true })).toBe(41);
       reopened.close();
     } finally {
       cleanupDbFile(tmpPath);

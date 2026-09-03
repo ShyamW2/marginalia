@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { DB_PATH, ensureDataDirs } from "./paths.js";
-import { MIGRATIONS } from "./migrations.js";
+import { MIGRATIONS, type Migration } from "./migrations.js";
 
 let db: Database.Database | undefined;
 
@@ -25,6 +25,17 @@ export function getDb(): Database.Database {
   return db;
 }
 
+function applyOneMigration(database: Database.Database, migration: Migration): void {
+  const run = database.transaction(() => {
+    if (migration.run) migration.run(database);
+    else database.exec(migration.sql!);
+    // pragma values can't be bound params; migration.version is our own
+    // integer literal, never user input.
+    database.pragma(`user_version = ${migration.version}`);
+  });
+  run();
+}
+
 function runMigrations(database: Database.Database): void {
   const currentVersion = database.pragma("user_version", {
     simple: true,
@@ -35,14 +46,33 @@ function runMigrations(database: Database.Database): void {
   );
 
   for (const migration of pending) {
-    const applyMigration = database.transaction(() => {
-      if (migration.run) migration.run(database);
-      else database.exec(migration.sql!);
-      // pragma values can't be bound params; migration.version is our own
-      // integer literal, never user input.
-      database.pragma(`user_version = ${migration.version}`);
-    });
-    applyMigration();
+    // M40 §B3: a table-rebuild migration (CREATE/copy/DROP/RENAME) needs
+    // `foreign_keys = OFF` for the DROP of a table other tables still
+    // reference — SQLite genuinely enforces that check, confirmed live
+    // (`DROP TABLE` on a referenced parent throws "FOREIGN KEY constraint
+    // failed" with rows still pointing at it). But the pragma is a
+    // documented no-op while a transaction is open, and every migration
+    // here runs inside one — so the toggle has to happen *outside* the
+    // transaction `applyOneMigration` opens, which is what this branch is
+    // for. `foreign_key_check` afterward is the other half of SQLite's own
+    // rebuild recipe: confirms the rebuild didn't quietly orphan a
+    // reference, checked before re-enabling enforcement.
+    if (migration.requiresForeignKeysOff) {
+      database.pragma("foreign_keys = OFF");
+      try {
+        applyOneMigration(database, migration);
+        const violations = database.pragma("foreign_key_check") as unknown[];
+        if (violations.length > 0) {
+          throw new Error(
+            `migration ${migration.version} left dangling foreign keys: ${JSON.stringify(violations)}`,
+          );
+        }
+      } finally {
+        database.pragma("foreign_keys = ON");
+      }
+      continue;
+    }
+    applyOneMigration(database, migration);
   }
 }
 

@@ -2604,7 +2604,7 @@ export function ReaderView({
         // row saved after it; `parseSerializedLocator` accepts both.
         const displayLocator: Locator | undefined =
           jumpTarget && jumpTarget.cfi !== UNRESOLVABLE_CHAPTER_ANCHOR_CFI
-            ? { sectionIndex: 0, offset: 0, length: 0, cfi: jumpTarget.cfi }
+            ? { sectionIndex: 0, offset: 0, length: 0, cfi: jumpTarget.cfi ?? undefined }
             : position?.location
               ? parseSerializedLocator(position.location)
               : undefined;
@@ -2883,7 +2883,7 @@ export function ReaderView({
       // document, so it's trusted without going through resolveAnchor again.
       rendererRef.current?.paintMark(
         created.id,
-        { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi },
+        { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi ?? undefined },
         created.kind,
       );
       clearNativeSelection();
@@ -2933,7 +2933,7 @@ export function ReaderView({
     setHighlights((prev) => [...prev, created]);
     rendererRef.current?.paintMark(
       created.id,
-      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi },
+      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi ?? undefined },
       created.kind,
     );
     clearNativeSelection();
@@ -3025,7 +3025,7 @@ export function ReaderView({
     setHighlights((prev) => [...prev, created]);
     rendererRef.current?.paintMark(
       created.id,
-      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi },
+      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi ?? undefined },
       created.kind,
     );
 
@@ -3083,7 +3083,7 @@ export function ReaderView({
     setHighlights((prev) => [...prev, created]);
     rendererRef.current?.paintMark(
       created.id,
-      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi },
+      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi ?? undefined },
       created.kind,
     );
     setDefinitionCard({ left, top, term, highlightId: created.id, result: null });
@@ -3185,7 +3185,7 @@ export function ReaderView({
   }
 
   function handleNavigateToHighlight(highlight: HighlightWithThread) {
-    void rendererRef.current?.goTo({ sectionIndex: 0, offset: 0, length: 0, cfi: highlight.cfi });
+    void rendererRef.current?.goTo({ sectionIndex: 0, offset: 0, length: 0, cfi: highlight.cfi ?? undefined });
   }
 
   /** M35 §D4: `< >` traversal inside an open ThreadPanel — moves the reader

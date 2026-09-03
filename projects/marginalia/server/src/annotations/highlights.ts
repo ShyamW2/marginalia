@@ -15,7 +15,11 @@ interface HighlightRow {
   exact: string;
   prefix: string;
   suffix: string;
-  cfi: string;
+  // M40 §B3 (migration 41): nullable at the DB layer for a PDF highlight —
+  // not yet exercised (nothing creates one without a real CFI until M41's
+  // PdfRenderer), but the read shape has to admit it now that the column
+  // does.
+  cfi: string | null;
   spine_index: number;
   kind: string;
   importance: number;

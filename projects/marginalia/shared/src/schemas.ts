@@ -212,6 +212,11 @@ export const HighlightOriginSchema = z.enum(["reader", "thematic"]);
 export type HighlightOrigin = z.infer<typeof HighlightOriginSchema>;
 
 export const HighlightSchema = AnchorSchema.extend({
+  // M40 §B3 (migration 41): overrides AnchorSchema's required `cfi` — the DB
+  // column is nullable now (a PDF highlight has none), so the *read* shape
+  // has to admit it even though `AnchorSchema`/`CreateHighlightBodySchema`
+  // stay required (nothing creates a highlight without a real CFI yet).
+  cfi: z.string().min(1).nullable(),
   id: z.string(), // uuid v4
   resourceId: z.string(),
   kind: HighlightKindSchema,

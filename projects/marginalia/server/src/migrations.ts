@@ -7,6 +7,11 @@ export interface Migration {
    * was needed). Exactly one of the two is set. */
   sql?: string;
   run?: (database: Database.Database) => void;
+  /** M40 §B3: set on a table-rebuild migration whose DROP TABLE needs
+   * `foreign_keys = OFF` — db.ts's `runMigrations` toggles the pragma
+   * outside this migration's own transaction (it's a documented no-op
+   * inside one) and runs `foreign_key_check` before turning it back on. */
+  requiresForeignKeysOff?: boolean;
 }
 
 /**
@@ -953,5 +958,78 @@ export const MIGRATIONS: Migration[] = [
       ALTER TABLE chapter_digests ADD COLUMN document_fields TEXT;
       ALTER TABLE book_digests ADD COLUMN document_fields TEXT;
     `,
+  },
+  {
+    // M40 §B3 (PDF.md §7.3): a PDF highlight has no CFI, and SQLite can't
+    // relax a NOT NULL constraint in place — this is the table-rebuild this
+    // codebase has never needed before (all 40 prior migrations are
+    // additive: CREATE TABLE, ALTER TABLE ADD COLUMN, or a targeted DELETE).
+    // Every other column is copied through unchanged, in the exact order
+    // the 9 additive migrations since v1 (kind, importance, note, panel_dx/
+    // dy, panel_width/height, definition/definition_source, anchor_source,
+    // "offset"/length, origin) left it.
+    //
+    // ⚠️ `requiresForeignKeysOff: true` below is load-bearing, confirmed
+    // live rather than assumed: `DROP TABLE highlights` throws "FOREIGN KEY
+    // constraint failed" under `foreign_keys = ON` while `threads`,
+    // `thread_anchors`, `highlight_tags` and `highlight_themes` still hold
+    // rows referencing it — SQLite really does enforce that, unlike the
+    // first pass at this migration assumed. The toggle can't happen from
+    // inside this `run:` function, though — `PRAGMA foreign_keys` is a
+    // documented no-op while a transaction is open, and every migration
+    // here runs inside one (db.ts's `applyOneMigration`) — so db.ts's
+    // `runMigrations` handles it one layer up, outside that transaction,
+    // for any migration carrying this flag. `PRAGMA foreign_key_check`
+    // (also there) is the row-count check's sibling: confirms the rebuild
+    // didn't quietly orphan a reference.
+    version: 41,
+    requiresForeignKeysOff: true,
+    run: (database) => {
+      const before = database.prepare("SELECT COUNT(*) AS n FROM highlights").get() as { n: number };
+      database.exec(`
+        CREATE TABLE highlights_new (
+          id            TEXT PRIMARY KEY,
+          resource_id   TEXT NOT NULL REFERENCES resources(id),
+          exact         TEXT NOT NULL,
+          prefix        TEXT NOT NULL,
+          suffix        TEXT NOT NULL,
+          cfi           TEXT,
+          spine_index   INTEGER NOT NULL,
+          created_at    TEXT NOT NULL,
+          kind          TEXT NOT NULL DEFAULT 'rose',
+          importance    INTEGER NOT NULL DEFAULT 0,
+          note          TEXT NOT NULL DEFAULT '',
+          panel_dx      REAL NOT NULL DEFAULT 0,
+          panel_dy      REAL NOT NULL DEFAULT 0,
+          panel_width   REAL,
+          panel_height  REAL,
+          definition    TEXT NOT NULL DEFAULT '',
+          definition_source TEXT NOT NULL DEFAULT '',
+          anchor_source TEXT NOT NULL DEFAULT '',
+          "offset"      INTEGER,
+          length        INTEGER,
+          origin        TEXT NOT NULL DEFAULT 'reader'
+        );
+        INSERT INTO highlights_new SELECT * FROM highlights;
+        DROP TABLE highlights;
+        ALTER TABLE highlights_new RENAME TO highlights;
+        CREATE INDEX idx_highlights_resource ON highlights(resource_id);
+      `);
+      const after = database.prepare("SELECT COUNT(*) AS n FROM highlights").get() as { n: number };
+      if (after.n !== before.n) {
+        throw new Error(`highlights rebuild lost rows: ${before.n} -> ${after.n}`);
+      }
+      // `foreign_key_check` (unlike the boolean pragma) works fine inside a
+      // transaction — checked here, before this closes, so a violation
+      // throws *inside* `applyOneMigration`'s transaction and the whole
+      // rebuild rolls back atomically, rather than being discovered after
+      // it's already committed. db.ts's `requiresForeignKeysOff` handling
+      // runs the same check again after commit, as a second, independent
+      // safety net covering every table, not just this migration's own.
+      const violations = database.pragma("foreign_key_check(highlights)") as unknown[];
+      if (violations.length > 0) {
+        throw new Error(`highlights rebuild left dangling foreign keys: ${JSON.stringify(violations)}`);
+      }
+    },
   },
 ];
