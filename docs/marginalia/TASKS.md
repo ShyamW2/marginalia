@@ -3066,16 +3066,67 @@ gap as A8)._
 
 #### E. The empty-book paths
 
-- [ ] **E1.** ⚠️ A `text_layer = 0` resource imports with **zero `resource_text` rows**, and the digest, scan,
+- [x] **E1.** ⚠️ A `text_layer = 0` resource imports with **zero `resource_text` rows**, and the digest, scan,
       search, audio and context routes all currently assume at least one section exists. Give
       each an explicit empty path returning an empty result, each with a test that passes a
       resource with no text rows. **This is the most likely source of M39 crash bugs.**
-- [ ] **E2.** Scan detection per PDF.md §6 — per *document*, not per page: `text_layer = 0`
+      _Done: every one of the five already degraded correctly on an empty `sections`/
+      `resource_text` array — `buildScanData`, `searchResource`, `buildDigestStatus`,
+      `buildAudioState` and `resolveContext`'s three rungs all either map/filter/reduce over
+      `[]` (empty, not a throw) or hit an existing `.length === 0` guard (`runDigest`'s reduce
+      step, `maybeRefreshBookDigestSnapshot`, audio's `cast/scan` route). Nothing here was
+      written defending against PDFs specifically — it's the same shape as "a freshly
+      imported book with no digest yet," a state this codebase was already careful about.
+      The actual gap was the missing regression test PDF.md itself asks for, so that's what
+      this task added: `scan.test.ts`, `search.test.ts`, `threads.test.ts` (all three context
+      rungs), and two new route tests (`digest.test.ts`, `audio.test.ts`) exercising a
+      zero-section resource end to end. The latter two needed `buildDigestStatus` and
+      `buildAudioState` exported/threaded with `db` as a parameter (mirroring
+      `resolveContext`'s existing shape) instead of reaching for the `getDb()` singleton, so
+      they could run against an isolated `:memory:` db like every other test in this file.
+      540 server tests green (up from 531 at the top of this task)._
+- [x] **E2.** Scan detection per PDF.md §6 — per *document*, not per page: `text_layer = 0`
       when >50% of pages yield under 100 extracted characters. A digital paper with a
       scanned appendix is still a digital paper.
-- [ ] **E3.** The Desk card and the reader strip say plainly "No text layer — preview only.
+      _Done, already, as of §A1/§C2 — `extract.ts`'s `SCAN_CHAR_THRESHOLD = 100` /
+      `SCAN_PAGE_FRACTION = 0.5` match this spec exactly, and `importPdf.ts` already skips
+      the reflow EPUB and every `resource_text` row for `isScan`. Left unchecked only for
+      lack of the positive case — `extract.test.ts` had "not a scan when every page has
+      text" but nothing that actually crossed the threshold. Added two: a fixture where 3 of
+      4 pages are blank (pdfkit's stand-in for an image-only scanned page — `getTextContent()`
+      genuinely returns zero items for one, same as the real thing) asserts `isScan === true`;
+      a second, inverted fixture (1 blank page of 4) asserts the per-document rule holds the
+      other way — a minority of blank pages doesn't flip a real paper to scan-only. Found
+      while writing the first fixture: body text has to clear 100 *non-whitespace* characters
+      after `.replace(/\s/g, "")`, not 100 characters of prose — a short one-sentence "real"
+      page reads as short too and silently inflates the scan count, the same fixture-density
+      trap A3's own note already caught elsewhere in this milestone._
+- [x] **E3.** The Desk card and the reader strip say plainly "No text layer — preview only.
       OCR isn't supported yet." rather than showing controls that do nothing. In M39 a scan
       has no reader at all — opening it explains why. The preview arrives in M41 §D.
+      _Done: `ReaderPage.tsx` checks `resource.textLayer` before ever mounting `ReaderView`
+      (kept out of that 4,750-line component entirely, per decision 17c's "no `if (format
+      === 'pdf')` inside ReaderView" — this is a route-level branch, not a renderer one) and
+      renders the plain explanatory page instead, so every entry point (cover click, Listen,
+      a deep link) lands on the same honest state rather than trying to load a `.reflow.epub`
+      that `importPdf.ts` never generated for a scan. `LibraryGrid.tsx` (the accessibility
+      floor, settled decision 15) swaps its highlight-count/Listen-button footer for the same
+      sentence; `BookActionCard.tsx` (the Desk's 3D card) does the same and additionally
+      omits Digest/Scan/Listen — each would otherwise open onto a real but pointless empty
+      surface, which is exactly the "controls that do nothing" this task asks to avoid.
+      Publish is left in on both — harmless for an empty book, out of this task's scope.
+      Covered by five new tests (`ReaderPage.test.tsx`, `LibraryGrid.test.tsx`,
+      `BookActionCard.test.tsx`) asserting the message appears and the dead controls don't,
+      for both a scan and a normal resource. **Not live-driven** — same gap as C4/C5/C7:
+      no real scanned PDF fixture was clicked through in an actual browser this session.
+      Unlike those, the reason isn't "no real PDF corpus" (a synthetic scanned fixture would
+      do fine here, same as E2's) — it's that this repo's only running server is the
+      operator's real dev instance with real imported books and no `DELETE /api/resources/:id`
+      route (decision 5: immutable-on-import, by design), so there was no way to import a
+      throwaway test PDF through it and clean up afterward without either polluting the real
+      library or hand-editing the live SQLite file — both worse than leaving this owed. A
+      disposable `LIBRARY_DIR`/`DB_PATH` for exactly this kind of session-local live-driving
+      would remove the blocker; worth its own task rather than working around it here._
 
 _Acceptance for M39: import a two-column paper, and it reads in the existing reading pane
 with its figures in place, its sections as chapters, a working TOC, highlights that anchor

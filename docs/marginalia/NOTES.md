@@ -6261,6 +6261,19 @@ ink.
   decision (a document-specific card shape? inline additions to the existing one?) — a
   design call, not an implementation one.
 
+- **M39 §E3 — the no-text-layer messaging is untested against a real scan, live, in a
+  browser.** Same root cause as the rest of this M39 cluster (no real PDF corpus), but a
+  different reason it's still owed: unlike §A8/§C4-7, a *synthetic* scanned fixture (e.g.
+  E2's own blank-page pdfkit PDF) would do fine here — the gap is that this repo's only
+  running server this session was the operator's real dev instance, with real imported
+  books and no `DELETE /api/resources/:id` route (decision 5: immutable-on-import, by
+  design). There was no way to import a throwaway test PDF through it and remove it again
+  without either leaving a permanent test entry in the real library or hand-editing the
+  live SQLite file directly — both worse than leaving this owed. Needs either the
+  operator's own click-through, or a disposable `LIBRARY_DIR`/`DB_PATH` pointed at a
+  scratch directory for exactly this kind of session-local live-driving (would also unblock
+  future sessions in the same spot, not just this one).
+
 ## M24.5 §1-3 — distillation, the colour ramp, and library-wide matching — 2026-08-18
 
 ### Why the distillation pass reads analyses, not just theme strings
@@ -7779,3 +7792,80 @@ mapping is a two-line `instanceof` check, low-risk but untested); §C7's actual 
 against two real imports a version apart. All tracked in Blockers below, folded into the
 existing "the real gate is still owed" item rather than duplicating it, since they're the
 same root cause (no real PDF corpus in this session).
+
+## M39 §E — the empty-book paths — 2026-09-03
+
+Implemented E1-E3. Server: `buildDigestStatus` exported from `routes/digest.ts`,
+`buildAudioState` re-signatured to take `db` instead of reaching for the `getDb()`
+singleton (both now testable the same way `resolveContext` already was), and six new/
+extended test files. Client: `ReaderPage.tsx`'s text-layer guard, `LibraryGrid.tsx`'s and
+`BookActionCard.tsx`'s no-text-layer messaging, and three new component tests. 540 server
+tests + 498 web tests green (up from 531/493 at the top of this task). TASKS.md carries a
+`_Done: ..._` note per item; this entry is the narrative.
+
+**E1 turned out to already be done, functionally — the milestone's own risk warning was
+about a bug class that never actually shipped.** PDF.md §6 names this "the most likely
+source of M39 crash bugs" on the reasonable assumption that code written for a
+never-empty EPUB spine would choke on an empty one. Reading every one of the five named
+consumers end to end (`buildScanData`, `searchResource`, `buildDigestStatus`'s two
+builders, `buildAudioState`, and `resolveContext`'s three context-ladder rungs) found no
+crash: every array operation over `sections`/`resource_text` rows degrades to an empty
+result on its own (`.map`/`.filter`/`.reduce` over `[]` is `[]`/`0`, not a throw), and the
+handful of spots that do something *conditional* on having chapters already guard on
+`.length === 0` — `runDigest`'s final reduce, `maybeRefreshBookDigestSnapshot`'s
+snapshot refresh, and (found already in place) the `cast/scan` route's explicit
+`{error: "no_text"}`. This wasn't luck: "a freshly imported book with zero digest rows"
+is a state this codebase has had to handle correctly since M1, long before PDF existed,
+so the defensiveness these five routes needed for a scan was already load-bearing for
+every ordinary undigested EPUB. The actual, real gap PDF.md's own wording ask for — "each
+needs a test that passes a resource with no text rows" — was genuinely missing, so that's
+what got built: one test per consumer, seeding a resource with zero `resource_text` rows
+and asserting the empty result rather than a throw. Two of the five (`buildDigestStatus`,
+`buildAudioState`) weren't exported/testable in isolation before this pass; both now
+follow the shape `resolveContext` (threads.ts) already established — take `db` as an
+explicit parameter, get instantiated against `:memory:` in the test, no singleton in the
+loop.
+
+**E2 was also already done** (§A1/§C2's `isScan` in `extract.ts`/`importPdf.ts` already
+match PDF.md §6's numbers exactly — `SCAN_CHAR_THRESHOLD = 100`, `SCAN_PAGE_FRACTION =
+0.5`, per-document not per-page) — unchecked only because `extract.test.ts` had the
+negative case ("not a scan when every page has text") but nothing that actually crossed
+the threshold. Building the positive fixture surfaced a real trap, not a bug: `pdfkit`
+text short enough to read as "one real sentence" in the test's own prose reads as under
+100 *non-whitespace* characters once `extractedChars` strips spaces — inflating the
+"short page" count on pages meant to represent real content, the same fixture-density
+class of mistake A3's own NOTES.md entry already flagged for column detection. Fixed by
+writing genuinely paragraph-length fixture text, matching `buildFixturePdf`'s own already-
+working paragraphs, not by touching the threshold.
+
+**E3 is genuine new code, and it's deliberately outside `ReaderView`.** A scan's missing
+text layer is caught at `ReaderPage.tsx` — before `ReaderView` (4,750 lines, the M40 §A
+refactor target) ever mounts — rather than as a branch inside it, because decision 17c's
+rule ("no `if (format === 'pdf')` inside ReaderView") is about exactly this kind of
+special case, and a route-level guard costs nothing there. Every path into the reader
+(cover click, the Desk's Listen action, a bookmark/deep link) converges on the same
+`ReaderPage` fetch, so all of them land on the same honest explanation instead of some
+paths quietly trying and failing to open a `.reflow.epub` `importPdf.ts` never wrote for
+a scan. The Desk-side messaging went on both cards named in TASKS.md's wording — the
+accessibility-floor `LibraryGrid` (settled decision 15) and the 3D `BookActionCard` — and
+on the latter, Digest/Scan/Listen are omitted entirely rather than left to open onto a
+real-but-empty surface (a `document` digest with nothing generated, a Scan with zero
+chapters and zero highlights — accurate, but exactly the "controls that do nothing" the
+task asks to avoid). Publish stays on both: harmless for a book with nothing to publish,
+and touching what Publish itself should do for an empty library entry felt like scope
+this task didn't ask for.
+
+**What's unverified, and why it's a different gap than the rest of this M39 cluster.**
+Every other "not live-driven" item in M39 (§A8, §C4-7) is blocked on having no real PDF
+corpus in this environment. E3 doesn't have that problem — a synthetic scanned fixture
+(the same shape as E2's own blank-page pdfkit PDF) would exercise the real click-through
+fine. The actual blocker is that this session's only running server was the operator's
+real dev instance (`ps` found `tsx watch`/`vite` already up, serving a real library with
+real imported books), and there's no `DELETE /api/resources/:id` route — imports are
+permanent by design (decision 5). Importing a throwaway test PDF through that live server
+to click through the Desk card and the reader page would have left it in the operator's
+actual library with no clean way to remove it again, short of hand-editing the live
+SQLite file directly — a worse outcome than leaving this owed, given [[marginalia-data-dir-caution]]'s
+standing warning about exactly that kind of edit. Logged in Blockers ("M39 §E3") alongside
+a suggested fix (a disposable `LIBRARY_DIR`/`DB_PATH` for session-local live-driving) that
+would help every future PDF-arc session hit the same wall.
