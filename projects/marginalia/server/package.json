@@ -18,12 +18,14 @@
     "@anthropic-ai/sdk": "^0.112.1",
     "@huggingface/transformers": "3.8.1",
     "@marginalia/shared": "workspace:*",
+    "@napi-rs/canvas": "^1.0.8",
     "adm-zip": "^0.5.16",
     "better-sqlite3": "^12.4.1",
     "express": "^5.0.1",
     "htmlparser2": "^9.1.0",
     "kokoro-js": "^1.2.1",
     "multer": "^2.2.0",
+    "pdfjs-dist": "^6.3.289",
     "wordnet-db": "3.1.14",
     "zod": "^3.24.1"
   },
@@ -33,6 +35,8 @@
     "@types/express": "^5.0.0",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.10.2",
+    "@types/pdfkit": "^0.17.6",
+    "pdfkit": "^0.20.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
