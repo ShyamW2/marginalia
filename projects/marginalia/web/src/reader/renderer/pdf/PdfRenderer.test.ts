@@ -41,6 +41,37 @@ function stubResourceFetch(bytes: Uint8Array): void {
   );
 }
 
+/**
+ * M41 §A2: a URL-routing stub for the section-aware path — `/pdf-source`
+ * gets the fixture's raw bytes, `/text-sections`/`/pdf-sections` get real
+ * JSON (unlike `stubResourceFetch`'s single undifferentiated response,
+ * which is what made the M40 §D tests above exercise the *legacy* fallback
+ * all along: `.json()` doesn't exist on that stub's response shape, so
+ * `loadSectionData`'s own try/catch always degraded).
+ */
+function stubResourceFetchWithSections(
+  bytes: Uint8Array,
+  sections: { spineIndex: number; href: string; text: string }[],
+  pageSections: number[],
+  chapterTitles: Record<string, string> = {},
+): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.endsWith("/pdf-source")) {
+        return { ok: true, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
+      }
+      if (url.endsWith("/text-sections")) {
+        return { ok: true, json: async () => sections };
+      }
+      if (url.endsWith("/pdf-sections")) {
+        return { ok: true, json: async () => pageSections };
+      }
+      return { ok: true, json: async () => ({ metadata: { chapterTitles } }) };
+    }),
+  );
+}
+
 /** Selects the DOM range covering `needle` inside `container`'s flattened
  * text and installs it as the live window selection — the same shape a real
  * mouse drag over the text layer produces. */
@@ -156,6 +187,139 @@ describe("PdfRenderer", () => {
 
     await renderer.prev();
     expect(container.querySelector(".marginalia-pdf-text-layer")?.textContent).toContain("quick brown fox");
+
+    renderer.destroy();
+  });
+});
+
+// M41 §A2 (PDF.md §4/§7.5): "highlights are shared between reflow and
+// native" — the section-aware path, exercised against the same two-page
+// fixture but with real /text-sections and /pdf-sections responses this
+// time (the M40 §D tests above never had those, so they only ever
+// exercised the legacy single-section fallback).
+describe("PdfRenderer — section-aware (M41 §A2)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const sections = [
+    { spineIndex: 0, href: "section-000.xhtml", text: "Front matter. The quick brown fox jumps over the lazy dog." },
+    { spineIndex: 1, href: "section-001.xhtml", text: "A second page of content, with more words to search for." },
+  ];
+  const pageSections = [0, 1]; // page 0 -> section 0, page 1 -> section 1
+  const chapterTitles = { "0": "Chapter One", "1": "Chapter Two" };
+
+  it("resolves a selection's Locator against the canonical section text, not raw pdf.js text", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetchWithSections(bytes, sections, pageSections, chapterTitles);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const renderer = new PdfRenderer();
+    const selections: { locator: { sectionIndex: number; offset: number; length: number } }[] = [];
+    renderer.on("selected", (sel) => selections.push(sel));
+
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    const textLayer = container.querySelector(".marginalia-pdf-text-layer") as HTMLElement;
+
+    selectText(textLayer, "quick brown fox");
+    textLayer.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+
+    expect(selections).toHaveLength(1);
+    const loc = selections[0].locator;
+    expect(loc.sectionIndex).toBe(0);
+    // The canonical section text's own index of "quick brown fox" — proves
+    // this isn't the raw-page-relative offset (the page's own text starts
+    // differently, with no "Front matter." prefix).
+    expect(loc.offset).toBe(sections[0].text.indexOf("quick brown fox"));
+    expect(loc.length).toBe("quick brown fox".length);
+
+    renderer.destroy();
+  });
+
+  it("a highlight pinned to a different section only paints once its own page renders", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetchWithSections(bytes, sections, pageSections, chapterTitles);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    const secondPageText = sections[1].text;
+    const offset = secondPageText.indexOf("second page");
+    renderer.paintMark("h-section-1", { sectionIndex: 1, offset, length: "second page".length }, "honey");
+
+    // Still on page 0 (section 0) — a section-1 highlight has nothing to
+    // paint against yet.
+    expect(container.querySelector('.marginalia-pdf-highlight[data-highlight-id="h-section-1"]')).toBeNull();
+
+    await renderer.next();
+    expect(container.querySelector(".marginalia-pdf-text-layer")?.textContent).toContain("second page");
+    expect(container.querySelector('.marginalia-pdf-highlight[data-highlight-id="h-section-1"]')).toBeTruthy();
+
+    renderer.destroy();
+  });
+
+  it("goTo finds the right page for a section+offset it isn't currently showing", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetchWithSections(bytes, sections, pageSections, chapterTitles);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    expect(container.querySelector(".marginalia-pdf-text-layer")?.textContent).toContain("quick brown fox");
+
+    const offset = sections[1].text.indexOf("second page");
+    await renderer.goTo({ sectionIndex: 1, offset, length: "second page".length });
+    expect(container.querySelector(".marginalia-pdf-text-layer")?.textContent).toContain("second page");
+
+    renderer.destroy();
+  });
+
+  it("fires sectionEnd once per section arrival, not only at the document's end", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetchWithSections(bytes, sections, pageSections, chapterTitles);
+
+    const container = document.createElement("div");
+    const renderer = new PdfRenderer();
+    let sectionEndCount = 0;
+    renderer.on("sectionEnd", () => {
+      sectionEndCount += 1;
+    });
+
+    // Page 0 is section 0's *only* page — arriving at it (mount) is already
+    // arriving at the end of its section, unlike the legacy (single-
+    // section) test above where sectionEnd only ever fires at the very end.
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    expect(sectionEndCount).toBe(1);
+
+    await renderer.next();
+    expect(sectionEndCount).toBe(2);
+
+    renderer.destroy();
+  });
+
+  it("getToc returns one entry per section with its href, title, and cumulative percent", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetchWithSections(bytes, sections, pageSections, chapterTitles);
+
+    const container = document.createElement("div");
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    const toc = renderer.getToc();
+    expect(toc).toEqual([
+      { label: "Chapter One", href: "section-000.xhtml", spineIndex: 0, percent: 0, depth: 0 },
+      {
+        label: "Chapter Two",
+        href: "section-001.xhtml",
+        spineIndex: 1,
+        percent: (sections[0].text.length / (sections[0].text.length + sections[1].text.length)) * 100,
+        depth: 0,
+      },
+    ]);
 
     renderer.destroy();
   });
