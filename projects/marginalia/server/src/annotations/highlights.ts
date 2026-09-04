@@ -78,7 +78,9 @@ export function createHighlight(
     exact: string;
     prefix: string;
     suffix: string;
-    cfi: string;
+    // M41 §A2: null for a highlight created from the native PDF pane — no
+    // format-neutral CFI exists to give it.
+    cfi: string | null;
     spineIndex: number;
     kind: HighlightKind;
     anchorSource?: AnchorSource;

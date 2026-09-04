@@ -205,10 +205,14 @@ export const AnchorSchema = z.object({
   suffix: z.string().max(64),
   // M40 §B: an EPUB-only fast path now, not the primary anchor — see
   // `Locator` (web/src/reader/renderer/types.ts) and SPEC.md's amended
-  // "Anchoring rule". Still required here: nothing creates a highlight
-  // without a real CFI yet (that's M41's PdfRenderer). `highlights.cfi`
-  // itself is nullable at the DB layer as of migration 41.
-  cfi: z.string().min(1),
+  // "Anchoring rule". Nullable since M41 §A2: `PdfRenderer`'s `selected`
+  // event carries no CFI (no format has one to give it), so a highlight
+  // created from a native-pane selection sends null here — the server
+  // resolves its offset/length from spineIndex + exact/prefix/suffix
+  // instead (routes/highlights.ts), same as the offset fallback already did.
+  // `highlights.cfi` itself has been nullable at the DB layer since
+  // migration 41.
+  cfi: z.string().min(1).nullable(),
   spineIndex: z.number().int().nonnegative(),
 });
 export type Anchor = z.infer<typeof AnchorSchema>;
@@ -258,10 +262,10 @@ export const HighlightOriginSchema = z.enum(["reader", "thematic"]);
 export type HighlightOrigin = z.infer<typeof HighlightOriginSchema>;
 
 export const HighlightSchema = AnchorSchema.extend({
-  // M40 §B3 (migration 41): overrides AnchorSchema's required `cfi` — the DB
-  // column is nullable now (a PDF highlight has none), so the *read* shape
-  // has to admit it even though `AnchorSchema`/`CreateHighlightBodySchema`
-  // stay required (nothing creates a highlight without a real CFI yet).
+  // M40 §B3 (migration 41): the DB column is nullable (a PDF highlight has
+  // none) — restated explicitly here, though `AnchorSchema.cfi` is nullable
+  // too since M41 §A2, for the same reason migration 41's own comment gives:
+  // a claim worth keeping visible on the schema that's actually read back.
   cfi: z.string().min(1).nullable(),
   id: z.string(), // uuid v4
   resourceId: z.string(),
