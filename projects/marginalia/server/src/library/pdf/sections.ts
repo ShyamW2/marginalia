@@ -202,8 +202,26 @@ function padIndex(n: number): string {
  *  section, never a page (PDF.md §4 — the single most consequential
  *  extraction decision in this arc). */
 export function buildSections(pages: PdfPageContent[], outline: PdfOutlineEntry[]): PdfSection[] {
+  return buildSectionsWithPageIndex(pages, outline).sections;
+}
+
+/**
+ * M41 §A2: `buildSections` plus a page→section map (index = page index,
+ * value = section index) for the native pane's "highlights are shared
+ * between reflow and native" — nothing needed this before a second renderer
+ * existed to ask (NOTES.md, M40 §D's own SPEC-GAP). A page that begins
+ * mid-section (the same "outline destinations are page-anchored" trap §4
+ * warns about) is assigned to the section active at the *top* of the page —
+ * honest, not byte-exact, for the handful of pages that straddle a
+ * boundary; a highlight made in the sliver below the heading on that page
+ * anchors to the earlier section instead of the true one.
+ */
+export function buildSectionsWithPageIndex(
+  pages: PdfPageContent[],
+  outline: PdfOutlineEntry[],
+): { sections: PdfSection[]; pageSectionIndex: number[] } {
   const boundaries = detectBoundaries(pages, outline);
-  return boundaries.map((boundary, index) => {
+  const sections = boundaries.map((boundary, index) => {
     const blocks = blocksInRange(pages, boundary, boundaries[index + 1]);
     return {
       spineIndex: index,
@@ -213,4 +231,26 @@ export function buildSections(pages: PdfPageContent[], outline: PdfOutlineEntry[
       blocks,
     };
   });
+
+  // A boundary that starts partway down a page (`blockIndex > 0` — PDF.md
+  // §4's "outline destinations are page-anchored" trap) doesn't hand that
+  // page to the new section until the *next* page — only a boundary sitting
+  // at a page's very top (`blockIndex === 0`) does. Comparing `pageIndex`
+  // alone can't tell those apart, since both shapes share the same page.
+  const effectiveStartPage = (boundary: SectionBoundary): number =>
+    boundary.blockIndex > 0 ? boundary.pageIndex + 1 : boundary.pageIndex;
+
+  const pageSectionIndex: number[] = [];
+  let boundaryCursor = 0;
+  for (const page of pages) {
+    while (
+      boundaryCursor + 1 < boundaries.length &&
+      effectiveStartPage(boundaries[boundaryCursor + 1]) <= page.pageIndex
+    ) {
+      boundaryCursor++;
+    }
+    pageSectionIndex[page.pageIndex] = boundaryCursor;
+  }
+
+  return { sections, pageSectionIndex };
 }

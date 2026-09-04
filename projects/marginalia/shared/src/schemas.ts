@@ -71,6 +71,21 @@ export const UpdateResourceKindBodySchema = z.object({
 });
 export type UpdateResourceKindBody = z.infer<typeof UpdateResourceKindBodySchema>;
 
+/**
+ * GET /api/resources/:id/pdf-sections (M41 §A2, PDF.md §4/§7.5): which
+ * `resource_text` section (spineIndex) each PDF page belongs to — index is
+ * the page index, value is the section index. Built once at import from the
+ * same boundary detection that produced the spine (`buildSections`), so it
+ * agrees with `resource_text` by construction rather than by a second,
+ * independent extraction. A page that begins mid-section (PDF.md §4's own
+ * "outline destinations are page-anchored" trap) is assigned to the section
+ * active at the *top* of the page — an honest approximation, not byte-exact,
+ * for the handful of pages that straddle a boundary. Empty for a scan (no
+ * sections at all) or an EPUB (meaningless).
+ */
+export const PdfPageSectionsSchema = z.array(z.number().int().nonnegative());
+export type PdfPageSections = z.infer<typeof PdfPageSectionsSchema>;
+
 // ---------------------------------------------------------------------------
 // Shelf state (M8 — the Desk's freeform workspace)
 // ---------------------------------------------------------------------------
@@ -111,6 +126,16 @@ export type ResourceSummary = z.infer<typeof ResourceSummarySchema>;
 export const ReadingFlowSchema = z.enum(["paginated", "scrolled"]);
 export type ReadingFlow = z.infer<typeof ReadingFlowSchema>;
 
+// M41 §A1 (PDF.md §7.5): a `format: 'pdf'` resource opens in "reflow" (the
+// generated EPUB, `EpubRenderer`) or "native" (the raw PDF, `PdfRenderer`) —
+// remembered per book, same storage pattern as `flow` above (COALESCE on
+// write, defaults on every pre-M41 row). Meaningless for an EPUB resource,
+// which is always "reflow" and never shows the switch (A1: "absent for an
+// EPUB") — the column still defaults every row to "reflow" so a plain read
+// never needs a format check to make sense of it.
+export const RenderModeSchema = z.enum(["reflow", "native"]);
+export type RenderMode = z.infer<typeof RenderModeSchema>;
+
 export const ReadingPositionSchema = z.object({
   resourceId: z.string(),
   // M40 §B4: an opaque SerializedLocator — a bare epub.js CFI on any row
@@ -129,6 +154,9 @@ export const ReadingPositionSchema = z.object({
   // migration (migration 42's own column default), never null/optional —
   // a book that has never had its mode touched still reads as paginated.
   flow: ReadingFlowSchema,
+  // M41 §A1: defaults to "reflow" for every row written before migration 43,
+  // same never-null-never-optional shape as `flow`.
+  renderMode: RenderModeSchema,
   updatedAt: z.string(),
 });
 export type ReadingPosition = z.infer<typeof ReadingPositionSchema>;
@@ -140,6 +168,8 @@ export const UpdateReadingPositionBodySchema = z.object({
   // Optional: a plain position save (every scroll/turn) leaves the book's
   // saved mode untouched; only an explicit mode switch sends this.
   flow: ReadingFlowSchema.optional(),
+  // M41 §A1: same convention — only the strip's reflow/native switch sends this.
+  renderMode: RenderModeSchema.optional(),
 });
 export type UpdateReadingPositionBody = z.infer<
   typeof UpdateReadingPositionBodySchema

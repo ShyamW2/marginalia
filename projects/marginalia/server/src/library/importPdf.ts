@@ -4,10 +4,10 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import type { Resource } from "@marginalia/shared";
 import { extractPdf, type ExtractPdfOptions, PdfInvalidError, PdfPasswordError } from "./pdf/extract.js";
-import { buildSections } from "./pdf/sections.js";
+import { buildSections, buildSectionsWithPageIndex } from "./pdf/sections.js";
 import { generateReflowEpub } from "./pdf/generateEpub.js";
 import { EXTRACTOR_VERSION } from "./pdf/version.js";
-import { getResourceById, getResourceFilePath } from "./store.js";
+import { getResourceById, getResourceFilePath, setPdfPageSections } from "./store.js";
 import { LIBRARY_DIR } from "../paths.js";
 
 export { PdfInvalidError, PdfPasswordError };
@@ -65,13 +65,18 @@ export async function importPdf(
   let chapterTitles: Record<string, string> = {};
   let reflowBuffer: Buffer | null = null;
   let sectionRows: { spineIndex: number; href: string; text: string }[] = [];
+  // M41 §A2: page->section, for the native pane's "highlights are shared
+  // between reflow and native" (PDF.md §4/§7.5) — built alongside the spine
+  // itself so the two never disagree.
+  let pageSectionIndex: number[] = [];
 
   if (textLayer) {
-    const sections = buildSections(extracted.pages, extracted.outline);
-    const generated = generateReflowEpub({ title, author: null, sections, identifier: id });
+    const built = buildSectionsWithPageIndex(extracted.pages, extracted.outline);
+    const generated = generateReflowEpub({ title, author: null, sections: built.sections, identifier: id });
     reflowBuffer = generated.buffer;
     chapterTitles = generated.chapterTitles;
-    sectionRows = sections.map((s) => ({ spineIndex: s.spineIndex, href: s.href, text: s.text }));
+    sectionRows = built.sections.map((s) => ({ spineIndex: s.spineIndex, href: s.href, text: s.text }));
+    pageSectionIndex = built.pageSectionIndex;
   }
 
   const resource: Resource = {
@@ -111,6 +116,7 @@ export async function importPdf(
     for (const row of sectionRows) {
       insertText.run({ resourceId: id, spineIndex: row.spineIndex, href: row.href, text: row.text });
     }
+    if (pageSectionIndex.length > 0) setPdfPageSections(db, id, pageSectionIndex);
   });
 
   fs.writeFileSync(filePath, buffer);

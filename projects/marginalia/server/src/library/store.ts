@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import type {
   ReadingFlow,
   ReadingPosition,
+  RenderMode,
   Resource,
   ResourceSummary,
   ShelfState,
@@ -182,13 +183,50 @@ export function getResourceTextSection(
   return row ? { spineIndex: row.spine_index, href: row.href, text: row.text } : undefined;
 }
 
+/** M41 §A2 (PDF.md §4/§7.5): which `resource_text` section each PDF page
+ * belongs to — index is the page index, value is the section index. Built
+ * once at import (`importPdf.ts`) from the same boundary detection that
+ * produced the spine; empty for a scan, an EPUB, or a PDF imported before
+ * this migration (never backfilled — native mode on those falls back to
+ * treating the whole document as section 0, same as M40 §D). */
+export function getPdfPageSections(
+  db: Database.Database,
+  resourceId: string,
+): number[] {
+  const rows = db
+    .prepare(
+      `SELECT page_index, section_index FROM pdf_page_sections
+       WHERE resource_id = ? ORDER BY page_index`,
+    )
+    .all(resourceId) as { page_index: number; section_index: number }[];
+  const result: number[] = [];
+  for (const row of rows) result[row.page_index] = row.section_index;
+  return result;
+}
+
+/** Written once, at import — a PDF's pages never change (decision 5:
+ * immutable on import), so this table is never updated in place. */
+export function setPdfPageSections(
+  db: Database.Database,
+  resourceId: string,
+  sectionIndexByPage: number[],
+): void {
+  const insert = db.prepare(
+    `INSERT INTO pdf_page_sections (resource_id, page_index, section_index) VALUES (?, ?, ?)`,
+  );
+  const insertAll = db.transaction((rows: number[]) => {
+    rows.forEach((sectionIndex, pageIndex) => insert.run(resourceId, pageIndex, sectionIndex));
+  });
+  insertAll(sectionIndexByPage);
+}
+
 export function getReadingPosition(
   db: Database.Database,
   resourceId: string,
 ): ReadingPosition | undefined {
   const row = db
     .prepare(
-      "SELECT resource_id, location, spine_index, percent, flow, updated_at FROM reading_state WHERE resource_id = ?",
+      "SELECT resource_id, location, spine_index, percent, flow, render_mode, updated_at FROM reading_state WHERE resource_id = ?",
     )
     .get(resourceId) as
     | {
@@ -197,6 +235,7 @@ export function getReadingPosition(
         spine_index: number | null;
         percent: number | null;
         flow: ReadingFlow;
+        render_mode: RenderMode;
         updated_at: string;
       }
     | undefined;
@@ -207,6 +246,7 @@ export function getReadingPosition(
     spineIndex: row.spine_index,
     percent: row.percent,
     flow: row.flow,
+    renderMode: row.render_mode,
     updatedAt: row.updated_at,
   };
 }
@@ -222,15 +262,19 @@ export function setReadingPosition(
   // picks the existing row's value (an update) or the column's own
   // 'paginated' default (a fresh insert) whenever this is undefined.
   flow?: ReadingFlow,
+  // M41 §A1: same convention as `flow` — undefined leaves the book's saved
+  // reflow/native choice untouched.
+  renderMode?: RenderMode,
 ): ReadingPosition {
   const updatedAt = new Date().toISOString();
   db.prepare(
-    `INSERT INTO reading_state (resource_id, location, spine_index, percent, flow, updated_at)
-     VALUES (@resourceId, @location, @spineIndex, @percent, COALESCE(@flow, 'paginated'), @updatedAt)
+    `INSERT INTO reading_state (resource_id, location, spine_index, percent, flow, render_mode, updated_at)
+     VALUES (@resourceId, @location, @spineIndex, @percent, COALESCE(@flow, 'paginated'), COALESCE(@renderMode, 'reflow'), @updatedAt)
      ON CONFLICT (resource_id) DO UPDATE SET
        location = @location, spine_index = @spineIndex, percent = @percent,
-       flow = COALESCE(@flow, reading_state.flow), updated_at = @updatedAt`,
-  ).run({ resourceId, location, spineIndex, percent, flow: flow ?? null, updatedAt });
+       flow = COALESCE(@flow, reading_state.flow),
+       render_mode = COALESCE(@renderMode, reading_state.render_mode), updated_at = @updatedAt`,
+  ).run({ resourceId, location, spineIndex, percent, flow: flow ?? null, renderMode: renderMode ?? null, updatedAt });
   return getReadingPosition(db, resourceId)!;
 }
 

@@ -12,10 +12,12 @@ import { importEpub } from "../library/importResource.js";
 import { ensureReflowEpubPath, hashPdfBuffer, importPdf, PdfInvalidError, PdfPasswordError } from "../library/importPdf.js";
 import { extractCoverImage, guessImageMimeType } from "../library/epub.js";
 import {
+  getPdfPageSections,
   getReadingPosition,
   getResourceById,
   getResourceFilePath,
   getResourceLocations,
+  getResourceTextSections,
   listResourceSummaries,
   setReadingPosition,
   setResourceKind,
@@ -154,6 +156,55 @@ resourcesRouter.get("/:id/file", async (req, res) => {
   res.sendFile(filePath);
 });
 
+// M41 §A1 (PDF.md §7.5): the native pane always needs the *raw* PDF bytes,
+// scan or not — unlike `/file` above, which serves the generated reflow
+// EPUB for every non-scan PDF (the reflow pane's own need). Two routes, not
+// a query param on one, because they serve genuinely different content
+// types to genuinely different consumers.
+resourcesRouter.get("/:id/pdf-source", (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource || resource.format !== "pdf") {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  const filePath = getResourceFilePath(db, resource.id);
+  if (!filePath || !fs.existsSync(filePath)) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.type("application/pdf");
+  res.sendFile(filePath);
+});
+
+// M41 §A2 (PDF.md §4/§7.5): the native pane's page->section table, built
+// once at import (`importPdf.ts`) — empty for a scan, an EPUB, or a PDF
+// imported before migration 44.
+resourcesRouter.get("/:id/pdf-sections", (req, res) => {
+  const resource = getResourceById(getDb(), req.params.id);
+  if (!resource || resource.format !== "pdf") {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json(getPdfPageSections(getDb(), req.params.id));
+});
+
+// M41 §A2: the native pane's own copy of `resource_text` — reconstructing a
+// highlight's quote from a stored `(sectionIndex, offset, length)` Locator,
+// and locating the right page for a cross-mode jump, both need the same
+// canonical section text the reflow pane's `resource_text` rows already are
+// (PdfRenderer.ts's own comments explain why offsets are resolved against
+// this rather than pdf.js's raw per-page text). Reuses the exact rows
+// `search.ts`/`digest` already serve server-side; nothing new is computed.
+resourcesRouter.get("/:id/text-sections", (req, res) => {
+  const resource = getResourceById(getDb(), req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json(getResourceTextSections(getDb(), req.params.id));
+});
+
 resourcesRouter.get("/:id/cover", (req, res) => {
   const resource = getResourceById(getDb(), req.params.id);
   const filePath = getResourceFilePath(getDb(), req.params.id);
@@ -204,6 +255,7 @@ resourcesRouter.put("/:id/position", (req, res) => {
     parsed.data.spineIndex ?? null,
     parsed.data.percent ?? null,
     parsed.data.flow,
+    parsed.data.renderMode,
   );
   res.json(position);
 });

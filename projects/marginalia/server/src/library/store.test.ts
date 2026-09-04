@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createDb } from "../db.js";
-import { getReadingPosition, getResourceById, listResourceSummaries, setReadingPosition, setResourceKind } from "./store.js";
+import {
+  getPdfPageSections,
+  getReadingPosition,
+  getResourceById,
+  listResourceSummaries,
+  setPdfPageSections,
+  setReadingPosition,
+  setResourceKind,
+} from "./store.js";
 import { createHighlight } from "../annotations/highlights.js";
 import { createThread } from "../annotations/threads.js";
 
@@ -105,6 +113,64 @@ describe("setReadingPosition — flow", () => {
     setReadingPosition(db, resourceId, "loc-1", 0, 0, "paginated");
     setReadingPosition(db, resourceId, "loc-1", 0, 0, "scrolled");
     expect(getReadingPosition(db, resourceId)?.flow).toBe("scrolled");
+    db.close();
+  });
+});
+
+// M41 §A1 (migration 43): same shape as `flow` above — a plain position
+// save must not silently reset a book's reflow/native choice back to
+// "reflow".
+describe("setReadingPosition — renderMode", () => {
+  it("defaults a brand-new row to 'reflow' when no renderMode is given", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    setReadingPosition(db, resourceId, "loc-1", 0, 0);
+    expect(getReadingPosition(db, resourceId)?.renderMode).toBe("reflow");
+    db.close();
+  });
+
+  it("a plain position save leaves a previously-set renderMode untouched", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    setReadingPosition(db, resourceId, "loc-1", 0, 0, undefined, "native");
+    expect(getReadingPosition(db, resourceId)?.renderMode).toBe("native");
+
+    setReadingPosition(db, resourceId, "loc-2", 1, 10);
+    expect(getReadingPosition(db, resourceId)?.renderMode).toBe("native");
+    expect(getReadingPosition(db, resourceId)?.location).toBe("loc-2");
+    db.close();
+  });
+
+  it("an explicit renderMode switches the saved mode on an existing row", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    setReadingPosition(db, resourceId, "loc-1", 0, 0, undefined, "reflow");
+    setReadingPosition(db, resourceId, "loc-1", 0, 0, undefined, "native");
+    expect(getReadingPosition(db, resourceId)?.renderMode).toBe("native");
+    db.close();
+  });
+});
+
+// M41 §A2 (migration 44): page->section is written once, at import, and
+// read back exactly — no aggregation or reordering in either direction.
+describe("pdf_page_sections", () => {
+  it("round-trips a page->section table indexed by page", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    setPdfPageSections(db, resourceId, [0, 0, 1, 1, 1, 2]);
+    expect(getPdfPageSections(db, resourceId)).toEqual([0, 0, 1, 1, 1, 2]);
+    db.close();
+  });
+
+  it("returns an empty array for a resource with no page->section rows", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    expect(getPdfPageSections(db, resourceId)).toEqual([]);
     db.close();
   });
 });

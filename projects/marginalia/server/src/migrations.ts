@@ -1045,4 +1045,38 @@ export const MIGRATIONS: Migration[] = [
       database.exec(`ALTER TABLE reading_state ADD COLUMN flow TEXT NOT NULL DEFAULT 'paginated';`);
     },
   },
+  {
+    // M41 §A1 (PDF.md §7.5): which pane a `format: 'pdf'` resource opens in —
+    // "reflow" (the generated EPUB) or "native" (the raw PDF) — is a reader
+    // setting remembered per book, same shape as migration 42's `flow`: a
+    // plain additive column with a default, no table rebuild needed.
+    // Meaningless for an EPUB resource (always "reflow"); the column still
+    // defaults every row so a plain read never needs a format check.
+    version: 43,
+    run: (database) => {
+      database.exec(`ALTER TABLE reading_state ADD COLUMN render_mode TEXT NOT NULL DEFAULT 'reflow';`);
+    },
+  },
+  {
+    // M41 §A2 (PDF.md §4/§7.5): "highlights are shared between reflow and
+    // native" needs a persisted page->section table — nothing before this
+    // milestone needed one (M40 §D's PdfRenderer was headless and treated
+    // the whole document as section 0, see NOTES.md's M40 §D SPEC-GAP).
+    // One row per PDF page, built once at import time from the same
+    // boundary detection `buildSections` already runs (`importPdf.ts`), so
+    // it agrees with `resource_text` by construction. A fresh table, not a
+    // column on an existing one — there is no existing per-page row to hang
+    // it off.
+    version: 44,
+    run: (database) => {
+      database.exec(`
+        CREATE TABLE pdf_page_sections (
+          resource_id   TEXT NOT NULL REFERENCES resources(id),
+          page_index    INTEGER NOT NULL,
+          section_index INTEGER NOT NULL,
+          PRIMARY KEY (resource_id, page_index)
+        );
+      `);
+    },
+  },
 ];

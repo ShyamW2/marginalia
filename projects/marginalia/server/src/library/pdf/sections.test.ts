@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSections } from "./sections.js";
+import { buildSections, buildSectionsWithPageIndex } from "./sections.js";
 import type { PdfLine, PdfOutlineEntry, PdfPageContent } from "./types.js";
 
 function line(text: string, y: number, fontSize = 10): PdfLine {
@@ -134,5 +134,56 @@ describe("buildSections", () => {
 
     expect(sections).toHaveLength(2);
     expect(sections[0].text).toContain("Half-title page");
+  });
+});
+
+// M41 §A2 (PDF.md §4/§7.5): "highlights are shared between reflow and
+// native" needs a page->section table built from the same boundaries as the
+// spine itself, so the two can never disagree about where a section starts.
+describe("buildSectionsWithPageIndex", () => {
+  it("assigns every page to the section active at its own top", () => {
+    const pages: PdfPageContent[] = [
+      page(0, [line("Front matter.", 700)]),
+      page(1, [line("Chapter One", 750, 16), line("Body of chapter one.", 700)]),
+      page(2, [line("Still chapter one.", 700)]),
+      page(3, [line("Chapter Two", 750, 16), line("Body of chapter two.", 700)]),
+    ];
+    const outline: PdfOutlineEntry[] = [
+      { title: "Chapter One", pageIndex: 1, y: 760 },
+      { title: "Chapter Two", pageIndex: 3, y: 760 },
+    ];
+
+    const { sections, pageSectionIndex } = buildSectionsWithPageIndex(pages, outline);
+
+    expect(sections.map((s) => s.title)).toEqual(["Section 1", "Chapter One", "Chapter Two"]);
+    expect(pageSectionIndex).toEqual([0, 1, 1, 2]);
+  });
+
+  it("assigns a page split by a mid-page heading to the section active at its top, honestly", () => {
+    // Page 0 straddles the Chapter Two boundary (heading at y=400, partway
+    // down) — PDF.md §4's own "outline destinations are page-anchored" trap.
+    // The page is assigned to the *earlier* section (the one active at the
+    // page's top), not the later one the heading introduces.
+    const pages: PdfPageContent[] = [
+      page(0, [
+        line("End of the previous chapter.", 700),
+        line("Chapter Two", 400, 16),
+        line("Body of chapter two starts here.", 380),
+      ]),
+      page(1, [line("More of chapter two.", 700)]),
+    ];
+    const outline: PdfOutlineEntry[] = [{ title: "Chapter Two", pageIndex: 0, y: 400 }];
+
+    const { pageSectionIndex } = buildSectionsWithPageIndex(pages, outline);
+
+    expect(pageSectionIndex).toEqual([0, 1]);
+  });
+
+  it("matches buildSections's own spine exactly (a thin wrapper, not a second implementation)", () => {
+    const pages: PdfPageContent[] = Array.from({ length: 12 }, (_, i) =>
+      page(i, [line(`Page ${i} paragraph text goes here.`, 700)]),
+    );
+
+    expect(buildSectionsWithPageIndex(pages, []).sections).toEqual(buildSections(pages, []));
   });
 });
