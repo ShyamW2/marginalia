@@ -153,8 +153,11 @@ with proper status codes.
 | `POST /api/resources` | multipart upload of an .epub → import (hash, store, extract text, parse metadata) → resource JSON. Re-importing same bytes returns the existing resource (200, not error). |
 | `GET /api/resources` | library list (id, title, author, imported_at, highlight/thread counts) |
 | `GET /api/resources/:id` | single resource metadata |
-| `GET /api/resources/:id/file` | raw epub bytes (for epub.js in the browser) |
-| `GET /api/resources/:id/position` / `PUT` | reading position (opaque `SerializedLocator` string — a bare CFI on a legacy row, JSON thereafter; M40 §B4) |
+| `GET /api/resources/:id/file` | epub bytes for the reflow pane (raw epub, or a PDF's generated `.reflow.epub`; a text-layer-less PDF serves its own raw bytes here too — M39 §C3) |
+| `GET /api/resources/:id/pdf-source` | a PDF resource's raw bytes, always — what the native pane (M41) actually opens, regardless of text-layer/scan status |
+| `GET /api/resources/:id/pdf-sections` | a PDF resource's page→section table (M41 §A2, PDF.md §7.5) — `number[]` indexed by page, empty for a scan/EPUB/pre-M41 import |
+| `GET /api/resources/:id/text-sections` | a resource's full `resource_text`, in spine order — what the native pane resolves highlight/tint quotes against (M41 §A2) |
+| `GET /api/resources/:id/position` / `PUT` | reading position (opaque `SerializedLocator` string — a bare CFI on a legacy row, JSON thereafter; M40 §B4) plus `flow` (M40 §C9) and `renderMode` (M41 §A1), both remembered per book |
 | `GET /api/resources/:id/highlights` | all highlights + their thread summaries for render |
 | `POST /api/highlights` | `{resourceId, exact, prefix, suffix, cfi, spineIndex}` → highlight |
 | `DELETE /api/highlights/:id` | also deletes its thread/messages (cascade in code) |
