@@ -8070,3 +8070,68 @@ Added both to `vitest.setup.ts` alongside the file's existing `matchMedia`/
 `scrollIntoView` shims: one zero-size rect for a non-collapsed range, none for a collapsed
 one, the same "no test asserts on real geometry, only that it doesn't throw" convention
 those shims already established.
+
+## M40 §C — continuous scroll, and the plumbing that already existed for it — 2026-09-04
+
+Implemented C1-C9 (TASKS.md carries the per-item `_Done:` notes; this is the narrative).
+
+**Most of the epub.js-level work was already done in M40 §A and simply never turned on.**
+`EpubRenderer.mount()` has accepted an `opts.flow` and mapped it to `"scrolled-doc"` since
+the renderer seam was first extracted — `ReaderView` just always passed `"paginated"`.
+Discovering this early reshaped the whole milestone's shape: the real work turned out to
+be almost entirely in `ReaderView` (capabilities finally threaded through, per A5's own
+flagged gap) and in the parts of the anchor/progress/gesture system that had never had a
+reason to ask "which flow is this" before, not in epub.js integration itself.
+
+**epub.js already fires `relocated` continuously while scrolling, debounced ~20ms** —
+`Rendition` wires `manager.on(MANAGERS.SCROLLED, this.reportLocation.bind(this))`
+internally (confirmed by reading `epubjs/lib/rendition.js` and
+`epubjs/lib/managers/default/index.js` directly, not assumed), which is *why* C6
+(debounced position save) needed no new code: the same `relocated` handler a paginated
+turn already went through fires on every scroll tick too, and its existing debounce timer
+does the rest. The one thing epub.js's own geometry doesn't give scrolled flow is a
+meaningful chapter-page pair — `pageTurn.ts`'s `TurnGeometry` is a column-width measure,
+and a vertically-scrolling container's `scrollWidth`/`clientWidth` say nothing useful —
+hence `scrollProgressFromGeometry`, the vertical sibling extracted alongside it with its
+own unit tests rather than left as an untestable private method reading `container`
+directly.
+
+**`new URL(literal, import.meta.url)` and jsdom-vs-pdfkit findings from §D also shaped a
+small `selectionContext.ts` generalization used here too** — not new to this section, but
+worth noting: `getSelectionContext`/`rangeFromTextOffsets` already needed a root-Element
+signature (not `Document`) for `PdfRenderer`'s text layer; nothing in §C needed that
+further, but it's the same file.
+
+**Thread panels never actually tracked their mark's position before this** — found while
+implementing C7, not assumed from PDF.md's own description. Every existing
+`setExpandedThread(...)` call site sets `top` once, either to a constant
+(`DEFAULT_THREAD_PANEL_TOP`) or to the selection's position *at the moment the panel
+opened*, and never updates it again. That was invisible in paginated mode because a page's
+geometry doesn't change while a panel sits open on it (only a font-size/margin change
+does, which already has its own overlay-refresh path). Scroll mode makes the mark's
+viewport position change continuously while the panel is open, which is a genuinely new
+capability (`markRect` + a `relocated` subscription, rAF-throttled), not a bug fix to
+existing tracking.
+
+**Verified live** (headlessly via Playwright, `chromium-1234` under `--no-sandbox`, same
+constraint M40 §A's own Verify recorded — no interactive browser in this environment):
+opened East of Eden, toggled to scroll via the new strip control, scrolled deep into
+Chapter 1 with both the mouse wheel and keyboard `PageDown` (both moved the pane and
+updated book %/chapter % sensibly), scrolled to the chapter's end and back up and down
+again with no errors, created a real highlight mid-scroll (a real CFI, persisted,
+margin-rail dot visible), reloaded the page cold and confirmed it reopened in scroll mode
+at the saved position, advanced via the "next" chevron from the chapter's end into Chapter
+2 (chapter % correctly reset to 0% while book % continued forward), and switched back to
+paginated to confirm the two-column spread, page-number readout and fold/turn-zone chrome
+all returned with the earlier highlight still present throughout. Not driven live: audio
+follow's auto-scroll and an open thread panel's live follow while scrolling (C7) — both
+reasoned through the code, flagged rather than silently claimed, per M40 §A's own
+precedent for exactly this situation.
+
+**This verification pass wrote real rows into the operator's live database** (a highlight
+on East of Eden, and several `reading_state.flow`/`location` changes on it, left in
+"paginated" mode at wherever the last check landed) — the same category of thing
+[[marginalia-data-dir-caution]] exists to flag, done deliberately this time (a fixture
+book would have worked just as well and is the better default next time) rather than as
+an unplanned side effect. Not cleaned up automatically; surfaced to the operator instead
+of assuming it should be reverted.

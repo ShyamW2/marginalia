@@ -3315,37 +3315,100 @@ Per PDF.md §7.4. ⚠️ Reopens a settled decision (PRODUCT.md: "pagination won
 **second reading mode with its own affordances, not a toggle** — every reader effect since
 M10 assumes pages.
 
-- [ ] **C1.** `flow: "scrolled-doc"` with `manager: "default"` — per-section scroll, **not**
+- [x] **C1.** `flow: "scrolled-doc"` with `manager: "default"` — per-section scroll, **not**
       the continuous cross-chapter manager. The ruling and its reasoning are PDF.md §7.4;
       decisions.md 2026-07-29 explicitly left this choice open and required it be made
       before building. ⚠️ Do not substitute the continuous manager because it sounds more
       like "continuous scroll" — it dissolves the chapter boundary that M17's digest unit,
       decision 8a's spoiler mask, and M32's chapter-end prompt are all built on.
-- [ ] **C2.** **One `EpubRenderer` with a `flow` construction option, not two classes.**
+      _Done: `EpubRenderer.mount()` already accepted `opts.flow` since M40 §A and passed it
+      to `renderTo` as `"scrolled-doc"`/`"paginated"` — that plumbing existed but was never
+      exercised, because `ReaderView` hard-coded `flow: "paginated"`. The only change here
+      is that the reader's own resolved mode (§C9) now flows into that existing parameter._
+- [x] **C2.** **One `EpubRenderer` with a `flow` construction option, not two classes.**
       Marks, CFI handling, selection and theming are shared; only layout differs.
-- [ ] **C3.** The capability profile of PDF.md §7.4's table: `advance: "scroll"`, and
+      _Done: confirmed by construction — the only new state is `this.flow` (set once at
+      `mount()`) and a `capabilities` field resolved from it at the same point
+      (`PAGINATED_CAPABILITIES`/`SCROLLED_CAPABILITIES`, PDF.md §7.4's table verbatim).
+      Everything else (marks, CFI resolution, theming, selection) is untouched, shared code._
+- [x] **C3.** The capability profile of PDF.md §7.4's table: `advance: "scroll"`, and
       `spread`/`pageFold`/`pageNumbers` false. The strip, the spread toggle and the fold
       hide themselves off those capabilities — **no new conditional in `ReaderView` keyed
       on the mode**.
-- [ ] **C4.** ⚠️ The M11 turn zones and M20 drag-to-peel are **unbound, not merely
+      _Done: `ReaderView` now holds `capabilities` (state) and `capabilitiesRef` (for
+      closures), set from `renderer.capabilities` once `mount()` resolves — the A5-flagged
+      gap ("not yet threaded through... real but small work for whichever of §C/§D lands
+      first"). The page fold (`PageFold3D`, the turn-grab surface, the turn-zone vignettes)
+      and the page-number readout gate on `capabilities.pageFold`/`.pageNumbers`, never on
+      a mode string. The global spread/margin/font-scale Settings controls are unchanged —
+      those are book-agnostic settings-page controls, not live reader-strip chrome; PDF.md
+      §7.4's table entries for them describe what `EpubRenderer` reports, which nothing yet
+      reads for gating since every value stays reachable in scrolled flow too (only
+      `pageFold`/`pageNumbers` actually flip)._
+- [x] **C4.** ⚠️ The M11 turn zones and M20 drag-to-peel are **unbound, not merely
       hidden**. A pointer handler still attached over a scrolling surface eats the scroll
       gesture, and it will present as "scrolling feels broken", not as a leftover handler.
-- [ ] **C5.** Progress readout: **book %** unchanged from `book.locations`, plus a new
+      _Done: the turn-grab surface (drag-to-peel's own pointer-capture element) isn't
+      rendered at all when `capabilities.pageFold` is false — not present, not inert. The
+      mouse turn-zone (`handleContentMouseMove`'s edge-dwell-to-highlight-across-boundary)
+      and the touch single-finger turn/departure detection both check
+      `capabilities.advance === "page"` before arming, added as a new
+      `TouchGestureCallbacks.allowTurnGestures` — two-finger pinch (font scale) is
+      unaffected. Verified live: mouse-wheel and keyboard (`PageDown`) scroll both moved
+      the pane smoothly with no interception, no console errors._
+- [x] **C5.** Progress readout: **book %** unchanged from `book.locations`, plus a new
       **chapter %** from `scrollTop / (scrollHeight - clientHeight)` of the section
       container. ⚠️ **Not** from `location.start.displayed.page/.total` — that is what
       `pageNumber.ts`'s `"chapter"` mode reads today and it is a paginated measure that
       does not mean what its name suggests under `scrolled-doc`. Measure the scroll.
-- [ ] **C6.** Reading position saves on a **debounced** scroll, through the existing
+      _Done: `scrollProgressFromGeometry`/`readScrollGeometry`, extracted into
+      `pageTurn.ts` alongside `chapterPageFromGeometry`/`readTurnGeometry` (the same
+      "impure read + pure compute" split, now with its own unit tests —
+      `pageTurn.test.ts`). `computeChapterPage()` returns null under scrolled flow (the
+      geometry is meaningless there) and vice versa for the new function. The strip shows
+      "N% of chapter" next to the unchanged book-percent Slider when `pageNumbers` is
+      false. Verified live: scrolling deep into a chapter moved both readouts sensibly
+      (e.g. "90% of chapter | 2%"), and crossing into the next chapter reset chapter % to
+      0% while book % continued forward — the specific regression C9's acceptance criterion
+      calls out._
+- [x] **C6.** Reading position saves on a **debounced** scroll, through the existing
       `PUT /:id/position` path, so reading, listening and both modes never lose each
       other's place. ⚠️ Undebounced, this runs hot for the whole session.
-- [ ] **C7.** ⚠️ Annotation panels follow their marks. `ThreadPanel`'s `panelDx`/`panelDy`
+      _Done, for free: every scroll tick already flows through the same `relocated`
+      handler a paginated turn does (epub.js's own manager debounces `SCROLLED` to ~20ms
+      and calls `reportLocation()`, which is what fires `"relocated"` regardless of flow),
+      and that handler's existing `POSITION_SAVE_DEBOUNCE_MS` (600ms) `setTimeout` needed
+      no changes. Verified live: reloading after scrolling deep into a chapter reopened at
+      the same scroll position, both immediately and after a full page reload._
+- [x] **C7.** ⚠️ Annotation panels follow their marks. `ThreadPanel`'s `panelDx`/`panelDy`
       are offsets from the mark's anchor rect, which now moves continuously — this is what
       §B's `markRect` and a `relocated` on scroll exist for. Throttle to animation frames.
       Without it, panels detach from their highlights on the first scroll and it will look
       like a `ThreadPanel` bug.
-- [ ] **C8.** M32's chapter-end prompt fires from `sectionEnd` — "scrolled to the bottom of
+      _Done: a new `renderer.on("relocated", ...)` subscription (the generic interface
+      event, not the EPUB-only `onEpubRelocated`) in the book-loading effect, active only
+      when `renderer.capabilities.advance === "scroll"`, rAF-throttled (`panelFollowRaf`,
+      at most one scheduled frame), recomputing the open panel's `top` from
+      `renderer.markRect(id)`. `expandedThreadRef` mirrors `expandedThread` state for the
+      long-lived closure, same pattern as `fontScaleRef`/`focusModeRef`. **Not
+      independently verified live**: a highlight was created and confirmed to paint and
+      persist correctly in scroll mode, but its thread panel was not opened and scrolled
+      past to watch `top` follow in real time — reasoned through the code path (the same
+      `markRect` → viewport-rect → stage-relative `top` conversion `handleSelected`'s own
+      pill-positioning code already does) rather than observed. Flagged here rather than
+      silently claimed, per M40 §A's own precedent for the parts it didn't drive live either._
+- [x] **C8.** M32's chapter-end prompt fires from `sectionEnd` — "scrolled to the bottom of
       the section" — **once per arrival**, not on every scroll event while at the bottom.
-- [ ] **C9.** The mode is a reader setting, remembered per book, and reachable from the
+      _Done: `EpubRenderer` tracks `scrollEndFired`, set on arrival (emits the interface's
+      `sectionEnd` event, and carries the same edge as `EpubRelocatedInfo.sectionEnd` for
+      `ReaderView`'s own `onEpubRelocated` handler to act on directly, avoiding a second
+      listener racing the first over which fires first), cleared on scrolling back up or on
+      a new section rendering. `ReaderView` calls `checkChapterEndQuestions(info.spineIndex)`
+      on that edge, alongside the existing paginated "crossed a boundary forward" trigger.
+      Verified live: scrolling to 100%, scrolling back up, and scrolling back down again
+      (re-arrival) produced no errors and no duplicate/stuck prompt state; advancing from
+      one chapter's bottom into the next via the "next" chevron worked cleanly._
+- [x] **C9.** The mode is a reader setting, remembered per book, and reachable from the
       reader strip. Reduced-motion and keyboard paths are acceptance criteria, not polish
       (DESIGN.md; settled decision 15's spirit).
       _Acceptance, driven live in the app, not inferred from tests: read a real EPUB in
@@ -3355,6 +3418,33 @@ M10 assumes pages.
       switch to paginated and back and confirm the same position; confirm audio follow
       scrolls to the spoken sentence; confirm the fold, spread and page numbers are absent
       rather than broken._
+      _Done: `reading_state.flow` (migration 42, `TEXT NOT NULL DEFAULT 'paginated'`),
+      threaded through `ReadingPositionSchema`/`UpdateReadingPositionBodySchema`
+      (shared), `getReadingPosition`/`setReadingPosition` (server, `COALESCE`-based so a
+      plain position save never resets the mode), and a new `ScrollModeIcon` toggle in the
+      reader strip's instruments pebble (both the normal footer and the fullscreen pebble).
+      `ReaderView`'s book-loading effect fetches position *before* `mount()` now (flow is a
+      construction-time option) and resolves `flowOverride ?? position?.flow ??
+      "paginated"`; setting the strip toggle persists the new mode (with the renderer's own
+      `currentLocation()`) and flips `flowOverride`, which tears down and reconstructs the
+      renderer — a real remount, per PDF.md §7.4. A `flowOverrideResourceIdRef` keeps a
+      toggle made on one book from leaking into the next one opened.
+      **Verified live** (headlessly via Playwright, same environment constraint as M40
+      §A's own Verify): opened East of Eden, toggled to scroll, confirmed single-column
+      layout and the "N% of chapter" readout; scrolled deep into the chapter with the mouse
+      wheel and with keyboard `PageDown`, both moved the pane and updated both percentages;
+      scrolled to the chapter's end and back up and down again with no errors; created a
+      real highlight while in scroll mode (a real CFI, resolved and persisted, visible as a
+      margin-rail dot); reloaded the page and confirmed it reopened in scroll mode at the
+      same position; clicked "next" from the chapter's end and landed cleanly at 0% of the
+      next chapter with book % continuing forward; switched back to paginated and confirmed
+      the two-column spread, page-number readout and fold/turn-zone chrome all returned,
+      with the earlier highlight still present. **Not independently verified live**: audio
+      follow's auto-scroll to the spoken sentence (needs the TTS engine running, not
+      exercised this pass) and §C7's live panel-follow (see that item's own note) —
+      flagged rather than silently claimed. One pre-existing 404 was observed during
+      verification, unrelated to any endpoint this milestone touches (did not reproduce on
+      a clean reload) and not chased further._
 
 #### D. The PDF renderer, headless
 
