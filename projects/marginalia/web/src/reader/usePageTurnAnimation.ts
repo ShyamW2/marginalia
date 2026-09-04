@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import type { EpubRenderer } from "./renderer/epub/EpubRenderer.js";
+import type { PdfRenderer } from "./renderer/pdf/PdfRenderer.js";
 import {
   animate,
   useAnimationControls,
@@ -195,7 +196,7 @@ type TurnRenderer = "instant" | "slide" | "curl";
  * mode (M20 "spread-aware": the fold peels the near leaf only).
  */
 export interface PageTurnAnimationOptions {
-  rendererRef: RefObject<EpubRenderer | null>;
+  rendererRef: RefObject<EpubRenderer | PdfRenderer | null>;
   containerRef: RefObject<HTMLDivElement | null>;
   /** The paper card — `.pageClip`, the box the fold canvas is positioned
    * inside and the sheet the reader actually sees. Every rect the fold works
@@ -214,6 +215,11 @@ export interface PageTurnAnimationOptions {
    * `TurnRenderer`. Read at turn time, so flipping it takes effect on the
    * next turn with no reload and no remount. */
   pageTransition: PageTransition;
+  /** M41 §B4: `capabilities.pageFold` — the hard ceiling `resolveRenderer`'s
+   * ladder checks first. The M20/M27 fold does not apply to fixed pages
+   * (PDF.md §7.5) and must not be faked; false forces "slide" (plain
+   * page-to-page) regardless of the reader's own curl/slide preference. */
+  pageFoldEnabled: boolean;
 }
 
 export function usePageTurnAnimation({
@@ -223,6 +229,7 @@ export function usePageTurnAnimation({
   stageRef,
   spreadMode,
   pageTransition,
+  pageFoldEnabled,
 }: PageTurnAnimationOptions): {
   stageControls: ReturnType<typeof useAnimationControls>;
   stageReducedMotion: boolean | null;
@@ -487,12 +494,13 @@ export function usePageTurnAnimation({
    * `!stageReducedMotion`, already checked above; that overlap is harmless
    * and keeps this ladder correct even if the two checks are ever reordered. */
   const resolveRenderer = useCallback((): TurnRenderer => {
+    if (!pageFoldEnabled) return "slide";
     if (stageReducedMotion) return "instant";
     if (pageTransition === "slide") return "slide";
     if (lowFpsRef.current) return "slide";
     if (!scene3DAvailable) return "slide";
     return "curl";
-  }, [stageReducedMotion, pageTransition, scene3DAvailable]);
+  }, [pageFoldEnabled, stageReducedMotion, pageTransition, scene3DAvailable]);
 
   const handleDrawCost = useCallback((p90DrawMs: number, samples: number) => {
     // One frame in ten eating a whole 30fps frame drawing the fold and

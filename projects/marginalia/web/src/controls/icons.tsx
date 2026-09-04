@@ -224,6 +224,30 @@ export function ScrollModeIcon({ size = 18, scrolled = false }: IconProps & { sc
   );
 }
 
+/** M41 §A1: the reader strip's reflow/native switch for a `format: 'pdf'`
+ * resource — absent for an EPUB (A1: "the switch is... absent for an
+ * EPUB"), so this glyph only ever needs to distinguish the two PDF panes.
+ * A single page outline throughout; `native = false` (reflow) fills it with
+ * flowing text lines, `native = true` fills it with a small picture glyph —
+ * the one thing the mode actually changes (does this page hold reflowed
+ * text or the PDF's own fixed image), same "affordance for the mechanism,
+ * not a literal metaphor" spirit as `ScrollModeIcon`. */
+export function RenderModeIcon({ size = 18, native = false }: IconProps & { native?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="5" y="3.5" width="14" height="17" rx="1.8" stroke="currentColor" strokeWidth="1.6" />
+      {native ? (
+        <>
+          <circle cx="9.5" cy="9.5" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M6.5 16.5l3.5-4 2.5 3 2-2.5 3 3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      ) : (
+        <path d="M8 8h8M8 11.3h8M8 14.6h5.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
+
 /** M30 E2: the thread panel's own delete affordance. A trash can rather than
  * a second "×" in the same panel — the header already has one meaning
  * "collapse this thread", and a lookalike glyph a few rows below it, meaning

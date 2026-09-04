@@ -30,6 +30,8 @@ import {
   type ReaderPaneWidth,
   type ReadingFlow,
   type ReadingPosition,
+  type RenderMode,
+  type ResourceFormat,
   type SearchHit,
   type SearchMatchMode,
   type Settings,
@@ -53,12 +55,13 @@ import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
 import { Slider } from "../controls/Slider.js";
 import { ExpandingCluster } from "../controls/ExpandingCluster.js";
-import { BrainIcon, FullscreenIcon, MagnifierIcon, PublishIcon, ScanIcon, ScrollModeIcon, TrayIcon } from "../controls/icons.js";
+import { BrainIcon, FullscreenIcon, MagnifierIcon, PublishIcon, RenderModeIcon, ScanIcon, ScrollModeIcon, TrayIcon } from "../controls/icons.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { ChromeSlotPortal } from "../app/chromeSlot.js";
 import { DEFAULT_KIND_LABELS, hoverFillOpacity, kindLabelsFromSettings } from "./highlightKinds.js";
 import { EpubRenderer, HIGHLIGHT_MARK_CLASS, PAGINATED_CAPABILITIES } from "./renderer/epub/EpubRenderer.js";
+import { PdfRenderer } from "./renderer/pdf/PdfRenderer.js";
 import {
   parseSerializedLocator,
   serializeLocator,
@@ -425,11 +428,14 @@ function savePosition(
   // the server's own COALESCE leaves the book's saved mode untouched.
   // Only an explicit mode switch passes one.
   flow?: ReadingFlow,
+  // M41 §A1: same convention as `flow` — only the reflow/native switch
+  // passes one.
+  renderMode?: RenderMode,
 ): void {
   fetch(`/api/resources/${resourceId}/position`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ location, spineIndex, percent, flow }),
+    body: JSON.stringify({ location, spineIndex, percent, flow, renderMode }),
   }).catch(() => {
     // best-effort — losing one position write isn't worth surfacing an error
   });
@@ -554,6 +560,10 @@ interface ReaderViewProps {
    * fields are threaded down alongside the id. */
   resourceTitle: string;
   resourceAuthor: string | null;
+  /** M41 §A1: `format: 'pdf'` is the only format that ever shows a reflow/
+   * native switch (A1: "absent for an EPUB") — same "threaded down
+   * alongside the id" story as resourceTitle/resourceAuthor above. */
+  resourceFormat: ResourceFormat;
   /** Arriving via the scan's airlock transition (DESIGN.md): land on this
    * highlight's position and open its thread, instead of the saved reading
    * position. */
@@ -644,6 +654,7 @@ export function ReaderView({
   resourceId,
   resourceTitle,
   resourceAuthor,
+  resourceFormat,
   initialHighlightId,
   initialQuestion,
   spreadMode,
@@ -710,12 +721,18 @@ export function ReaderView({
   // reader margin further in; measuring the fold from *that* is what drew
   // the canvas a margin off its own content.
   const pageClipRef = useRef<HTMLDivElement>(null);
-  // M40 §A: the epub.js-specific renderer (mount/theme/marks/navigation) —
+  // M40 §A / M41 §A1: the concrete renderer (mount/theme/marks/navigation) —
   // everything that used to be `renditionRef`/`bookRef`/`currentCfiRef`/
   // `currentSpineIndexRef`/`currentContentsRef`/`tintCfiRef`/
   // `searchMarkCfisRef`/`attachedCfiRef`/`cfiOwnersRef` is now this one
-  // object's own internal bookkeeping — see EpubRenderer.ts.
-  const rendererRef = useRef<EpubRenderer | null>(null);
+  // object's own internal bookkeeping — see EpubRenderer.ts. A real union,
+  // not just `EpubRenderer`, now that `PdfRenderer` is a second live
+  // consumer (M40 §A3's own note: "the abstraction is genuinely proven only
+  // once a second renderer actually consumes it") — every call site below
+  // that isn't genuinely EPUB-specific (guarded by `instanceof EpubRenderer`
+  // where it is) now works against either concrete renderer unchanged,
+  // because both implement the same named-extras surface.
+  const rendererRef = useRef<EpubRenderer | PdfRenderer | null>(null);
   // M40 §C: the chrome asks capabilities, never the format or the mode
   // (settled decision 17c, extended by §C3 to "or the mode") — read by JSX
   // (`capabilities`) and by gesture handlers defined outside the render
@@ -744,6 +761,12 @@ export function ReaderView({
   // (keep `flowOverride`) apart from "a different book just opened" (a
   // stale override from the *previous* book must not leak into this one).
   const flowOverrideResourceIdRef = useRef<string | null>(null);
+  // M41 §A1: the reflow/native switch — same shape and same reason as
+  // `flowOverride` immediately above, one level up (which *renderer* to
+  // construct, not an option passed to one). Meaningless for an EPUB
+  // (`resourceFormat !== "pdf"`), where it's never read.
+  const [renderModeOverride, setRenderModeOverride] = useState<RenderMode | null>(null);
+  const renderModeOverrideResourceIdRef = useRef<string | null>(null);
   // M32 A: the spine index the reader was on just before the current
   // relocation — comparing the two is how "just crossed a chapter boundary
   // forward" is told apart from every other kind of relocation. Was
@@ -780,6 +803,9 @@ export function ReaderView({
     stageRef: marginWrapperRef,
     spreadMode,
     pageTransition,
+    // M41 §B4: capabilities.pageFold — the fold must not be faked for a
+    // surface that doesn't support it (native PDF).
+    pageFoldEnabled: capabilities.pageFold,
   });
   // The book-loading effect's internal handlers (keydown, and the audio
   // auto-turn) close over `rendition` directly and don't re-run per-render, so
@@ -2428,12 +2454,14 @@ export function ReaderView({
   }
 
   /**
-   * M40 §A (PDF.md §7): constructs and mounts the `EpubRenderer`, subscribes
-   * to every event `ReaderView`'s chrome needs, and once `mount()` resolves
-   * (the book has opened), fetches the resource-level data (position,
-   * highlights, chapter meta) that used to live inside epub.js's own
-   * `book.ready.then(...)`. Replaces the ~950-line book-loading effect this
-   * milestone extracted `EpubRenderer` out of.
+   * M40 §A / M41 §A1 (PDF.md §7, §7.5): constructs and mounts the concrete
+   * renderer — `EpubRenderer` for reflow, `PdfRenderer` for native, chosen
+   * from the book's saved `renderMode` (fetched below, alongside `flow`) —
+   * subscribes to every event `ReaderView`'s chrome needs, and once
+   * `mount()` resolves (the book has opened), fetches the resource-level
+   * data (position, highlights, chapter meta) that used to live inside
+   * epub.js's own `book.ready.then(...)`. Replaces the ~950-line
+   * book-loading effect M40 §A extracted `EpubRenderer` out of.
    */
   useEffect(() => {
     if (!containerRef.current || !marginWrapperRef.current) return;
@@ -2448,6 +2476,15 @@ export function ReaderView({
     if (isNewBook) {
       flowOverrideResourceIdRef.current = resourceId;
       if (flowOverride !== null) setFlowOverride(null);
+    }
+    // M41 §A1: same "stale override from a different book" story as
+    // `flowOverride` immediately above, one level up (which *renderer* to
+    // construct, not an option passed to one).
+    const isNewRenderModeBook = renderModeOverrideResourceIdRef.current !== resourceId;
+    const renderModeOverrideForThisBook = isNewRenderModeBook ? null : renderModeOverride;
+    if (isNewRenderModeBook) {
+      renderModeOverrideResourceIdRef.current = resourceId;
+      if (renderModeOverride !== null) setRenderModeOverride(null);
     }
 
     setStatus("loading");
@@ -2468,219 +2505,285 @@ export function ReaderView({
     setExpandedThread(null);
     highlightsRef.current = [];
 
-    const renderer = new EpubRenderer();
-    rendererRef.current = renderer;
+    // M41 §A1: which renderer to construct depends on the book's saved
+    // `renderMode` (part of `position`, fetched below) — construction moves
+    // inside that fetch's continuation now, rather than happening
+    // synchronously up front the way it could when there was only ever one
+    // renderer class. `renderer` (outer scope) is what the cleanup below
+    // destroys; it stays null if the effect is torn down before the fetch
+    // resolves, in which case there's nothing to destroy.
+    let renderer: EpubRenderer | PdfRenderer | null = null;
     // M40 §C7: at most one scheduled frame at a time — `relocated` can fire
     // many times before the next paint (epub.js debounces scroll to ~20ms,
     // still faster than a frame on a fast scroll), and only the latest
     // position matters once it runs.
     let panelFollowRaf: number | null = null;
-
     const unsubscribers: (() => void)[] = [];
-    unsubscribers.push(
-      renderer.onUnanchored((highlightId) => {
-        setUnanchoredIds((prev) => {
-          if (prev.has(highlightId)) return prev;
-          const next = new Set(prev);
-          next.add(highlightId);
-          return next;
-        });
-      }),
-    );
-    unsubscribers.push(
-      renderer.on("selected", ({ text, prefix, suffix, locator }) => {
-        const rect = renderer.getViewportRectForSelection();
-        const stage = stageRef.current;
-        if (!rect || !stage) return;
-        // ⚠️ M31 B2, confirmed by reading the stack rather than by
-        // guessing: `AskPill` is `position: absolute` and renders as a
-        // **direct child of `.stage`** (outside `.pageClip`, so a panel can
-        // roam past the page's own edge), so `.stage` is its containing
-        // block and the only box these numbers may be measured against.
-        const stageRect = stage.getBoundingClientRect();
-        const rawLeft = rect.left + rect.width / 2 - stageRect.left;
-        const rawTop = rect.top - stageRect.top;
-        setPendingSelection({
-          cfi: locator.cfi ?? "",
-          exact: text,
-          prefix,
-          suffix,
-          spineIndex: locator.sectionIndex,
-          // Clamp so a selection right at the edge of the visible page
-          // can't push the pill (which renders above the selection)
-          // off-screen.
-          left: Math.min(Math.max(rawLeft, 40), stageRect.width - 40),
-          top: Math.max(rawTop, 40),
-        });
-      }),
-    );
-    unsubscribers.push(
-      renderer.on("markClicked", (highlightId) => {
-        // M35 §G4: "select/add highlight" mode intercepts a mark click
-        // before it ever opens a panel — `linkQuoteModeRef` (not the
-        // `linkQuoteMode` state) because this handler is registered once
-        // per mount and would otherwise see the value from that render
-        // forever.
-        const mode = linkQuoteModeRef.current;
-        if (mode) {
-          if (!mode.allowExistingHighlightClick) {
-            setLinkQuoteError("Existing highlights can't be added from here — select new text instead.");
-            return;
-          }
-          const clicked = highlightsRef.current.find((h) => h.id === highlightId);
-          if (!clicked || clicked.id === mode.primaryHighlightId) return;
-          const clickedThreadId = clicked.thread?.id ?? null;
-          if (clickedThreadId !== null || clicked.primaryHighlightId !== null) {
-            setLinkQuoteError(
-              clickedThreadId === mode.threadId
-                ? "This quote is already part of this annotation."
-                : "This quote already belongs to a different annotation.",
-            );
-            return;
-          }
-          setLinkQuoteError(null);
-          setLinkQuoteConfirm({ kind: "highlight", highlightId: clicked.id, exact: clicked.exact });
-          return;
-        }
-
-        // A click on a highlight mark also fires as a content 'click' too —
-        // handleContentClick's own mark hit-test (M19.6) is what keeps that
-        // from also turning the page. Clicking a highlight expands its
-        // thread. M35 §D3: a click on a non-primary anchor resolves to the
-        // thread's primary — the one annotation, not a second one on this
-        // passage.
-        const resolvedId = resolveOpenHighlightId(highlightsRef.current, highlightId);
-        setExpandedThread({ highlightId: resolvedId, top: DEFAULT_THREAD_PANEL_TOP, initialAnchorHighlightId: highlightId });
-      }),
-    );
-    // M40 §C7: an open thread panel's `top` follows its mark's live position
-    // while scrolling — PDF.md's own reasoning for why `markRect` and a
-    // `relocated` on scroll exist. Only relevant under `advance: "scroll"`
-    // (a paginated page's marks don't move while a panel is open); the
-    // interface's generic `on("relocated", ...)`, not the EPUB-only
-    // `onEpubRelocated`, since `markRect` is a generic member too.
-    unsubscribers.push(
-      renderer.on("relocated", () => {
-        if (renderer.capabilities.advance !== "scroll") return;
-        const id = expandedThreadRef.current?.highlightId;
-        if (!id || panelFollowRaf !== null) return;
-        panelFollowRaf = requestAnimationFrame(() => {
-          panelFollowRaf = null;
-          if (cancelled) return;
-          const stage = stageRef.current;
-          const rect = renderer.markRect(id);
-          if (!rect || !stage) return;
-          const top = Math.max(rect.top - stage.getBoundingClientRect().top, 40);
-          setExpandedThread((prev) => (prev && prev.highlightId === id ? { ...prev, top } : prev));
-        });
-      }),
-    );
-    unsubscribers.push(
-      renderer.onSectionRendered(({ document: doc, sectionIndex }) => {
-        attachTouchHandlers(doc);
-        doc.addEventListener("click", (event) => handleContentClick(event, doc));
-        doc.addEventListener("mousemove", (event) => handleContentMouseMove(event, doc));
-        doc.addEventListener("mousedown", handleContentMouseDown);
-        doc.addEventListener("mouseup", handleContentMouseUp);
-        doc.addEventListener("keydown", (event) => handleIframeKeydown(event as KeyboardEvent));
-        repaintSearchMarks(sectionIndex);
-      }),
-    );
-    unsubscribers.push(
-      renderer.onEpubRelocated((info) => {
-        // Shared by a real relocation and a repagination-only update — see
-        // publishPageNumbers' old comment (now EpubRenderer.computeChapterPage):
-        // idempotent, called on both.
-        if (info.chapterPage) {
-          setDisplayedPage(info.chapterPage);
-          const weights = sectionWeightRef.current;
-          if (weights) {
-            const existing = bookPageMapRef.current;
-            bookPageMapRef.current = existing
-              ? recordMeasuredPages(existing, info.spineIndex, info.chapterPage.total)
-              : buildBookPageMap(weights, info.spineIndex, info.chapterPage.total);
-            const map = bookPageMapRef.current;
-            const pageInfo = map ? lookupBookPage(map, info.spineIndex, info.chapterPage.page) : null;
-            if (pageInfo) {
-              setBookPage(pageInfo);
-              setProgressPercent(Math.round((pageInfo.page / pageInfo.total) * 100));
-            } else if (info.kind === "relocated" && typeof info.percent === "number") {
-              setProgressPercent(Math.round(info.percent * 100));
-            }
-          } else if (info.kind === "relocated" && typeof info.percent === "number") {
-            setProgressPercent(Math.round(info.percent * 100));
-          }
-        } else if (info.kind === "relocated" && typeof info.percent === "number") {
-          setProgressPercent(Math.round(info.percent * 100));
-        }
-        setScrollChapterPercent(info.scrollPercent);
-
-        if (info.kind !== "relocated") return;
-
-        // M32 A: captured before it's overwritten below — the signal for
-        // "the reader just crossed a chapter boundary" is comparing this
-        // relocation's index against the one *before* it, forward only (a
-        // backward jump, e.g. re-reading, never counts as "finishing" a
-        // chapter). See checkChapterEndQuestions.
-        const previousSpineIndex = previousSpineIndexRef.current;
-        previousSpineIndexRef.current = info.spineIndex;
-        if (previousSpineIndex !== null && info.spineIndex > previousSpineIndex) {
-          void checkChapterEndQuestions(previousSpineIndex);
-        }
-        // M40 §C8: scrolled flow's own "finished this chapter" signal —
-        // arriving at the bottom of the *current* section, rather than
-        // paginating past it into the next one.
-        if (info.sectionEnd) {
-          void checkChapterEndQuestions(info.spineIndex);
-        }
-        setAtStart(info.atStart);
-        setAtEnd(info.atEnd);
-        setCurrentSpineIndex(info.spineIndex);
-        // M21: the audio tint/auto-turn effect needs to know "a page just
-        // turned" even *within* the same spine section (currentSpineIndex
-        // alone wouldn't change) — a plain counter is the cheapest signal.
-        setTurnTick((t) => t + 1);
-
-        // M22.6 C: every relocation — a manual turn, a chapter-nav/TOC jump,
-        // or the follow-the-voice effect's own corrective jump — comes
-        // through here, so this is the one place that can tell them apart.
-        // Landing exactly on the sounding section re-engages (however it
-        // happened); landing anywhere else *without* the follow jump being
-        // the one doing it means the reader just navigated away on purpose.
-        const sounding = playerRef.current.currentSegment;
-        if (sounding) {
-          if (info.spineIndex === sounding.spineIndex) setDetached(false);
-          else if (!followJumpActiveRef.current) setDetached(true);
-        }
-
-        if (info.cfi) {
-          window.clearTimeout(saveTimerRef.current);
-          saveTimerRef.current = window.setTimeout(() => {
-            // M40 §B4: writes the new SerializedLocator form — a legacy bare
-            // CFI is still valid on *read* (parseSerializedLocator), but
-            // every write from here on emits the wrapped form.
-            savePosition(
-              resourceId,
-              serializeLocator({ sectionIndex: info.spineIndex, offset: 0, length: 0, cfi: info.cfi! }),
-              info.spineIndex,
-              typeof info.percent === "number" ? info.percent * 100 : null,
-            );
-          }, POSITION_SAVE_DEBOUNCE_MS);
-        }
-      }),
-    );
 
     // M40 §C1/§C9: `flow` is a `mount()`-time construction option (PDF.md
     // §7.4 — switching modes destroys and recreates the rendition), so the
     // book's saved mode has to be known *before* `mount()` is called, not
     // fetched alongside highlights/chapter-meta afterward the way position
-    // used to be. Moving `fetchPosition` earlier costs nothing (it's an
-    // independent network call either way) and the same settled promise is
-    // reused below instead of fetching it twice.
+    // used to be. M41 §A1 extends this further: *which renderer to
+    // construct* now depends on the same fetch too.
     const positionPromise = fetchPosition(resourceId);
     const initialMount = positionPromise.then(async (position) => {
       if (cancelled || !containerRef.current) return position;
-      await renderer.mount(containerRef.current, { id: resourceId }, {
+
+      const resolvedRenderMode: RenderMode =
+        resourceFormat === "pdf" ? (renderModeOverrideForThisBook ?? position?.renderMode ?? "reflow") : "reflow";
+      const activeRenderer = resolvedRenderMode === "native" ? new PdfRenderer() : new EpubRenderer();
+      renderer = activeRenderer;
+      rendererRef.current = activeRenderer;
+
+      unsubscribers.push(
+        activeRenderer.onUnanchored((highlightId) => {
+          setUnanchoredIds((prev) => {
+            if (prev.has(highlightId)) return prev;
+            const next = new Set(prev);
+            next.add(highlightId);
+            return next;
+          });
+        }),
+      );
+      unsubscribers.push(
+        activeRenderer.on("selected", ({ text, prefix, suffix, locator }) => {
+          const rect = activeRenderer.getViewportRectForSelection();
+          const stage = stageRef.current;
+          if (!rect || !stage) return;
+          // ⚠️ M31 B2, confirmed by reading the stack rather than by
+          // guessing: `AskPill` is `position: absolute` and renders as a
+          // **direct child of `.stage`** (outside `.pageClip`, so a panel can
+          // roam past the page's own edge), so `.stage` is its containing
+          // block and the only box these numbers may be measured against.
+          const stageRect = stage.getBoundingClientRect();
+          const rawLeft = rect.left + rect.width / 2 - stageRect.left;
+          const rawTop = rect.top - stageRect.top;
+          setPendingSelection({
+            cfi: locator.cfi ?? "",
+            exact: text,
+            prefix,
+            suffix,
+            spineIndex: locator.sectionIndex,
+            // Clamp so a selection right at the edge of the visible page
+            // can't push the pill (which renders above the selection)
+            // off-screen.
+            left: Math.min(Math.max(rawLeft, 40), stageRect.width - 40),
+            top: Math.max(rawTop, 40),
+          });
+        }),
+      );
+      unsubscribers.push(
+        activeRenderer.on("markClicked", (highlightId) => {
+          // M35 §G4: "select/add highlight" mode intercepts a mark click
+          // before it ever opens a panel — `linkQuoteModeRef` (not the
+          // `linkQuoteMode` state) because this handler is registered once
+          // per mount and would otherwise see the value from that render
+          // forever.
+          const mode = linkQuoteModeRef.current;
+          if (mode) {
+            if (!mode.allowExistingHighlightClick) {
+              setLinkQuoteError("Existing highlights can't be added from here — select new text instead.");
+              return;
+            }
+            const clicked = highlightsRef.current.find((h) => h.id === highlightId);
+            if (!clicked || clicked.id === mode.primaryHighlightId) return;
+            const clickedThreadId = clicked.thread?.id ?? null;
+            if (clickedThreadId !== null || clicked.primaryHighlightId !== null) {
+              setLinkQuoteError(
+                clickedThreadId === mode.threadId
+                  ? "This quote is already part of this annotation."
+                  : "This quote already belongs to a different annotation.",
+              );
+              return;
+            }
+            setLinkQuoteError(null);
+            setLinkQuoteConfirm({ kind: "highlight", highlightId: clicked.id, exact: clicked.exact });
+            return;
+          }
+
+          // A click on a highlight mark also fires as a content 'click' too —
+          // handleContentClick's own mark hit-test (M19.6) is what keeps that
+          // from also turning the page. Clicking a highlight expands its
+          // thread. M35 §D3: a click on a non-primary anchor resolves to the
+          // thread's primary — the one annotation, not a second one on this
+          // passage.
+          const resolvedId = resolveOpenHighlightId(highlightsRef.current, highlightId);
+          setExpandedThread({ highlightId: resolvedId, top: DEFAULT_THREAD_PANEL_TOP, initialAnchorHighlightId: highlightId });
+        }),
+      );
+      // M40 §C7: an open thread panel's `top` follows its mark's live position
+      // while scrolling — PDF.md's own reasoning for why `markRect` and a
+      // `relocated` on scroll exist. Only relevant under `advance: "scroll"`
+      // (a paginated page's marks don't move while a panel is open); the
+      // interface's generic `on("relocated", ...)`, not the EPUB-only
+      // `onEpubRelocated`, since `markRect` is a generic member too.
+      unsubscribers.push(
+        activeRenderer.on("relocated", () => {
+          if (activeRenderer.capabilities.advance !== "scroll") return;
+          const id = expandedThreadRef.current?.highlightId;
+          if (!id || panelFollowRaf !== null) return;
+          panelFollowRaf = requestAnimationFrame(() => {
+            panelFollowRaf = null;
+            if (cancelled) return;
+            const stage = stageRef.current;
+            const rect = activeRenderer.markRect(id);
+            if (!rect || !stage) return;
+            const top = Math.max(rect.top - stage.getBoundingClientRect().top, 40);
+            setExpandedThread((prev) => (prev && prev.highlightId === id ? { ...prev, top } : prev));
+          });
+        }),
+      );
+      // M41 §A1: `onSectionRendered`/`onEpubRelocated` are genuinely
+      // EPUB-specific event shapes (a per-section DOM Document to attach
+      // gesture listeners to; a relocate payload carrying chapter-page/
+      // scroll-percent concepts a fixed-page surface has no equivalent for) —
+      // kept as named-extras rather than forced onto the shared interface
+      // (M40 §A's own precedent). `PdfRenderer` drives the same downstream
+      // state from the interface's generic `relocated`/`sectionEnd` events
+      // instead, in the branch below. This is the renderer *construction*
+      // seam choosing which low-level event API to speak, not the chrome
+      // branching on format (decision 17c) — every state update either branch
+      // makes is the same handful of setters.
+      if (activeRenderer instanceof EpubRenderer) {
+        const epubRenderer = activeRenderer;
+        unsubscribers.push(
+          epubRenderer.onSectionRendered(({ document: doc, sectionIndex }) => {
+            attachTouchHandlers(doc);
+            doc.addEventListener("click", (event) => handleContentClick(event, doc));
+            doc.addEventListener("mousemove", (event) => handleContentMouseMove(event, doc));
+            doc.addEventListener("mousedown", handleContentMouseDown);
+            doc.addEventListener("mouseup", handleContentMouseUp);
+            doc.addEventListener("keydown", (event) => handleIframeKeydown(event as KeyboardEvent));
+            repaintSearchMarks(sectionIndex);
+          }),
+        );
+        unsubscribers.push(
+          epubRenderer.onEpubRelocated((info) => {
+            // Shared by a real relocation and a repagination-only update — see
+            // publishPageNumbers' old comment (now EpubRenderer.computeChapterPage):
+            // idempotent, called on both.
+            if (info.chapterPage) {
+              setDisplayedPage(info.chapterPage);
+              const weights = sectionWeightRef.current;
+              if (weights) {
+                const existing = bookPageMapRef.current;
+                bookPageMapRef.current = existing
+                  ? recordMeasuredPages(existing, info.spineIndex, info.chapterPage.total)
+                  : buildBookPageMap(weights, info.spineIndex, info.chapterPage.total);
+                const map = bookPageMapRef.current;
+                const pageInfo = map ? lookupBookPage(map, info.spineIndex, info.chapterPage.page) : null;
+                if (pageInfo) {
+                  setBookPage(pageInfo);
+                  setProgressPercent(Math.round((pageInfo.page / pageInfo.total) * 100));
+                } else if (info.kind === "relocated" && typeof info.percent === "number") {
+                  setProgressPercent(Math.round(info.percent * 100));
+                }
+              } else if (info.kind === "relocated" && typeof info.percent === "number") {
+                setProgressPercent(Math.round(info.percent * 100));
+              }
+            } else if (info.kind === "relocated" && typeof info.percent === "number") {
+              setProgressPercent(Math.round(info.percent * 100));
+            }
+            setScrollChapterPercent(info.scrollPercent);
+
+            if (info.kind !== "relocated") return;
+
+            // M32 A: captured before it's overwritten below — the signal for
+            // "the reader just crossed a chapter boundary" is comparing this
+            // relocation's index against the one *before* it, forward only (a
+            // backward jump, e.g. re-reading, never counts as "finishing" a
+            // chapter). See checkChapterEndQuestions.
+            const previousSpineIndex = previousSpineIndexRef.current;
+            previousSpineIndexRef.current = info.spineIndex;
+            if (previousSpineIndex !== null && info.spineIndex > previousSpineIndex) {
+              void checkChapterEndQuestions(previousSpineIndex);
+            }
+            // M40 §C8: scrolled flow's own "finished this chapter" signal —
+            // arriving at the bottom of the *current* section, rather than
+            // paginating past it into the next one.
+            if (info.sectionEnd) {
+              void checkChapterEndQuestions(info.spineIndex);
+            }
+            setAtStart(info.atStart);
+            setAtEnd(info.atEnd);
+            setCurrentSpineIndex(info.spineIndex);
+            // M21: the audio tint/auto-turn effect needs to know "a page just
+            // turned" even *within* the same spine section (currentSpineIndex
+            // alone wouldn't change) — a plain counter is the cheapest signal.
+            setTurnTick((t) => t + 1);
+
+            // M22.6 C: every relocation — a manual turn, a chapter-nav/TOC jump,
+            // or the follow-the-voice effect's own corrective jump — comes
+            // through here, so this is the one place that can tell them apart.
+            // Landing exactly on the sounding section re-engages (however it
+            // happened); landing anywhere else *without* the follow jump being
+            // the one doing it means the reader just navigated away on purpose.
+            const sounding = playerRef.current.currentSegment;
+            if (sounding) {
+              if (info.spineIndex === sounding.spineIndex) setDetached(false);
+              else if (!followJumpActiveRef.current) setDetached(true);
+            }
+
+            if (info.cfi) {
+              window.clearTimeout(saveTimerRef.current);
+              saveTimerRef.current = window.setTimeout(() => {
+                // M40 §B4: writes the new SerializedLocator form — a legacy bare
+                // CFI is still valid on *read* (parseSerializedLocator), but
+                // every write from here on emits the wrapped form.
+                savePosition(
+                  resourceId,
+                  serializeLocator({ sectionIndex: info.spineIndex, offset: 0, length: 0, cfi: info.cfi! }),
+                  info.spineIndex,
+                  typeof info.percent === "number" ? info.percent * 100 : null,
+                );
+              }, POSITION_SAVE_DEBOUNCE_MS);
+            }
+          }),
+        );
+      } else {
+        // M41 §A2/§B1: PdfRenderer's own relocate — a bare Locator plus a
+        // whole-book percent estimate, no chapter-page/scroll-percent concept
+        // (capabilities.pageNumbers is false, so PageNumberDisplay never asks
+        // for one). Every downstream setter below is the same one the EPUB
+        // branch calls; only the source event shape differs.
+        unsubscribers.push(
+          activeRenderer.on("relocated", ({ locator, bookPercent }) => {
+            setCurrentSpineIndex(locator.sectionIndex);
+            if (typeof bookPercent === "number") setProgressPercent(Math.round(bookPercent * 100));
+            setTurnTick((t) => t + 1);
+
+            const sounding = playerRef.current.currentSegment;
+            if (sounding) {
+              if (locator.sectionIndex === sounding.spineIndex) setDetached(false);
+              else if (!followJumpActiveRef.current) setDetached(true);
+            }
+
+            window.clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = window.setTimeout(() => {
+              savePosition(
+                resourceId,
+                serializeLocator(locator),
+                locator.sectionIndex,
+                typeof bookPercent === "number" ? bookPercent * 100 : null,
+              );
+            }, POSITION_SAVE_DEBOUNCE_MS);
+          }),
+        );
+        unsubscribers.push(
+          activeRenderer.on("sectionEnd", () => {
+            // PDF.md §7.2: "sectionEnd is an event, however this surface
+            // defines the end" — here, arriving at a section's own last page.
+            // No forward-only guard (unlike the EPUB branch's boundary-
+            // crossing check): matches EPUB's own scrolled-mode sectionEnd,
+            // which re-fires on a backward-then-forward re-visit too.
+            const spineIndex = rendererRef.current?.currentLocation()?.sectionIndex;
+            if (spineIndex !== undefined) void checkChapterEndQuestions(spineIndex);
+          }),
+        );
+      }
+
+      await activeRenderer.mount(containerRef.current, { id: resourceId }, {
         flow: flowOverrideForThisBook ?? position?.flow ?? "paginated",
         spread: spreadMode,
         fontScale: fontScaleRef.current,
@@ -2691,10 +2794,11 @@ export function ReaderView({
 
     void initialMount
       .then(async (position) => {
-        if (cancelled) return;
-        renderer.applyTheme(themeVars);
-        renderer.setFocusMode(focusModeRef.current);
-        applyCapabilities(renderer.capabilities);
+        if (cancelled || !renderer) return;
+        const activeRenderer = renderer;
+        activeRenderer.applyTheme(themeVars);
+        activeRenderer.setFocusMode(focusModeRef.current);
+        applyCapabilities(activeRenderer.capabilities);
 
         const [resourceHighlights, chapterMeta] = await Promise.all([
           fetchHighlights(resourceId),
@@ -2707,7 +2811,7 @@ export function ReaderView({
           setSectionSpans(buildSectionSpans(chapterMeta.weights));
         }
         highlightsRef.current = resourceHighlights;
-        renderer.setHighlights(resourceHighlights);
+        activeRenderer.setHighlights(resourceHighlights);
         setHighlights(resourceHighlights);
 
         // M35 §D3: navigate to the *clicked* passage (a secondary anchor's
@@ -2726,15 +2830,26 @@ export function ReaderView({
         // M40 §B4: `position.location` is a SerializedLocator — a bare CFI
         // on any row saved before this milestone, the wrapped form on every
         // row saved after it; `parseSerializedLocator` accepts both.
+        // M41 §A2: a jump target with no CFI (a PDF highlight) carries its
+        // real spineIndex/offset/length instead of the EPUB-only
+        // `sectionIndex: 0, offset: 0, length: 0` placeholder — that placeholder
+        // only ever worked because `EpubRenderer.goTo` trusts `loc.cfi` first
+        // and never looks at the rest when one is present; `PdfRenderer` has
+        // none to trust.
         const displayLocator: Locator | undefined =
           jumpTarget && jumpTarget.cfi !== UNRESOLVABLE_CHAPTER_ANCHOR_CFI
-            ? { sectionIndex: 0, offset: 0, length: 0, cfi: jumpTarget.cfi ?? undefined }
+            ? {
+                sectionIndex: jumpTarget.spineIndex,
+                offset: jumpTarget.offset ?? 0,
+                length: jumpTarget.length ?? 0,
+                cfi: jumpTarget.cfi ?? undefined,
+              }
             : position?.location
               ? parseSerializedLocator(position.location)
               : undefined;
 
         if (displayLocator) {
-          await renderer.goTo(displayLocator);
+          await activeRenderer.goTo(displayLocator);
         }
         if (cancelled) return;
         setStatus("ready");
@@ -2752,9 +2867,9 @@ export function ReaderView({
         // CFI (and, per M19.6, a stable book-wide page number); M12's table
         // of contents also needs them (chapter-start percents are derived
         // from them, see toc.ts).
-        renderer.ensureLocations().then(() => {
+        activeRenderer.ensureLocations().then(() => {
           if (cancelled) return;
-          setToc(renderer.getToc());
+          setToc(activeRenderer.getToc());
         });
       })
       .catch(() => {
@@ -2773,17 +2888,17 @@ export function ReaderView({
       if (panelFollowRaf !== null) cancelAnimationFrame(panelFollowRaf);
       for (const off of unsubscribers) off();
       rendererRef.current = null;
-      renderer.destroy();
+      renderer?.destroy();
     };
     // themeVars intentionally excluded — handled by the effect below so
     // toggling the theme doesn't tear down and reload the whole book.
-    // `flowOverride` is included deliberately (M40 §C9): setting it via the
-    // strip control is what tears down and reconstructs the renderer with
-    // the new flow, per PDF.md §7.4 ("switching modes destroys and recreates
-    // the rendition") — everything above already tells that trigger apart
-    // from an ordinary book change.
+    // `flowOverride`/`renderModeOverride` are included deliberately (M40
+    // §C9/M41 §A1): setting either via the strip control is what tears down
+    // and reconstructs the renderer, per PDF.md §7.4 ("switching modes
+    // destroys and recreates the rendition") — everything above already
+    // tells that trigger apart from an ordinary book change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resourceId, flowOverride]);
+  }, [resourceId, flowOverride, renderModeOverride]);
 
   /** M40 §C9: the strip's reading-mode toggle. Persists the switch to
    * `reading_state.flow` (best-effort, alongside whatever position is
@@ -2801,6 +2916,19 @@ export function ReaderView({
       savePosition(resourceId, serializeLocator(loc), currentSpineIndex, progressPercent, mode);
     }
     setFlowOverride(mode);
+  }
+
+  /** M41 §A1: the strip's reflow/native switch, for a `format: 'pdf'`
+   * resource only — same shape as `setReadingFlow` immediately above,
+   * persisting to `reading_state.render_mode` before flipping
+   * `renderModeOverride`, which is what actually tears down and
+   * reconstructs the renderer with the new mode (the book-loading effect). */
+  function setReadingMode(mode: RenderMode) {
+    const loc = rendererRef.current?.currentLocation();
+    if (loc) {
+      savePosition(resourceId, serializeLocator(loc), currentSpineIndex, progressPercent, undefined, mode);
+    }
+    setRenderModeOverride(mode);
   }
 
   // M40 §A: `EpubRenderer.applyTheme`/`setFocusMode` do their own full
@@ -3027,11 +3155,13 @@ export function ReaderView({
     });
     if (created) {
       setHighlights((prev) => [...prev, created]);
-      // This CFI was just derived from the live, currently-rendered
-      // document, so it's trusted without going through resolveAnchor again.
+      // This CFI (or, for a PDF, the offset/length the server just resolved
+      // from spineIndex + exact/prefix/suffix — M41 §A2) was just derived
+      // from the live, currently-rendered document, so it's trusted without
+      // going through resolveAnchor again.
       rendererRef.current?.paintMark(
         created.id,
-        { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi ?? undefined },
+        { sectionIndex: created.spineIndex, offset: created.offset ?? 0, length: created.length ?? 0, cfi: created.cfi ?? undefined },
         created.kind,
       );
       clearNativeSelection();
@@ -3081,7 +3211,7 @@ export function ReaderView({
     setHighlights((prev) => [...prev, created]);
     rendererRef.current?.paintMark(
       created.id,
-      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi ?? undefined },
+      { sectionIndex: created.spineIndex, offset: created.offset ?? 0, length: created.length ?? 0, cfi: created.cfi ?? undefined },
       created.kind,
     );
     clearNativeSelection();
@@ -3173,7 +3303,7 @@ export function ReaderView({
     setHighlights((prev) => [...prev, created]);
     rendererRef.current?.paintMark(
       created.id,
-      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi ?? undefined },
+      { sectionIndex: created.spineIndex, offset: created.offset ?? 0, length: created.length ?? 0, cfi: created.cfi ?? undefined },
       created.kind,
     );
 
@@ -3231,7 +3361,7 @@ export function ReaderView({
     setHighlights((prev) => [...prev, created]);
     rendererRef.current?.paintMark(
       created.id,
-      { sectionIndex: created.spineIndex, offset: 0, length: 0, cfi: created.cfi ?? undefined },
+      { sectionIndex: created.spineIndex, offset: created.offset ?? 0, length: created.length ?? 0, cfi: created.cfi ?? undefined },
       created.kind,
     );
     setDefinitionCard({ left, top, term, highlightId: created.id, result: null });
@@ -4243,12 +4373,27 @@ export function ReaderView({
             {progressGroup}
             {digestCluster}
             {listeningCluster}
-            <IconButton
-              icon={<ScrollModeIcon scrolled={capabilities.advance === "scroll"} />}
-              label={capabilities.advance === "scroll" ? "Switch to paginated" : "Switch to continuous scroll"}
-              pressed={capabilities.advance === "scroll"}
-              onClick={() => setReadingFlow(capabilities.advance === "scroll" ? "paginated" : "scrolled")}
-            />
+            {/* M40 §C9: a reader setting remembered per book — meaningless
+                for the native pane (no flow concept there), so hidden under
+                capabilities.advance === "image" rather than shown inert. */}
+            {capabilities.advance !== "image" && (
+              <IconButton
+                icon={<ScrollModeIcon scrolled={capabilities.advance === "scroll"} />}
+                label={capabilities.advance === "scroll" ? "Switch to paginated" : "Switch to continuous scroll"}
+                pressed={capabilities.advance === "scroll"}
+                onClick={() => setReadingFlow(capabilities.advance === "scroll" ? "paginated" : "scrolled")}
+              />
+            )}
+            {/* M41 §A1: absent for an EPUB — only a format: 'pdf' resource
+                ever has a reflow/native pane to switch between. */}
+            {resourceFormat === "pdf" && (
+              <IconButton
+                icon={<RenderModeIcon native={capabilities.advance === "image"} />}
+                label={capabilities.advance === "image" ? "Switch to reflowed text" : "Switch to original PDF"}
+                pressed={capabilities.advance === "image"}
+                onClick={() => setReadingMode(capabilities.advance === "image" ? "reflow" : "native")}
+              />
+            )}
             <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.fullscreen}>
               <IconButton
                 icon={<FullscreenIcon />}
@@ -4289,13 +4434,26 @@ export function ReaderView({
             <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
             {/* M40 §C9: a reader setting remembered per book, reachable from
                 the strip — not gated on any capability itself (every EPUB
-                supports both flows), unlike the controls §C3 hides. */}
-            <IconButton
-              icon={<ScrollModeIcon scrolled={capabilities.advance === "scroll"} />}
-              label={capabilities.advance === "scroll" ? "Switch to paginated" : "Switch to continuous scroll"}
-              pressed={capabilities.advance === "scroll"}
-              onClick={() => setReadingFlow(capabilities.advance === "scroll" ? "paginated" : "scrolled")}
-            />
+                supports both flows), unlike the controls §C3 hides. Hidden
+                for the native pane (M41 §A1), which has no flow concept. */}
+            {capabilities.advance !== "image" && (
+              <IconButton
+                icon={<ScrollModeIcon scrolled={capabilities.advance === "scroll"} />}
+                label={capabilities.advance === "scroll" ? "Switch to paginated" : "Switch to continuous scroll"}
+                pressed={capabilities.advance === "scroll"}
+                onClick={() => setReadingFlow(capabilities.advance === "scroll" ? "paginated" : "scrolled")}
+              />
+            )}
+            {/* M41 §A1: absent for an EPUB — only a format: 'pdf' resource
+                ever has a reflow/native pane to switch between. */}
+            {resourceFormat === "pdf" && (
+              <IconButton
+                icon={<RenderModeIcon native={capabilities.advance === "image"} />}
+                label={capabilities.advance === "image" ? "Switch to reflowed text" : "Switch to original PDF"}
+                pressed={capabilities.advance === "image"}
+                onClick={() => setReadingMode(capabilities.advance === "image" ? "reflow" : "native")}
+              />
+            )}
             <IconButton
               icon={<FullscreenIcon />}
               label="Fullscreen"

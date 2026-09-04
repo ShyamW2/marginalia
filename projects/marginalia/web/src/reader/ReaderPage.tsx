@@ -320,6 +320,7 @@ export function ReaderPage({
             resourceId={resource.id}
             resourceTitle={resource.title}
             resourceAuthor={resource.author ?? null}
+            resourceFormat={resource.format}
             initialHighlightId={initialLocationState?.jumpToHighlightId}
             initialQuestion={initialLocationState?.jumpToQuestion}
             spreadMode={spreadMode}
