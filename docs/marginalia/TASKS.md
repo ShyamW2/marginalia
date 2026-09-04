@@ -3513,22 +3513,51 @@ real paper. Drive it with the same five PDFs from M39 §A8.
 
 - [ ] **A1.** A `format: 'pdf'` resource opens in reflow or native, remembered per book.
       The switch is in the reader strip, and is absent for an EPUB.
+      _Code done, left unchecked — see NOTES.md "M41 §A — the mode switch, and a bug the
+      tests couldn't have caught": `reading_state.render_mode` (migration 43), the strip's
+      `RenderModeIcon` toggle, `setReadingMode`. **Verified live** end to end against the
+      operator's one real PDF (native mount, page nav, round-trip both directions) — this
+      also caught and fixed a real crash (`pdf.js` needs `GlobalWorkerOptions.workerSrc`,
+      thrown before touching any bytes, invisible to every test in this arc so far)._
 - [ ] **A2.** ⚠️ Highlights are **shared between the two modes**, not duplicated — both
       resolve the same `Locator` against the same `resource_text`. A highlight made in
       reflow appears in native and back.
       _Acceptance: highlight in reflow, switch to native, and the mark is on the right words
       of the right page — and vice versa._
+      _Code done, left unchecked. `pdf_page_sections` (migration 44) + canonical-text
+      resolution in `PdfRenderer`, covered by unit tests (`PdfRenderer.test.ts`'s
+      "section-aware" block). **Not live-verified**: the library's only PDF predates
+      migration 44 (exercises the old single-section fallback only) and, separately, has
+      a pre-existing reflow-pane bug unrelated to this milestone (mount hangs, confirmed
+      against pre-M41 code too) — blocks a live cross-mode check on it either way. A fresh
+      PDF import would exercise both gaps; see NOTES.md for the full narrative._
 
 #### B. Chrome parity
 
 - [ ] **B1.** Threads, notes, tags, the ask flow, Define, the glossary and the Digest all
       work in native mode with no format-specific branch — they act on highlights, which are
       already format-neutral after M40 §B.
+      _Code done, left unchecked. Falls out of the renderer union (`rendererRef` is now
+      `EpubRenderer | PdfRenderer`) with zero format branches in `ReaderView` — these
+      features only ever touched `highlights` state and the shared interface. Not
+      independently live-verified (needs the same fresh import as A2)._
 - [ ] **B2.** The find bar over native: text search against `resource_text` with
       text-layer rect painting.
+      _Code done, left unchecked. `PdfRenderer.getRenderedSectionText`/`paintSearchMarks`/
+      `clearSearchMarks` implemented; `ReaderView`'s find-bar code already called these
+      generically. Not live-verified._
 - [ ] **B3.** Audio sentence-follow tinting re-expressed over text-layer rects.
+      _Code done, left unchecked. `PdfRenderer.setTint`/`isLocatorVisible` implemented;
+      the audio-follow effect already called these generically. Not live-verified (needs
+      a running TTS engine, same caveat M40 §A's own Verify flagged for the EPUB path)._
 - [ ] **B4.** ⚠️ The M20/M27 page fold does **not** apply to fixed pages and must not be
       faked. `capabilities.pageFold = false` hides it; page turn is plain page-to-page.
+      _Done. `usePageTurnAnimation`'s `resolveRenderer()` ladder now checks
+      `pageFoldEnabled` (= `capabilities.pageFold`) first, forcing "slide" regardless of
+      the reader's own curl/slide preference — previously nothing stopped a curl being
+      requested under a capability profile that says it doesn't apply. Verified live: the
+      native pane's page turns showed no fold chrome, drag surface, or turn-zone
+      vignettes throughout every native-mode check above._
 
 #### C. Zoom and navigation
 

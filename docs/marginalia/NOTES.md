@@ -8135,3 +8135,99 @@ on East of Eden, and several `reading_state.flow`/`location` changes on it, left
 book would have worked just as well and is the better default next time) rather than as
 an unplanned side effect. Not cleaned up automatically; surfaced to the operator instead
 of assuming it should be reverted.
+
+## M41 §A — the mode switch, and a bug the tests couldn't have caught — 2026-09-04
+
+Implemented A1 (the reflow/native switch) and A2 (highlights shared between the two
+panes, PDF.md §7.5's own acceptance test), plus most of B (chrome parity) as a
+consequence of finishing the renderer union M40 §A3 deliberately left half-done ("the
+abstraction is genuinely proven only once a second renderer actually consumes it").
+
+**A2's design, not prescribed by PDF.md**: `PdfRenderer`'s `Locator` offsets are now a
+slice of the *canonical* `resource_text` a section holds, not pdf.js's own raw per-page
+text (M40 §D's original shape, which treated the whole document as section 0). Resolving
+a stored Locator against whichever page is currently rendered goes through a text search
+(`findAnchorInText`, the same primitive `resolveAnchor`'s own fallback step already
+uses) — reconstruct the quote from canonical text, then find it in the page's own raw
+text — rather than trusting an offset as a raw index into anything pdf.js produced. A new
+`pdf_page_sections` table (migration 44), built once at import from the *same* boundary
+detection that produces the spine (`buildSectionsWithPageIndex`), is what makes this
+possible: it's the bridge between "which page is on screen" and "which `resource_text`
+section does its content belong to." A PDF imported before this migration has no such
+table and falls back to M40 §D's original single-section behaviour verbatim (both paths
+covered by tests; the fallback is not a stub, it's the real M40 §D code path unchanged).
+
+**Real bug found live, not by any test**: switching to native mode crashed silently on
+every real attempt — `pdf.js` throws `"No GlobalWorkerOptions.workerSrc specified"` from
+inside `getDocument()`, before it ever touches the fetched bytes. Neither `PdfRenderer`'s
+own test file nor M40 §D caught this: jsdom's `getDocument()` doesn't reach the real
+worker-creation path a browser does, and M40 §D never actually mounted in a browser
+(headless, "not routed to from any UI yet" by its own words). Fixed by importing the
+worker script through Vite's `?url` asset-import suffix and assigning it to
+`GlobalWorkerOptions.workerSrc` — guarded behind `!import.meta.env.VITEST` since that
+same import resolves to a real absolute filesystem path under Vitest that pdf.js's
+fake-worker fallback then can't `import()` the way a browser's module loader can (a
+second, different failure from the first, found immediately after fixing it and caught by
+the existing test suite going red rather than live). This is exactly the class of bug
+PDF.md's own "Verification: entirely live" instruction for this milestone exists to catch
+— confirmed by trying it.
+
+**Two more real bugs, both from a stale placeholder**: four `paintMark(...)` call sites
+(right after creating a highlight from a live selection) hardcoded
+`{ offset: 0, length: 0 }` — harmless for EPUB, where `paintMark` returns immediately once
+it sees a real `loc.cfi` and never looks at the rest, but wrong for a PDF highlight, which
+has no CFI and needs those fields to mean something. Same story for the "jump to a
+highlight with no CFI" path (posed-question anchors, and now PDF highlights): it built
+`{ sectionIndex: 0, offset: 0, length: 0 }` unconditionally rather than the highlight's
+real `spineIndex`/`offset`/`length`. Both fixed to pass the real values through — found by
+reading the call sites while wiring `PdfRenderer` in, not live, though the second one
+would have surfaced immediately on the first "reveal in reader" click on a PDF highlight.
+
+**Verified live** (Playwright, headless Chromium, against the operator's actual running
+dev server — no separate throwaway instance, see below): opened the one real PDF in the
+library ("A Programming Paradigm for Spatiotemporal Composability", imported before
+migration 44 so this exercises the *legacy* fallback path, not the new section-aware one
+— see below), switched to native, confirmed a real `<canvas>` and `.marginalia-pdf-text-layer`
+appear with the paper's actual text ("A Programming Paradigm for Spatiotemporal
+Composability / Yifan Shi..."), paged forward with `next()` and saw the Contents/TOC page
+render, switched back and forth between native and reflow twice with no console errors.
+The mode-switch control itself (`RenderModeIcon`, strip placement, label, absence for
+every EPUB in the library) was exercised the same way.
+
+**Not verified live: A2's actual cross-mode claim** ("highlight in reflow, switch to
+native, and the mark is on the right words of the right page — and vice versa"), because
+this library's one PDF resource turned out to have a **separate, pre-existing bug**: its
+reflow pane never renders at all — no iframe ever appears, no console error, `status`
+never reaches `"ready"` or `"error"`, `mount()` simply hangs. **Confirmed pre-existing and
+unrelated to this milestone**: reverted `ReaderView.tsx` to its exact pre-M41 content
+(`git show f21fd8c:...`, temporarily, restored immediately after) and reproduced the
+identical hang against the same resource — meanwhile a different EPUB (Metamorphosis)
+opened perfectly throughout, ruling out a systemic reflow regression. Root cause not
+chased further (out of scope for A/B; smells like something specific to this generated
+`.reflow.epub`, an M39 concern) — worth a look before relying on this resource for any
+further live PDF testing. Because reflow is unusable for this resource, and it's the only
+PDF in the library, A2's section-aware path (which needs a post-migration-44 import) has
+had **no live exercise at all**, only the unit tests in `PdfRenderer.test.ts`'s own
+"section-aware" describe block. A fresh PDF import (any real paper) would exercise both
+gaps at once and is the natural next step.
+
+**On testing against the operator's real running instance**: the dev server (`concurrently`,
+started before this session) was already up, and its `tsx watch` auto-restarted on file
+saves mid-session and applied migrations 43/44 on its own — confirmed via a direct,
+read-only `better-sqlite3` query before touching anything further, same caution
+[[marginalia-data-dir-caution]] asks for. No book content, highlights, or resources were
+created, deleted, or modified — the only real-data side effect was the one PDF's
+`reading_state.render_mode` flipping to `"native"` and back to `"reflow"` while clicking
+through the mode switch, restored to its original value (confirmed by a final read) before
+this session moved on.
+
+**TASKS.md left unchecked**, deliberately, for A1/A2/B: the milestone's own acceptance
+bar is "entirely live," and A2's specific claim — the actual point of the milestone —
+hasn't had that yet, for the reasons above. What's true: the code is written, the seam is
+type-consistent across both concrete renderers with no `instanceof` outside the one
+documented exception, the server round-trips its new migrations/routes against a real
+populated database, the full test suite is green (server: 553, web: 524, including 8 for
+`PdfRenderer` alone), and native mode itself — including the one real crash a live check
+actually caught — is confirmed working end to end. What's still open is a fresh-PDF live
+pass exercising A2's cross-mode claim specifically, blocked today only by the unrelated
+reflow bug above.
