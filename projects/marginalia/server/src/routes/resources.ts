@@ -203,6 +203,7 @@ resourcesRouter.put("/:id/position", (req, res) => {
     parsed.data.location,
     parsed.data.spineIndex ?? null,
     parsed.data.percent ?? null,
+    parsed.data.flow,
   );
   res.json(position);
 });

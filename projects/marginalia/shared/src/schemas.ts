@@ -102,6 +102,15 @@ export type ResourceSummary = z.infer<typeof ResourceSummarySchema>;
 // Reading position
 // ---------------------------------------------------------------------------
 
+// M40 §C9: the reading mode is a reader setting *remembered per book*, not
+// the global (format-blind) settings `readerMargin`/`spreadMode`/etc. use —
+// so it lives on `reading_state`, the one table already scoped by
+// resourceId, rather than `settings`. Mirrors `RendererOptions["flow"]`
+// (`web/src/reader/renderer/types.ts`) but lives in shared/ since the server
+// reads and writes it too.
+export const ReadingFlowSchema = z.enum(["paginated", "scrolled"]);
+export type ReadingFlow = z.infer<typeof ReadingFlowSchema>;
+
 export const ReadingPositionSchema = z.object({
   resourceId: z.string(),
   // M40 §B4: an opaque SerializedLocator — a bare epub.js CFI on any row
@@ -116,6 +125,10 @@ export const ReadingPositionSchema = z.object({
   // itself off spoiling past where the reader actually is.
   spineIndex: z.number().int().nonnegative().nullable(),
   percent: z.number().min(0).max(100).nullable(),
+  // M40 §C9: defaults to "paginated" for every row written before this
+  // migration (migration 42's own column default), never null/optional —
+  // a book that has never had its mode touched still reads as paginated.
+  flow: ReadingFlowSchema,
   updatedAt: z.string(),
 });
 export type ReadingPosition = z.infer<typeof ReadingPositionSchema>;
@@ -124,6 +137,9 @@ export const UpdateReadingPositionBodySchema = z.object({
   location: z.string().min(1),
   spineIndex: z.number().int().nonnegative().nullable().optional(),
   percent: z.number().min(0).max(100).nullable().optional(),
+  // Optional: a plain position save (every scroll/turn) leaves the book's
+  // saved mode untouched; only an explicit mode switch sends this.
+  flow: ReadingFlowSchema.optional(),
 });
 export type UpdateReadingPositionBody = z.infer<
   typeof UpdateReadingPositionBodySchema

@@ -10,7 +10,9 @@ import { audioTintStyle, markStyleForKind, searchMarkStyle } from "../../highlig
 import {
   chapterPageFromGeometry,
   installTurnFix,
+  readScrollGeometry,
   readTurnGeometry,
+  scrollProgressFromGeometry,
   shownSectionIndex,
   type PaginatedManager,
 } from "../../pageTurn.js";
@@ -153,8 +155,27 @@ export interface EpubRelocatedInfo {
   percent: number | null;
   /** null exactly when `publishPageNumbers`'s own original guard failed —
    * the epub.js manager wasn't ready yet. `ReaderView` falls back to the
-   * percentage-based progress readout in that case, same as before. */
+   * percentage-based progress readout in that case, same as before. Always
+   * null under `flow: "scrolled"` — pageTurn.ts's geometry is a paginated
+   * measure (PDF.md §7.4: "do not derive [chapter %] from
+   * `location.start.displayed.page/.total`"). */
   chapterPage: { page: number; total: number } | null;
+  /** M40 §C5: `scrollTop / (scrollHeight - clientHeight)` of the section's
+   * own scroll container — the scrolled-flow sibling of `chapterPage`,
+   * populated only under `flow: "scrolled"` (null under `"paginated"`, the
+   * same way `chapterPage` is null under `"scrolled"`). Measured directly
+   * off the manager's container per PDF.md §7.4, not derived from epub.js's
+   * own paginated-only displayed-page pair. */
+  scrollPercent: number | null;
+  /** M40 §C8: true on exactly the relocation that is the *arrival* at the
+   * bottom of a scrolled section — never on a later relocation still sitting
+   * there. Mirrors the interface's own `sectionEnd` event (also emitted, for
+   * a consumer that only holds the abstract `ResourceRenderer`); carried
+   * here too so `ReaderView`'s single `onEpubRelocated` handler can act on
+   * it inline, using `info.spineIndex` directly, rather than a second
+   * listener racing this one over which fires first. Always false under
+   * `flow: "paginated"` and for a `"repaginated"` update. */
+  sectionEnd: boolean;
 }
 
 type Listener<T> = (arg: T) => void;
@@ -170,16 +191,31 @@ type Listener<T> = (arg: T) => void;
  * second renderer exists to prove it against would mean inventing
  * speculative interface members. See docs/marginalia/TASKS.md M40 §A.
  */
+/** PDF.md §7.4's capability table — `flow` is a `mount()`-time construction
+ * option (switching modes destroys and recreates the rendition, per that
+ * section), so `capabilities` is resolved once at mount and held, not
+ * recomputed per call. */
+export const PAGINATED_CAPABILITIES: RendererCapabilities = {
+  spread: true,
+  fontScale: true,
+  margins: true,
+  pageFold: true,
+  pageNumbers: true,
+  textSelection: true,
+  advance: "page",
+};
+const SCROLLED_CAPABILITIES: RendererCapabilities = {
+  spread: false,
+  fontScale: true,
+  margins: true,
+  pageFold: false,
+  pageNumbers: false,
+  textSelection: true,
+  advance: "scroll",
+};
+
 export class EpubRenderer implements ResourceRenderer {
-  readonly capabilities: RendererCapabilities = {
-    spread: true,
-    fontScale: true,
-    margins: true,
-    pageFold: true,
-    pageNumbers: true,
-    textSelection: true,
-    advance: "page",
-  };
+  capabilities: RendererCapabilities = PAGINATED_CAPABILITIES;
 
   private book: Book | null = null;
   private rendition: Rendition | null = null;
@@ -226,6 +262,12 @@ export class EpubRenderer implements ResourceRenderer {
   private redisplayTimer: number | undefined;
   private spreadMode: RendererOptions["spread"] = "auto";
   private marginPx = 0;
+  private flow: RendererOptions["flow"] = "paginated";
+  /** M40 §C8: `sectionEnd` fires once per *arrival* at the bottom of a
+   * scrolled section, not once per scroll event while sitting at the
+   * bottom. Reset whenever a new section renders or the reader scrolls back
+   * up, so scrolling to the bottom again later is a new arrival. */
+  private scrollEndFired = false;
 
   private lastSelectionViewportRect: DOMRect | null = null;
 
@@ -250,6 +292,8 @@ export class EpubRenderer implements ResourceRenderer {
     this.spreadMode = opts.spread;
     this.fontScale = opts.fontScale;
     this.marginPx = opts.marginPx;
+    this.flow = opts.flow;
+    this.capabilities = opts.flow === "scrolled" ? SCROLLED_CAPABILITIES : PAGINATED_CAPABILITIES;
 
     const initialWidth = this.pinContainerWidth();
 
@@ -811,9 +855,24 @@ export class EpubRenderer implements ResourceRenderer {
    * loses to sub-pixel `getBoundingClientRect` rounding right at page
    * boundaries. */
   private computeChapterPage(): { page: number; total: number } | null {
+    // pageTurn.ts's geometry is a column-width measure — meaningless once
+    // the section scrolls vertically instead (PDF.md §7.4).
+    if (this.flow === "scrolled") return null;
     const manager = managerOf(this.rendition);
     if (!manager?.container) return null;
     return chapterPageFromGeometry(readTurnGeometry(manager));
+  }
+
+  /** M40 §C5/§C8: scrolled-flow's own progress and "reached the end" signal
+   * — measured directly off the manager's own scroll container, never
+   * derived from epub.js's paginated `location.start.displayed` (PDF.md
+   * §7.4's own warning: that pair means something different once the
+   * section scrolls instead of paginates). */
+  private computeScrollProgress(): { percent: number; atBottom: boolean } | null {
+    if (this.flow !== "scrolled") return null;
+    const manager = managerOf(this.rendition);
+    if (!manager?.container) return null;
+    return scrollProgressFromGeometry(readScrollGeometry(manager));
   }
 
   private handleSectionRepaginated(section: unknown): void {
@@ -831,7 +890,17 @@ export class EpubRenderer implements ResourceRenderer {
       refreshHighlightOverlays(this.rendition);
       if (chapterPage) {
         this.epubRelocatedListeners.forEach((cb) =>
-          cb({ kind: "repaginated", spineIndex: index, cfi: null, atStart: false, atEnd: false, percent: null, chapterPage }),
+          cb({
+            kind: "repaginated",
+            spineIndex: index,
+            cfi: null,
+            atStart: false,
+            atEnd: false,
+            percent: null,
+            chapterPage,
+            scrollPercent: null,
+            sectionEnd: false,
+          }),
         );
       }
     });
@@ -841,7 +910,23 @@ export class EpubRenderer implements ResourceRenderer {
     this.currentCfi = location.start.cfi;
     this.currentSpineIndex = location.start.index;
     const chapterPage = this.computeChapterPage();
+    const scrollProgress = this.computeScrollProgress();
     const pct = location.start.percentage;
+
+    // M40 §C8: an *arrival* at the bottom, not every scroll tick already
+    // there — `handleRendered` resets this back to false for the next
+    // section (a fresh scroll position of 0), and scrolling back up from
+    // the bottom resets it here so scrolling back down re-fires once more.
+    let justArrivedAtEnd = false;
+    if (scrollProgress) {
+      if (scrollProgress.atBottom && !this.scrollEndFired) {
+        this.scrollEndFired = true;
+        justArrivedAtEnd = true;
+        this.emit("sectionEnd", undefined as never);
+      } else if (!scrollProgress.atBottom) {
+        this.scrollEndFired = false;
+      }
+    }
 
     this.epubRelocatedListeners.forEach((cb) =>
       cb({
@@ -852,13 +937,15 @@ export class EpubRenderer implements ResourceRenderer {
         atEnd: Boolean(location.atEnd),
         percent: typeof pct === "number" ? pct : null,
         chapterPage,
+        scrollPercent: scrollProgress?.percent ?? null,
+        sectionEnd: justArrivedAtEnd,
       }),
     );
 
     this.emit("relocated", {
       locator: { sectionIndex: location.start.index, offset: 0, length: 0, cfi: location.start.cfi },
       bookPercent: typeof pct === "number" ? Math.round(pct * 100) : null,
-      sectionPercent: chapterPage ? chapterPage.page / chapterPage.total : 0,
+      sectionPercent: chapterPage ? chapterPage.page / chapterPage.total : (scrollProgress?.percent ?? 0),
     });
   }
 
@@ -866,6 +953,10 @@ export class EpubRenderer implements ResourceRenderer {
     const contents = (view as ViewWithContents).contents;
     if (!contents) return;
     this.currentContents = contents;
+    // A new section is a fresh iframe scrolled to its own top — whatever
+    // "arrived at the bottom" this milestone last saw belonged to the
+    // section that just left.
+    this.scrollEndFired = false;
     this.resolveHighlightsForSection(contents);
     this.sectionRenderedListeners.forEach((cb) => cb({ document: contents.document, sectionIndex: contents.sectionIndex }));
 

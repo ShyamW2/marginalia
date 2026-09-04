@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import type {
+  ReadingFlow,
   ReadingPosition,
   Resource,
   ResourceSummary,
@@ -187,7 +188,7 @@ export function getReadingPosition(
 ): ReadingPosition | undefined {
   const row = db
     .prepare(
-      "SELECT resource_id, location, spine_index, percent, updated_at FROM reading_state WHERE resource_id = ?",
+      "SELECT resource_id, location, spine_index, percent, flow, updated_at FROM reading_state WHERE resource_id = ?",
     )
     .get(resourceId) as
     | {
@@ -195,6 +196,7 @@ export function getReadingPosition(
         location: string;
         spine_index: number | null;
         percent: number | null;
+        flow: ReadingFlow;
         updated_at: string;
       }
     | undefined;
@@ -204,6 +206,7 @@ export function getReadingPosition(
     location: row.location,
     spineIndex: row.spine_index,
     percent: row.percent,
+    flow: row.flow,
     updatedAt: row.updated_at,
   };
 }
@@ -214,15 +217,21 @@ export function setReadingPosition(
   location: string,
   spineIndex: number | null = null,
   percent: number | null = null,
+  // M40 §C9: undefined means "a plain position save — leave the book's
+  // saved mode as it is", not "reset it to paginated". `COALESCE` below
+  // picks the existing row's value (an update) or the column's own
+  // 'paginated' default (a fresh insert) whenever this is undefined.
+  flow?: ReadingFlow,
 ): ReadingPosition {
   const updatedAt = new Date().toISOString();
   db.prepare(
-    `INSERT INTO reading_state (resource_id, location, spine_index, percent, updated_at)
-     VALUES (@resourceId, @location, @spineIndex, @percent, @updatedAt)
+    `INSERT INTO reading_state (resource_id, location, spine_index, percent, flow, updated_at)
+     VALUES (@resourceId, @location, @spineIndex, @percent, COALESCE(@flow, 'paginated'), @updatedAt)
      ON CONFLICT (resource_id) DO UPDATE SET
-       location = @location, spine_index = @spineIndex, percent = @percent, updated_at = @updatedAt`,
-  ).run({ resourceId, location, spineIndex, percent, updatedAt });
-  return { resourceId, location, spineIndex, percent, updatedAt };
+       location = @location, spine_index = @spineIndex, percent = @percent,
+       flow = COALESCE(@flow, reading_state.flow), updated_at = @updatedAt`,
+  ).run({ resourceId, location, spineIndex, percent, flow: flow ?? null, updatedAt });
+  return getReadingPosition(db, resourceId)!;
 }
 
 /** M19.6 "page numbers, book-wide and stable": the cached

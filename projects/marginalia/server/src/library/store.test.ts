@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDb } from "../db.js";
-import { getResourceById, listResourceSummaries, setResourceKind } from "./store.js";
+import { getReadingPosition, getResourceById, listResourceSummaries, setReadingPosition, setResourceKind } from "./store.js";
 import { createHighlight } from "../annotations/highlights.js";
 import { createThread } from "../annotations/threads.js";
 
@@ -67,6 +67,44 @@ describe("resources.kind / text_layer", () => {
     setResourceKind(db, resourceId, "prose");
     expect(getResourceById(db, resourceId)?.kind).toBe("prose");
     expect(getResourceById(db, resourceId)?.textLayer).toBe(true);
+    db.close();
+  });
+});
+
+// M40 §C9 (migration 42): the reading mode is per-book state, so it lives
+// alongside the position it's saved next to rather than the global settings
+// table — and a plain position save (the common case, every scroll/turn)
+// must not silently reset it back to "paginated".
+describe("setReadingPosition — flow", () => {
+  it("defaults a brand-new row to 'paginated' when no flow is given", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    setReadingPosition(db, resourceId, "loc-1", 0, 0);
+    expect(getReadingPosition(db, resourceId)?.flow).toBe("paginated");
+    db.close();
+  });
+
+  it("a plain position save leaves a previously-set flow untouched", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    setReadingPosition(db, resourceId, "loc-1", 0, 0, "scrolled");
+    expect(getReadingPosition(db, resourceId)?.flow).toBe("scrolled");
+
+    setReadingPosition(db, resourceId, "loc-2", 1, 10);
+    expect(getReadingPosition(db, resourceId)?.flow).toBe("scrolled");
+    expect(getReadingPosition(db, resourceId)?.location).toBe("loc-2");
+    db.close();
+  });
+
+  it("an explicit flow switches the saved mode on an existing row", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    setReadingPosition(db, resourceId, "loc-1", 0, 0, "paginated");
+    setReadingPosition(db, resourceId, "loc-1", 0, 0, "scrolled");
+    expect(getReadingPosition(db, resourceId)?.flow).toBe("scrolled");
     db.close();
   });
 });

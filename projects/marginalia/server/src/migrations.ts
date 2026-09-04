@@ -1032,4 +1032,17 @@ export const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    // M40 §C9: the reading mode ("paginated" | "scrolled") is a per-book
+    // reader setting, so it lives on `reading_state` — the one table already
+    // scoped by resourceId — rather than the global `settings` table. A
+    // plain additive column with a default: unlike migration 41's NOT NULL
+    // relax, SQLite allows `ADD COLUMN ... DEFAULT` without a table rebuild,
+    // and every row written before this migration reads as "paginated",
+    // which is what it already was.
+    version: 42,
+    run: (database) => {
+      database.exec(`ALTER TABLE reading_state ADD COLUMN flow TEXT NOT NULL DEFAULT 'paginated';`);
+    },
+  },
 ];

@@ -52,7 +52,7 @@ describe("db migrations", () => {
   it("records the applied schema version", () => {
     const db = createDb(":memory:");
     const version = db.pragma("user_version", { simple: true });
-    expect(version).toBe(41);
+    expect(version).toBe(42);
     db.close();
   });
 
@@ -245,6 +245,29 @@ describe("db migrations", () => {
     db.close();
   });
 
+  it("migration 042 adds reading_state.flow, defaulting to 'paginated'", () => {
+    const db = createDb(":memory:");
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO resources (id, title, author, format, file_path, metadata, imported_at)
+       VALUES ('res-1', 'Title', NULL, 'epub', '/tmp/x.epub', '{}', @now)`,
+    ).run({ now });
+    db.prepare(
+      `INSERT INTO reading_state (resource_id, location, updated_at) VALUES ('res-1', 'loc', @now)`,
+    ).run({ now });
+
+    const row = db.prepare("SELECT flow FROM reading_state WHERE resource_id = 'res-1'").get() as { flow: string };
+    expect(row.flow).toBe("paginated");
+
+    db.prepare("UPDATE reading_state SET flow = 'scrolled' WHERE resource_id = 'res-1'").run();
+    const updated = db.prepare("SELECT flow FROM reading_state WHERE resource_id = 'res-1'").get() as {
+      flow: string;
+    };
+    expect(updated.flow).toBe("scrolled");
+
+    db.close();
+  });
+
   it("migration 033 clears thematic_digests/book_themes/theme_parents on upgrade, but never canonical_themes", () => {
     // M35 §C4: the stored shape of thematic_digests.themes changed (and its
     // contents are stale under the old naming prompt), so the operator's
@@ -292,7 +315,7 @@ describe("db migrations", () => {
       legacy.close();
 
       const db = createDb(tmpPath);
-      expect(db.pragma("user_version", { simple: true })).toBe(41);
+      expect(db.pragma("user_version", { simple: true })).toBe(42);
       expect(db.prepare("SELECT COUNT(*) AS n FROM thematic_digests").get()).toEqual({ n: 0 });
       expect(db.prepare("SELECT COUNT(*) AS n FROM book_themes").get()).toEqual({ n: 0 });
       expect(db.prepare("SELECT COUNT(*) AS n FROM theme_parents").get()).toEqual({ n: 0 });
@@ -359,7 +382,7 @@ describe("db migrations", () => {
       legacy.close();
 
       const db = createDb(tmpPath);
-      expect(db.pragma("user_version", { simple: true })).toBe(41);
+      expect(db.pragma("user_version", { simple: true })).toBe(42);
 
       const row = db.prepare("SELECT * FROM highlights WHERE id = 'h-1'").get() as Record<string, unknown>;
       expect(row).toEqual({
@@ -429,7 +452,7 @@ describe("db migrations", () => {
       // Reopening the same file must not re-run migration 001 (which would
       // throw on CREATE TABLE against already-existing tables).
       const second = createDb(tmpPath);
-      expect(second.pragma("user_version", { simple: true })).toBe(41);
+      expect(second.pragma("user_version", { simple: true })).toBe(42);
       second.close();
     } finally {
       cleanupDbFile(tmpPath);
@@ -458,7 +481,7 @@ describe("db migrations", () => {
       legacy.close();
 
       const repaired = createDb(tmpPath);
-      expect(repaired.pragma("user_version", { simple: true })).toBe(41);
+      expect(repaired.pragma("user_version", { simple: true })).toBe(42);
       const columnsAfter = repaired.prepare("PRAGMA table_info(resource_ai_settings)").all() as { name: string }[];
       expect(columnsAfter.some((c) => c.name === "show_thematic_quotes")).toBe(true);
       repaired.close();
@@ -476,7 +499,7 @@ describe("db migrations", () => {
       // ("duplicate column name") from migration 37 re-adding a column
       // migration 36 already added correctly.
       const reopened = createDb(tmpPath);
-      expect(reopened.pragma("user_version", { simple: true })).toBe(41);
+      expect(reopened.pragma("user_version", { simple: true })).toBe(42);
       reopened.close();
     } finally {
       cleanupDbFile(tmpPath);

@@ -723,6 +723,16 @@
   font-size: 0.8rem;
 }
 
+/* M40 §C5: the scrolled-flow sibling of PageNumberDisplay's own `.pageNumber`
+ * (that module's rule, mirrored rather than imported — this one has no
+ * full/compact form to switch between, just the one string). */
+.scrollChapterPercent {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 /* M24.7 B: the instruments pebble — fullscreen, search, heat strip — reuses
  * the nav pebble's own pill shape (radius, border, shadow, padding) via
  * `composes` rather than duplicating those five properties a third time

@@ -207,6 +207,23 @@ export function ScanIcon({ size = 18 }: IconProps) {
   );
 }
 
+/** M40 §C9: the reader strip's paginated/scroll toggle. Two stacked leaves
+ * for "paginated" (`scrolled = false`); the same two leaves with a
+ * continuing line through them for "scrolled" — an affordance for the one
+ * thing the mode actually changes (whether the page break is real), not a
+ * literal scrollbar glyph. */
+export function ScrollModeIcon({ size = 18, scrolled = false }: IconProps & { scrolled?: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4.5" y="3.5" width="15" height="8" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <rect x="4.5" y="12.5" width="15" height="8" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      {scrolled && (
+        <path d="M12 9v6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+}
+
 /** M30 E2: the thread panel's own delete affordance. A trash can rather than
  * a second "×" in the same panel — the header already has one meaning
  * "collapse this thread", and a lookalike glyph a few rows below it, meaning

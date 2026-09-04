@@ -213,6 +213,50 @@ export function readTurnGeometry(manager: PaginatedManager): TurnGeometry {
   };
 }
 
+/** M40 §C5/§C8: `flow: "scrolled"`'s own three numbers — the vertical
+ * sibling of `TurnGeometry`, which this section's own manager (`flow:
+ * "scrolled-doc"` still uses the `"default"` manager, per PDF.md §7.4's
+ * ruling) exposes on the identical `container` field, just measured on the
+ * other axis. */
+export interface ScrollGeometry {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+}
+
+/** How close to the true bottom counts as "arrived" — sub-pixel scroll
+ * rounding (the same family of issue `SNAP_TOLERANCE_PX` above exists for)
+ * means `scrollTop === scrollHeight - clientHeight` can miss by a pixel even
+ * when the reader is visibly at the end. */
+const SCROLL_END_TOLERANCE_PX = 2;
+
+/**
+ * The scrolled-flow progress readout (§C5) and "reached the end" signal
+ * (§C8), both from the same three numbers. `percent` is clamped to [0, 1];
+ * a section that doesn't scroll at all (fits entirely on screen) reads as
+ * 100% read and already at the bottom, rather than dividing by zero.
+ */
+export function scrollProgressFromGeometry(g: ScrollGeometry): {
+  percent: number;
+  atBottom: boolean;
+} {
+  const scrollable = g.scrollHeight - g.clientHeight;
+  const percent = scrollable > 0 ? g.scrollTop / scrollable : 1;
+  return {
+    percent: Math.min(1, Math.max(0, percent)),
+    atBottom: scrollable <= 0 || g.scrollTop >= scrollable - SCROLL_END_TOLERANCE_PX,
+  };
+}
+
+export function readScrollGeometry(manager: PaginatedManager): ScrollGeometry {
+  const container = manager.container;
+  return {
+    scrollTop: container.scrollTop,
+    scrollHeight: container.scrollHeight,
+    clientHeight: container.clientHeight,
+  };
+}
+
 /**
  * Replaces the manager's `next`/`prev` with versions that decide via
  * `decideTurn`. Installed once per rendition, so every caller is covered —

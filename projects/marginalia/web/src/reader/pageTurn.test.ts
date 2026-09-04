@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   chapterPageFromGeometry,
   decideTurn,
+  scrollProgressFromGeometry,
   spreadCount,
   spreadIndex,
+  type ScrollGeometry,
   type TurnGeometry,
 } from "./pageTurn.js";
 
@@ -96,5 +98,51 @@ describe("decideTurn", () => {
     // expanded content width lands half a pixel short of a whole page view.
     const g = { delta: 1025, clientWidth: 1025, scrollWidth: 4100 - 0.5, scrollLeft: 2050 };
     expect(decideTurn("next", g)).toEqual({ kind: "scroll", offset: 3075 });
+  });
+});
+
+// M40 §C5/§C8: `flow: "scrolled"`'s own progress + "reached the end" —
+// PDF.md §7.4's "measure the scroll directly", never derived from the
+// paginated pair above.
+function scrollGeometry(scrollTop: number, scrollHeight: number, clientHeight = 800): ScrollGeometry {
+  return { scrollTop, scrollHeight, clientHeight };
+}
+
+describe("scrollProgressFromGeometry", () => {
+  it("reports 0% at the top of a scrollable section", () => {
+    const { percent, atBottom } = scrollProgressFromGeometry(scrollGeometry(0, 4000));
+    expect(percent).toBe(0);
+    expect(atBottom).toBe(false);
+  });
+
+  it("reports partial progress proportionally", () => {
+    const { percent, atBottom } = scrollProgressFromGeometry(scrollGeometry(1600, 4000));
+    // scrollable = 4000 - 800 = 3200; 1600 / 3200 = 0.5
+    expect(percent).toBeCloseTo(0.5);
+    expect(atBottom).toBe(false);
+  });
+
+  it("reaches the bottom within tolerance, not only at an exact match", () => {
+    // scrollable = 3200; one pixel short of exact.
+    const { percent, atBottom } = scrollProgressFromGeometry(scrollGeometry(3199, 4000));
+    expect(percent).toBeCloseTo(1, 2);
+    expect(atBottom).toBe(true);
+  });
+
+  it("is not at the bottom well before it, even close", () => {
+    const { atBottom } = scrollProgressFromGeometry(scrollGeometry(3190, 4000));
+    expect(atBottom).toBe(false);
+  });
+
+  it("clamps rather than overshoots past a scrollTop beyond the scrollable range", () => {
+    const { percent } = scrollProgressFromGeometry(scrollGeometry(9999, 4000));
+    expect(percent).toBe(1);
+  });
+
+  it("treats a section that fits entirely on screen as fully read, not a division by zero", () => {
+    const { percent, atBottom } = scrollProgressFromGeometry(scrollGeometry(0, 500));
+    expect(percent).toBe(1);
+    expect(atBottom).toBe(true);
+    expect(Number.isNaN(percent)).toBe(false);
   });
 });
