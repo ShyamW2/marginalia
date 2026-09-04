@@ -333,7 +333,7 @@ export class EpubRenderer implements ResourceRenderer {
     // against (the caller is responsible for landing on the right section
     // first, same as goToFindHit already does).
     if (this.currentContents && this.currentContents.sectionIndex === loc.sectionIndex) {
-      const range = rangeFromTextOffsets(this.currentContents.document, loc.offset, loc.offset + loc.length);
+      const range = rangeFromTextOffsets(this.currentContents.document.body, loc.offset, loc.offset + loc.length);
       if (range) {
         await this.rendition.display(this.currentContents.cfiFromRange(range));
         return;
@@ -447,7 +447,7 @@ export class EpubRenderer implements ResourceRenderer {
     if (!loc) return null;
     if (loc.cfi) return loc.cfi;
     if (!this.currentContents || this.currentContents.sectionIndex !== loc.sectionIndex) return null;
-    const range = rangeFromTextOffsets(this.currentContents.document, loc.offset, loc.offset + loc.length);
+    const range = rangeFromTextOffsets(this.currentContents.document.body, loc.offset, loc.offset + loc.length);
     return range ? this.currentContents.cfiFromRange(range) : null;
   }
 
@@ -547,7 +547,7 @@ export class EpubRenderer implements ResourceRenderer {
   isLocatorVisible(loc: Locator): boolean {
     if (!this.currentContents || !this.container) return false;
     if (this.currentContents.sectionIndex !== loc.sectionIndex) return false;
-    const range = rangeFromTextOffsets(this.currentContents.document, loc.offset, loc.offset + loc.length);
+    const range = rangeFromTextOffsets(this.currentContents.document.body, loc.offset, loc.offset + loc.length);
     if (!range) return false;
     const iframeEl = this.currentContents.document.defaultView?.frameElement as HTMLElement | null | undefined;
     if (!iframeEl) return false;
@@ -603,7 +603,7 @@ export class EpubRenderer implements ResourceRenderer {
     // other direction.
     const currentByCfi = new Map<string, boolean>();
     for (const { index, start, end } of located) {
-      const range = rangeFromTextOffsets(contents.document, start, end);
+      const range = rangeFromTextOffsets(contents.document.body, start, end);
       if (!range) continue;
       const cfi = contents.cfiFromRange(range);
       if (this.cfiOwners.has(cfi)) continue;
@@ -793,7 +793,7 @@ export class EpubRenderer implements ResourceRenderer {
       } else if (result.status === "fallback" || result.status === "offset") {
         const start = result.status === "fallback" ? result.match.start : result.start;
         const end = result.status === "fallback" ? result.match.end : result.end;
-        const range = rangeFromTextOffsets(contents.document, start, end);
+        const range = rangeFromTextOffsets(contents.document.body, start, end);
         if (range) {
           this.attachOwnedMark(highlight.id, contents.cfiFromRange(range), highlight.kind);
         } else {
@@ -885,7 +885,7 @@ export class EpubRenderer implements ResourceRenderer {
     const exact = range.toString();
     if (!exact.trim()) return;
 
-    const { prefix, suffix } = getSelectionContext(contents.document, range, SELECTION_CONTEXT_MAX_LEN);
+    const { prefix, suffix } = getSelectionContext(contents.document.body, range, SELECTION_CONTEXT_MAX_LEN);
 
     const iframeEl = contents.document.defaultView?.frameElement as HTMLElement | null | undefined;
     if (iframeEl) {
