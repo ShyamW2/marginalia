@@ -8023,3 +8023,50 @@ it *returned* to its caller never set those two fields — anyone reading the re
 directly (rather than re-fetching from the DB) would have silently gotten `undefined`
 where the type now says `number | null`. Fixed alongside, not filed separately, since the
 fix is one line and the same commit that surfaced it.
+
+## M40 §D — the second renderer, and a fixture that only broke inside its own test — 2026-09-04
+
+Implemented D1-D4 (TASKS.md carries the per-item `_Done:` notes; this is the narrative).
+
+**SPEC-GAP: `PdfRenderer`'s `Locator.sectionIndex` is always `0`.** PDF.md §4's spine unit
+is a detected *section*, not a page, and a real multi-section PDF needs a persisted
+page→section table to know which `resource_text` row a given page's characters belong to
+— nothing in M39's import path builds one, because nothing needed it before a renderer
+existed to ask. Building that table is M41 §A2's problem ("highlights are shared between
+reflow and native"), not this milestone's: M40 §D is headless, and "the whole document is
+section 0" is PDF.md §4's own fallback rule 3 ("one section for the whole document, under
+40 pages"), not an invented shortcut. `paintMark`/`goTo`/`currentLocation` all key off a
+`pageOffsets` cumulative-character table built once at mount by concatenating every
+page's own `getTextContent()` — real code, not a stub, just scoped to one section.
+
+**pdfkit produces a genuinely corrupt PDF when built inside its own test's jsdom
+environment** — not a jsdom canvas gap (that one was expected and designed around, see
+below), but pdf.js failing to parse the *content stream itself* ("Bad FCHECK in flate
+stream"), with `getTextContent()` silently returning zero items rather than throwing.
+Traced to `typeof document` branches in pdfkit's own bundle (`ICC_PROFILE_PATH`'s
+resolution swaps from a real file path to `new URL(..., document.baseURI)` the moment a
+`document` global exists) — jsdom supplies exactly that global for every test file in this
+suite. Confirmed by building the *identical* fixture once under plain Node (fine) and once
+inside a vitest file (corrupt) with nothing else different. Fix: the fixture is a static
+binary (`fixtures/pdf-renderer-sample.pdf`), generated once under plain Node and committed
+— the same pattern `fixtures/alice-in-wonderland.epub` already uses for exactly the same
+reason (a real file, not a per-run build), not a new one invented for this file.
+
+**`new URL(literal, import.meta.url)` is not safe to write inline in a Vite-built test
+file.** Vite statically detects that exact expression shape and rewrites the literal at
+build time into an asset reference — which stops being a `file:` URL, so
+`fileURLToPath()` on the result throws "The URL must be of scheme file" with no indication
+of why. Routing `import.meta.url` through a local variable first
+(`const thisFileUrl = import.meta.url; new URL(literal, thisFileUrl)`) breaks the pattern
+match and restores plain Node behaviour. Cost real time to isolate because the error
+message names the URL's scheme, not the rewrite that produced it.
+
+**jsdom's `Range` doesn't stub `getClientRects`/`getBoundingClientRect` at all** — unlike
+`Element`, where jsdom returns an honest all-zero rect, `Range.prototype.getClientRects`
+is simply `undefined` in this jsdom version (25.0.1), confirmed by direct instantiation
+before assuming. `PdfRenderer`'s highlight-painting path (`paintRangeInto`) calls both to
+turn a resolved text range into positioned mark boxes, so this isn't cosmetic — it throws.
+Added both to `vitest.setup.ts` alongside the file's existing `matchMedia`/
+`scrollIntoView` shims: one zero-size rect for a non-collapsed range, none for a collapsed
+one, the same "no test asserts on real geometry, only that it doesn't throw" convention
+those shims already established.

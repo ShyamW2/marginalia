@@ -3358,15 +3358,52 @@ M10 assumes pages.
 
 #### D. The PDF renderer, headless
 
-- [ ] **D1.** `PdfRenderer` implementing the interface: pdf.js canvas + text layer,
+- [x] **D1.** `PdfRenderer` implementing the interface: pdf.js canvas + text layer,
       `advance: "image"`, `spread`/`fontScale`/`margins`/`pageFold`/`pageNumbers` false.
-- [ ] **D2.** Selection via the text layer's real DOM Ranges, so `getSelectionContext`
+      _Done: `web/src/reader/renderer/pdf/PdfRenderer.ts`. No official pdf.js `TextLayer`
+      builder — its font-ascent measurement needs a real 2D canvas context, which jsdom
+      doesn't provide without the native `canvas` package; each text item is positioned
+      straight from its own `transform` via `Util.transform(viewport.transform,
+      item.transform)` instead (real text nodes, real Ranges, invisible — the raster
+      canvas is the visible page). Canvas rasterization itself degrades rather than
+      fails when `getContext("2d")` returns null, the same rule
+      `server/src/library/pdf/rasterize.ts` already applies for exactly the same reason.
+      SPEC-GAP, recorded in the file's own header comment and NOTES.md: `Locator
+      .sectionIndex` is always `0` — a real multi-section PDF needs a persisted
+      page→section table this milestone doesn't build (M41 §A2's problem); the whole
+      document as one section is PDF.md §4's own fallback rule 3 and the only shape
+      this file is tested against._
+- [x] **D2.** Selection via the text layer's real DOM Ranges, so `getSelectionContext`
       works unchanged.
-- [ ] **D3.** Highlight painting from text-layer Range client rects into absolutely
+      _Done, with a small generalization: `getSelectionContext`/`rangeFromTextOffsets`
+      (`web/src/reader/selectionContext.ts`) took a `Document` and hard-coded `doc.body`
+      as the text root — fine for `EpubRenderer`, whose iframe document is one document
+      per section, but `PdfRenderer` has no per-page iframe to isolate against. Both now
+      take an `Element` root instead (EpubRenderer's 6 call sites updated to pass
+      `contents.document.body`, behaviour unchanged). Added `offsetsForRange` (the
+      inverse direction: Range → char offsets) alongside them, since `PdfRenderer`'s
+      `selected` event has no CFI fast path to fall back on the way EpubRenderer's does._
+- [x] **D3.** Highlight painting from text-layer Range client rects into absolutely
       positioned divs. ⚠️ `marks-pane` is CFI-keyed and is **not** reused here.
-- [ ] **D4.** Not routed to from any UI yet. M41 turns it on.
+      _Done: `paintRangeInto` builds one box per `range.getClientRects()` entry inside a
+      wrapper div positioned 1:1 over the page. `markRect` mirrors `EpubRenderer`'s own
+      convention of reporting the *first* line's rect rather than a union, for the same
+      reason (the annotation panel just needs one anchor point)._
+- [x] **D4.** Not routed to from any UI yet. M41 turns it on.
       _Acceptance: a test mounts `PdfRenderer` over a fixture PDF, makes a selection, paints
       a mark, and round-trips a `Locator` — with no route in the app reaching it._
+      _Done: `web/src/reader/renderer/pdf/PdfRenderer.test.ts`, against a static two-page
+      fixture (`fixtures/pdf-renderer-sample.pdf`) rather than a pdfkit-built one — found
+      live that pdfkit branches on `typeof document` and produces a genuinely corrupt
+      content stream ("Bad FCHECK in flate stream") when built inside this file's own
+      jsdom environment, so the fixture is generated once under plain Node and committed,
+      the same way the EPUB fixtures in this repo are static files rather than built per
+      test run. Also required two jsdom gaps to be closed: `Range.getClientRects`/
+      `getBoundingClientRect` are entirely absent in this jsdom version (not stubbed,
+      simply undefined) — added to `vitest.setup.ts` alongside the existing
+      `matchMedia`/`scrollIntoView` shims, same convention (a single zero-size rect, no
+      test asserts on real geometry). `grep -rln "PdfRenderer" web/src` confirms nothing
+      outside `renderer/pdf/` and this doc comment references it — not routed anywhere._
 
 ---
 
