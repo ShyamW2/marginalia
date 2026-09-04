@@ -45,7 +45,28 @@
  * painted; the margin rail's distinct "unanchored" styling never applies to
  * it.
  */
-import { getDocument, Util } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { GlobalWorkerOptions, getDocument, Util } from "pdfjs-dist/legacy/build/pdf.mjs";
+// M41 §A1, found live: pdf.js refuses to run at all without this — "No
+// GlobalWorkerOptions.workerSrc specified" — thrown from inside
+// getDocument() before it ever touches the bytes. Never surfaced in this
+// file's own tests (jsdom's `getDocument` doesn't reach the worker-creation
+// path the way a real browser does) or in M40 §D, which was headless and
+// never actually mounted in one. `?url` is Vite's own asset-URL import
+// suffix — it resolves to a real fetchable path in both dev and the built
+// bundle, unlike a bare `import.meta.url` construction, which resolves
+// against *this* file's URL rather than the worker's own.
+import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
+
+// Vitest's own module graph resolves the `?url` import to a real absolute
+// path, but pdf.js's fake-worker fallback then tries to `import()` that path
+// directly and fails (no such loader outside a real browser/Vite runtime) —
+// and unlike the browser, pdf.js quietly runs workerless under jsdom without
+// ever needing this assigned, which is what every test here already relies
+// on. `import.meta.env.VITEST` is Vitest's own standard flag for telling the
+// two apart (https://vitest.dev — set automatically, not project config).
+if (!import.meta.env?.VITEST) {
+  GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+}
 import type { HighlightKind, HighlightWithThread } from "@marginalia/shared";
 import { findAnchorInText } from "@marginalia/shared";
 import { getSelectionContext, offsetsForRange, rangeFromTextOffsets } from "../../selectionContext.js";
