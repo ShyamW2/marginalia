@@ -543,7 +543,7 @@ async function requestDefinition(highlightId: string): Promise<Definition> {
 }
 
 interface PendingSelection {
-  cfi: string;
+  cfi: string | null;
   exact: string;
   prefix: string;
   suffix: string;
@@ -2560,7 +2560,11 @@ export function ReaderView({
           const rawLeft = rect.left + rect.width / 2 - stageRect.left;
           const rawTop = rect.top - stageRect.top;
           setPendingSelection({
-            cfi: locator.cfi ?? "",
+            // PdfRenderer's "selected" event has no cfi at all (native
+            // mode has none to give) — null, never "", which the server's
+            // AnchorSchema (string().min(1).nullable()) rejects as invalid
+            // (found live: a native-mode highlight silently failed to save).
+            cfi: locator.cfi ?? null,
             exact: text,
             prefix,
             suffix,

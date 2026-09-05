@@ -373,9 +373,15 @@ export class EpubRenderer implements ResourceRenderer {
       return;
     }
     // M40 §B step 3: no CFI — resolve against the current section's text if
-    // it's the one showing; otherwise there is nothing live to resolve
-    // against (the caller is responsible for landing on the right section
-    // first, same as goToFindHit already does).
+    // it's the one showing. M41 §A1 follow-up: a cfi-less Locator is routine
+    // now that native mode saves position this way, and on first mount
+    // nothing is ever "current" yet — display the section itself first (the
+    // same call `goToSpineIndex` makes) so there's something to resolve the
+    // offset against, instead of silently rendering nothing at all (found
+    // live: switching from native back to reflow hung with no iframe).
+    if (!this.currentContents || this.currentContents.sectionIndex !== loc.sectionIndex) {
+      await this.rendition.display(loc.sectionIndex);
+    }
     if (this.currentContents && this.currentContents.sectionIndex === loc.sectionIndex) {
       const range = rangeFromTextOffsets(this.currentContents.document.body, loc.offset, loc.offset + loc.length);
       if (range) {

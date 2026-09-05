@@ -151,7 +151,7 @@ interface ResolvableHighlight {
  * children's coordinates, measured from `pageDiv`'s own rect, need no
  * further translation) and is never the click/hover target itself.
  */
-function paintRangeInto(wrapper: HTMLElement, range: Range, pageDiv: HTMLElement): void {
+function paintRangeInto(wrapper: HTMLElement, range: Range, pageDiv: HTMLElement, attrs?: Record<string, string>): void {
   wrapper.replaceChildren();
   const pageRect = pageDiv.getBoundingClientRect();
   for (const rect of Array.from(range.getClientRects())) {
@@ -162,6 +162,11 @@ function paintRangeInto(wrapper: HTMLElement, range: Range, pageDiv: HTMLElement
     box.style.width = `${rect.width}px`;
     box.style.height = `${rect.height}px`;
     box.style.pointerEvents = "auto";
+    // The fill belongs on each line-rect box, not on `wrapper` — `wrapper`
+    // spans the whole page (`inset: 0`) purely as these boxes' positioning
+    // context, so painting it directly tints the entire page instead of
+    // just the matched text (found live, M41 §A2 follow-up).
+    if (attrs) applyMarkAttrs(box, attrs);
     wrapper.appendChild(box);
   }
 }
@@ -571,8 +576,8 @@ export class PdfRenderer implements ResourceRenderer {
       el.addEventListener("click", () => this.emit("markClicked", id));
       this.pinnedMarkEls.set(id, el);
     }
-    if (this.themeVars) applyMarkAttrs(el, markStyleForKind(kind, this.themeVars, this.focusModeHidden));
-    paintRangeInto(el, range, this.pageDiv);
+    const attrs = this.themeVars ? markStyleForKind(kind, this.themeVars, this.focusModeHidden) : undefined;
+    paintRangeInto(el, range, this.pageDiv, attrs);
     if (!el.isConnected) this.pageDiv.insertBefore(el, this.textLayerDiv);
   }
 
@@ -665,8 +670,8 @@ export class PdfRenderer implements ResourceRenderer {
     el.style.position = "absolute";
     el.style.inset = "0";
     el.style.pointerEvents = "none";
-    if (this.themeVars) applyMarkAttrs(el, audioTintStyle(this.themeVars, this.focusModeHidden));
-    paintRangeInto(el, range, this.pageDiv);
+    const attrs = this.themeVars ? audioTintStyle(this.themeVars, this.focusModeHidden) : undefined;
+    paintRangeInto(el, range, this.pageDiv, attrs);
     this.pageDiv.insertBefore(el, this.textLayerDiv);
     this.tintEl = el;
   }
@@ -687,8 +692,7 @@ export class PdfRenderer implements ResourceRenderer {
       el.style.position = "absolute";
       el.style.inset = "0";
       el.style.pointerEvents = "none";
-      applyMarkAttrs(el, searchMarkStyle(this.themeVars, index === currentIndex));
-      paintRangeInto(el, range, this.pageDiv);
+      paintRangeInto(el, range, this.pageDiv, searchMarkStyle(this.themeVars, index === currentIndex));
       this.pageDiv.insertBefore(el, this.textLayerDiv);
       this.searchMarkEls.add(el);
     }
@@ -934,7 +938,16 @@ function buildTextLayer(
 ): void {
   container.replaceChildren();
   for (const item of items) {
-    if (!isTextItem(item) || !item.str) continue;
+    if (!isTextItem(item)) continue;
+    if (!item.str) {
+      // `textOfItems` (pageTexts, used for offset matching) still counts
+      // this item's EOL as a "\n" character even with no visible glyph —
+      // skipping it here entirely desyncs every later offset from the
+      // DOM's own text-node walk (`rangeFromTextOffsets`), found live as a
+      // highlight landing ~20 characters into its own quote.
+      if (item.hasEOL) container.appendChild(document.createTextNode("\n"));
+      continue;
+    }
     const tx = Util.transform(viewport.transform, item.transform) as number[];
     const angle = Math.atan2(tx[1], tx[0]);
     const fontHeight = Math.hypot(tx[2], tx[3]);
