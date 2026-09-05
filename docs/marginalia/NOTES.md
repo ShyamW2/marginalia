@@ -8231,3 +8231,100 @@ populated database, the full test suite is green (server: 553, web: 524, includi
 actually caught — is confirmed working end to end. What's still open is a fresh-PDF live
 pass exercising A2's cross-mode claim specifically, blocked today only by the unrelated
 reflow bug above.
+
+
+## M41 §A2/§B2 — three live-only bugs, and the goTo hang that was never really "pre-existing" — 2026-09-05
+
+Picking up from the entry above: the operator re-imported the same PDF and imported a
+fresh one (`8d111eeb...`, "EA S1 Competency Standards.pdf", 6 pages, textLayer true,
+`pdf_page_sections` populated by migration 44) specifically so A2's cross-mode claim
+could finally be driven live. It was, in both directions, and found three real bugs —
+none of them things the unit tests could have caught, because all three are about the
+DOM/CSSOM a real browser produces, which jsdom's `PdfRenderer.test.ts` suite never
+touches for canvas/text-layer geometry.
+
+**Bug 1 — the highlight tinted the whole page, not the matched text.**
+`PdfRenderer`'s `paintOneMark`/`paintTintForCurrentPage`/`paintSearchMarks` all built a
+wrapper `div` with `inset: 0` (spanning the *entire page*) and called `applyMarkAttrs`
+(background-color/opacity/mix-blend-mode) on **that wrapper**, then `paintRangeInto`
+populated its children with the actual per-line rect boxes — which had no fill of their
+own. So every mark in native mode painted a faint, page-wide wash rather than a
+highlight shaped to the words. Fixed by moving the fill onto each rect box `paintRangeInto`
+creates, not the wrapper. This affected all three consumers identically (a highlight, the
+audio tint, and find-bar search marks all share `paintRangeInto`).
+
+**Bug 2 — highlights landed ~20 characters into their own quote.**
+`buildTextLayer` skipped creating a DOM node entirely for any pdf.js text item with an
+empty `str` (`if (!isTextItem(item) || !item.str) continue`), but `textOfItems` — which
+builds the string `pageTexts`/matching is done against — still counts that same item's
+`hasEOL` as a `"\n"` character. Every such skipped item (common: blank-line/paragraph-
+break markers between table rows) permanently desynced the DOM's own character count from
+the string `findAnchorInText` matched positions against, and `rangeFromTextOffsets` walks
+the DOM by character count. Confirmed directly with a throwaway node script loading the
+same PDF via `pdfjs-dist`: at one point in the document, `textOfItems`' concat put a known
+phrase at index 1089, the DOM-equivalent concat (skipping empty-`str` items) put it at
+1081 — an 8-character drift from a single skipped item, growing with every one before it.
+On the actual displayed page this added up to ~20 characters, which is why the highlight
+visibly started mid-phrase ("...applies |technical knowledge..." instead of at
+"Proficiently"). Fixed by still emitting a bare `"\n"` text node for a skipped item when
+it has `hasEOL`, keeping the DOM's character count exactly in sync with `textOfItems`'.
+Verified by sampling actual rendered pixel colours (not just DOM rects, which can look
+plausible while being subtly wrong): pure white immediately before the highlighted word,
+the fill colour beginning exactly at its first pixel, nothing bleeding in front of it.
+
+**Bug 3 — a highlight created in native mode silently failed to save.**
+Unrelated to the above two: `ReaderView`'s shared `"selected"` event handler (used by both
+renderers) built `pendingSelection` with `cfi: locator.cfi ?? ""`. `EpubRenderer` always
+supplies a real CFI, so this never mattered before. `PdfRenderer`'s own `"selected"` event
+has no CFI at all (native mode has none to give), so this defaulted to `""` — and the
+server's `AnchorSchema.cfi` is `z.string().min(1).nullable()`, which accepts `null` but not
+`""`. Every highlight created while in native mode got a `400 invalid_body`, silently
+swallowed by `postHighlight`'s `if (!res.ok) return null`, so nothing looked wrong in the
+UI — no highlight appeared, no error surfaced. Caught only by adding response-body logging
+to the live test. Fixed by defaulting to `null` (and widening `PendingSelection.cfi`'s
+type to `string | null` to match) instead of `""`.
+
+**The real headline: the "pre-existing" reflow-pane hang from the 2026-09-04 entry above
+was never actually pre-existing, or unrelated to this milestone.** It was this: switching
+back to reflow from native mode calls `EpubRenderer.goTo` with a CFI-less `Locator` (the
+routine, expected shape once native mode exists at all). `goTo`'s no-CFI branch only ever
+resolved against `this.currentContents` — which is `null` until *something* has rendered —
+and if the section doesn't already match, the function just returned, having called
+`rendition.display()` zero times. Nothing was ever asked to render, so nothing ever did:
+no iframe, no error, no timeout, forever. This reproduced identically on the *original*
+PDF from 2026-09-04 (confirmed: its stored position was `{sectionIndex, offset, length}`
+with no `cfi` key at all — the same shape) and, once fixed, that resource's reflow pane
+opened correctly too, on the first real content it's shown in this arc. Fixed by
+displaying the section itself (`this.rendition.display(loc.sectionIndex)`) whenever there's
+no CFI and no already-matching `currentContents`, then falling through to the existing
+offset-based refinement within it.
+
+**What's now genuinely live-verified, not just unit-tested:** A2's cross-mode identity
+in the reflow→native direction, pixel-precise. A1's round-trip, both directions, actually
+working end to end (the 2026-09-04 note's "verified both directions" was written before
+this gap was found — it hadn't actually exercised a CFI-less `goTo`, or got lucky with
+timing). B2 (find bar over native), including the find bar's highlight-aware search
+surfacing a highlight hit alongside a plain-text hit on the same page, both painted with
+correct, independent geometry.
+
+**What's still not independently confirmed:** the actual `<svg>` mark appearing in the
+reflow pane's DOM under headless Playwright — checked directly and found absent for
+*every* highlight tried, including pre-existing ones on a long-established EPUB (Alice in
+Wonderland, 18 real highlights, nothing touched by this milestone). Since the symptom is
+identical on code this session never touched, it reads as a characteristic of
+marks-pane's rendering under this specific headless setup (most likely something
+timing/paint related that a real browser session wouldn't hit) rather than a product bug
+— but it means the very last step of "does the mark visually appear" for the
+native→reflow direction wants a real, non-headless look before fully closing the loop.
+B1/B3 remain as the 2026-09-04 entry left them: reasoned solid (same generic interface,
+no format branch) but not independently driven live this session either.
+
+**Test artifacts cleaned up**: the session created five highlights on the operator's
+fresh PDF while testing (one real one from the pixel-precision check, four duplicate
+"Addresses" ones from repeated script runs while chasing the CFI-empty-string bug) — all
+deleted via `DELETE /api/highlights/:id` before finishing, confirmed empty afterward. One
+side effect **not** cleaned up: a throwaway import of the test fixture
+`fixtures/pdf-renderer-sample.pdf` (a tiny, textless sample used to exercise the import
+pipeline itself), left in the library as resource `eee25a26...` since no
+delete-resource route exists and removing library files directly isn't something to do
+without asking — [[marginalia-data-dir-caution]].

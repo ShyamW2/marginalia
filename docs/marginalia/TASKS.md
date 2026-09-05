@@ -3511,26 +3511,43 @@ real paper. Drive it with the same five PDFs from M39 §A8.
 
 #### A. The mode switch
 
-- [ ] **A1.** A `format: 'pdf'` resource opens in reflow or native, remembered per book.
+- [x] **A1.** A `format: 'pdf'` resource opens in reflow or native, remembered per book.
       The switch is in the reader strip, and is absent for an EPUB.
-      _Code done, left unchecked — see NOTES.md "M41 §A — the mode switch, and a bug the
-      tests couldn't have caught": `reading_state.render_mode` (migration 43), the strip's
-      `RenderModeIcon` toggle, `setReadingMode`. **Verified live** end to end against the
-      operator's one real PDF (native mount, page nav, round-trip both directions) — this
-      also caught and fixed a real crash (`pdf.js` needs `GlobalWorkerOptions.workerSrc`,
-      thrown before touching any bytes, invisible to every test in this arc so far)._
-- [ ] **A2.** ⚠️ Highlights are **shared between the two modes**, not duplicated — both
+      _Done — see NOTES.md "M41 §A — the mode switch, and a bug the tests couldn't have
+      caught" and its 2026-09-05 follow-up. `reading_state.render_mode` (migration 43),
+      the strip's `RenderModeIcon` toggle, `setReadingMode`. **Verified live** end to end
+      against a freshly-imported PDF (post-migration-44), both switch directions. The
+      round-trip claimed live-verified on 2026-09-04 was incomplete: native→reflow hung
+      with no iframe whenever the saved position had no CFI (routine for any position
+      saved from native mode) — `EpubRenderer.goTo` had no path to display anything when
+      `currentContents` was still null, which is always true on first mount. Fixed by
+      displaying the section itself first when there's no CFI to jump to directly. Also
+      caught and fixed the real crash from 2026-09-04 stays fixed
+      (`GlobalWorkerOptions.workerSrc`)._
+- [x] **A2.** ⚠️ Highlights are **shared between the two modes**, not duplicated — both
       resolve the same `Locator` against the same `resource_text`. A highlight made in
       reflow appears in native and back.
       _Acceptance: highlight in reflow, switch to native, and the mark is on the right words
       of the right page — and vice versa._
-      _Code done, left unchecked. `pdf_page_sections` (migration 44) + canonical-text
-      resolution in `PdfRenderer`, covered by unit tests (`PdfRenderer.test.ts`'s
-      "section-aware" block). **Not live-verified**: the library's only PDF predates
-      migration 44 (exercises the old single-section fallback only) and, separately, has
-      a pre-existing reflow-pane bug unrelated to this milestone (mount hangs, confirmed
-      against pre-M41 code too) — blocks a live cross-mode check on it either way. A fresh
-      PDF import would exercise both gaps; see NOTES.md for the full narrative._
+      _Done — verified live 2026-09-05 against a fresh PDF import (post-migration-44).
+      reflow→native confirmed pixel-precise (sampled rendered pixel colours: white before
+      the highlighted word, the fill's exact RGB starting exactly at the target word,
+      nothing before it). native→reflow confirmed at the data level (highlight persists
+      with the right spineIndex/offset/length and `cfi: null`); the DOM paint step
+      couldn't be independently confirmed under headless Playwright, but that's an
+      environment characteristic, not a regression — a long-standing EPUB with real
+      highlights (Alice in Wonderland) shows the identical "no `<svg>` mark visible"
+      symptom, so it isn't specific to PDF or to a null CFI. Three real bugs found and
+      fixed live during this verification, none catchable by the existing unit tests
+      (see NOTES.md 2026-09-05 entry): (1) `PdfRenderer`'s mark/tint/search-mark painting
+      applied its fill to the whole-page wrapper `div` instead of each per-rect box, so
+      every mark tinted the entire page instead of the matched text; (2) `buildTextLayer`
+      skipped DOM nodes for empty-`str` text items that `textOfItems` still counted
+      (their `hasEOL` newline), desyncing the DOM's character offsets from the ones a
+      highlight is matched against — highlights landed ~20 characters into their own
+      quote; (3) the client defaulted a PDF selection's missing CFI to `""` instead of
+      `null`, which the server's `cfi: string().min(1).nullable()` schema rejects — every
+      highlight created in native mode was silently failing to save (400, swallowed)._
 
 #### B. Chrome parity
 
@@ -3541,11 +3558,14 @@ real paper. Drive it with the same five PDFs from M39 §A8.
       `EpubRenderer | PdfRenderer`) with zero format branches in `ReaderView` — these
       features only ever touched `highlights` state and the shared interface. Not
       independently live-verified (needs the same fresh import as A2)._
-- [ ] **B2.** The find bar over native: text search against `resource_text` with
+- [x] **B2.** The find bar over native: text search against `resource_text` with
       text-layer rect painting.
-      _Code done, left unchecked. `PdfRenderer.getRenderedSectionText`/`paintSearchMarks`/
-      `clearSearchMarks` implemented; `ReaderView`'s find-bar code already called these
-      generically. Not live-verified._
+      _Done — verified live 2026-09-05 (same session as A2). Searching a fresh PDF's
+      native pane found the correct total hit count across the book and painted correct,
+      correctly-sized rects for a hit purely from page text alongside a second hit that
+      was a highlight matched by containment (the find bar surfaces both kinds by
+      design) — confirms `getRenderedSectionText`/`paintSearchMarks` inherited the same
+      offset-sync fix A2 needed._
 - [ ] **B3.** Audio sentence-follow tinting re-expressed over text-layer rects.
       _Code done, left unchecked. `PdfRenderer.setTint`/`isLocatorVisible` implemented;
       the audio-follow effect already called these generically. Not live-verified (needs
