@@ -8328,3 +8328,78 @@ side effect **not** cleaned up: a throwaway import of the test fixture
 pipeline itself), left in the library as resource `eee25a26...` since no
 delete-resource route exists and removing library files directly isn't something to do
 without asking — [[marginalia-data-dir-caution]].
+
+
+## M41 §C1 — adaptive spread/zoom/continuous scroll for the native pane — 2026-09-06
+
+The operator asked for this directly while actually reading a paper in native mode: a
+2-page spread when the pane is wide enough, a fit-width single page when it isn't, and
+— once zoomed in past that — real continuous scroll rather than a page silently clipped
+by `overflow: hidden`. This is the entirety of TASKS.md's own M41 §C1, previously just
+one unimplemented sentence. Planned in plan mode first (two scope questions put to the
+operator directly: full continuous scroll across pages, not just a scrollable single
+page — confirmed; no persistence of zoom/layout choice across opens — confirmed,
+matching how a reflow⇄native switch already destroys and reconstructs the renderer, so
+"resets every time" costs nothing extra).
+
+**The core design decision**: continuous scroll is *derived* state, never tracked
+separately. `PdfRenderer.relayout()` recomputes, on every resize/zoom/fit-mode change,
+whether the reader's current zoom scale exceeds the active fit mode's own — if so,
+`advance` becomes `"scroll"`; if not, `"image"`. This means zooming back down, *or* the
+container growing back wide enough on its own, snaps back to paginated automatically in
+either direction — deliberately designed this way after noticing (before writing any
+code) that it's easy to build only the "zoom in → continuous" half and forget the
+"resize wider while already zoomed in → should back out" half.
+
+**Existing machinery this reused rather than reinvented**: `scrollProgressFromGeometry`
+(`pageTurn.ts`) — the exact same three-number scroll-progress function
+`EpubRenderer.computeScrollProgress` already calls for its own `flow: "scrolled"` mode —
+for the continuous mode's own progress readout and "reached the end" latch. The
+renderer-agnostic `next()`/`prev()`/keyboard-shortcut dispatch (already fully capability-
+driven, confirmed by reading it rather than assuming) needed zero changes: spread-aware
+step size (2 pages instead of 1) and continuous mode's "scroll by one viewport" both live
+entirely inside `PdfRenderer`'s own `next()`/`prev()`, invisible to everything upstream.
+
+**A real interaction bug found during implementation, not live-testing this time**: the
+existing reflow/native mode-switch button and its label/pressed-state all keyed off
+`capabilities.advance === "image"` to mean "currently native." That stopped being a valid
+test the moment PDF's own `advance` could also become `"scroll"` (continuous zoom) —
+the toggle would have visually flipped to look like "reflow mode" the instant a reader
+zoomed in, despite still being very much in the native pane. Fixed by switching every one
+of those checks to the new `capabilities.zoom` field instead (true only for `PdfRenderer`,
+regardless of its internal paginated/continuous state) — caught by reasoning through the
+capability change's downstream effects before writing the UI, not by a live click that
+happened to expose it.
+
+**What changed architecturally in `PdfRenderer`**: the single `pageDiv`/`textLayerDiv`/
+mark-bookkeeping fields became a `Map<pageIndex, PageMount>` — 1-2 pages live at once for
+a spread, several for continuous scroll (windowed: only pages near the viewport are ever
+real `<canvas>`+text-layer DOM; everything else is a lightweight sized placeholder,
+promoted/demoted by a rAF-debounced scroll handler as the reader scrolls). Every mark/
+tint/search-mark method that used to read "the one current page" now iterates whichever
+pages are currently mounted — safe because a highlight already resolves independently
+per page (never spans two), so this was always a valid assumption, just newly load-
+bearing. `naturalPageSizes` (each page's own scale:1 dimensions) piggybacks on the
+existing eager per-page walk `buildPageTexts` already did at mount — zero new async cost,
+and it's what makes every continuous-scroll placeholder's height known up front rather
+than discovered late (the thing that would otherwise cause scroll-position jank as
+real content loads in).
+
+**Verified live** (fresh PDF, `8d111eeb...`, the same one M41 §A2 used): a wide pane
+showed a genuine 2-up spread with real content on both pages; narrowing to 700px dropped
+to a single fit-width page; repeated zoom-in past the fit scale engaged continuous scroll
+— confirmed not just visually but structurally (a real scrollable container,
+`scrollHeight` far exceeding `clientHeight`, holding one slot per document page); zooming
+back out snapped back to the pixel-identical original spread; one ArrowRight in a forced
+spread advanced the progress readout from 0% to 28% and landed on genuinely different
+page content (a step of 1 would have landed much closer to 0%, on the very next page) —
+confirming the spread-aware ×2 step; a highlight made at fit-width repainted correctly
+after two zoom-in clicks, its rect width growing from 411px to 592px (≈1.44×, matching
+`ZOOM_STEP² = 1.2²`) at a new, still word-correct position. Test highlights created
+during this were deleted afterward.
+
+New unit tests: `pdfLayout.test.ts` (the pure spread/fit-scale/zoom-clamp math, no
+browser) and two additions to `PdfRenderer.test.ts` (zoom-in past fit flips `advance` to
+`"scroll"` and fires `onLayoutChanged`, zoom-out snaps back; a forced spread makes a
+single `next()` advance by 2 pages, confirmed via the legacy-path offset staying at 0
+rather than becoming a step-of-1's nonzero value).

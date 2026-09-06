@@ -605,10 +605,61 @@ Named here so the M41 estimate is honest. None of this is inherited from the EPU
 |---|---|
 | Selection | pdf.js text layer (absolutely-positioned transparent spans over the canvas) — real DOM Ranges, so `getSelectionContext` works unchanged |
 | Highlight painting | client rects from the text-layer Range → absolutely-positioned divs. `marks-pane` is CFI-keyed and is **not** reused |
-| Pagination | fixed pages; `capabilities.reflowable = false`, so spread/margins/font-scale/fold are all hidden rather than reimplemented |
+| Pagination | fixed pages; `fontScale`/`margins`/`pageFold` are all false, so those controls hide rather than reimplement — `spread`/`zoom` are real (§7.6) |
 | Find bar | pdf.js `findController`, or the same text search against `resource_text` with text-layer rect painting |
 | Audio follow | the sentence-tint path re-expressed over text-layer rects |
 | Page turn | plain page-to-page; the M20/M27 fold does **not** apply and must not be faked |
+
+### 7.6 Zoom and layout (M41 §C1)
+
+**The spread threshold is computed from the PDF's own page geometry, never a fixed
+pixel breakpoint.** Unlike EPUB's `SPREAD_MIN_WIDTH = 960` (readerGeometry.ts) — safe
+as a constant because reflowable text can be laid out at any width — a PDF page has a
+fixed intrinsic size, and that size varies hugely (a portrait paper vs. a landscape
+slide deck need very different container widths before a spread is legible). The test:
+would two pages side by side still render at ≥ `MIN_SPREAD_SCALE` (0.6) of their own
+native resolution? (`pdfLayout.ts`'s `shouldShowSpread`.)
+
+**Continuous scroll is a derived state, not a tracked one.** `advance` is `"scroll"`
+exactly when the user has stepped away from the active fit-mode's own live scale via
+zoomIn/zoomOut — recomputed on every relayout (a resize, a zoom action, a fit-mode
+change), never a separate flag that could drift from that comparison. Zooming back down
+to (or the container growing back up to) the fit-mode's own scale snaps back to
+paginated single/spread automatically, in either direction — the resize case is the one
+easy to build only half of (people remember "zoom in → continuous," forget "container
+grows back wider while already zoomed in → back out of continuous").
+
+**No persistence** (settled this milestone): zoom/layout state is pure `PdfRenderer`
+instance state, resetting to fit-width (auto-spread if it fits) on every open and every
+reflow⇄native switch — cheap, since that switch already destroys and reconstructs the
+renderer (§7.4's own rule).
+
+**Capability profile**, extending §7.5's table — `zoom: true` only for `PdfRenderer`
+(EPUB reflows instead of zooming; `fontScale` already owns that job), gating the zoom
+control cluster in the chrome the same way every other capability does (never
+`resourceFormat`, unlike the reflow/native mode-switch button itself, which controls
+*which* capabilities are even in effect rather than reading them):
+
+| capability | native, single/spread | native, continuous |
+|---|---|---|
+| `advance` | `"image"` | `"scroll"` |
+| `spread` | ✓ (may resolve to 1-up at a narrow width) | ✗ — no gutter to spread across, same as EPUB's scrolled row |
+| `zoom` | ✓ | ✓ |
+
+**Reporting layout state back to the chrome.** `capabilities` is set into `ReaderView`
+React state once, at mount — `EpubRenderer` never needs it updated again (`flow` is
+fixed at construction). `PdfRenderer`'s `advance`/`spread` now change inside a single
+instance's lifetime, so it carries a PDF-only extra, `onLayoutChanged`, the same
+named-extra shape as `onEpubRelocated`/`onSectionRendered` — not a shared-interface
+event, since EPUB has nothing to report through it.
+
+**A highlight resolves independently per mounted page**, never spanning two — the same
+assumption the single-page code silently baked in before this landed (now stated, not
+implied), which is what makes highlight/tint/search-mark painting correct under spread
+or continuous layout with no extra bookkeeping: they already re-derive their `Range`
+from the live text-layer DOM on every call rather than caching pixel positions, so
+iterating whichever pages are currently mounted (1–2 for a spread, several for
+continuous scroll) is always safe.
 
 ---
 

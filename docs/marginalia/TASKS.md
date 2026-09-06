@@ -3581,9 +3581,25 @@ real paper. Drive it with the same five PDFs from M39 §A8.
 
 #### C. Zoom and navigation
 
-- [ ] **C1.** Fit-width / fit-page / free zoom, and page navigation that keeps the reading
+- [x] **C1.** Fit-width / fit-page / free zoom, and page navigation that keeps the reading
       position in sync with the same path reflow uses — reading, listening and both modes
       must never lose each other's place.
+      _Done — see PDF.md §7.6 and NOTES.md's 2026-09-06 entry. Adaptive 1-page/2-page
+      spread driven by the PDF's own page geometry (`pdfLayout.ts`'s `shouldShowSpread`,
+      not a fixed breakpoint like EPUB's), fit-width/fit-page/free zoom controls, and a
+      real virtualized continuous-scroll mode that engages automatically once the reader
+      zooms past the active fit scale (and disengages automatically the other direction
+      too — zooming back down, or the pane growing back wide enough). Arrow-key paging
+      steps by 2 pages in a spread, 1 otherwise, and just scrolls in continuous mode —
+      all through the same renderer-agnostic `next()`/`prev()` the chrome already called
+      unchanged. Verified live: 2-up spread at a wide pane, 1-up at a narrow one, zoom-in
+      engaging continuous scroll (confirmed a real scrollable multi-page container, not
+      just a wider single page), zoom-out snapping back to the identical spread,
+      arrow-key stepping by 2 in a spread (confirmed via the progress readout and a
+      genuinely different page's content), and a highlight repainting at the correct,
+      proportionally-rescaled position after zooming. No persistence (a settled scope
+      call this milestone) — resets to fit-width every time, cheap since a reflow⇄native
+      switch already destroys and reconstructs the renderer._
 
 #### D. The scan preview
 
