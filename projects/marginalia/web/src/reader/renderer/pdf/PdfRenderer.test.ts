@@ -72,6 +72,15 @@ function stubResourceFetchWithSections(
   );
 }
 
+/** jsdom never lays anything out, so every element's `clientWidth`/
+ * `clientHeight` reads 0 by default — M41 §C1's layout math needs a real
+ * (mocked) container size to exercise its spread/zoom decisions at all
+ * rather than always falling back to `FALLBACK_SCALE`'s single-page path. */
+function mockContainerSize(container: HTMLElement, width: number, height: number): void {
+  Object.defineProperty(container, "clientWidth", { configurable: true, value: width });
+  Object.defineProperty(container, "clientHeight", { configurable: true, value: height });
+}
+
 /** Selects the DOM range covering `needle` inside `container`'s flattened
  * text and installs it as the live window selection — the same shape a real
  * mouse drag over the text layer produces. */
@@ -101,6 +110,7 @@ describe("PdfRenderer", () => {
       pageFold: false,
       pageNumbers: false,
       textSelection: true,
+      zoom: true,
       advance: "image",
     });
   });
@@ -320,6 +330,83 @@ describe("PdfRenderer — section-aware (M41 §A2)", () => {
         depth: 0,
       },
     ]);
+
+    renderer.destroy();
+  });
+});
+
+describe("PdfRenderer — zoom/layout (M41 §C1)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("zooming in past the fit-width scale switches to continuous scroll; zooming back down snaps to paginated", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    const container = document.createElement("div");
+    // Small on purpose — a low fit scale means only a few zoomIn() steps are
+    // needed to cross it.
+    mockContainerSize(container, 200, 260);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    expect(renderer.capabilities.advance).toBe("image");
+    expect(renderer.getZoomMode()).toBe("fit-width");
+
+    let layoutChanges = 0;
+    renderer.onLayoutChanged(() => {
+      layoutChanges += 1;
+    });
+
+    for (let i = 0; i < 20 && renderer.capabilities.advance !== "scroll"; i++) {
+      renderer.zoomIn();
+    }
+    expect(renderer.capabilities.advance).toBe("scroll");
+    expect(renderer.getZoomMode()).toBe("free");
+    // Let the async DOM rebuild the capability flip already committed to
+    // (synchronously, before relayout's own first await) actually settle —
+    // several event-loop turns, not one, since renderPageInto chains
+    // multiple real awaits (getPage, getTextContent).
+    for (let i = 0; i < 10 && layoutChanges === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(layoutChanges).toBeGreaterThan(0);
+
+    for (let i = 0; i < 20 && renderer.capabilities.advance !== "image"; i++) {
+      renderer.zoomOut();
+    }
+    expect(renderer.capabilities.advance).toBe("image");
+    expect(renderer.getZoomMode()).toBe("fit-width");
+
+    renderer.destroy();
+  });
+
+  it("a spread (pagesAcross === 2) makes a single next() call advance by 2 pages", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    const container = document.createElement("div");
+    // Wide enough to spread regardless of the fixture's own natural page
+    // width — MIN_SPREAD_SCALE (0.6) needs containerWidth >= 1.2x the
+    // natural width of *two* pages, and no real PDF page is anywhere near
+    // this wide.
+    mockContainerSize(container, 6000, 4000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    expect(renderer.capabilities.spread).toBe(true);
+    // Legacy (no section data) path: `currentLocation().offset` is
+    // `pageOffsets[pageIndex]` — 0 while anchored on page 0, and some
+    // positive value (page 0's own text length) once genuinely on page 1.
+    expect(renderer.currentLocation()?.offset).toBe(0);
+
+    // The fixture has exactly 2 pages. A step of 2 from page 0 overflows
+    // past the last page (index 1) and is blocked — `pageIndex` stays put.
+    // A step of 1 (the bug this guards against) would instead successfully
+    // land on page 1, changing the reported offset.
+    await renderer.next();
+    expect(renderer.currentLocation()?.offset).toBe(0);
 
     renderer.destroy();
   });

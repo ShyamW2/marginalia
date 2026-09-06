@@ -55,7 +55,20 @@ import { Button } from "../controls/Button.js";
 import { IconButton } from "../controls/IconButton.js";
 import { Slider } from "../controls/Slider.js";
 import { ExpandingCluster } from "../controls/ExpandingCluster.js";
-import { BrainIcon, FullscreenIcon, MagnifierIcon, PublishIcon, RenderModeIcon, ScanIcon, ScrollModeIcon, TrayIcon } from "../controls/icons.js";
+import {
+  BrainIcon,
+  FitPageIcon,
+  FitWidthIcon,
+  FullscreenIcon,
+  MagnifierIcon,
+  PublishIcon,
+  RenderModeIcon,
+  ScanIcon,
+  ScrollModeIcon,
+  TrayIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+} from "../controls/icons.js";
 import { BookCover } from "../library/BookCover.js";
 import { coverLayoutId } from "../library/coverLayoutId.js";
 import { ChromeSlotPortal } from "../app/chromeSlot.js";
@@ -747,6 +760,13 @@ export function ReaderView({
     capabilitiesRef.current = next;
     setCapabilities(next);
   }
+  // M41 §C1: PdfRenderer's own `advance`/`spread` change *inside a single
+  // instance's lifetime* (zooming in/out) — unlike EPUB, where `flow` is
+  // fixed at construction and `capabilities` never needs updating again
+  // after mount. `pdfZoom` mirrors that live state for the zoom cluster's
+  // own display (mode pressed-state, no live percent readout requested);
+  // null for an EPUB, where `capabilities.zoom` is always false anyway.
+  const [pdfZoom, setPdfZoom] = useState<{ mode: "fit-width" | "fit-page" | "free" } | null>(null);
   // M40 §C9: the reading mode is a reader setting remembered *per book*
   // (`reading_state.flow`, migration 42) — `null` means "not decided by the
   // reader this session; use whatever the book was last saved with",
@@ -2785,6 +2805,19 @@ export function ReaderView({
             if (spineIndex !== undefined) void checkChapterEndQuestions(spineIndex);
           }),
         );
+        // M41 §C1: unlike EPUB (`flow` fixed at construction — `capabilities`
+        // never needs updating again after mount), PdfRenderer's own
+        // `advance`/`spread` change *inside a single instance's lifetime* as
+        // the reader zooms past the active fit mode's own scale. Registered
+        // before `mount()` below (not after it resolves) so this also
+        // catches `relayout()`'s very first, mount-time emission — the
+        // initial `applyCapabilities`/`setPdfZoom` read, not a separate one.
+        unsubscribers.push(
+          activeRenderer.onLayoutChanged(() => {
+            applyCapabilities(activeRenderer.capabilities);
+            setPdfZoom({ mode: activeRenderer.getZoomMode() });
+          }),
+        );
       }
 
       await activeRenderer.mount(containerRef.current, { id: resourceId }, {
@@ -4378,9 +4411,11 @@ export function ReaderView({
             {digestCluster}
             {listeningCluster}
             {/* M40 §C9: a reader setting remembered per book — meaningless
-                for the native pane (no flow concept there), so hidden under
-                capabilities.advance === "image" rather than shown inert. */}
-            {capabilities.advance !== "image" && (
+                for the native pane (no flow concept there; M41 §C1's own
+                zoomed-in continuous scroll is a derived render state, never
+                a user-chosen "flow"), so hidden under capabilities.zoom
+                (true only for PdfRenderer) rather than shown inert. */}
+            {!capabilities.zoom && (
               <IconButton
                 icon={<ScrollModeIcon scrolled={capabilities.advance === "scroll"} />}
                 label={capabilities.advance === "scroll" ? "Switch to paginated" : "Switch to continuous scroll"}
@@ -4392,11 +4427,33 @@ export function ReaderView({
                 ever has a reflow/native pane to switch between. */}
             {resourceFormat === "pdf" && (
               <IconButton
-                icon={<RenderModeIcon native={capabilities.advance === "image"} />}
-                label={capabilities.advance === "image" ? "Switch to reflowed text" : "Switch to original PDF"}
-                pressed={capabilities.advance === "image"}
-                onClick={() => setReadingMode(capabilities.advance === "image" ? "reflow" : "native")}
+                icon={<RenderModeIcon native={capabilities.zoom} />}
+                label={capabilities.zoom ? "Switch to reflowed text" : "Switch to original PDF"}
+                pressed={capabilities.zoom}
+                onClick={() => setReadingMode(capabilities.zoom ? "reflow" : "native")}
               />
+            )}
+            {/* M41 §C1: the native pane's own adaptive spread/zoom — gated on
+                the capability (never resourceFormat, unlike the mode-switch
+                button above), since this asks what the *current* renderer
+                can do, not which renderer exists. */}
+            {capabilities.zoom && (
+              <>
+                <IconButton
+                  icon={<FitWidthIcon />}
+                  label="Fit width"
+                  pressed={pdfZoom?.mode === "fit-width"}
+                  onClick={() => rendererRef.current?.setZoomMode("fit-width")}
+                />
+                <IconButton
+                  icon={<FitPageIcon />}
+                  label="Fit page"
+                  pressed={pdfZoom?.mode === "fit-page"}
+                  onClick={() => rendererRef.current?.setZoomMode("fit-page")}
+                />
+                <IconButton icon={<ZoomOutIcon />} label="Zoom out" onClick={() => rendererRef.current?.zoomOut()} />
+                <IconButton icon={<ZoomInIcon />} label="Zoom in" onClick={() => rendererRef.current?.zoomIn()} />
+              </>
             )}
             <KeyCapAnchor shortcutKey={SHORTCUT_KEYS.fullscreen}>
               <IconButton
@@ -4437,10 +4494,10 @@ export function ReaderView({
             <IconButton icon={<TrayIcon />} label="Heat strip" onClick={onOpenScan} />
             <IconButton icon={<MagnifierIcon />} label="Search" onClick={() => handleFindShortcut()} />
             {/* M40 §C9: a reader setting remembered per book, reachable from
-                the strip — not gated on any capability itself (every EPUB
-                supports both flows), unlike the controls §C3 hides. Hidden
-                for the native pane (M41 §A1), which has no flow concept. */}
-            {capabilities.advance !== "image" && (
+                the strip. Hidden for the native pane (M41 §C1: `zoom` is
+                true only for PdfRenderer, whose own continuous scroll is a
+                derived zoom state, never this user-chosen "flow"). */}
+            {!capabilities.zoom && (
               <IconButton
                 icon={<ScrollModeIcon scrolled={capabilities.advance === "scroll"} />}
                 label={capabilities.advance === "scroll" ? "Switch to paginated" : "Switch to continuous scroll"}
@@ -4452,11 +4509,33 @@ export function ReaderView({
                 ever has a reflow/native pane to switch between. */}
             {resourceFormat === "pdf" && (
               <IconButton
-                icon={<RenderModeIcon native={capabilities.advance === "image"} />}
-                label={capabilities.advance === "image" ? "Switch to reflowed text" : "Switch to original PDF"}
-                pressed={capabilities.advance === "image"}
-                onClick={() => setReadingMode(capabilities.advance === "image" ? "reflow" : "native")}
+                icon={<RenderModeIcon native={capabilities.zoom} />}
+                label={capabilities.zoom ? "Switch to reflowed text" : "Switch to original PDF"}
+                pressed={capabilities.zoom}
+                onClick={() => setReadingMode(capabilities.zoom ? "reflow" : "native")}
               />
+            )}
+            {/* M41 §C1: the native pane's own adaptive spread/zoom — gated on
+                the capability (never resourceFormat, unlike the mode-switch
+                button above), since this asks what the *current* renderer
+                can do, not which renderer exists. */}
+            {capabilities.zoom && (
+              <>
+                <IconButton
+                  icon={<FitWidthIcon />}
+                  label="Fit width"
+                  pressed={pdfZoom?.mode === "fit-width"}
+                  onClick={() => rendererRef.current?.setZoomMode("fit-width")}
+                />
+                <IconButton
+                  icon={<FitPageIcon />}
+                  label="Fit page"
+                  pressed={pdfZoom?.mode === "fit-page"}
+                  onClick={() => rendererRef.current?.setZoomMode("fit-page")}
+                />
+                <IconButton icon={<ZoomOutIcon />} label="Zoom out" onClick={() => rendererRef.current?.zoomOut()} />
+                <IconButton icon={<ZoomInIcon />} label="Zoom in" onClick={() => rendererRef.current?.zoomIn()} />
+              </>
             )}
             <IconButton
               icon={<FullscreenIcon />}

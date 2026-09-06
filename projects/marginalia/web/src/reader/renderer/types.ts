@@ -33,9 +33,13 @@ export interface RendererCapabilities {
   pageFold: boolean;
   pageNumbers: boolean;
   textSelection: boolean;
+  /** M41 §C1: true only for `PdfRenderer` — gates the zoom control cluster.
+   *  EPUB reflows instead of zooming; `fontScale` already owns that job. */
+  zoom: boolean;
   /** "page"   — discrete turns (today's EPUB pane)
-   *  "scroll" — continuous within a section (M40 §C)
-   *  "image"  — fixed pages, no reflow (M41's native PDF)
+   *  "scroll" — continuous within a section (M40 §C), or a zoomed-in native
+   *             PDF pane past its own fit scale (M41 §C1)
+   *  "image"  — fixed pages, no reflow (M41's native PDF at or under fit)
    *  Drives which progress readout the strip shows. */
   advance: "page" | "scroll" | "image";
 }
@@ -94,6 +98,12 @@ export interface ResourceRenderer {
   applyTheme(vars: ReaderThemeVars): void;
   setFontScale(scale: number): void;
   setMargins(px: number): void;
+  /** M41 §C1. No-op under `capabilities.zoom === false`. "free" only ever
+   *  results from `zoomIn`/`zoomOut` stepping past the active fit mode's own
+   *  scale — there is no `setZoomMode("free")`. */
+  setZoomMode(mode: "fit-width" | "fit-page"): void;
+  zoomIn(): void;
+  zoomOut(): void;
 
   readonly capabilities: RendererCapabilities;
 }

@@ -202,6 +202,7 @@ export const PAGINATED_CAPABILITIES: RendererCapabilities = {
   pageFold: true,
   pageNumbers: true,
   textSelection: true,
+  zoom: false,
   advance: "page",
 };
 const SCROLLED_CAPABILITIES: RendererCapabilities = {
@@ -211,6 +212,7 @@ const SCROLLED_CAPABILITIES: RendererCapabilities = {
   pageFold: false,
   pageNumbers: false,
   textSelection: true,
+  zoom: false,
   advance: "scroll",
 };
 
@@ -582,6 +584,12 @@ export class EpubRenderer implements ResourceRenderer {
     // beyond bookkeeping the value for `applyGapForWidth`'s own formula.
     this.marginPx = px;
   }
+
+  /** M41 §C1: zoom is native-PDF-only (`capabilities.zoom` is always false
+   * here) — EPUB reflows instead, via `setFontScale`. */
+  setZoomMode(_mode: "fit-width" | "fit-page"): void {}
+  zoomIn(): void {}
+  zoomOut(): void {}
 
   // ── Highlights / search marks (EPUB-only) ───────────────────────────
 

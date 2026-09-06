@@ -1,7 +1,7 @@
 /**
- * M40 §D / M41 §A2 (PDF.md §7.2, §7.5, §4): the pdf.js implementation of
- * `ResourceRenderer` — the native, fixed-page PDF surface, distinct from
- * `EpubRenderer`'s reflowable one.
+ * M40 §D / M41 §A2/§C1 (PDF.md §7.2, §7.5, §7.6, §4): the pdf.js
+ * implementation of `ResourceRenderer` — the native, fixed-page PDF surface,
+ * distinct from `EpubRenderer`'s reflowable one.
  *
  * Every pdfjs-dist import in the app lives here.
  *
@@ -30,6 +30,19 @@
  *   (`pageOffsets`/`pageTexts`) — M40 §D's original, simpler behaviour,
  *   preserved exactly so an un-migrated PDF keeps working within native
  *   mode itself (cross-mode sharing just isn't available for it).
+ *
+ * M41 §C1 (PDF.md §7.6) adds adaptive layout on top of the above: one or
+ * two pages can be mounted at once (`pageMounts`, keyed by page index,
+ * replacing a single page's worth of DOM state), and — once the reader
+ * zooms in past the active fit mode's own scale — a fully continuous
+ * scrollable column takes over instead of discrete pages. Every method that
+ * used to read a single `pageDiv`/`textLayerDiv`/mark-bookkeeping field now
+ * operates over whichever entries of `pageMounts` are currently live; a
+ * highlight resolves independently against each mounted page (never spans
+ * two), which is what makes highlight/tint/search-mark painting correct
+ * under spread or continuous layout with no extra bookkeeping — they
+ * already re-derive their `Range` from the live text-layer DOM on every
+ * call rather than caching pixel positions.
  *
  * SPEC-GAP, carried over from M40 §D and only partly closed here: a page
  * whose section starts partway down it is assigned to the section active at
@@ -71,6 +84,7 @@ import type { HighlightKind, HighlightWithThread } from "@marginalia/shared";
 import { findAnchorInText } from "@marginalia/shared";
 import { getSelectionContext, offsetsForRange, rangeFromTextOffsets } from "../../selectionContext.js";
 import { audioTintStyle, markStyleForKind, searchMarkStyle } from "../../highlightKinds.js";
+import { scrollProgressFromGeometry } from "../../pageTurn.js";
 import type { TocEntry } from "../epub/toc.js";
 import type {
   Locator,
@@ -80,15 +94,34 @@ import type {
   RendererOptions,
   ResourceRenderer,
 } from "../types.js";
+import {
+  clampZoomScale,
+  computeFitScale,
+  shouldShowSpread,
+  ZOOM_STEP,
+  type FitMode,
+} from "./pdfLayout.js";
 
 const TEXT_LAYER_CLASS = "marginalia-pdf-text-layer";
 const MARK_CLASS = "marginalia-pdf-highlight";
 const TINT_CLASS = "marginalia-pdf-audio-tint";
 const SEARCH_MARK_CLASS = "marginalia-pdf-search-mark";
 const SELECTION_CONTEXT_MAX_LEN = 64;
-// 1.5x screen resolution — plenty for a fixed page; not tuned against a real
-// display yet since nothing renders this to a screen (M41's job).
-const RENDER_SCALE = 1.5;
+// M41 §C1's fallback for a container jsdom (or a not-yet-laid-out real
+// browser frame) reports as zero-sized — `computeFitScale` would otherwise
+// divide by zero into a scale of 0 (an invisible page). Matches the old,
+// pre-§C1 hardcoded `RENDER_SCALE`, so every existing test that never mocks
+// element geometry keeps rendering at the same pixel size it always did.
+const FALLBACK_SCALE = 1.5;
+// Below this, `userScale` is treated as "back at the active fit mode's own
+// scale" rather than a real, still-zoomed-in override — sub-pixel float
+// drift from repeated zoomIn/zoomOut multiplication/division must not leave
+// a view permanently a hair off from snapping back to paginated.
+const ZOOM_EPSILON = 0.005;
+// One extra viewport of slack above/below the visible area, in continuous
+// mode, before a mounted page is torn back down to a placeholder — keeps a
+// small scroll from constantly promoting/demoting the same page.
+const CONTINUOUS_BUFFER_VIEWPORTS = 1;
 
 // Narrow, local shapes for what this file uses from pdfjs-dist's proxies —
 // same pattern as server/src/library/pdf/extract.ts, which keeps the
@@ -130,7 +163,7 @@ type Listener<T> = (arg: T) => void;
  * full `HighlightWithThread` (thread/tag/note fields this file never
  * touches). `offset`/`length` are only meaningful in the legacy (no
  * section data) coordinate system; `exact`/`prefix`/`suffix` are only used
- * in the section-aware one. Both are carried so `resolveAndPaintCurrentPage`
+ * in the section-aware one. Both are carried so `resolveAndPaintPage`
  * can pick whichever the resource actually has. */
 interface ResolvableHighlight {
   id: string;
@@ -141,6 +174,19 @@ interface ResolvableHighlight {
   kind: HighlightKind;
   offset: number | null;
   length: number | null;
+}
+
+/** M41 §C1: everything a single mounted page needs — replaces what used to
+ * be five singular fields (`pageDiv`/`textLayerDiv`/`pinnedMarkEls`/
+ * `searchMarkEls`/`tintEl`) now that 1-2 pages (spread) or several
+ * (continuous scroll) can be live at once, keyed by page index in
+ * `pageMounts`. */
+interface PageMount {
+  pageDiv: HTMLElement;
+  textLayerDiv: HTMLElement;
+  pinnedMarkEls: Map<string, HTMLElement>;
+  searchMarkEls: Set<HTMLElement>;
+  tintEl: HTMLElement | null;
 }
 
 /**
@@ -183,19 +229,19 @@ function applyMarkAttrs(el: HTMLElement, attrs: Record<string, string>): void {
 }
 
 /**
- * M40 §D / M41 §A2: the second `ResourceRenderer` implementation.
- * `capabilities` follows PDF.md §7.5's table exactly — nothing reflows,
- * nothing paginates in the epub.js sense, so every layout knob but
- * `textSelection` is off.
+ * M40 §D / M41 §A2/§C1: the second `ResourceRenderer` implementation.
+ * `capabilities` starts per PDF.md §7.5's table and now changes at runtime
+ * (§7.6) as the reader zooms past the active fit mode's own scale.
  */
 export class PdfRenderer implements ResourceRenderer {
-  readonly capabilities: RendererCapabilities = {
+  capabilities: RendererCapabilities = {
     spread: false,
     fontScale: false,
     margins: false,
     pageFold: false,
     pageNumbers: false,
     textSelection: true,
+    zoom: true,
     advance: "image",
   };
 
@@ -204,8 +250,6 @@ export class PdfRenderer implements ResourceRenderer {
   private themeVars: ReaderThemeVars | null = null;
   private focusModeHidden = false;
 
-  private pageDiv: HTMLElement | null = null;
-  private textLayerDiv: HTMLElement | null = null;
   private pageIndex = 0;
 
   /** Legacy (no section data) coordinate system — cumulative char offset /
@@ -213,6 +257,10 @@ export class PdfRenderer implements ResourceRenderer {
    * page's own `getTextContent()`, whole document as section 0. */
   private pageOffsets: number[] = [];
   private pageTexts: string[] = [];
+  /** Each page's own scale:1 viewport size — M41 §C1's spread/fit-scale
+   * math needs this per page (real PDFs mix page sizes), collected in the
+   * same eager per-page walk `buildPageTexts` already does. */
+  private naturalPageSizes: { width: number; height: number }[] = [];
 
   /** Section-aware coordinate system — see the class comment. Empty when
    * the resource predates migration 44 or a fetch failed; `hasSectionData`
@@ -230,11 +278,40 @@ export class PdfRenderer implements ResourceRenderer {
     return this.pageSectionIndex.length > 0 && this.sectionTexts.size > 0;
   }
 
+  // ── M41 §C1: layout/zoom state ───────────────────────────────────────
+  private fitMode: FitMode = "fit-width";
+  /** `null` = tracking the active fit mode's own live scale. Non-null = the
+   * reader has stepped away via `zoomIn`/`zoomOut`, past which the view
+   * becomes continuous scroll (`relayout`'s own rule, PDF.md §7.6). */
+  private userScale: number | null = null;
+  private currentFitScale = FALLBACK_SCALE;
+  private effectiveScale = FALLBACK_SCALE;
+  private pagesAcross: 1 | 2 = 1;
+  private resizeObserver: ResizeObserver | null = null;
+  /** Bumped on every `relayout()` call — async page-render work captures it
+   * at start and bails (touching neither `pageMounts` nor the DOM) if it's
+   * changed by the time an `await` resolves, so a resize/zoom spam can never
+   * race two renders into the same container or paint a mark into an
+   * already-discarded `pageDiv`. */
+  private renderGeneration = 0;
+  private pageMounts = new Map<number, PageMount>();
+  private layoutListeners = new Set<Listener<void>>();
+
+  // ── M41 §C1: continuous-scroll state (non-null only while
+  // capabilities.advance === "scroll") ─────────────────────────────────
+  private scrollHost: HTMLElement | null = null;
+  private continuousSlots: HTMLElement[] = [];
+  private continuousRafHandle: number | null = null;
+  private handleContinuousScroll = (): void => {
+    if (this.continuousRafHandle !== null) return;
+    this.continuousRafHandle = requestAnimationFrame(() => {
+      this.continuousRafHandle = null;
+      void this.syncContinuousWindow();
+    });
+  };
+
   private highlights: ResolvableHighlight[] = [];
-  private pinnedMarkEls = new Map<string, HTMLElement>();
-  private searchMarkEls = new Set<HTMLElement>();
   private tintTarget: Locator | null = null;
-  private tintEl: HTMLElement | null = null;
   private lastSelectionViewportRect: DOMRect | null = null;
   /** `sectionEnd` fires once per arrival at the last page *of the current
    * section* (or the document, in the legacy system) — re-rendering the
@@ -261,7 +338,18 @@ export class PdfRenderer implements ResourceRenderer {
 
     await this.buildPageTexts();
     if (this.cancelled) return;
-    await this.renderPage(0);
+    await this.relayout();
+    if (this.cancelled) return;
+
+    // jsdom has no ResizeObserver at all — degrades to "no live resize
+    // reactivity", same "degrades, never throws" rule this file's own
+    // canvas-context fallback already follows. The initial `relayout()`
+    // above already ran regardless, so every test keeps working exactly as
+    // before this landed.
+    if (typeof ResizeObserver !== "undefined") {
+      this.resizeObserver = new ResizeObserver(() => void this.relayout());
+      this.resizeObserver.observe(container);
+    }
   }
 
   /** Populates the section-aware coordinate system — degrades silently
@@ -320,13 +408,14 @@ export class PdfRenderer implements ResourceRenderer {
 
   destroy(): void {
     this.cancelled = true;
+    this.renderGeneration++;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.teardownContinuous();
     this.container?.replaceChildren();
     this.container = null;
-    this.pageDiv = null;
-    this.textLayerDiv = null;
     this.doc = null;
-    this.pinnedMarkEls.clear();
-    this.searchMarkEls.clear();
+    this.pageMounts = new Map();
   }
 
   private async buildPageTexts(): Promise<void> {
@@ -334,6 +423,7 @@ export class PdfRenderer implements ResourceRenderer {
     if (!doc) return;
     const offsets: number[] = [];
     const texts: string[] = [];
+    const naturalSizes: { width: number; height: number }[] = [];
     let cumulative = 0;
     for (let i = 0; i < doc.numPages; i++) {
       offsets.push(cumulative);
@@ -342,9 +432,12 @@ export class PdfRenderer implements ResourceRenderer {
       const text = textOfItems(content.items);
       texts.push(text);
       cumulative += text.length;
+      const natural = page.getViewport({ scale: 1 });
+      naturalSizes.push({ width: natural.width, height: natural.height });
     }
     this.pageOffsets = offsets;
     this.pageTexts = texts;
+    this.naturalPageSizes = naturalSizes;
   }
 
   private pageIndexForOffset(offset: number): number {
@@ -458,17 +551,28 @@ export class PdfRenderer implements ResourceRenderer {
   }
 
   async next(): Promise<void> {
-    if (!this.doc) return;
-    if (this.pageIndex >= this.doc.numPages - 1) {
+    const doc = this.doc;
+    if (!doc) return;
+    if (this.capabilities.advance === "scroll") {
+      this.scrollHost?.scrollBy({ top: this.scrollHost.clientHeight * 0.9, behavior: "auto" });
+      return;
+    }
+    const step = this.pagesAcross === 2 ? 2 : 1;
+    if (this.pageIndex + step > doc.numPages - 1) {
       this.emitSectionEndOnce();
       return;
     }
-    await this.renderPage(this.pageIndex + 1);
+    await this.renderPage(this.pageIndex + step);
   }
 
   async prev(): Promise<void> {
+    if (this.capabilities.advance === "scroll") {
+      this.scrollHost?.scrollBy({ top: -(this.scrollHost.clientHeight * 0.9), behavior: "auto" });
+      return;
+    }
     if (this.pageIndex <= 0) return;
-    await this.renderPage(this.pageIndex - 1);
+    const step = this.pagesAcross === 2 ? 2 : 1;
+    await this.renderPage(Math.max(0, this.pageIndex - step));
   }
 
   currentLocation(): Locator | null {
@@ -503,12 +607,37 @@ export class PdfRenderer implements ResourceRenderer {
     this.emit("sectionEnd", undefined as never);
   }
 
-  /** A highlight `resolveAndPaintCurrentPage` could not place — never
-   * fired (see the class comment's SPEC-GAP). Registered so `ReaderView`
-   * can subscribe uniformly across both renderers without an `instanceof`
-   * check. */
+  /** A highlight `resolveAndPaintPage` could not place — never fired (see
+   * the class comment's SPEC-GAP). Registered so `ReaderView` can subscribe
+   * uniformly across both renderers without an `instanceof` check. */
   onUnanchored(_cb: Listener<string>): () => void {
     return () => {};
+  }
+
+  /** M41 §C1 (PDF.md §7.6): the PDF-only readout for the zoom control
+   * cluster — not on the shared `ResourceRenderer` interface, same reasoning
+   * as `onEpubRelocated`/`onSectionRendered`: a seam member only earns its
+   * place once a second implementation needs it too, and EPUB has no zoom
+   * concept (`capabilities.zoom` is permanently false there). Fires
+   * whenever `relayout()` finishes — a resize, a zoom action, a fit-mode
+   * change — so `ReaderView` can re-read `capabilities`/`getZoomMode`/
+   * `getZoomPercent` fresh; `capabilities` itself is otherwise only read
+   * once, at mount, by the chrome. */
+  onLayoutChanged(cb: Listener<void>): () => void {
+    this.layoutListeners.add(cb);
+    return () => this.layoutListeners.delete(cb);
+  }
+
+  private emitLayoutChanged(): void {
+    this.layoutListeners.forEach((cb) => cb());
+  }
+
+  getZoomMode(): "fit-width" | "fit-page" | "free" {
+    return this.userScale === null ? this.fitMode : "free";
+  }
+
+  getZoomPercent(): number {
+    return Math.round(this.effectiveScale * 100);
   }
 
   // ── Marks ────────────────────────────────────────────────────────────
@@ -538,17 +667,20 @@ export class PdfRenderer implements ResourceRenderer {
 
   removeMark(highlightId: string): void {
     this.highlights = this.highlights.filter((h) => h.id !== highlightId);
-    const el = this.pinnedMarkEls.get(highlightId);
-    if (el) {
-      el.remove();
-      this.pinnedMarkEls.delete(highlightId);
+    for (const mount of this.pageMounts.values()) {
+      const el = mount.pinnedMarkEls.get(highlightId);
+      if (el) {
+        el.remove();
+        mount.pinnedMarkEls.delete(highlightId);
+      }
     }
   }
 
   /** M41 §A2: the bulk-resolve path `EpubRenderer.setHighlights` mirrors —
-   * a full loaded list, re-resolved against whichever page is currently
-   * rendered (and again on every future render, since a PDF page's DOM is
-   * ephemeral — `renderPage` calls this itself). */
+   * a full loaded list, re-resolved against whichever page(s) are currently
+   * mounted (and again on every future render, since a PDF page's DOM is
+   * ephemeral — `renderPaginated`/`syncContinuousWindow` call this
+   * themselves). */
   setHighlights(highlights: HighlightWithThread[]): void {
     this.highlights = highlights.map((h) => ({
       id: h.id,
@@ -563,9 +695,8 @@ export class PdfRenderer implements ResourceRenderer {
     this.resolveAndPaintCurrentPage();
   }
 
-  private paintOneMark(id: string, kind: HighlightKind, range: Range): void {
-    if (!this.pageDiv || !this.textLayerDiv) return;
-    let el = this.pinnedMarkEls.get(id);
+  private paintOneMark(mount: PageMount, id: string, kind: HighlightKind, range: Range): void {
+    let el = mount.pinnedMarkEls.get(id);
     if (!el) {
       el = document.createElement("div");
       el.className = MARK_CLASS;
@@ -574,63 +705,76 @@ export class PdfRenderer implements ResourceRenderer {
       el.style.inset = "0";
       el.style.pointerEvents = "none";
       el.addEventListener("click", () => this.emit("markClicked", id));
-      this.pinnedMarkEls.set(id, el);
+      mount.pinnedMarkEls.set(id, el);
     }
     const attrs = this.themeVars ? markStyleForKind(kind, this.themeVars, this.focusModeHidden) : undefined;
-    paintRangeInto(el, range, this.pageDiv, attrs);
-    if (!el.isConnected) this.pageDiv.insertBefore(el, this.textLayerDiv);
+    paintRangeInto(el, range, mount.pageDiv, attrs);
+    if (!el.isConnected) mount.pageDiv.insertBefore(el, mount.textLayerDiv);
   }
 
-  /** Resolves every pinned highlight against whichever page is currently
-   * rendered — called after every `renderPage` (a fresh DOM), and again
+  /** Resolves every pinned highlight against every currently-mounted page —
+   * called after every fresh render (a fresh DOM per mount), and again
    * after `setHighlights`/`paintMark`/`applyTheme`/`setFocusMode` touch
-   * state that could change what's resolvable or how it should look. */
+   * state that could change what's resolvable or how it should look. A
+   * highlight resolves independently per page (never spans two), so
+   * iterating every mount is always safe regardless of single/spread/
+   * continuous layout. */
   private resolveAndPaintCurrentPage(): void {
-    if (!this.pageDiv || !this.textLayerDiv) return;
+    for (const [pageIndex, mount] of this.pageMounts) {
+      this.resolveAndPaintPage(pageIndex, mount);
+    }
+  }
+
+  private resolveAndPaintPage(pageIndex: number, mount: PageMount): void {
     const stillPresent = new Set<string>();
 
     if (this.hasSectionData) {
-      const currentSection = this.sectionForPage(this.pageIndex);
-      const pageText = this.pageTexts[this.pageIndex] ?? "";
+      const currentSection = this.sectionForPage(pageIndex);
+      const pageText = this.pageTexts[pageIndex] ?? "";
       for (const h of this.highlights) {
         if (h.spineIndex !== currentSection || !h.exact) continue;
         const match = findAnchorInText(pageText, h);
         if (!match) continue;
-        const range = rangeFromTextOffsets(this.textLayerDiv, match.start, match.end);
+        const range = rangeFromTextOffsets(mount.textLayerDiv, match.start, match.end);
         if (!range) continue;
         stillPresent.add(h.id);
-        this.paintOneMark(h.id, h.kind, range);
+        this.paintOneMark(mount, h.id, h.kind, range);
       }
     } else {
-      const pageStart = this.pageOffsets[this.pageIndex] ?? 0;
-      const pageLen = this.pageLength(this.pageIndex);
+      const pageStart = this.pageOffsets[pageIndex] ?? 0;
+      const pageLen = this.pageLength(pageIndex);
       for (const h of this.highlights) {
         if (h.spineIndex !== 0 || h.offset == null || h.length == null) continue;
         const localStart = h.offset - pageStart;
         const localEnd = localStart + h.length;
         if (localStart < 0 || localEnd > pageLen) continue;
-        const range = rangeFromTextOffsets(this.textLayerDiv, localStart, localEnd);
+        const range = rangeFromTextOffsets(mount.textLayerDiv, localStart, localEnd);
         if (!range) continue;
         stillPresent.add(h.id);
-        this.paintOneMark(h.id, h.kind, range);
+        this.paintOneMark(mount, h.id, h.kind, range);
       }
     }
 
-    for (const [id, el] of this.pinnedMarkEls) {
+    for (const [id, el] of mount.pinnedMarkEls) {
       if (!stillPresent.has(id)) {
         el.remove();
-        this.pinnedMarkEls.delete(id);
+        mount.pinnedMarkEls.delete(id);
       }
     }
   }
 
   /** Mirrors `EpubRenderer`'s own convention: the *first* line box of a
-   * (possibly multi-line) mark, not their union. */
+   * (possibly multi-line) mark, not their union. Searches every mounted
+   * page — a highlight lives on exactly one, but which one isn't known
+   * ahead of time under spread/continuous layout. */
   markRect(highlightId: string): DOMRect | null {
-    const el = this.pinnedMarkEls.get(highlightId);
-    if (!el?.isConnected) return null;
-    const box = el.firstElementChild;
-    return box ? box.getBoundingClientRect() : null;
+    for (const mount of this.pageMounts.values()) {
+      const el = mount.pinnedMarkEls.get(highlightId);
+      if (!el?.isConnected) continue;
+      const box = el.firstElementChild;
+      if (box) return box.getBoundingClientRect();
+    }
+    return null;
   }
 
   setTint(loc: Locator | null): void {
@@ -639,28 +783,34 @@ export class PdfRenderer implements ResourceRenderer {
   }
 
   private paintTintForCurrentPage(): void {
-    if (this.tintEl) {
-      this.tintEl.remove();
-      this.tintEl = null;
+    for (const [pageIndex, mount] of this.pageMounts) {
+      this.paintTintForPage(pageIndex, mount);
+    }
+  }
+
+  private paintTintForPage(pageIndex: number, mount: PageMount): void {
+    if (mount.tintEl) {
+      mount.tintEl.remove();
+      mount.tintEl = null;
     }
     const loc = this.tintTarget;
-    if (!loc || !this.pageDiv || !this.textLayerDiv) return;
-    if (this.sectionForPage(this.pageIndex) !== loc.sectionIndex) return;
+    if (!loc) return;
+    if (this.sectionForPage(pageIndex) !== loc.sectionIndex) return;
 
     let range: Range | null = null;
     if (this.hasSectionData) {
       const text = this.sectionTexts.get(loc.sectionIndex) ?? "";
       const quote = text.slice(loc.offset, loc.offset + loc.length);
       if (quote) {
-        const match = findAnchorInText(this.pageTexts[this.pageIndex] ?? "", { exact: quote, prefix: "", suffix: "" });
-        if (match) range = rangeFromTextOffsets(this.textLayerDiv, match.start, match.end);
+        const match = findAnchorInText(this.pageTexts[pageIndex] ?? "", { exact: quote, prefix: "", suffix: "" });
+        if (match) range = rangeFromTextOffsets(mount.textLayerDiv, match.start, match.end);
       }
     } else {
-      const pageStart = this.pageOffsets[this.pageIndex] ?? 0;
+      const pageStart = this.pageOffsets[pageIndex] ?? 0;
       const localStart = loc.offset - pageStart;
       const localEnd = localStart + loc.length;
-      if (localStart >= 0 && localEnd <= this.pageLength(this.pageIndex)) {
-        range = rangeFromTextOffsets(this.textLayerDiv, localStart, localEnd);
+      if (localStart >= 0 && localEnd <= this.pageLength(pageIndex)) {
+        range = rangeFromTextOffsets(mount.textLayerDiv, localStart, localEnd);
       }
     }
     if (!range) return;
@@ -671,43 +821,45 @@ export class PdfRenderer implements ResourceRenderer {
     el.style.inset = "0";
     el.style.pointerEvents = "none";
     const attrs = this.themeVars ? audioTintStyle(this.themeVars, this.focusModeHidden) : undefined;
-    paintRangeInto(el, range, this.pageDiv, attrs);
-    this.pageDiv.insertBefore(el, this.textLayerDiv);
-    this.tintEl = el;
+    paintRangeInto(el, range, mount.pageDiv, attrs);
+    mount.pageDiv.insertBefore(el, mount.textLayerDiv);
+    mount.tintEl = el;
   }
 
   /** B2 (PDF.md §7.5): "text search against `resource_text` with text-layer
    * rect painting". `located` entries are offsets into whatever
    * `getRenderedSectionText` returned for the current page — `ReaderView`
    * locates hits against that same string before calling this, exactly as
-   * it does for `EpubRenderer`. */
+   * it does for `EpubRenderer`. Paints only onto the current page's own
+   * mount, matching `getRenderedSectionText`'s own single-page scope. */
   paintSearchMarks(located: { index: number; start: number; end: number }[], currentIndex: number): void {
     this.clearSearchMarks();
-    if (!this.pageDiv || !this.textLayerDiv || !this.themeVars) return;
+    const mount = this.pageMounts.get(this.pageIndex);
+    if (!mount || !this.themeVars) return;
     for (const { index, start, end } of located) {
-      const range = rangeFromTextOffsets(this.textLayerDiv, start, end);
+      const range = rangeFromTextOffsets(mount.textLayerDiv, start, end);
       if (!range) continue;
       const el = document.createElement("div");
       el.className = SEARCH_MARK_CLASS;
       el.style.position = "absolute";
       el.style.inset = "0";
       el.style.pointerEvents = "none";
-      paintRangeInto(el, range, this.pageDiv, searchMarkStyle(this.themeVars, index === currentIndex));
-      this.pageDiv.insertBefore(el, this.textLayerDiv);
-      this.searchMarkEls.add(el);
+      paintRangeInto(el, range, mount.pageDiv, searchMarkStyle(this.themeVars, index === currentIndex));
+      mount.pageDiv.insertBefore(el, mount.textLayerDiv);
+      mount.searchMarkEls.add(el);
     }
   }
 
   clearSearchMarks(): void {
-    for (const el of this.searchMarkEls) el.remove();
-    this.searchMarkEls.clear();
+    for (const mount of this.pageMounts.values()) {
+      for (const el of mount.searchMarkEls) el.remove();
+      mount.searchMarkEls.clear();
+    }
   }
 
   /** Which section's text the *currently rendered page* holds — null for
-   * any other section, since only one page is ever live at a time (unlike
-   * `EpubRenderer`, which lays a whole section out at once). B2/B3 both
-   * read this to know whether there's anything to search on screen right
-   * now. */
+   * any other section. B2/B3 both read this to know whether there's
+   * anything to search on screen right now. */
   getRenderedSectionText(sectionIndex: number): string | null {
     if (this.sectionForPage(this.pageIndex) !== sectionIndex) return null;
     return this.pageTexts[this.pageIndex] ?? "";
@@ -715,8 +867,7 @@ export class PdfRenderer implements ResourceRenderer {
 
   /** B3's own "should I auto-turn to catch up" check — true only when the
    * locator's section is the one currently on screen *and* its quote
-   * actually resolves there (no separate viewport/scroll test: a rendered
-   * PDF page has nothing to scroll past in this milestone). */
+   * actually resolves there. */
   isLocatorVisible(loc: Locator): boolean {
     if (this.sectionForPage(this.pageIndex) !== loc.sectionIndex) return false;
     if (this.hasSectionData) {
@@ -739,11 +890,9 @@ export class PdfRenderer implements ResourceRenderer {
    * `frameElement: null` is correct, not a stub: `pointerOverInkAt`'s own
    * ink test already skips any frame with no element, which is exactly
    * "the fold's ink/paper distinction doesn't apply here" (B4: the fold
-   * itself never mounts under `capabilities.pageFold = false`). The
-   * document itself is what `hasLiveSelection`/`clearNativeSelection` need,
-   * and both work unchanged against it. */
+   * itself never mounts under `capabilities.pageFold = false`). */
   renderedFrames(): { document: Document; frameElement: HTMLElement | null }[] {
-    return this.pageDiv ? [{ document, frameElement: null }] : [];
+    return this.pageMounts.size > 0 ? [{ document, frameElement: null }] : [];
   }
 
   getToc(): TocEntry[] {
@@ -784,10 +933,10 @@ export class PdfRenderer implements ResourceRenderer {
     this.paintTintForCurrentPage();
   }
 
-  /** Nothing here ever reflows (every layout capability is false), so this
-   * is just a safe re-run of the same resolution `applyTheme`/page renders
-   * already do — kept real rather than a silent no-op so the call site
-   * doesn't need an `instanceof` guard to know it's harmless. */
+  /** Nothing here ever reflows, so this is just a safe re-run of the same
+   * resolution `applyTheme`/page renders already do — kept real rather than
+   * a silent no-op so the call site doesn't need an `instanceof` guard to
+   * know it's harmless. */
   refreshOverlays(): void {
     this.resolveAndPaintCurrentPage();
     this.paintTintForCurrentPage();
@@ -796,24 +945,126 @@ export class PdfRenderer implements ResourceRenderer {
   setFontScale(_scale: number): void {}
   setMargins(_px: number): void {}
 
-  // ── Internals ────────────────────────────────────────────────────────
+  /** M41 §C1 (PDF.md §7.6). */
+  setZoomMode(mode: FitMode): void {
+    this.fitMode = mode;
+    this.userScale = null;
+    void this.relayout();
+  }
 
+  zoomIn(): void {
+    this.userScale = clampZoomScale((this.userScale ?? this.currentFitScale) * ZOOM_STEP);
+    void this.relayout();
+  }
+
+  zoomOut(): void {
+    const next = (this.userScale ?? this.currentFitScale) / ZOOM_STEP;
+    this.userScale = next <= this.currentFitScale + ZOOM_EPSILON ? null : clampZoomScale(next);
+    void this.relayout();
+  }
+
+  // ── Internals: layout ────────────────────────────────────────────────
+
+  /** The navigation entry point (`goTo`/`next`/`prev` all funnel through
+   * this) — sets the target page, then defers all actual rendering to
+   * `relayout()`, the single function that decides single/spread/
+   * continuous and builds the DOM to match. */
   private async renderPage(pageIndex: number): Promise<void> {
+    const doc = this.doc;
+    if (!doc) return;
+    this.pageIndex = Math.max(0, Math.min(pageIndex, doc.numPages - 1));
+    this.sectionEndFired = false;
+    await this.relayout();
+  }
+
+  /**
+   * M41 §C1 (PDF.md §7.6): the central layout decision, called from the
+   * `ResizeObserver`, `setZoomMode`/`zoomIn`/`zoomOut`, and `renderPage`.
+   * Continuous scroll is *derived* state, never a separately-tracked flag
+   * that could drift from it: `advance` is `"scroll"` exactly when
+   * `userScale` is non-null, recomputed here every time, so a container
+   * growing back up (or zooming back down) to meet the fit scale snaps back
+   * to paginated single/spread automatically in either direction.
+   */
+  private async relayout(): Promise<void> {
     const container = this.container;
     const doc = this.doc;
     if (!container || !doc) return;
-    this.pageIndex = Math.max(0, Math.min(pageIndex, doc.numPages - 1));
-    this.sectionEndFired = false;
+    const generation = ++this.renderGeneration;
 
-    const page = await doc.getPage(this.pageIndex + 1);
-    if (this.cancelled) return;
-    const viewport = page.getViewport({ scale: RENDER_SCALE });
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+    const natural = this.naturalPageSizes[this.pageIndex] ?? { width: 0, height: 0 };
 
-    container.replaceChildren();
+    if (containerWidth <= 0) {
+      // Not yet laid out (or jsdom, which never lays out at all) —
+      // FALLBACK_SCALE keeps every existing test's pixel expectations
+      // exactly what they were before this landed.
+      this.pagesAcross = 1;
+      this.currentFitScale = FALLBACK_SCALE;
+    } else {
+      this.pagesAcross = this.userScale === null && shouldShowSpread(containerWidth, natural.width) ? 2 : 1;
+      // Stable, even-aligned pairing (0|1, 2|3, ...) whenever a spread is
+      // showing — idempotent if already even, and what re-pairs a page that
+      // was alone (odd index) the moment a spread becomes available.
+      if (this.pagesAcross === 2 && this.pageIndex % 2 === 1) this.pageIndex -= 1;
+      this.currentFitScale =
+        computeFitScale(this.fitMode, containerWidth, containerHeight, natural.width, natural.height, this.pagesAcross) ||
+        FALLBACK_SCALE;
+    }
+
+    // Snap-back: a resize (or the container simply finishing layout) that
+    // brings the fit scale back up to meet a standing zoom-in undoes it,
+    // exactly as zooming back down by hand would.
+    if (this.userScale !== null && this.userScale <= this.currentFitScale + ZOOM_EPSILON) {
+      this.userScale = null;
+    }
+
+    this.effectiveScale = this.userScale ?? this.currentFitScale;
+    const nextAdvance: "image" | "scroll" = this.userScale !== null ? "scroll" : "image";
+    this.capabilities = {
+      ...this.capabilities,
+      advance: nextAdvance,
+      spread: nextAdvance === "image" && this.pagesAcross === 2,
+    };
+
+    if (nextAdvance === "scroll") {
+      if (!this.scrollHost) {
+        container.replaceChildren();
+        this.pageMounts = new Map();
+        const scrollHost = document.createElement("div");
+        scrollHost.style.cssText = "width:100%;height:100%;overflow:auto;position:relative;";
+        container.appendChild(scrollHost);
+        this.scrollHost = scrollHost;
+      }
+      await this.rebuildContinuousColumn(generation);
+    } else {
+      this.teardownContinuous();
+      await this.renderPaginated(generation);
+    }
+
+    if (generation !== this.renderGeneration) return;
+    this.emitLayoutChanged();
+  }
+
+  /** Builds the extracted, reusable per-page render — everything from
+   * "fetch the page → canvas/text-layer DOM → raster → text layer",
+   * parameterized on scale instead of a hardcoded constant. Returns `null`
+   * (touching neither the DOM nor `pageMounts`) if cancelled or superseded
+   * by a later `relayout()` mid-flight — the fix for a resize/zoom spam
+   * racing two renders into the same container. */
+  private async renderPageInto(pageIndex: number, scale: number, generation: number): Promise<PageMount | null> {
+    const doc = this.doc;
+    if (!doc) return null;
+    const page = await doc.getPage(pageIndex + 1);
+    if (this.cancelled || generation !== this.renderGeneration) return null;
+    const viewport = page.getViewport({ scale });
+
     const pageDiv = document.createElement("div");
     pageDiv.style.position = "relative";
     pageDiv.style.width = `${viewport.width}px`;
     pageDiv.style.height = `${viewport.height}px`;
+    pageDiv.style.flex = "none";
 
     const canvas = document.createElement("canvas");
     canvas.width = viewport.width;
@@ -826,18 +1077,8 @@ export class PdfRenderer implements ResourceRenderer {
     textLayerDiv.className = TEXT_LAYER_CLASS;
     textLayerDiv.style.position = "absolute";
     textLayerDiv.style.inset = "0";
-    textLayerDiv.addEventListener("mouseup", () => this.handleSelection());
+    textLayerDiv.addEventListener("mouseup", () => this.handleSelection(pageIndex, textLayerDiv));
     pageDiv.appendChild(textLayerDiv);
-
-    container.appendChild(pageDiv);
-    this.pageDiv = pageDiv;
-    this.textLayerDiv = textLayerDiv;
-    // A fresh page is a fresh DOM (`replaceChildren` above) — nothing
-    // painted into the old one survives, so the bookkeeping for it doesn't
-    // either.
-    this.pinnedMarkEls = new Map();
-    this.searchMarkEls = new Set();
-    this.tintEl = null;
 
     // Rasterization degrades, never fails — matches
     // server/src/library/pdf/rasterize.ts's own rule for exactly the same
@@ -846,12 +1087,45 @@ export class PdfRenderer implements ResourceRenderer {
     // satisfy a test environment. A real browser always has one.
     const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | null;
     if (ctx) await page.render({ canvasContext: ctx, viewport }).promise;
-    if (this.cancelled) return;
+    if (this.cancelled || generation !== this.renderGeneration) return null;
 
     const content = await page.getTextContent();
-    if (this.cancelled) return;
+    if (this.cancelled || generation !== this.renderGeneration) return null;
     buildTextLayer(textLayerDiv, content.items, viewport);
 
+    return { pageDiv, textLayerDiv, pinnedMarkEls: new Map(), searchMarkEls: new Set(), tintEl: null };
+  }
+
+  /** Single or 2-up spread, discrete pages — `relayout()`'s paginated
+   * branch. */
+  private async renderPaginated(generation: number): Promise<void> {
+    const doc = this.doc;
+    const container = this.container;
+    if (!doc || !container) return;
+
+    let indices = [this.pageIndex];
+    if (this.pagesAcross === 2 && this.pageIndex + 1 <= doc.numPages - 1) {
+      indices = [this.pageIndex, this.pageIndex + 1];
+    }
+
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "row";
+    wrapper.style.alignItems = "flex-start";
+    wrapper.style.justifyContent = "center";
+    wrapper.style.gap = "0";
+
+    const newMounts = new Map<number, PageMount>();
+    for (const idx of indices) {
+      const mount = await this.renderPageInto(idx, this.effectiveScale, generation);
+      if (!mount) return; // cancelled, or superseded — a later relayout owns the DOM now
+      newMounts.set(idx, mount);
+      wrapper.appendChild(mount.pageDiv);
+    }
+    if (generation !== this.renderGeneration) return;
+
+    container.replaceChildren(wrapper);
+    this.pageMounts = newMounts;
     this.resolveAndPaintCurrentPage();
     this.paintTintForCurrentPage();
 
@@ -862,28 +1136,149 @@ export class PdfRenderer implements ResourceRenderer {
       sectionPercent: (this.pageIndex + 1) / doc.numPages,
     });
 
+    const lastVisibleIndex = indices[indices.length - 1];
     const isLastOfSection = this.hasSectionData
-      ? this.pageIndex === doc.numPages - 1 ||
-        (this.pageSectionIndex[this.pageIndex + 1] ?? 0) !== (this.pageSectionIndex[this.pageIndex] ?? 0)
-      : this.pageIndex === doc.numPages - 1;
+      ? lastVisibleIndex === doc.numPages - 1 ||
+        (this.pageSectionIndex[lastVisibleIndex + 1] ?? 0) !== (this.pageSectionIndex[lastVisibleIndex] ?? 0)
+      : lastVisibleIndex === doc.numPages - 1;
     if (isLastOfSection) this.emitSectionEndOnce();
   }
 
-  private handleSelection(): void {
+  private teardownContinuous(): void {
+    if (this.scrollHost) {
+      this.scrollHost.removeEventListener("scroll", this.handleContinuousScroll);
+    }
+    if (this.continuousRafHandle !== null) {
+      cancelAnimationFrame(this.continuousRafHandle);
+      this.continuousRafHandle = null;
+    }
+    this.scrollHost = null;
+    this.continuousSlots = [];
+  }
+
+  /** Rebuilds the whole placeholder column at the current `effectiveScale`
+   * — called on every entry into continuous mode and every further zoom
+   * change while already there (a full canvas re-render either way, since
+   * the scale genuinely changed). Scrolls the anchor page (`this.pageIndex`)
+   * to the top, then hands off to `syncContinuousWindow` to populate the
+   * actual visible window. */
+  private async rebuildContinuousColumn(generation: number): Promise<void> {
+    const doc = this.doc;
+    const scrollHost = this.scrollHost;
+    if (!doc || !scrollHost) return;
+
+    scrollHost.removeEventListener("scroll", this.handleContinuousScroll);
+    scrollHost.replaceChildren();
+    this.pageMounts = new Map();
+    this.continuousSlots = [];
+
+    for (let i = 0; i < doc.numPages; i++) {
+      const natural = this.naturalPageSizes[i] ?? { width: 0, height: 0 };
+      const placeholder = document.createElement("div");
+      placeholder.style.width = `${natural.width * this.effectiveScale}px`;
+      placeholder.style.height = `${natural.height * this.effectiveScale}px`;
+      placeholder.style.margin = "0 auto 16px";
+      placeholder.dataset.pageIndex = String(i);
+      scrollHost.appendChild(placeholder);
+      this.continuousSlots.push(placeholder);
+    }
+    if (generation !== this.renderGeneration) return;
+
+    this.continuousSlots[this.pageIndex]?.scrollIntoView({ block: "start" });
+    scrollHost.addEventListener("scroll", this.handleContinuousScroll, { passive: true });
+    await this.syncContinuousWindow();
+  }
+
+  /** Promotes near-visible placeholders to real rendered pages, demotes
+   * real pages that have scrolled well out of view back to placeholders
+   * (bounding DOM/canvas count regardless of document length), picks
+   * "current page" as whichever slot has the greatest overlap with the
+   * viewport, and reports position via the same `scrollProgressFromGeometry`
+   * `EpubRenderer`'s own scrolled flow already uses — zero new progress
+   * math, no risk of the two renderers' semantics drifting apart. rAF-
+   * debounced by `handleContinuousScroll`, mirroring the existing
+   * `panelFollowRaf` "no more than once a frame" pattern already in
+   * ReaderView.tsx. */
+  private async syncContinuousWindow(): Promise<void> {
+    const scrollHost = this.scrollHost;
+    const doc = this.doc;
+    if (!scrollHost || !doc) return;
+    const generation = this.renderGeneration;
+    const hostRect = scrollHost.getBoundingClientRect();
+    const buffer = hostRect.height * CONTINUOUS_BUFFER_VIEWPORTS;
+
+    let bestIndex = this.pageIndex;
+    let bestOverlap = -Infinity;
+    const toMount: number[] = [];
+    for (let i = 0; i < this.continuousSlots.length; i++) {
+      const rect = this.continuousSlots[i].getBoundingClientRect();
+      const overlap = Math.min(rect.bottom, hostRect.bottom) - Math.max(rect.top, hostRect.top);
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        bestIndex = i;
+      }
+      const nearVisible = rect.bottom >= hostRect.top - buffer && rect.top <= hostRect.bottom + buffer;
+      if (nearVisible) toMount.push(i);
+    }
+
+    for (const [idx, mount] of [...this.pageMounts]) {
+      if (toMount.includes(idx)) continue;
+      const placeholder = document.createElement("div");
+      placeholder.style.width = mount.pageDiv.style.width;
+      placeholder.style.height = mount.pageDiv.style.height;
+      placeholder.style.margin = "0 auto 16px";
+      placeholder.dataset.pageIndex = String(idx);
+      this.continuousSlots[idx]?.replaceWith(placeholder);
+      this.continuousSlots[idx] = placeholder;
+      this.pageMounts.delete(idx);
+    }
+
+    for (const idx of toMount) {
+      if (this.pageMounts.has(idx)) continue;
+      const mount = await this.renderPageInto(idx, this.effectiveScale, generation);
+      if (!mount || generation !== this.renderGeneration) continue;
+      mount.pageDiv.style.margin = "0 auto 16px";
+      this.continuousSlots[idx]?.replaceWith(mount.pageDiv);
+      this.continuousSlots[idx] = mount.pageDiv;
+      this.pageMounts.set(idx, mount);
+      this.resolveAndPaintPage(idx, mount);
+      this.paintTintForPage(idx, mount);
+    }
+    if (generation !== this.renderGeneration) return;
+
+    if (bestIndex !== this.pageIndex) {
+      this.pageIndex = bestIndex;
+      this.sectionEndFired = false;
+    }
+
+    const scrollProgress = scrollProgressFromGeometry({
+      scrollTop: scrollHost.scrollTop,
+      scrollHeight: scrollHost.scrollHeight,
+      clientHeight: scrollHost.clientHeight,
+    });
+    this.emit("relocated", {
+      locator: this.currentLocation() ?? { sectionIndex: 0, offset: 0, length: 0 },
+      bookPercent: this.bookPercentForPage(this.pageIndex),
+      sectionPercent: scrollProgress.percent,
+    });
+    if (scrollProgress.atBottom) this.emitSectionEndOnce();
+  }
+
+  private handleSelection(pageIndex: number, textLayerDiv: HTMLElement): void {
     const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0 || !this.textLayerDiv) return;
+    if (!selection || selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
     if (range.collapsed) return;
-    if (!this.textLayerDiv.contains(range.commonAncestorContainer)) return;
+    if (!textLayerDiv.contains(range.commonAncestorContainer)) return;
     const exact = range.toString();
     if (!exact.trim()) return;
 
-    const { prefix, suffix } = getSelectionContext(this.textLayerDiv, range, SELECTION_CONTEXT_MAX_LEN);
+    const { prefix, suffix } = getSelectionContext(textLayerDiv, range, SELECTION_CONTEXT_MAX_LEN);
     // No iframe here (unlike EpubRenderer), so the Range's own client rect
     // is already viewport-relative — no frame-offset translation needed.
     this.lastSelectionViewportRect = range.getBoundingClientRect();
 
-    const pageSection = this.sectionForPage(this.pageIndex);
+    const pageSection = this.sectionForPage(pageIndex);
     const sectionText = this.sectionTexts.get(pageSection);
     let locatorOffset: number;
     let locatorLength: number;
@@ -901,8 +1296,8 @@ export class PdfRenderer implements ResourceRenderer {
       // doesn't appear there verbatim — falls back to a raw offset local to
       // this renderer's own document-cumulative space. Still anchors fine
       // within native mode itself; only cross-mode sharing degrades.
-      const offsets = offsetsForRange(this.textLayerDiv, range);
-      const pageStart = this.pageOffsets[this.pageIndex] ?? 0;
+      const offsets = offsetsForRange(textLayerDiv, range);
+      const pageStart = this.pageOffsets[pageIndex] ?? 0;
       locatorOffset = pageStart + offsets.start;
       locatorLength = offsets.end - offsets.start;
     }
@@ -920,7 +1315,7 @@ export class PdfRenderer implements ResourceRenderer {
  * No official pdf.js `TextLayer` here, on purpose: its font-ascent
  * measurement (`TextLayer#getAscent`) needs a real 2D canvas context, which
  * jsdom doesn't provide without the native `canvas` package — the same
- * constraint `renderPage`'s own raster skip works around, and this file
+ * constraint `renderPageInto`'s own raster skip works around, and this file
  * doesn't take on that dependency just to borrow the official builder. Each
  * item is positioned straight from its own `transform`, matched against the
  * viewport the same way pdf.js's own builder does internally

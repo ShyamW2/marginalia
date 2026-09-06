@@ -248,6 +248,53 @@ export function RenderModeIcon({ size = 18, native = false }: IconProps & { nati
   );
 }
 
+/** M41 §C1: the native pane's zoom cluster — a magnifying glass with a
+ * plus/minus, matching the "affordance for the mechanism" spirit of
+ * `ScrollModeIcon`/`RenderModeIcon` above rather than inventing a fourth
+ * idiom. */
+export function ZoomInIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M15.3 15.3 20 20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M10.5 7.5v6M7.5 10.5h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function ZoomOutIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="10.5" cy="10.5" r="6.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M15.3 15.3 20 20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M7.5 10.5h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A page outline whose full extent the width bracket spans — the "width"
+ * half of fit-width/fit-page, the same fixed page-outline base
+ * `RenderModeIcon` already uses. */
+export function FitWidthIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="7" y="3.5" width="10" height="17" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M3.5 12h3.5M17 12h3.5M5 9.5 2.5 12 5 14.5M19 9.5 21.5 12 19 14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Same page outline, bracket rotated onto the vertical extent — "fit
+ * page" fits height too, not just width. */
+export function FitPageIcon({ size = 18 }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="7" y="4.5" width="10" height="15" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M12 1v2.5M9.5 2 12 0.5 14.5 2M12 23v-2.5M9.5 22l2.5 1.5 2.5-1.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 /** M30 E2: the thread panel's own delete affordance. A trash can rather than
  * a second "×" in the same panel — the header already has one meaning
  * "collapse this thread", and a lookalike glyph a few rows below it, meaning
