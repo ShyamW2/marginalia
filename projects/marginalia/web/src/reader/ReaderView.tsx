@@ -3954,6 +3954,12 @@ export function ReaderView({
       step={0.01}
       clickToType={false}
       formatValue={(v) => `${Math.round(v * 100)}%`}
+      // M43 §C1: both call sites (the fullscreen pebble and the windowed
+      // footer) dock this trigger at the bottom of the viewport, same as
+      // the reading-progress slider a few lines up — `dialPlacement`
+      // defaults to "below" (SliderDial.tsx), which grows the dial
+      // downward off the bottom edge instead of over the reading pane.
+      dialPlacement="above"
       onPreviewChange={(v) => {
         if (v !== null) rendererRef.current?.setZoomScale(v);
       }}

@@ -1319,6 +1319,19 @@ export class PdfRenderer implements ResourceRenderer {
     canvas.height = Math.round(viewport.height * dpr);
     canvas.style.position = "absolute";
     canvas.style.inset = "0";
+    // §B1 corrective, found live: `inset: 0` alone stretches a *non-replaced*
+    // box (a plain div) to fill its containing block, but <canvas> is a
+    // replaced element — once its `width`/`height` content attributes (the
+    // backing store, above) diverged from `viewport`'s CSS size, the
+    // over-constrained "all four insets 0, no explicit size" system resolves
+    // by keeping the canvas at its *intrinsic* (backing-store) size and
+    // letting an inset go slack, not by shrinking it — so at dpr>1 the canvas
+    // painted itself at dpr× the intended CSS size, and only the top-left
+    // 1/dpr fraction of the page stayed visible in the page box. Pin the CSS
+    // box to the unscaled `viewport` size explicitly rather than relying on
+    // inset-driven stretching.
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
     pageDiv.appendChild(canvas);
 
     const textLayerDiv = document.createElement("div");

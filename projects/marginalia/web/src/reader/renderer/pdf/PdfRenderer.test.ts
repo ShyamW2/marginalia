@@ -249,7 +249,14 @@ describe("PdfRenderer", () => {
         const pageDiv = container.querySelector("canvas")?.parentElement as HTMLElement;
         const canvas = container.querySelector("canvas") as HTMLCanvasElement;
         const cssWidth = parseFloat(pageDiv.style.width);
-        return { cssWidth, backingWidth: canvas.width, backingHeight: canvas.height, renderer };
+        return {
+          cssWidth,
+          backingWidth: canvas.width,
+          backingHeight: canvas.height,
+          canvasCssWidth: canvas.style.width,
+          canvasCssHeight: canvas.style.height,
+          renderer,
+        };
       } finally {
         if (originalDescriptor) Object.defineProperty(window, "devicePixelRatio", originalDescriptor);
       }
@@ -274,6 +281,18 @@ describe("PdfRenderer", () => {
     const at4x = await mountAtDpr(4);
     at4x.renderer.destroy();
     expect(at4x.backingWidth).toBe(Math.round(at4x.cssWidth * 2.5));
+
+    // §B1 corrective, found live: <canvas> is a *replaced* element, so
+    // `position:absolute; inset:0` alone does not stretch it to its
+    // container the way it would a plain div — once the backing store
+    // (canvas.width/height) diverged from the CSS box at dpr>1, an
+    // unstyled canvas rendered at its own intrinsic (backing-store) size
+    // instead, showing only the top-left 1/dpr fraction of the page. The
+    // CSS box must be pinned explicitly.
+    for (const m of [at1x, at2x, at4x]) {
+      expect(m.canvasCssWidth).toBe(`${m.cssWidth}px`);
+      expect(parseFloat(m.canvasCssHeight)).toBeGreaterThan(0);
+    }
   });
 
   it("M43 §A corrective: buildTextLayer applies a scaleX correction so each span's on-screen width matches the PDF's own glyph metrics, not the browser's substitute-font advance width", async () => {
