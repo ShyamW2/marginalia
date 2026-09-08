@@ -41,8 +41,8 @@ describe("generateReflowEpub", () => {
     ]),
   ];
   const outline = [
-    { title: "Chapter One", pageIndex: 0, y: 760 },
-    { title: "Chapter Two", pageIndex: 1, y: 760 },
+    { title: "Chapter One", pageIndex: 0, y: 760, depth: 1 },
+    { title: "Chapter Two", pageIndex: 1, y: 760, depth: 1 },
   ];
   const sections = buildSections(pages, outline);
 
@@ -115,5 +115,81 @@ describe("generateReflowEpub", () => {
 
     const parsed = extractEpub(generated.buffer);
     expect(parsed.spine[0].text).toContain("Figure 1. A diagram.");
+  });
+
+  // M42 §C4: a depth-2+ subheading is independently reachable from the
+  // chapter picker via an in-section anchor, not a spine index.
+  describe("subheadings (M42 §C4)", () => {
+    const pagesWithSub: PdfPageContent[] = [
+      page(0, [
+        line("1. Introduction", 750, 16),
+        line("Intro body text here.", 700),
+        line("1.1 Background", 650, 14),
+        line("Background body text here.", 600),
+      ]),
+    ];
+    const subOutline = [
+      { title: "1. Introduction", pageIndex: 0, y: 760, depth: 1 },
+      { title: "1.1 Background", pageIndex: 0, y: 660, depth: 2 },
+    ];
+    const subSections = buildSections(pagesWithSub, subOutline);
+
+    it("gives the subheading's own paragraph a matching loc- id", () => {
+      const generated = generateReflowEpub({ title: "Sub Test", author: null, sections: subSections });
+      const zip = new AdmZip(generated.buffer);
+      const sectionXml = zip.getEntry(`OEBPS/${subSections[0].href}`)?.getData().toString("utf-8");
+
+      const offset = subSections[0].subheadings[0].offset;
+      expect(sectionXml).toContain(`<p id="loc-${offset}">1.1 Background</p>`);
+    });
+
+    // Found live against a real paper (NOTES.md "M42 — subheading offsets"):
+    // a blank line's normalized text is "", and "" is a prefix of every
+    // string — an unguarded `startsWith` check let the *first* blank line
+    // anywhere in the section (long before the real heading) consume the
+    // subheading and attach its id to nothing meaningful.
+    it("skips a blank line rather than letting it satisfy the subheading match first", () => {
+      const pagesWithBlank: PdfPageContent[] = [
+        page(0, [
+          line("1. Introduction", 750, 16),
+          line("Intro body text here.", 700),
+          line("", 680), // a blank line, same shape found live
+          line("1.1 Background", 650, 14),
+          line("Background body text here.", 600),
+        ]),
+      ];
+      const blankOutline = [
+        { title: "1. Introduction", pageIndex: 0, y: 760, depth: 1 },
+        { title: "1.1 Background", pageIndex: 0, y: 660, depth: 2 },
+      ];
+      const blankSections = buildSections(pagesWithBlank, blankOutline);
+      const generated = generateReflowEpub({ title: "Blank Test", author: null, sections: blankSections });
+      const zip = new AdmZip(generated.buffer);
+      const sectionXml = zip.getEntry(`OEBPS/${blankSections[0].href}`)?.getData().toString("utf-8");
+
+      const offset = blankSections[0].subheadings[0].offset;
+      expect(sectionXml).toContain(`<p id="loc-${offset}">1.1 Background</p>`);
+    });
+
+    it("nests the subheading under its section in both nav.xhtml and toc.ncx", () => {
+      const generated = generateReflowEpub({ title: "Sub Test", author: null, sections: subSections });
+      const zip = new AdmZip(generated.buffer);
+      const offset = subSections[0].subheadings[0].offset;
+      const fragmentHref = `${subSections[0].href}#loc-${offset}`;
+
+      const nav = zip.getEntry("OEBPS/nav.xhtml")?.getData().toString("utf-8");
+      expect(nav).toContain(`<ol><li><a href="${fragmentHref}">1.1 Background</a></li></ol>`);
+
+      const ncx = zip.getEntry("OEBPS/toc.ncx")?.getData().toString("utf-8");
+      expect(ncx).toContain(`<content src="${fragmentHref}"/>`);
+    });
+
+    it("does not let the subheading's title leak into metadata.chapterTitles", () => {
+      const generated = generateReflowEpub({ title: "Sub Test", author: null, sections: subSections });
+      const parsed = extractEpub(generated.buffer);
+
+      expect(parsed.metadata.chapterTitles).toEqual({ "0": "1. Introduction" });
+      expect(generated.chapterTitles).toEqual({ "0": "1. Introduction" });
+    });
   });
 });

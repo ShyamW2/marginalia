@@ -29,15 +29,15 @@ export interface PdfLine {
 }
 
 /** A rasterized region replacing a run of the page — an equation band
- *  (§3.4) or a figure/table (§3.5). `image` is null when rasterization
- *  degraded (canvas unavailable or threw) — the block still holds its
- *  place in reading order but contributes no picture. */
+ *  (§3.4) or a figure/table (§3.5, table amended M42). `image` is null when
+ *  rasterization degraded (canvas unavailable or threw) — the block still
+ *  holds its place in reading order but contributes no picture. */
 export interface PdfRasterBlock {
-  kind: "equation" | "figure";
+  kind: "equation" | "figure" | "table";
   image: Buffer | null;
-  /** Figure only: the caption text, already present as its own `line`
-   *  block in the surrounding flow — carried here only for the `<figure>`'s
-   *  alt/figcaption when the generated EPUB is built (B2). */
+  /** Figure/table only: the caption text, already present as its own
+   *  `line` block in the surrounding flow — carried here only for the
+   *  `<figure>`'s alt/figcaption when the generated EPUB is built (B2). */
   caption?: string;
   y: number;
   /** The source page — PDF.md §3.5's `images/fig-p<page>-<n>.png` naming,
@@ -76,4 +76,11 @@ export interface PdfOutlineEntry {
    *  page's text at the heading rather than rounding to the page boundary
    *  (PDF.md §4 ⚠️). Null when unresolvable. */
   y: number | null;
+  /** M42 §C1: nesting depth from `getOutline()`'s own tree, 1-indexed (1 =
+   *  a top-level entry, matching PDF.md §4's "depth-1 heading" language),
+   *  threaded through instead of discarded when the tree is flattened to
+   *  document order — only a depth-1 entry starts a new `PdfSection`
+   *  (PDF.md §4 amended); deeper entries stay inline in their parent's text
+   *  as independently reachable subheadings. */
+  depth: number;
 }

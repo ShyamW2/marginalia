@@ -4,12 +4,18 @@ import { orderPageItems } from "./columns.js";
 import { groupLines } from "./lines.js";
 import { detectEquationBands } from "./equations.js";
 import { detectFigureRegions } from "./figures.js";
+import { detectTableRegions } from "./tables.js";
 import { buildPageBlocks } from "./blocks.js";
 import { cropRegion, renderPageToBuffer, type RenderablePage } from "./rasterize.js";
 import type { ExtractedPdf, PdfOutlineEntry, PdfPageContent, RawTextItem } from "./types.js";
 
 const SCAN_CHAR_THRESHOLD = 100;
 const SCAN_PAGE_FRACTION = 0.5;
+// M42 §A3: an `Info.Title` that's present but an obvious placeholder — found
+// live on a real PDF whose embedded metadata was literally the four-character
+// string "Title:" (NOTES.md "M39 — the real gate, finally") — must be treated
+// the same as an absent one, not taken at face value.
+const PLACEHOLDER_TITLE = /^(title:?|untitled|no\s*title|document\d*|\(?untitled\)?)$/i;
 
 export class PdfPasswordError extends Error {
   constructor() {
@@ -74,13 +80,14 @@ async function loadDocument(buffer: Buffer): Promise<PdfjsDocument> {
 async function resolveOutlineEntry(
   doc: PdfjsDocument,
   node: PdfjsOutlineNode,
+  depth: number,
 ): Promise<PdfOutlineEntry> {
   let dest = node.dest;
   if (typeof dest === "string") {
     dest = await doc.getDestination(dest).catch(() => null);
   }
   if (!Array.isArray(dest) || dest.length === 0) {
-    return { title: node.title, pageIndex: null, y: null };
+    return { title: node.title, pageIndex: null, y: null, depth };
   }
   const [ref] = dest;
   let pageIndex: number | null = null;
@@ -89,7 +96,7 @@ async function resolveOutlineEntry(
   } catch {
     pageIndex = null;
   }
-  return { title: node.title, pageIndex, y: destinationY(dest) };
+  return { title: node.title, pageIndex, y: destinationY(dest), depth };
 }
 
 /** A PDF destination array is `[page, /TypeName, ...coords]`, and where the
@@ -117,21 +124,22 @@ function destinationY(dest: unknown[]): number | null {
   }
 }
 
-/** Flattens the outline tree in document order — PDF.md §4 doesn't
- *  distinguish nesting depth, and neither does the detected-headings
- *  fallback it stands in for. */
+/** Flattens the outline tree in document order — M42 §C1: carries each
+ *  node's own nesting depth through (1 = top-level) instead of discarding
+ *  it, so `sections.ts` can tell a real chapter boundary from a subsection
+ *  that stays inline in its parent's text (PDF.md §4 amended). */
 async function extractOutline(doc: PdfjsDocument): Promise<PdfOutlineEntry[]> {
   const tree = await doc.getOutline().catch(() => null);
   if (!tree || tree.length === 0) return [];
 
   const entries: PdfOutlineEntry[] = [];
-  async function walk(nodes: PdfjsOutlineNode[]): Promise<void> {
+  async function walk(nodes: PdfjsOutlineNode[], depth: number): Promise<void> {
     for (const node of nodes) {
-      entries.push(await resolveOutlineEntry(doc, node));
-      if (node.items?.length) await walk(node.items);
+      entries.push(await resolveOutlineEntry(doc, node, depth));
+      if (node.items?.length) await walk(node.items, depth + 1);
     }
   }
-  await walk(tree);
+  await walk(tree, 1);
   return entries;
 }
 
@@ -203,8 +211,9 @@ export async function extractPdf(buffer: Buffer, options: ExtractPdfOptions = {}
 
     const equationBands = detectEquationBands(lines);
     const figureRegions = detectFigureRegions(lines, pageItems.width, pageItems.height);
+    const tableRegions = detectTableRegions(lines);
 
-    const needsRaster = equationBands.length > 0 || figureRegions.length > 0;
+    const needsRaster = equationBands.length > 0 || figureRegions.length > 0 || tableRegions.length > 0;
     const raster = needsRaster ? await getRaster(pageItems.pageIndex) : null;
 
     const equationImages = await Promise.all(
@@ -217,6 +226,11 @@ export async function extractPdf(buffer: Buffer, options: ExtractPdfOptions = {}
         raster ? cropRegion(raster.png, raster.scale, raster.pageHeight, region) : Promise.resolve(null),
       ),
     );
+    const tableImages = await Promise.all(
+      tableRegions.map((region) =>
+        raster ? cropRegion(raster.png, raster.scale, raster.pageHeight, region) : Promise.resolve(null),
+      ),
+    );
 
     const blocks = buildPageBlocks(
       lines,
@@ -225,6 +239,7 @@ export async function extractPdf(buffer: Buffer, options: ExtractPdfOptions = {}
       pageItems.height,
       equationImages,
       figureImages,
+      tableImages,
     );
     pages.push({ pageIndex: pageItems.pageIndex, width: pageItems.width, height: pageItems.height, blocks });
   }
@@ -234,7 +249,8 @@ export async function extractPdf(buffer: Buffer, options: ExtractPdfOptions = {}
   const outline = await extractOutline(doc);
 
   const metadata = await doc.getMetadata().catch(() => ({ info: {} }) as { info?: Record<string, unknown> });
-  const title = typeof metadata.info?.Title === "string" && metadata.info.Title.trim() ? metadata.info.Title.trim() : null;
+  const rawTitle = typeof metadata.info?.Title === "string" ? metadata.info.Title.trim() : "";
+  const title = rawTitle && !PLACEHOLDER_TITLE.test(rawTitle) ? rawTitle : null;
 
   return { title, outline, pages, isScan };
 }

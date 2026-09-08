@@ -2,9 +2,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type Database from "better-sqlite3";
-import type { Resource } from "@marginalia/shared";
+import type { Resource, ResourceSubheading } from "@marginalia/shared";
 import { extractPdf, type ExtractPdfOptions, PdfInvalidError, PdfPasswordError } from "./pdf/extract.js";
-import { buildSections, buildSectionsWithPageIndex } from "./pdf/sections.js";
+import { buildSections, buildSectionsWithPageIndex, firstMeaningfulSectionTitle } from "./pdf/sections.js";
 import { generateReflowEpub } from "./pdf/generateEpub.js";
 import { EXTRACTOR_VERSION } from "./pdf/version.js";
 import { getResourceById, getResourceFilePath, setPdfPageSections } from "./store.js";
@@ -19,7 +19,9 @@ export function hashPdfBuffer(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).update(`:${EXTRACTOR_VERSION}`).digest("hex");
 }
 
-function reflowEpubPath(id: string): string {
+/** Exported so `deleteResource` (store.ts) can clean up this file without
+ * duplicating the naming convention. */
+export function reflowEpubPath(id: string): string {
   return path.join(LIBRARY_DIR, `${id}.reflow.epub`);
 }
 
@@ -57,27 +59,50 @@ export async function importPdf(
   if (existing) return existing;
 
   const extracted = await extractPdf(buffer, options);
-  const title = extracted.title ?? titleFromFilename(originalFilename);
   const textLayer = !extracted.isScan;
   const importedAt = new Date().toISOString();
   const filePath = pdfPath(id);
 
   let chapterTitles: Record<string, string> = {};
+  // M42 §C4: the native pane's own copy of a section's depth-2+ headings —
+  // the reflow pane gets these from the generated EPUB's own nested nav
+  // instead, but the native pane never parses that EPUB, so it needs the
+  // same information carried here, mirroring `chapterTitles`'s convention
+  // (sparse: only a section that actually has subheadings gets an entry).
+  let subheadingsBySection: Record<string, ResourceSubheading[]> = {};
   let reflowBuffer: Buffer | null = null;
   let sectionRows: { spineIndex: number; href: string; text: string }[] = [];
   // M41 §A2: page->section, for the native pane's "highlights are shared
   // between reflow and native" (PDF.md §4/§7.5) — built alongside the spine
   // itself so the two never disagree.
   let pageSectionIndex: number[] = [];
+  let builtSections: ReturnType<typeof buildSectionsWithPageIndex>["sections"] = [];
 
   if (textLayer) {
     const built = buildSectionsWithPageIndex(extracted.pages, extracted.outline);
-    const generated = generateReflowEpub({ title, author: null, sections: built.sections, identifier: id });
-    reflowBuffer = generated.buffer;
-    chapterTitles = generated.chapterTitles;
+    builtSections = built.sections;
     sectionRows = built.sections.map((s) => ({ spineIndex: s.spineIndex, href: s.href, text: s.text }));
     pageSectionIndex = built.pageSectionIndex;
+    for (const section of built.sections) {
+      if (section.subheadings.length > 0) subheadingsBySection[String(section.spineIndex)] = section.subheadings;
+    }
   }
+
+  // M42 §A3: a placeholder/absent `Info.Title` (extract.ts) falls back to
+  // the first real detected heading before resorting to the filename — the
+  // same "prefer real content over absent metadata" degrade EPUB import
+  // already applies.
+  const title = extracted.title ?? firstMeaningfulSectionTitle(builtSections) ?? titleFromFilename(originalFilename);
+
+  if (textLayer) {
+    const generated = generateReflowEpub({ title, author: null, sections: builtSections, identifier: id });
+    reflowBuffer = generated.buffer;
+    chapterTitles = generated.chapterTitles;
+  }
+
+  const metadata: Resource["metadata"] = {};
+  if (Object.keys(chapterTitles).length > 0) metadata.chapterTitles = chapterTitles;
+  if (Object.keys(subheadingsBySection).length > 0) metadata.subheadings = subheadingsBySection;
 
   const resource: Resource = {
     id,
@@ -88,7 +113,7 @@ export async function importPdf(
     // settable afterwards (§D4), never re-detected.
     kind: "document",
     textLayer,
-    metadata: Object.keys(chapterTitles).length > 0 ? { chapterTitles } : {},
+    metadata,
     importedAt,
   };
 

@@ -27,15 +27,31 @@ describe("detectFigureRegions", () => {
     expect(regions[0].y1).toBeGreaterThan(regions[0].y0);
   });
 
-  it("recognises Table/Algorithm/Chart/Scheme captions, case-insensitively", () => {
+  it("recognises Algorithm/Chart/Scheme captions, case-insensitively", () => {
     const lines = groupLines([
-      item("table 2. Results by condition.", 40, 700),
+      item("algorithm 2. The sorting procedure.", 40, 700),
       item("Following text right below.", 40, 686),
     ]);
 
     const regions = detectFigureRegions(lines, PAGE_WIDTH, PAGE_HEIGHT);
 
-    expect(regions.some((r) => r.caption.toLowerCase().startsWith("table 2"))).toBe(true);
+    expect(regions.some((r) => r.caption.toLowerCase().startsWith("algorithm 2"))).toBe(true);
+  });
+
+  // M42 §B1: a "Table N" caption belongs to `tables.ts`'s own positive
+  // row/cell detection now — this blank-region heuristic must not also fire
+  // for it and produce a second, spurious rasterized region.
+  it("no longer recognises Table captions — that's tables.ts's job now", () => {
+    const lines = groupLines([
+      item("Table 2. Results by condition.", 40, 700),
+      // A big gap, the same shape a real figure's blank area would have —
+      // still must not match, since "Table" is no longer in the pattern.
+      item("Following text far below.", 40, 300),
+    ]);
+
+    const regions = detectFigureRegions(lines, PAGE_WIDTH, PAGE_HEIGHT);
+
+    expect(regions).toHaveLength(0);
   });
 
   it("does not flag a caption-like line with no adjacent blank area large enough", () => {

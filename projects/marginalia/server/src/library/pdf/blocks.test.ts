@@ -72,4 +72,33 @@ describe("buildPageBlocks", () => {
 
     expect(blocks).toEqual([{ kind: "line", line: lines[0] }]);
   });
+
+  // M42 §B2: a table's row/cell lines never enter the block stream at all —
+  // not even reduced to a `line` block — mirroring how an equation band's
+  // interior lines vanish entirely (§3.4/§3.5's rule, verbatim).
+  it("replaces a table's row/cell lines with one table block, contributing no text", () => {
+    const lines = groupLines([
+      item("Preceding paragraph text runs here.", 40, 700),
+      item("Table 1 Results by condition.", 40, 680),
+      item("Left cell text goes here", 40, 660, { width: 150 }),
+      item("Right cell text goes here", 320, 660, { width: 200 }),
+      item("Following paragraph text runs here.", 40, 620),
+    ]);
+    const image = Buffer.from("fake-png");
+
+    const blocks = buildPageBlocks(lines, 0, PAGE_WIDTH, PAGE_HEIGHT, [], [], [image]);
+
+    const kinds = blocks.map((b) => b.kind);
+    expect(kinds).toEqual(["line", "line", "table", "line"]);
+    const tableBlock = blocks.find((b) => b.kind === "table");
+    expect(tableBlock?.kind).toBe("table");
+    if (tableBlock?.kind === "table") {
+      expect(tableBlock.image).toBe(image);
+      expect(tableBlock.caption).toBe("Table 1 Results by condition.");
+    }
+    const text = blocksToText(blocks);
+    expect(text).toContain("Table 1 Results by condition.");
+    expect(text).not.toContain("Left cell text");
+    expect(text).not.toContain("Right cell text");
+  });
 });

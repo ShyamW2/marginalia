@@ -57,7 +57,7 @@ function collectImages(sections: PdfSection[]): Map<PdfBlock, ImageRef> {
   const countByPage = new Map<number, number>();
   for (const section of sections) {
     for (const block of section.blocks) {
-      if (block.kind !== "equation" && block.kind !== "figure") continue;
+      if (block.kind !== "equation" && block.kind !== "figure" && block.kind !== "table") continue;
       if (!block.image) continue;
       const n = countByPage.get(block.page) ?? 0;
       countByPage.set(block.page, n + 1);
@@ -97,13 +97,20 @@ function stripLeadingTitleLines(blocks: PdfBlock[], title: string): PdfBlock[] {
 function sectionXhtml(section: PdfSection, images: Map<PdfBlock, ImageRef>): string {
   const parts: string[] = [];
   let pendingLines: PdfLine[] = [];
+  // M42 §C4: the id the *next* flush's first paragraph should carry — set
+  // only when a subheading's own line is about to start a fresh pending
+  // batch (see the forced break below).
+  let pendingId = "";
+  let nextSubIndex = 0;
 
   const flushParagraphs = () => {
     if (pendingLines.length === 0) return;
-    for (const paragraph of linesToParagraphs(pendingLines)) {
-      parts.push(`<p>${escapeXml(paragraph)}</p>`);
-    }
+    linesToParagraphs(pendingLines).forEach((paragraph, i) => {
+      const idAttr = i === 0 && pendingId ? ` id="${pendingId}"` : "";
+      parts.push(`<p${idAttr}>${escapeXml(paragraph)}</p>`);
+    });
     pendingLines = [];
+    pendingId = "";
   };
 
   // The heading line(s) that gave this section its title are still the
@@ -115,6 +122,35 @@ function sectionXhtml(section: PdfSection, images: Map<PdfBlock, ImageRef>): str
 
   for (const block of bodyBlocks) {
     if (block.kind === "line") {
+      // M42 §C4: a heading is always its own paragraph in the rendered
+      // EPUB, whether or not the source PDF's own line spacing happens to
+      // produce a gap/indent-based paragraph break there — real PDFs with
+      // otherwise-uniform line spacing were found live not to (NOTES.md
+      // "M42 — subheading offsets"), which left a subheading's line merged
+      // into the *previous* paragraph and its `#loc-` anchor pointing at
+      // nothing. `startsWith`, not exact equality: a coalesced multi-line
+      // heading's *first* line is a prefix of the full (possibly
+      // outline-derived, possibly non-verbatim — same trade-off
+      // `stripLeadingTitleLines` above already accepts) title.
+      const sub = section.subheadings[nextSubIndex];
+      const lineText = normalizeWhitespace(block.line.text);
+      // ⚠️ `lineText` must be checked non-empty before `startsWith` — an
+      // *empty* string is a prefix of everything, so a blank line (there
+      // are plenty, real PDFs found live) would otherwise satisfy this
+      // check immediately and consume the subheading against the wrong,
+      // blank paragraph, long before its real heading line ever arrives.
+      if (sub && lineText && normalizeWhitespace(sub.title).startsWith(lineText)) {
+        // Isolated as its own single-line paragraph, not merely started as
+        // one — otherwise whatever body content follows with no gap of its
+        // own (the same uniform-spacing shape above) would still fuse onto
+        // the heading's paragraph, one flush too late.
+        flushParagraphs();
+        pendingLines.push(block.line);
+        pendingId = `loc-${sub.offset}`;
+        flushParagraphs();
+        nextSubIndex++;
+        continue;
+      }
       pendingLines.push(block.line);
       continue;
     }
@@ -128,7 +164,8 @@ function sectionXhtml(section: PdfSection, images: Map<PdfBlock, ImageRef>): str
     } else {
       const caption = block.caption ? escapeXml(block.caption) : "";
       const figcaption = caption ? `<figcaption>${caption}</figcaption>` : "";
-      parts.push(`<figure><img src="${ref.href}" alt="${caption}" />${figcaption}</figure>`);
+      const className = block.kind === "table" ? ' class="table"' : "";
+      parts.push(`<figure${className}><img src="${ref.href}" alt="${caption}" />${figcaption}</figure>`);
     }
   }
   flushParagraphs();
@@ -198,13 +235,29 @@ function buildOpf(params: {
  *  correct; this one is also what today's parser actually reads. */
 function buildNcx(params: { title: string; identifier: string; sections: PdfSection[] }): string {
   const { title, identifier, sections } = params;
+  // M42 §C4: a depth-2+ subheading gets its own nested `navPoint`, sharing
+  // its parent section's `href` with a `#loc-<offset>` fragment —
+  // `extractChapterTitles` (epub.ts) already resolves "several navPoints,
+  // one href" by keeping the *first* title per href, so nesting these
+  // under their section (listed before its children) doesn't disturb
+  // `metadata.chapterTitles`, which still means the section's own title.
+  let playOrder = 0;
   const navPoints = sections
-    .map(
-      (s, i) =>
-        `<navPoint id="navpoint-${i + 1}" playOrder="${i + 1}"><navLabel><text>${escapeXml(
-          s.title,
-        )}</text></navLabel><content src="${s.href}"/></navPoint>`,
-    )
+    .map((s) => {
+      playOrder++;
+      const sectionPoint = `<navPoint id="navpoint-${playOrder}" playOrder="${playOrder}"><navLabel><text>${escapeXml(
+        s.title,
+      )}</text></navLabel><content src="${s.href}"/>`;
+      const childPoints = s.subheadings
+        .map((sub) => {
+          playOrder++;
+          return `<navPoint id="navpoint-${playOrder}" playOrder="${playOrder}"><navLabel><text>${escapeXml(
+            sub.title,
+          )}</text></navLabel><content src="${s.href}#loc-${sub.offset}"/></navPoint>`;
+        })
+        .join("");
+      return `${sectionPoint}${childPoints}</navPoint>`;
+    })
     .join("");
 
   return [
@@ -221,7 +274,18 @@ function buildNcx(params: { title: string; identifier: string; sections: PdfSect
 }
 
 function buildNav(params: { sections: PdfSection[] }): string {
-  const items = params.sections.map((s) => `<li><a href="${s.href}">${escapeXml(s.title)}</a></li>`).join("");
+  // M42 §C4: a depth-2+ subheading nests inside its section's own `<li>`
+  // as a plain EPUB3 nav sub-list, jumping to the same file's `#loc-<offset>`
+  // in-page anchor rather than a separate spine item.
+  const items = params.sections
+    .map((s) => {
+      const subItems = s.subheadings
+        .map((sub) => `<li><a href="${s.href}#loc-${sub.offset}">${escapeXml(sub.title)}</a></li>`)
+        .join("");
+      const nested = subItems ? `<ol>${subItems}</ol>` : "";
+      return `<li><a href="${s.href}">${escapeXml(s.title)}</a>${nested}</li>`;
+    })
+    .join("");
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">',

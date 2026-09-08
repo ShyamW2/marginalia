@@ -35,6 +35,17 @@ export type ResourceFormat = z.infer<typeof ResourceFormatSchema>;
 export const ResourceKindSchema = z.enum(["prose", "document"]);
 export type ResourceKind = z.infer<typeof ResourceKindSchema>;
 
+// M42 §C4: a depth-2+ heading that stays inline in its parent chapter
+// rather than starting its own spine section — `offset` is a character
+// offset into that section's own `resource_text`, the format-neutral
+// `Locator` anchor (decision 11), not a spine index of its own.
+export const ResourceSubheadingSchema = z.object({
+  title: z.string(),
+  depth: z.number(),
+  offset: z.number(),
+});
+export type ResourceSubheading = z.infer<typeof ResourceSubheadingSchema>;
+
 export const ResourceMetadataSchema = z
   .object({
     language: z.string().optional(),
@@ -45,6 +56,13 @@ export const ResourceMetadataSchema = z
     // or missing entries just mean the scan's chapter toggle has nothing to
     // show for that chapter and falls back to its number.
     chapterTitles: z.record(z.string(), z.string()).optional(),
+    // M42 §C4: spineIndex -> that section's own depth-2+ subheadings, in
+    // document order. Native-pane-only plumbing — the reflow pane gets the
+    // same information from the generated EPUB's own nested nav instead
+    // (`generateEpub.ts`), since it never parses this field. Sparse: a
+    // section with no subheadings has no entry here, same convention as
+    // `chapterTitles`.
+    subheadings: z.record(z.string(), z.array(ResourceSubheadingSchema)).optional(),
   })
   .catchall(z.unknown());
 export type ResourceMetadata = z.infer<typeof ResourceMetadataSchema>;

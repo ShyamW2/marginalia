@@ -60,6 +60,24 @@ describe("extractPdf", () => {
     expect(result.title).toBe("A Small Test Paper");
   });
 
+  // M42 §A3: a real PDF's own embedded metadata was found live to be the
+  // literal four-character string "Title:" (NOTES.md "M39 — the real gate,
+  // finally") — a placeholder, not a real title, and must degrade the same
+  // way an absent one does rather than being taken at face value.
+  it("treats a placeholder metadata title the same as an absent one", async () => {
+    const doc = new PDFDocument({ size: "A4", margin: 50, info: { Title: "Title:" } });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const finished = new Promise<Buffer>((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+    doc.fontSize(12).text("Some real body text on the only page.", 50, 120, { width: 495 });
+    doc.end();
+    const buffer = await finished;
+
+    const result = await extractPdf(buffer);
+
+    expect(result.title).toBeNull();
+  });
+
   it("is not flagged as a scan when every page has real extracted text", async () => {
     const buffer = await buildFixturePdf();
 

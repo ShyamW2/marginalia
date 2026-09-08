@@ -1,6 +1,11 @@
 import type { PdfLine } from "./types.js";
 
-const CAPTION_REGEX = /^(Fig(ure)?|Table|Algorithm|Chart|Scheme)\.?\s*\d+/i;
+// M42 §B1: "Table" moved to `tables.ts`'s own positive row/cell detection —
+// this blank-region heuristic assumes a figure's picture, which a table's
+// dense row text never has; letting "Table N" also fire here produced an
+// often-spurious rasterized region right next to the table (NOTES.md "M39 —
+// the real gate, finally", root cause 4).
+const CAPTION_REGEX = /^(Fig(ure)?|Algorithm|Chart|Scheme)\.?\s*\d+/i;
 const MIN_AREA_FRACTION = 0.04;
 
 export interface FigureRegion {

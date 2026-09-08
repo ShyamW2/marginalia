@@ -81,6 +81,26 @@ export function extractEpub(buffer: Buffer): ExtractedEpub {
  * or real book imported so far uses it; a book without a parseable NCX
  * simply gets numbers with no names, which is exactly the toggle's
  * documented fallback, not a crash. See NOTES.md.
+ *
+ * M42 §C4: a `<navPoint>` can genuinely *nest* another (a subheading's own
+ * navPoint inside its chapter's) — found live generating one for the first
+ * time, from a PDF's inline subheadings. That breaks an assumption this
+ * walk used to make: one flat pending label/href pair, reset on every
+ * `<navPoint>` open, loses the *parent's* own in-progress label the moment
+ * a nested child's navPoint opens and resets it out from under it — fixed
+ * with a real stack, one frame per open navPoint, since nesting is
+ * genuinely a stack. That alone isn't enough, though: a nested child's own
+ * `content src` (a same-file `#fragment` anchor) resolves to the identical
+ * stripped href as its enclosing parent's (`resolveZipPath` strips
+ * `#...`), and a child's `</navPoint>` always closes before its parent's —
+ * so "first write wins" would let the *subheading* claim the chapter's own
+ * href. Fixed by never letting a navPoint register an href one of its
+ * still-open ancestors already owns (`shadowedByAncestor` below); the
+ * *enclosing* one, closing later, is the one that wins it. ⚠️ Do not
+ * "simplify" this to skip every fragment-bearing `content` outright — a
+ * real book's own top-level entries routinely use one too (the Jekyll and
+ * Hyde fixture's title page is `titlepage.xhtml#pgepubid00000`; skipping
+ * all fragments blanked its chapter titles entirely when tried).
  */
 function extractChapterTitles(
   zip: AdmZip,
@@ -102,37 +122,44 @@ function extractChapterTitles(
   const ncxDir = path.posix.dirname(ncxItem.href);
   const titlesByHref = new Map<string, string>();
 
-  let capturingLabel = false;
-  let pendingLabel = "";
-  let pendingHref: string | null = null;
+  interface NavPointFrame {
+    href: string | null;
+    label: string;
+    capturingLabel: boolean;
+  }
+  const stack: NavPointFrame[] = [];
 
   const parser = new Parser(
     {
       onopentag(name, attribs) {
         const local = localName(name).toLowerCase();
         if (local === "navpoint") {
-          pendingHref = null;
-          pendingLabel = "";
+          stack.push({ href: null, label: "", capturingLabel: false });
         } else if (local === "text") {
-          capturingLabel = true;
-        } else if (local === "content" && attribs.src && !pendingHref) {
-          pendingHref = resolveZipPath(ncxDir, attribs.src);
+          const frame = stack[stack.length - 1];
+          if (frame) frame.capturingLabel = true;
+        } else if (local === "content" && attribs.src) {
+          const frame = stack[stack.length - 1];
+          if (frame && !frame.href) frame.href = resolveZipPath(ncxDir, attribs.src);
         }
       },
       ontext(text) {
-        if (capturingLabel) pendingLabel += text;
+        const frame = stack[stack.length - 1];
+        if (frame?.capturingLabel) frame.label += text;
       },
       onclosetag(name) {
         const local = localName(name).toLowerCase();
         if (local === "text") {
-          capturingLabel = false;
+          const frame = stack[stack.length - 1];
+          if (frame) frame.capturingLabel = false;
         } else if (local === "navpoint") {
-          const title = pendingLabel.trim();
-          if (pendingHref && title && !titlesByHref.has(pendingHref)) {
-            titlesByHref.set(pendingHref, title);
+          const frame = stack.pop();
+          if (!frame) return;
+          const title = frame.label.trim();
+          const shadowedByAncestor = frame.href !== null && stack.some((ancestor) => ancestor.href === frame.href);
+          if (frame.href && title && !shadowedByAncestor && !titlesByHref.has(frame.href)) {
+            titlesByHref.set(frame.href, title);
           }
-          pendingHref = null;
-          pendingLabel = "";
         }
       },
     },
