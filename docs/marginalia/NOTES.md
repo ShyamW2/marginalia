@@ -8403,3 +8403,741 @@ browser) and two additions to `PdfRenderer.test.ts` (zoom-in past fit flips `adv
 `"scroll"` and fires `onLayoutChanged`, zoom-out snaps back; a forced spread makes a
 single `next()` advance by 2 pages, confirmed via the legacy-path offset staying at 0
 rather than becoming a step-of-1's nonzero value).
+
+## M39 — the real gate, finally: operator feedback against the two real PDFs already in the library — 2026-09-07
+
+The operator read two real PDFs already sitting in their own library — `a5410cf2…`
+("A Programming Paradigm for Spatiotemporal Composability", a real LaTeX paper) and
+`8d111eeb…` ("Title:" — Engineers Australia's Stage 1 Competency Standard, a real
+two-column/table-heavy PDF) — through the reflow pane and the native pane, and reported
+several concrete problems. This is exactly the M39 §A8 "real gate" that every prior
+NOTES.md entry in this arc (§A, §B, §C/§D) flagged as still owed — no synthetic pdfkit
+fixture was involved this time. Investigated by re-running the actual extractor
+(`extractPdf` + `buildSections`) against both files directly rather than theorising from
+the screenshots — every finding below is from that live output, not guesswork. **Nothing
+was fixed yet — this is diagnosis only, at the operator's request, before a plan is
+agreed.**
+
+### Root cause 1 (confirmed, `8d111eeb…`): one document-wide font size + unbounded heading-line coalescing swallows an entire page into one garbled title
+
+`sections.ts`'s `modalBodyFontSize` computes a **single** modal body size across the
+*whole* document, and `isHeadingLine` flags any line at ≥1.15× that size. This document's
+global modal size is 9pt (the dense prose pages), but its competency-list page is set
+entirely in 12pt/18pt — a legitimate, different body size for that page, not a heading.
+Every one of that page's ~30 lines cleared the 9pt-derived 10.35pt threshold:
+
+```
+fontSize=18.00 qualifies=true :: "1. KNOWLEDGE AND SKILL BASE"
+fontSize=12.00 qualifies=true :: "1.1. Comprehensive, theory based understanding of the underpinning natural and"
+fontSize=12.00 qualifies=true :: "physical sciences and the engineering fundamentals applicable to the engineering"
+… (every line on the page, through "3.6. Effective team membership and team leadership.")
+```
+
+`detectHeadingBoundaries`'s coalescing loop (added in M39 §B to fix a two-line wrapped
+*title* — NOTES.md "M39 §B", bug 1) joins a *run* of consecutive heading-qualifying
+lines into one boundary with no cap on the run's length or the resulting title's size
+(`HEADING_MAX_CHARS = 120` is checked per *line*, never against the coalesced total). Here
+the run is the entire page, so the boundary's title becomes all ~30 lines concatenated —
+exactly the garbled multi-hundred-character section title the operator saw. This is the
+same fix that closed M39 §B's bug 1 turning into a much larger liability the moment a real
+document has more than one legitimate body size — a case no pdfkit fixture happened to
+construct. Directly explains "S3's heading seems wrong" and contributes to "many
+subsections of chapters are misplaced."
+
+### Root cause 2 (confirmed, `a5410cf2…`): PDF outline destinations that collide on one y-coordinate get silently deduped, dropping real headings
+
+This paper has a full, correctly-nested 64-entry outline, resolved in the right document
+order. But four consecutive entries — `1. Introduction`, `1.1. Dimensions of
+Composability`, `1.2. Motivating Examples`, `1.2.1. Plugin Systems` — all resolve to
+**the same page (3) and the same y (70.86614)**, a real quirk of this PDF's own
+LaTeX/hyperref-generated destinations, not a parsing bug. `resolveOutlineBoundaries`
+(`sections.ts:110`) turns each into `(pageIndex, blockIndex)` by finding the first line at
+or below that y — identical inputs, identical output — and `dedupeAndSort` then drops
+exact `(pageIndex, blockIndex)` duplicates, silently discarding three of the four real
+section boundaries. The result, confirmed from `buildSections`' own output:
+
+```
+--- [0] "Section 1" (15103 chars) ---     ← swallows real §1, §1.1, §1.2 content
+--- [1] "1. Introduction" (3507 chars) ---
+code and can be removed freely. Among the top 100 extensions by install count…
+```
+
+Section `[1]`, titled "1. Introduction", does not start with the introduction — it starts
+mid-sentence, in the middle of what is really §1.2.1's discussion of VSCode plugins,
+because that's where the single surviving (collided) boundary happens to land. The real
+introduction's text is stranded inside the oversized, genericly-titled `[0]` "Section 1"
+front-matter blob instead. This is precisely the operator's report: *"Content from
+headings 1, 1.1, 1.2 show up at the bottom [of Section 1], then the next section titled
+1. Introduction continues from 1.2.1."* Root cause: **`dedupeAndSort`'s exact-match
+dedup is the wrong response to a coordinate collision** — it should never be possible for
+resolving four *different* outline entries to make three of them vanish.
+
+### Root cause 3 (structural, confirmed by count): no heading-depth/hierarchy concept anywhere in the pipeline
+
+`SectionBoundary`/`PdfSection` carry no depth or parent field — every boundary, from
+either rung, becomes an equal, flat, top-level spine entry. This paper's 64-entry,
+4-level-deep outline (`1` → `1.1` → `1.2.1`) produced **49 flat top-level sections** for
+one 44-page paper (even after root cause 2's silent drops). This is the exact shape the
+operator predicted unprompted: *"we may end up with 60-70 chapters for a 30 page book,
+with 2 sentence chapters."* This isn't a bug to fix so much as a data-model gap to close:
+nothing downstream (`resource_text`, the digest, the scan) is chapter-shaped correctly
+until a section carries its outline depth and children can roll up under a parent for
+navigation, while the *reading* spine (what `resource_text` stores per LLM feature) can
+stay flat underneath — those are two different questions and worth separating explicitly
+in any fix: **spine granularity** (what a "chapter" is for the digest/scan) is not
+obligated to equal **TOC nesting** (what the chapter picker shows).
+
+### Root cause 4 (confirmed, `8d111eeb…`): table cells merge into running prose — there is no table/grid concept at all
+
+`groupLines` (`lines.ts`) groups items into a line by y-proximity alone, with zero notion
+of table columns/cells. A genuine two-column *table* row (`"1.1 Comprehensive, theory
+based understanding…"` in the left cell, `"a) Engages with the engineering discipline at
+a phenomenological level…"` in the right cell) sits at the same y, so it becomes **one
+joined text line**, spliced together with a plain space:
+
+```
+fontSize=9.00 :: "1.1 Comprehensive, theory based a) Engages with the engineering discipline at a phenomenol…"
+```
+
+This is the mechanism, confirmed directly, behind "no table is rendered or correctly
+embedded" — not a missing render, but the table's row/column structure being destroyed at
+extraction and turned into cross-cell word salad. It compounds with root cause 1: the
+table's own caption (`"Table 1 Knowledge and Skill Base: Elements and Indicators"`,
+14pt) and header row (`"ELEMENT OF COMPETENCY INDICATORS OF ATTAINMENT"`, 11pt) both
+clear the heading threshold and become their own one-line "sections", so what should be
+one coherent table fragments across three sections (a bare caption, a bare header, then
+the garbled row data) with nothing tying them together. It also revives the exact
+"accepted, not fixed" finding from NOTES.md "M39 §A" — a genuinely textual table still
+matches `figures.ts`'s `Table\s*\d+` caption regex and triggers a spurious rasterized
+`[figure]` region right next to it (confirmed present in this document's own extraction
+dump) — previously only theorised against a synthetic fixture, now confirmed on a real
+one. `columns.ts`'s two-column reordering was **not** the mechanism here (this page never
+qualified as two-column by its own bimodal test) — worth recording so the eventual fix
+doesn't chase the wrong heuristic.
+
+### A fifth, one-line finding: the "Title:" title
+
+The operator's own screenshot shows the reader header reading "Title:". Root cause is a
+single line: `extract.ts:237` takes the resource title straight from the PDF's own
+`Info.Title` metadata field, falling back to `null` only when that field is empty — never
+when it's present but obviously a placeholder. This PDF's own embedded metadata *is*
+literally the four-character string `"Title:"`. Not an extraction bug, but a one-line
+fallback (treat a metadata title that's suspiciously short/matches a placeholder pattern,
+or simply prefer the first detected heading when one exists, the same way EPUB import
+already prefers real content over absent metadata) would fix it cheaply. Flagged, not
+sized — the operator didn't ask about this directly, but it's visible in their own
+screenshot and cheap to note here.
+
+### On "Contents aren't formatted nicely (want each item on a new line)"
+
+Checked `ChapterNav.tsx`/`ChapterNav.module.css` directly: the TOC popover already
+renders one `<button>` per entry with `.tocEntry { display: block; width: 100%; }` — this
+is not a CSS layout bug, each entry is already its own row. The "run-together" look is a
+direct, predicted symptom of root causes 1 and 3: a handful of TOC rows are themselves
+multi-heading garbled strings (root cause 1's coalescing), and the fine-grained
+subsections that should be their own rows are simply **missing** (root cause 2's silent
+drops) or **flattened with no visual hierarchy** (root cause 3). Expect this complaint to
+mostly resolve once 1/2/3 are fixed rather than treating it as a fourth, independent UI
+bug — worth a quick re-check after, not a separate fix now.
+
+### Not independently confirmed
+
+"New Lines are sometimes incorrectly placed" beyond the table-cell-merge case in root
+cause 4 — no second, distinct mechanism was found in this pass. If it persists once root
+cause 4 is fixed, it needs its own real-PDF example to chase (a citation/footnote
+superscript being pulled onto its own line is one plausible related mechanism —
+`groupLines`' y-proximity-only grouping has the same blind spot for a superscript sitting
+slightly off the baseline — but this is a hypothesis, not something observed in either
+PDF's actual output, and shouldn't be treated as confirmed).
+
+---
+
+## Proposed acceptance criteria — native PDF viewer, Acrobat-parity pass (draft, 2026-09-07, not yet in TASKS.md)
+
+Written at the operator's request, alongside the reflow investigation above, from their
+own live use of the native pane on `8d111eeb…`. **Draft for discussion — not actioned,
+not yet folded into TASKS.md/PDF.md.** Where a claim about current behaviour is made
+below, it's either confirmed by reading the code (cited) or flagged explicitly as
+unconfirmed.
+
+### 1. Continuous, smooth zoom
+- Zoom is a continuously variable scale — drag/scroll/pinch, not fixed presets — and the
+  page visibly interpolates through intermediate scales while zooming rather than jumping
+  between discrete steps.
+  ⚠️ **Current behaviour** (M41 §C1, confirmed in NOTES.md's own entry above): zoom is
+  stepped (`ZOOM_STEP` per click, e.g. the 1.2× per click already measured live) with no
+  interpolation — this criterion is new scope, not a regression to fix.
+- Acceptance: dragging a zoom control end to end renders visibly interpolated frames, not
+  a single jump; releasing lands on the exact scale under the pointer, not the nearest
+  preset.
+- The zoom↔continuous-scroll threshold crossing (PDF.md §7.6) still happens automatically
+  at the new continuous granularity, with no visible pop/flicker at the crossover.
+
+### 2. A page "slide" on turn
+- Advancing/retreating a page (arrow keys, prev/next, click-to-turn) animates a plain 2D
+  directional slide of the outgoing/incoming page — replacing today's instant swap.
+  ⚠️ M41 §B4 is satisfied by *not faking the M20/M27 3D fold* (`pageFold: false` stays
+  correct — this criterion must not reintroduce it), not by removing all motion; a slide
+  is not a fold.
+- Respects reduced motion (decision 14's standing rule that every motion surface owes a
+  reduced-motion path): instant swap, no slide, when the OS/user preference is set.
+
+### 3. Zoomed-out background matches the page, not the app's paper theme
+- When the rendered page (at the current zoom) is smaller than the pane in either axis,
+  the exposed pane background should read as a continuation of the page (plain white, or
+  the page's own detected background) rather than `--color-bg`'s cream/paper reader tone.
+  ⚠️ Scope this to the **native pane only** — the reflow/EPUB pane's `--color-bg` paper
+  tone is a deliberate choice (decision 12, "the reader taking its quietest variant") made
+  for reflowed *text*, not a rendered page image, and should not change.
+- Acceptance: zoom out below fit-scale on a portrait single page in a wide pane;
+  no visible color seam between the page and the surrounding pane.
+
+### 4. No reserved margin around the native page at fit-width
+- `margins: false` is already correct in the native capability profile (M40 §D1) — the
+  margin *control* is already hidden. This criterion extends it to the page container
+  itself: at fit-width, the rendered page should fill the pane's available width with no
+  more empty side padding than needed for a drop-shadow/edge, not a fixed reserved inset.
+  ⚠️ **Not verified against the current CSS** — needs a measured before/after, not assumed
+  broken.
+
+### 5. Toolbar stays fixed under a *pane* resize; only rescales on a *tab/window* resize
+  ⚠️ **Confirmed current behaviour, and it is the direct cause of this complaint**:
+  `useReaderStripLayout.ts` decides the strip's stacked/unstacked layout from a
+  `ResizeObserver` on the strip's **own container** (`containerRef`) — which is sized to
+  the reading *pane*, not the tab/window. Opening a side panel (`ThreadPanel`, the margin
+  rail) narrows the pane without touching the tab, and today that alone is enough to flip
+  `stacked` and restack/rescale the strip (`measure()`, lines 45–57) — this is deliberate
+  behaviour (M24.7 §C's whole point was replacing a static breakpoint with a real
+  measurement of available room) that happens to produce exactly the symptom reported.
+- New criterion: distinguish *why* the pane narrowed. A pane narrowed by the **tab/window**
+  shrinking should still restack (today's behaviour, correct). A pane narrowed by a
+  **sibling panel opening** (nothing about the tab changed) should not move, rescale, or
+  restack the strip/foot — only the content between them reflows.
+- This likely needs the hook to compare against viewport width (or a value that only
+  changes on an actual window resize) rather than reacting to every resize of its own
+  pane-scoped container — a real design question, not a one-line fix, since the two cases
+  produce an identical `ResizeObserver` signal today and have to be told apart some other
+  way (e.g. observing the tab/window width directly alongside the pane's, and stacking
+  only when *that* also shrank).
+
+### 6. Does not regress what M41 §C1/§D already ship
+- Adaptive 1-page/2-page spread, fit-width/fit-page zoom, virtualized continuous scroll
+  past the fit scale, and the scan-preview capability-off states (§D1/§D2) are unchanged
+  by this pass — this is additive polish on top of them, not a redesign.
+
+Not sized, not sequenced, not assigned a milestone number — for discussion before any of
+this is actioned.
+
+---
+
+## M42 §A4 gate — re-run against the two real PDFs, after §A/§B land — 2026-09-07
+
+Implemented §A1–A3 and §B1–B3, bumped `EXTRACTOR_VERSION` to 2 (extraction output changed
+materially — PDF.md §2), then re-ran `extractPdf` + `buildSections` directly against the
+same two real files this whole arc has been diagnosing (`8d111eeb…` and `a5410cf2…`,
+already in `LIBRARY_DIR`), per M39 §A8's own method. Result: **passes**, both real gates.
+
+**§A4 (Engineers Australia PDF, `8d111eeb…`):**
+- Section count dropped from 12 (pre-fix) to 5. The 12pt/18pt competency-list page (root
+  cause 1) is now one clean heading, not ~30 lines swallowed into one run-on title.
+- Title correctly reads `null` at the `extractPdf` layer (the embedded `"Title:"`
+  placeholder is rejected, PDF.md §4/A3) — `importPdf`'s own fallback chain (not exercised
+  by this gate script, which calls `extractPdf` directly) then prefers the first real
+  detected heading over the filename.
+
+**§B4 (same file, tables — B3's own acceptance criteria):**
+- All three captions ("Table 1 Knowledge and Skill Base…", "Table 2 Engineering
+  Application Ability…", "Table 3 Professional and Personal Attributes…") present as
+  ordinary text.
+- The exact garbled cross-cell join root cause 4 found live (`"1.1 Comprehensive, theory
+  based a) Engages with the engineering discipline"`) — **absent**.
+- Header row text (`"ELEMENT OF COMPETENCY"`, `"INDICATORS OF ATTAINMENT"`) — **absent**
+  from `resource_text` anywhere (no bare header-row-only section either).
+- 4 table raster blocks produced (Table 1, Table 2, Table 2 (cont.), Table 3).
+- ⚠️ One tuning surprise worth recording: the real table's header row has almost no
+  internal gap between its own cells (~1pt) even though the *data* rows below it do
+  (~15pt, ratio ~1.7× the row's font size) — `detectTableRegions`' row heuristic
+  (`tables.ts`) had to tolerate a **leading** non-qualifying run (the header) the same way
+  it tolerates an *interior* one (a wrapped column-1 label), not just interior gaps, or it
+  gave up before ever finding the table at all. Also had to stop bailing out at the *first*
+  non-qualifying line after a caption — a real multi-row table interleaves several
+  genuinely-tabular (wide-gap) lines with several column-label-wrap lines that aren't, and
+  the first version of the heuristic only ever caught the first row before giving up,
+  leaving every row after it still garbled.
+
+**§A4 (paper, `a5410cf2…`):** the four colliding outline entries (`1`, `1.1`, `1.2`,
+`1.2.1`, all resolving to the same page/y — root cause 2) now each get their own section,
+in the right order, with the right content — confirmed directly: `"1.2.1. Plugin Systems"`
+now starts with its own real content ("code and can be removed freely. Among the top 100
+extensions…", previously stranded under the wrong section title), and the front-matter
+section no longer claims §1/§1.1/§1.2's body text. (Section count rose to 65 — expected,
+not a regression: §A2 stops *dropping* colliding entries, which is orthogonal to §C's
+still-unaddressed flat-hierarchy problem, root cause 3, out of scope for this milestone.)
+One thing that looked like a leak but wasn't, worth recording so it isn't re-investigated:
+the front-matter section's text does contain the literal strings "1.1. Dimensions of
+Composability" and "1.2.1. Plugin Systems" — traced to the paper's own printed table of
+contents (dot-leader page-number lines), correctly part of the front matter, not evidence
+of the old bug resurfacing.
+
+Not re-verified here (out of scope for this milestone, per TASKS.md M42 §A/§B only): §C
+(heading hierarchy/depth) and §D (native pane polish) remain as NOTES.md and PDF.md §4
+already describe them.
+
+---
+
+## M42 §A2 — outline y unreliable across a whole document, not just a colliding few — 2026-09-07
+
+Found by the operator re-uploading the same paper (`a5410cf2…`) after §A/§B landed:
+"the headings are much better after the updates, but the text under each heading often
+gets typed out into earlier chapters, leaving lots of empty chapters." Confirmed directly
+against the freshly-reimported resource (`f13e0dbf…`, `EXTRACTOR_VERSION` 2): most
+sections between "1. Introduction" and roughly "2. Preliminaries" were 0 characters, and
+`"1.2.1. Plugin Systems"` started mid-sentence with content that actually belonged to it,
+just far past its own heading line.
+
+**Root cause, once actually measured (not assumed from the earlier 4-entry symptom):**
+this paper's *entire* 64-entry outline shares **one identical `y` value**
+(`70.86614`) — not four entries colliding with each other, literally every entry, and that
+shared y corresponds to *none* of their true positions (it sits near the bottom margin of
+whatever page each entry's own heading happens to live on, an apparent LaTeX-template/
+hyperref quirk unrelated to any heading's real location). The first version of §A2's fix
+only re-resolved an entry via text search when its raw `(pageIndex, blockIndex)` literally
+collided with an earlier one — an isolated entry (the only heading destination pointing at
+a given page) never triggered that path and kept its equally-wrong y-based position,
+silently. That is why sections *between* the colliding group of four (e.g. "2.
+Preliminaries", the very next top-level heading, which doesn't share a page with the
+group) still ended up empty too — the bug wasn't confined to the four entries NOTES.md's
+earlier root cause 2 investigation happened to spot.
+
+**Fix (`sections.ts`, `resolveOutlineBoundaries`):** flipped the priority. An entry's own
+heading **text**, searched for on its destination page in document order after wherever
+the previous entry on that page landed, is now the primary signal for every entry, not
+just colliding ones. The destination y is now only a fallback for when no text match is
+found at all. `disambiguateCollisions` (the collision-only version) is gone — folded into
+one unconditional resolution.
+
+**Re-verified against `a5410cf2…` end to end:** 0 empty sections out of 65 (was ~40+),
+every section's text now starts with its own heading line (checked programmatically, not
+just spot-checked), total extracted character count essentially unchanged (~304K) —
+confirming this redistributes content to its correct section rather than losing any of it.
+Added a regression test (`sections.test.ts`) for the specific failure shape: two
+non-colliding headings sharing one meaningless y, to guard the case the first fix version
+missed.
+
+---
+
+## M42 §C — heading hierarchy, implemented and verified live — 2026-09-07
+
+Implemented C1–C5 (`sections.ts`, `extract.ts`, `generateEpub.ts`, `importPdf.ts`,
+`shared/schemas.ts`, plus the client side: `toc.ts`, `PdfRenderer.ts`, `ChapterNav.tsx`,
+`ReaderView.tsx`). Bumped `EXTRACTOR_VERSION` to 4. Design: outline/heading depth is
+threaded through to a new `SectionBoundary.depth`; only depth-1 boundaries start a
+`PdfSection`, depth-2+ ones become `PdfSubheading`s (`{title, depth, offset}`) attached to
+whichever depth-1 section is open, `offset` a character offset into that section's own
+`resource_text` (decision 11's format-neutral `Locator`, not a spine index). The reflow
+pane gets these from the generated EPUB's own **nested** nav (`nav.xhtml`/`toc.ncx`, a
+subheading's own `<navPoint>`/`<li>` inside its chapter's, `href="section-N.xhtml#loc-<offset>"`);
+the native pane, which never parses that EPUB, reads the same data from a new
+`resource.metadata.subheadings` field instead. Both renderers jump to a subheading through
+the *existing* `goTo(Locator)` seam — no fragment-parsing needed in either renderer.
+`ChapterNav` is now a real collapsible tree: each chapter with subheadings gets a down
+arrow, auto-expanded for the chapter currently being read.
+
+**Two real bugs found only by testing against the real 92-page paper, not synthetic
+fixtures — recorded so they aren't rediscovered:**
+
+1. **Subheading offsets computed from a truncated `blocksToText` prefix disagreed with the
+   full section's own paragraph grouping.** `linesToParagraphs`' gap/indent judgment is
+   relative to its own sample's median line spacing — recomputing it on a slice can
+   legitimately decide differently than the full text does at the same position. Fixed by
+   searching the section's own already-assembled text for each subheading's rendered line,
+   forward from the previous match, rather than reconstructing a prefix.
+2. **A blank line's normalized text (`""`) is a prefix of every string.** `generateEpub.ts`'s
+   own "is this paragraph the next subheading" check used `startsWith`, which an empty
+   line satisfies immediately — the *first* blank line anywhere in the section (there are
+   many) consumed the subheading match long before the real heading line, so no anchor id
+   ever landed on the right paragraph. Fixed with an explicit non-empty guard before the
+   `startsWith` check. Also found and fixed along the way: `extractChapterTitles`
+   (`epub.ts`)'s NCX parser had no real stack, so a genuinely nested `<navPoint>` (the first
+   one this codebase ever generated) reset its *parent's* in-progress label out from under
+   it, and — separately — a same-file nested child's `content src` fragment resolves to the
+   identical stripped href as its parent's, so "first write wins" let the child's title
+   claim the chapter's own href. Both fixed; ⚠️ the fragment-stripping fix must not skip
+   *every* fragment-bearing `content` — the Jekyll and Hyde fixture's own title page
+   legitimately uses one, and skipping unconditionally blanked its chapter titles entirely
+   (caught by the existing `epub.test.ts` fixture test).
+
+**Verified against `a5410cf2…` end to end** (delete + reimport via the real running server,
+not a script calling internals directly): 65 flat sections → 10 real chapters, 55
+subheadings recorded across 7 chapters, nested correctly (e.g. "1.2" at depth 2 with
+"1.2.1"/"1.2.2"/"1.2.3" at depth 3 under it) — and **every one of the 55 `#loc-` references
+in the generated nav has a matching anchor id** in its section's own XHTML, checked
+programmatically, not spot-checked.
+
+---
+
+## M42 — delete a book — 2026-09-07
+
+Added `DELETE /api/resources/:id`. `deleteResource` (`store.ts`) hand-cascades every
+`resource_id`-scoped table in one transaction (no DB `ON DELETE` — migrations.ts's own
+documented convention; `deleteHighlight` the smaller worked example this follows).
+Highlights go through `deleteHighlight` itself, not a raw `DELETE`, so their own
+thread/message/publish cascade still runs; `llm_usage.resource_id` is nulled, not deleted
+(cost/audit history, same treatment `deleteHighlight` already gives `message_id`). The
+route layer then removes on-disk files (library source + reflow EPUB, the audio render
+cache via the existing `deleteResourceAudioCache`, the digest markdown projection).
+**The vault is deliberately left untouched** — a one-way compiled projection (settled
+decision 6) the reader may have since edited or cross-linked in Obsidian, and its
+`Concepts/` notes are shared across the whole vault, not owned by any one book (operator
+decision, asked directly rather than assumed).
+
+`DeleteConfirmDialog` (M30 E1's highlight-delete dialog) generalized and moved from
+`reader/` to `controls/` — takes a `message: ReactNode` now instead of a hardcoded
+highlight-specific string — and reused for book deletion from all three library surfaces
+(`LibraryGrid`, and `BookActionCard`, shared by the Desk and the Shelf), with one shared
+confirm-dialog instance hoisted to `DeskPage`. Verified end to end against the live running
+server: upload → delete → 404 on refetch → absent from `/api/resources` → on-disk files
+gone.
+
+**Unrelated pre-existing issue found while running the full workspace test suite, not
+caused by this work and not fixed here:** `shared/src/schemas.test.ts` has 3 failing tests
+(`ResourceSummarySchema`/`HighlightSchema` parsing) — confirmed via `git stash` on
+`schemas.ts` alone that they fail identically on the pre-M42 code, so it predates this
+session. Worth a look, out of scope here.
+
+## M42 §D/§E — implemented, code-verified; live browser check still owed — 2026-09-07
+
+**§E1 (toolbar pane-resize fix).** `useReaderStripLayout.ts`'s `measure()` now threads a
+second, independent width (`window.innerWidth`) alongside the existing pane-container
+measurement, via a pulled-out pure function `shouldRestack` (unit-tested directly,
+`pdfLayout.ts`'s own `shouldShowSpread` pattern, since jsdom has no `ResizeObserver`). A
+transition applies only when the window width itself moved in the matching direction —
+shrank to stack, grew to unstack — so a sibling panel (`ThreadPanel`, the margin rail)
+opening/closing, which narrows the pane with the window untouched, now leaves `stacked`
+alone; a real tab/window resize still restacks exactly as before. 7 new unit tests, all
+passing. Not yet watched live in DevTools (open a panel, confirm nothing in the strip
+moves) — the fix's own correctness doesn't depend on the exact CSS mechanism by which a
+sibling panel narrows `.topRow` (still not fully reconstructed from static reading — see
+the code comment), only on the observed symptom (`.topRow` narrows without `window
+.innerWidth` moving), so this is lower-risk than §D below, but still unverified live.
+
+**§D1 (continuous zoom).** Three real gesture surfaces, all routed through a new
+`PdfRenderer.setZoomScale(scale)` (added to the shared `ResourceRenderer` interface,
+no-op on `EpubRenderer`, matching `zoomIn`/`zoomOut`'s own convention):
+- **Scroll/trackpad-pinch**: a `wheel` listener on the PDF pane's own container, firing
+  only on `ctrlKey`/`metaKey` (the standard cross-browser signal for both "Ctrl+scroll to
+  zoom" and a trackpad pinch — Chrome/Firefox synthesize `ctrlKey` on a real pinch). Pure
+  delta→scale math in `pdfLayout.ts`'s new `wheelZoomTarget`, unit-tested.
+- **Touch pinch**: the existing `TouchGestureState` machine (`ReaderView.tsx`) was
+  font-scale-only — `pinchFontScale`'s `min`/`max` bounds were hardcoded to
+  `TEXT_SIZE_MIN`/`MAX` at the one call site in `handleTouchMove`. Pulled those into two
+  new `TouchGestureCallbacks` fields (`scaleMin`/`scaleMax`), and both callback
+  constructions (stage + the epub.js iframe's own content document) now branch on
+  `capabilities.zoom`: PDF zoom under it, font scale otherwise. A PDF pinch commits live
+  on every preview tick (`setZoomScale` already debounces its own real re-render) rather
+  than showing `PinchResizeInstrument`'s font-sample popover, which doesn't apply to a
+  fixed-page raster.
+- **Drag**: reused the reader's one shared drag control (`Slider`, decisions.md 2026-07-30
+  "one control system") rather than a bespoke one — a new `zoomSlider` fragment (defined
+  once, used in both the fullscreen pebble and the normal footer's zoom clusters, same
+  hoisting pattern `progressGroup`/`digestCluster`/`listeningCluster` already use),
+  `onPreviewChange` driving `setZoomScale` live without feeding its own `percent` back into
+  `value` mid-drag (mirrors the progress Slider's own `onPreviewChange`/`value` split).
+
+Mechanically: `setZoomScale` commits `userScale` (so `getZoomMode()` reads "free"
+immediately) and imperatively scales the already-rendered paginated wrapper via CSS
+`transform`, ahead of a debounced (`ZOOM_COMMIT_DEBOUNCE_MS` = 120ms) real pdf.js
+re-render — the interpolation is a blurry-but-live preview of the existing raster, sharpened
+once the gesture settles, same trade-off Maps/Photos-style zoom viewers make. 5 new
+`PdfRenderer` tests (real-timer polling, matching the existing zoom-threshold test's own
+pattern — fake timers don't mix cleanly with pdf.js's internal scheduling, confirmed by
+trying). All 543 web tests pass; `tsc --noEmit` clean.
+⚠️ **Not yet felt live** — drag/wheel/pinch smoothness and the "no pop/flicker at the
+continuous-scroll threshold crossing" acceptance criterion are experiential claims a test
+suite cannot settle. The dev server was already running (`:5173`, started 2026-09-04) and
+kept running rather than restarted; no browser-automation tool was available this session
+to drive it. Needs an operator pass with a real PDF before checking D1 off in TASKS.md.
+
+**§D2 (page-turn slide).** Root-caused, not "instant swap" as TASKS.md's own framing
+guessed: `usePageTurnAnimation.ts`'s `resolveRenderer()` already resolves `"slide"` for
+native PDF (`pageFoldEnabled` is `capabilities.pageFold`, false there) — the actual bug is
+one level down, in `pageSnapshot.ts`'s `buildSnapshot`, which did `container
+.querySelector("iframe")` and returned `null` unconditionally when none exists. A native
+PDF pane has no iframe (`PdfRenderer` renders straight into `container`), so every native
+turn's capture failed and silently fell back to `turnPageSlide` — a 90ms opacity-dip +
+6px-shift + 130ms fade, not a slide, which reads as "barely animated" and is almost
+certainly what the operator's "instant swap" actually meant. Fix: a new `buildNativeSnapshot`
+branch, simpler than the iframe path rather than a lesser version of it — pdf.js has
+already rasterized each visible page onto its own same-document, same-origin `<canvas>`
+(`PdfRenderer.ts`'s `renderPageInto`), so those bitmaps composite directly via `drawImage`
+with none of the iframe path's SVG/`foreignObject`/CSS-inlining machinery. Highlight/tint
+overlay divs are deliberately not composited in (a best-effort ~380ms flourish; the
+destination page repaints its own marks correctly the instant the turn lands — this file's
+own standing rule). Downstream of the capture (`cardLayout`, `composeCardSnapshot`,
+`resolveCardPaper`, `PageSlide`) was already format-neutral and needed no changes.
+⚠️ Not testable in jsdom (`canvas.getContext("2d")` returns null there — confirmed the same
+constraint already documented elsewhere in this file/`PdfRenderer.test.ts`), so this file's
+own existing test boundary (only the DOM-measurement/string-building helpers are tested,
+never the top-level capture orchestration) is unchanged, not newly incomplete. Needs a live
+page-turn on a real native PDF to actually see the slide before checking D2 off.
+
+**§D3 (zoomed-out background).** `.stage`'s background is `var(--color-bg)` unconditionally
+today — deliberate for EPUB (decision 12), wrong for a rasterized PDF page's own white
+paper. New `.stageNativePane` modifier class (`background: #fff`), applied only under
+`capabilities.zoom`. Composes for free with §D2's fix: `resolveCardPaper` (cardSnapshot.ts,
+already format-neutral) walks up from the card reading the first ancestor's *computed*
+background, so it now correctly picks up white for a native pane's page-turn card too.
+⚠️ Not yet seen live — needs a portrait PDF at fit-page in a wide pane to actually show the
+seam this closes.
+
+**§D4 (no reserved margin at fit-width).** `.marginWrapper`'s padding came from
+`--reader-margin`, driven by `READER_MARGIN_PX[readerMargin]` unconditionally regardless of
+capability — TASKS.md's own "not yet confirmed as broken" was right to hedge; it was live.
+New `NATIVE_PDF_MARGIN_PX = 8` (readerGeometry.ts) used instead of the reader's four-step
+margin setting whenever `capabilities.margins` is false (native PDF only — the *control* for
+this was already hidden per M40 §D1, confirmed correct this session, unlike D4's own
+padding). ⚠️ 8px is a first guess, not measured against a rendered drop-shadow — flagged the
+same way `MIN_SPREAD_SCALE`'s own comment already flags its untuned constant.
+
+**Overall:** all four D items and E1 are implemented and pass every test/typecheck this
+session can run; none have been watched happen in a real browser against a real PDF this
+session, which every one of D1–D4's own acceptance criteria in TASKS.md is written in terms
+of (a *feel*, a *seam*, a *slide*, a *gutter* — not a return value). TASKS.md's checkboxes
+for D/E1 are left unchecked pending that pass, per M39 §A8/§A4's own precedent of only
+checking a box after it's actually been read/watched, not after the code that should
+produce it compiles and its unit tests pass.
+
+## M43 — scoping session against the operator's own live pass — 2026-09-08
+
+The operator drove the native pane and the reflow output live (this is the pass M42
+§D/E1's entry above was waiting on) and reported several problems, screenshots included.
+Root-caused four of them by reading the code rather than guessing; TASKS.md M43 §A/§B
+carry the exact citations, summarized here so a later session doesn't have to re-find them:
+
+- **Highlight gaps/doubled-thickness (§A1).** `PdfRenderer.ts`'s `paintRangeInto`
+  (~line 202) paints one box per `Range.getClientRects()` entry with zero merging. pdf.js's
+  text layer emits one span per text item — frequently a single word, sometimes a lone
+  punctuation glyph — so any highlight crossing a span boundary is drawn as several boxes
+  that don't reliably abut: a gap where they undershoot, a darker doubled-opacity seam
+  where they overlap. `EpubRenderer`'s marks-pane doesn't have this because it's built for
+  continuous prose (SVG, CFI-keyed) — not reusable per PDF.md §7.5, but it's the reference
+  for "why doesn't the reflow pane have this bug."
+- **Selection pill never dismisses on click-away in native mode (§A2).**
+  `handleContentClick` — the only thing that calls `setPendingSelection(null)` — is wired
+  exclusively inside `ReaderView`'s `if (activeRenderer instanceof EpubRenderer)` branch,
+  attached per-section to the EPUB iframe's own document. `PdfRenderer` gets no equivalent
+  listener, and its own `handleSelection` early-returns on a collapsed selection, so a
+  click-away in the native pane reaches nothing that would hide `AskPill`. A real gap in
+  M41 §A1's "named-extras kept off the shared interface" design, not a violation of it —
+  the substitute for `handleContentClick` was simply never built for the PDF side.
+- **Native-pane pixelation (§B1).** `renderPageInto` sizes the canvas backing store 1:1
+  with the CSS-pixel viewport, never multiplied by `devicePixelRatio` — confirmed by
+  reading the function, no `devicePixelRatio` reference anywhere in `PdfRenderer.ts`. Every
+  HiDPI display renders a 1×-resolution raster stretched into a 2×/3×-density box. This is
+  a different code path from `rasterize.ts`'s server-side `RASTER_SCALE = 2` (reflow's
+  embedded figures, §F) — the interactive canvas has no DPR awareness of its own at all.
+- **Zoom-popup z-index (§C1).** Not root-caused this session — flagged as an open
+  diagnostic in TASKS.md rather than guessed. The candidate cause (a missing/lower
+  `z-index` against a sibling stacking context in the reader-strip cluster) is a starting
+  point, not a confirmed finding; check the popup's actual computed stacking in devtools
+  before touching CSS.
+
+Two items were forked design decisions rather than bugs — recorded in `decisions.md`
+2026-09-08, not re-derived here: **(1)** OCR-to-LaTeX for equations stays a rendering-only
+upgrade, never entering `resource_text`, because a math-OCR model's error rate on
+multi-line equations is a worse poison for the digest/search than the plain-text
+reconstruction §3.4 already rejects — a wrong symbol reads as confidently correct, not
+visibly mangled. **(2)** The native pane's default navigation inverts from
+"paginated, continuous scroll only past the fit scale" to "scroll by default, paginated
+only at a legible 2-up spread fit" — scoped to `PdfRenderer` alone, does not reopen
+decision 17c's "pagination won" for EPUB, whose own `flow: "scrolled-doc"` mode is
+untouched.
+
+⚠️ Nothing in this session was driven live — same caveat M42 §D/E1's own entry states, for
+the same reason (no browser-automation tool available in this environment). Everything
+above is either read from the source or, for §C1/§E1, explicitly flagged as
+not-yet-root-caused/not-yet-evaluated rather than guessed.
+
+## M43 §0.1 — live verification of M42 §D1–D4/E1, and a new zoom-jump bug found doing it — 2026-09-08
+
+Driven live this session against the real PDF already in the library ("A Programming
+Paradigm for Spatiotemporal Composability"), Playwright/Chromium headless (`.ds-sync`'s
+own bundled install — no project driver skill existed for this repo yet; worth
+`/run-skill-generator` if this becomes routine) against the dev server already running on
+`:5173`/`:5175`. Screenshots taken at each step; not committed (scratch only).
+
+**§D1 (continuous zoom) — FAILS, a real bug, not the operator's `handleWheel`
+formula working as intended.** Ctrl+wheel with a single, small, real `deltaY: -30` event
+(confirmed via a capture-phase `wheel` listener — exactly one event fired, not a synthetic
+burst) should move the zoom from 110% to ~120% per `wheelZoomTarget`'s own math
+(`base * exp(-deltaY * WHEEL_ZOOM_SENSITIVITY)` = 1.10 × exp(0.09) ≈ 1.20). It instead
+landed on **219%** — the pane visibly pops to roughly double size on the very first tick.
+Root cause, read after reproducing: `relayout()` (`PdfRenderer.ts` ~1196–1213) recomputes
+`pagesAcross` from `this.userScale === null && shouldShowSpread(...)` *in the same pass*
+that first sets `userScale` non-null — so the instant a zoom gesture steps away from a
+legible 2-up spread's own fit scale, `pagesAcross` flips 2→1 before the snap-back check
+below it runs, and `computeFitScale(..., pagesAcross)` for a single page is roughly **2×**
+the spread's own per-page fit scale (a lone page can claim the width two pages used to
+split). The snap-back check (~1209, `this.userScale <= this.currentFitScale +
+ZOOM_EPSILON`) then compares the *small* zoom target against this *newly doubled* fit
+scale, decides the fit scale "caught up," and resets `userScale` to `null` — so
+`effectiveScale` lands on the new single-page fit scale (≈219%) instead of the intended
+~9% nudge. This is not a synthetic-input artifact: reproduced with one real wheel event,
+starting from the exact state D1's own acceptance criterion is written against (a legible
+spread, zooming past its own fit scale — PDF.md §7.6's "threshold crossing"). Every
+subsequent tick from there behaves normally (219%→240%→263%→...), so it's specifically the
+*first* step away from a spread that pops.
+⚠️ **This is squarely in the code M43 §D (navigation model default-to-scroll) is about to
+rewrite** — `pagesAcross`/`nextAdvance`'s derivation in `relayout()` is the same region
+§D1–D3 there touch. Whoever implements §D should fix this as part of that work (or first,
+since §D's own new "leaving the spread state" transition is exactly this crossing) rather
+than reading it as a pre-existing, unrelated bug to route around. Left unfixed and
+unfiled as its own TASKS.md item on purpose — no existing §A–§F item names it precisely,
+and it's cheaper to fix once as part of §D's rewrite than to patch the soon-to-be-replaced
+snap-back logic twice.
+
+**§D2 (page-turn slide) — PASSES.** Clicking "Next page" on a two-page spread shows a
+real 2D directional slide: at 160ms the outgoing spread is partway off to the left and the
+incoming one partway in from the right (both visible simultaneously, mid-transition); by
+360ms it settles cleanly on the new pages with no leftover artifact and no 3D fold chrome.
+Checked off below.
+
+**§D3 (zoomed-out background) — PASSES.** Forced single-page mode (narrow viewport, no
+legible spread) at "Fit page" then zoomed out; the area around the page reads plain white
+(`getComputedStyle` on the `.stageNativePane`-classed ancestor: `rgb(255, 255, 255)`), not
+the cream `--color-bg` (`#faf7f0`) the reflow pane correctly still uses. Checked off below.
+
+**§D4 (no reserved gutter at fit-width) — PASSES.** Measured canvas-vs-container edges at
+fit-width in both a wide (2-up spread, edge-to-edge) and narrow (single page) viewport:
+~9px on each side both times, consistent with a drop-shadow inset, not a dead margin.
+Checked off below.
+
+**§E1 (toolbar stays fixed under a sibling-panel resize) — PASSES, evidence not
+exhaustive.** Opening a highlight's floating annotation/thread editor (click a highlight
+mark → `ThreadPanel`) left the reader strip's own container at the identical `top`
+(17.796875px, pixel-exact) before and after — it did not move, resize, or restack.
+Separately shrinking the *real* browser viewport (1400px → 640px) did visibly restack the
+strip into two rows, confirming the "real resize still restacks" half wasn't broken by the
+fix. Not exercised: deliberately toggling `MarginRail`'s own docked width, the more literal
+version of "a sibling panel narrows the pane" `useReaderStripLayout.ts`'s fix targets —
+the `ThreadPanel` case above is a reasonable proxy (same mechanism, same pane-container
+`ResizeObserver`) but not a second, independent confirmation. Checked off below on the
+strength of what was actually seen; worth a `MarginRail`-specific look if this regresses.
+
+**§0's own question — does D1/D2 already fix the operator's §C1/§C2 complaints? No.**
+§C1 (the zoom-percentage popup rendering beneath the reader-strip tab cluster) is a CSS
+stacking-context/z-index issue; nothing in D1's zoom math or D2's slide capture touches
+the popup's own DOM position or z-index. §C2 (replacing the two fit-width/fit-page buttons
+with a single cycling toggle) is a chrome/UI-shape request D1/D2 don't address either —
+both buttons still exist unchanged, doing what they did before. §C1/§C2 remain open,
+distinct work; the D1 zoom-jump bug found above is a **third**, previously-unknown issue
+in the same neighborhood (the zoom/spread interaction), not a rediscovery of either.
+
+Environment note: the dev server (`:5173`/`:5175`) was already running from a prior
+session and was left running, not restarted, per this project's own data/port caution
+(marginalia-data-dir-caution) — nothing was killed to do this pass.
+
+## M43 §A corrective — highlight geometry, click-to-open, and an active-highlight state — 2026-09-08
+
+Operator report against the real "A Programming Paradigm for Spatiotemporal Composability"
+PDF (`b6a2161c…`), on the exact passage a screenshot showed: "highlighting is still not
+properly matched to text (going far over the line)"; "I can't click on the highlight to
+open the annotation"; and a request that the open annotation's highlight read as more
+pronounced while its panel is open, "as always text should still be rendered on top."
+TASKS.md M43 §A1/§A3 carry the full root-cause writeups; this is the live-verification
+record.
+
+**The alignment bug was not a merge-logic regression** — `mergeRectsIntoLines` (§A1,
+2026-09-08 earlier the same day) was working correctly. The actual cause was one layer
+down: `buildTextLayer`'s spans (`PdfRenderer.ts`, no official pdf.js `TextLayer` here, see
+that function's own comment) set no `fontFamily` and applied no horizontal scale
+correction, so each span's on-screen width was whatever the *browser's* default font
+renders `item.str` at — routinely wider or narrower than the PDF's own embedded-font
+width. `paintRangeInto` paints straight from these spans' `getClientRects()`, so the
+mismatch became a visible highlight overrun the instant a real feature (M43 §A1) started
+depending on that geometry — exactly what the function's own prior comment ("not
+pixel-perfect glyph spacing, which doesn't matter yet for a surface nothing renders to a
+screen") predicted. Fixed with the same technique `pdfjs-dist`'s own `TextLayer#layout`
+uses: measure the span's natural width via `ctx.measureText` on a lazily-created,
+module-shared measuring canvas (`null` on jsdom, same fallback shape as
+`renderPageInto`'s raster-context skip) and apply `transform: scaleX(expected /
+measured)`, where `expected = item.width * Math.hypot(viewport.transform[0],
+viewport.transform[1])` — the viewport's own zoom scale, not the item's combined
+transform, which would double-count the font-matrix scale already inside `item.width`.
+
+**The click-to-open bug**: `paintOneMark` inserted the mark div *before* `textLayerDiv` in
+DOM order. `textLayerDiv` is `inset: 0`, `pointer-events: auto` (needed for drag-selection)
+with no explicit z-index, so — being later in the DOM — it always won the browser's native
+hit-test over the mark's own line boxes underneath it, regardless of theirs being
+`pointer-events: auto` too. `markClicked` therefore never fired for a click squarely on a
+highlight, even though `ReaderView`'s generic `on("markClicked", …)` wiring (shared with
+`EpubRenderer`) was already correct. Fixed by appending the mark *after* the text layer —
+same relative order as `EpubRenderer`'s marks-pane SVG sitting above its iframe. Purely a
+hit-testing change: `textLayerDiv`'s spans are `color: transparent` (nothing paints from
+it either way), and the mark's multiply/screen blend still composites against the raster
+`canvas`, which stays earlier in the DOM regardless of where the text layer sits.
+
+**The active-highlight state** is new surface, not a bug fix: `setActiveHighlight(id |
+null)` added to `ResourceRenderer` (both renderers), baked into the *resting* style via a
+new `active` param on `markStyleForKind` — boosts `fill-opacity` to the same
+`hoverFillOpacity` strength M16's hover-pop already defined (still blended, never opaque)
+— rather than a one-off DOM mutation like the hover boost itself, because an open panel can
+outlive a page turn/relocation and needs to survive every re-paint the way `kind`/`hidden`
+already do. `ReaderView` drives it from `expandedThread?.highlightId`.
+
+**Live-verified** (Playwright/Chromium via an ad hoc `playwright-core` install in
+scratchpad, pointed at the already-running dev server — same approach as every other
+"no `chromium-cli` in this environment" entry above — against the cached chromium-1234
+binary at `~/.cache/ms-playwright`, `--use-gl=swiftshader`):
+- **Alignment**: zoomed the native pane to 400% on the operator's own paragraph
+  ("…establishing spatial composability local to one component. We then / unify the effect
+  context and the coeffect context into a single context…") — every highlighted line's
+  right edge now lands exactly on the last highlighted glyph, no overrun past the wrap
+  point, on both the honey and sage highlights in that paragraph.
+- **Click-to-open**: clicked the exact highlight box's own center (real coordinate click,
+  not a locator) — the annotation panel opened with that highlight's quote, matching
+  reflow mode's identical gesture.
+- **Active state, both renderers**: in the native pane, the clicked highlight visibly
+  brightened relative to its own resting wash and to neighbouring highlights, text legible
+  throughout. In EPUB (Kafka on the Shore), measured it numerically:
+  `getComputedStyle(mark).fillOpacity` went `0.22` → `0.95` on click, back to `0.22` on
+  Escape (closing the panel) — exactly `hoverFillOpacity("light")`'s own value.
+- **No new console errors.** Two pre-existing 404s seen on every load (a missing cover
+  image for this resource, `/api/jobs/events`) are unrelated to this change.
+
+Dev server (`:5173`/`:5175`) was already running from a prior session; left running, not
+restarted or killed, same caution as every other entry in this file.
+
+## M43 §B1 — native pane HiDPI canvas — 2026-09-08
+
+Same session as the §A corrective work above. `renderPageInto`'s canvas backing store was
+sized 1:1 with `viewport`'s CSS pixels and never multiplied by `devicePixelRatio`, so on any
+HiDPI display the browser stretched a 1×-resolution raster to fill a 2×/3×-density box —
+soft next to a native OS PDF viewer at the same size, per PDF.md §3.4/TASKS.md M43 §B1.
+
+Fixed by sizing only the backing store (and the `page.render()` call's own viewport) up by
+`min(devicePixelRatio, 2.5)`, while `pageDiv`'s CSS box — and therefore `buildTextLayer`'s
+positioning math and everything downstream of it (mark painting, selection, search-hit
+painting, all of which read `Range`/DOM-rect geometry against that same unscaled viewport)
+— stays exactly as it was. No `ctx.scale()` needed: pdf.js's own `page.render({ viewport })`
+already renders into as many pixels as the viewport it's given describes, so passing a
+second, DPR-scaled `getViewport({ scale: scale * dpr })` only to the render call does the
+job pdf.js already knows how to do.
+
+Capped at 2.5 rather than trusting an unbounded `devicePixelRatio` — TASKS.md's own note
+that DPR-2/DPR-3 is 4×/9× the pixels per page, and continuous scroll (§7.6) can have several
+pages mounted at once.
+
+**Live-verified with a *real* browser device-scale factor** (Playwright's
+`deviceScaleFactor`, not a jsdom property mock — the unit test covers that case separately)
+against the real "Spatiotemporal Composability" PDF at 1200×900:
+
+| requested DSF | reported `devicePixelRatio` | CSS page width | canvas backing width |
+|---|---|---|---|
+| 1 | 1 | 553px | 553px (1×) |
+| 2 | 2 | 553px | 1106px (2×) |
+| 3 | 3 | 553px | 1383px (2.5×, the cap) |
+
+CSS width identical across all three (confirming the geometry consumers are unaffected), no
+console errors at any DSF, and a screenshot at 2× shows visibly crisp text with highlight
+alignment (§A above) unaffected by the change.

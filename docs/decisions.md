@@ -3,6 +3,105 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-08 — M43 scoped: two forked calls on native-pane/reflow feedback
+
+The operator's own live pass against the native pane and the reflow output — the same
+pass `docs/marginalia/NOTES.md`'s "Proposed acceptance criteria — native PDF viewer,
+Acrobat-parity pass" (2026-09-07) and M42 §D/E1 (code-complete, live-verification
+"still owed" per that entry) were both waiting on. Most of the resulting feedback is
+straightforward bug-fixing (highlight-painting gaps, a persistent selection pill, canvas
+resolution) with a root cause already found by reading the code — see TASKS.md M43 §A/§B
+for the citations. Two items forked into genuinely different approaches and are decided
+here.
+
+**1. Equations get typeset via OCR-to-LaTeX, but the OCR'd LaTeX never enters
+`resource_text`.** The operator asked for LaTeX conversion of equation zones instead of
+today's flat rasterized PNG (PDF.md §3.4), reporting the raster's quality as visibly
+worse than the source PDF's own live-rendered math. The fork: does an OCR'd LaTeX string
+become searchable/quotable text (bigger win — the digest and search could reference an
+equation), or does it only upgrade the *visual* — an image swapped for typeset math,
+`resource_text` unaffected either way?
+**Decided: visual upgrade only.** §3.4's original rule ("detect and rasterize... do not
+reconstruct — it produces garbage that poisons the digest, search, and audio narration")
+was written for exactly this failure mode, and a math-OCR model (e.g. an
+open-source LaTeX-OCR model run locally, matching decision 9's local-first posture) has a
+real, non-trivial error rate on multi-line/matrix equations — an even more expensive
+kind of garbage to poison the digest with than the plain-text reconstruction §3.4 already
+rejected, because a wrong LaTeX symbol reads as confidently correct instead of visibly
+mangled. So: OCR the rasterized equation band, render the result as typeset math (KaTeX/
+MathJax) in the generated EPUB in place of the flat PNG, and fall back to today's PNG
+automatically on low OCR confidence or a render failure. `resource_text` keeps getting
+**nothing** for the equation, same as today — this is a rendering-quality change, not a
+text-substrate change, and needs no amendment to the "nothing but rasterized" half of
+§3.4/§3.5's rule, only to the "as an image" half. Cost accepted with eyes open: a second
+local model dependency (size/load-time budget, alongside Kokoro TTS) for a
+visual-only win — worth it because the failure mode of getting it wrong stays contained
+(a badly-typeset equation looks bad; it does not silently corrupt search or the digest).
+
+**2. The native pane's default navigation becomes scroll, with page-fit-to-spread as the
+one paginated exception — amending PDF.md §7.6.** Today (M41 §C1/§7.6): paginated
+single/spread is the default, and continuous scroll is a *derived* state that only
+engages once the reader zooms past the active fit scale, snapping back automatically.
+The operator's ask inverts this for the native pane specifically: continuous scroll is
+the default interaction; the one paginated state is "two pages exactly fill the pane,
+edge to edge" (today's spread-at-fit-scale), and *within* that state a scroll gesture
+still works, but turns the page (a slide-in of the next spread) rather than scrolling
+through it.
+⚠️ **This reopens a settled call.** CLAUDE.md decision 17c chose "pagination won" for the
+app generally and made continuous scroll deliberately a **second mode with its own
+affordances**, not the default, partly to keep the app's chapter-shaped assumptions
+(the digest unit, decision 8a's spoiler mask, audio's per-section manifests) load-bearing
+only where they still apply. That reasoning was about EPUB's per-section `flow:
+"scrolled-doc"` mode; it does not obviously transfer to the native PDF pane, which has no
+chapter-shaped rendering unit of its own (pages, not spine sections, are what's on
+screen) and where §7.6 already derives continuous scroll automatically today — so this is
+a **narrower amendment, scoped to the native pane only**, not a reopening of decision 17c
+for EPUB.
+**Decided, per the operator's own stated design:** for `PdfRenderer`, `advance` defaults
+to `"scroll"` rather than being derived from a zoom comparison; the one paginated state is
+detected the same way `shouldShowSpread`/`MIN_SPREAD_SCALE` already decide a 2-up spread
+is legible, and a scroll input while in that state drives a spread-to-spread slide
+instead of moving the scroll position. EPUB's own `advance`/`flow` semantics (decision 17c,
+M40 §C) are unchanged — this is `PdfRenderer`-only, and `ReaderView` still asks
+`capabilities`, never the format (settled decision 17c), for which behaviour applies.
+TASKS.md M43 §D carries the acceptance criteria.
+
+## 2026-09-07 — M42 scoped: three corrective calls on the real-PDF findings
+
+Following the operator reading two real PDFs already in the library through both panes
+and reporting several problems — investigated and root-caused in
+`docs/marginalia/NOTES.md` "M39 — the real gate, finally" (2026-09-07). This is the "real
+gate" M39 §A8 itself flagged as still owed, now run, and it found what that entry
+predicted a synthetic fixture couldn't: two section-boundary bugs, a table-structure gap,
+and a hierarchy gap. Three of the fixes forked into genuinely different approaches; put to
+the operator directly before writing TASKS.md, per this doc's own discipline. All three
+answered, recorded here, now binding for M42.
+
+**1. Tables are rasterized as images, the same treatment §3.4 already gives equations.**
+Not reconstructed as structured text/HTML. Cheapest, safest, and consistent with an
+existing precedent already accepted for equations — the cost, accepted with eyes open, is
+that a `document`-kind digest's `findings`/`methods` fields can't quote a table's data,
+since (matching equations' own rule) nothing but the caption enters `resource_text` for
+one. Revisit only if a real document kind's digest quality is later found to suffer for
+lack of it — not scheduled now.
+
+**2. Heading hierarchy changes the spine itself, not just the TOC's presentation.** A
+depth-2+ heading (`1.1`, `1.2.1`, …) no longer starts its own `PdfSection`/`resource_text`
+row — it rolls into its nearest depth-1 ancestor's section, the same way EPUB chapters
+don't fragment at every subheading. This is the one call here that **refines PDF.md §4**
+rather than being purely additive: "the spine unit is a section" (settled decision 17b)
+still holds, but "a detected section" now means a depth-1 heading's span, not every
+heading-qualifying line's span. Rejected: keeping the spine as flat as today and only
+adding visual nesting to `ChapterNav` — safer and non-invasive, but leaves the digest/scan
+still operating over sections as fine-grained as "49 flat sections for one 44-page paper,"
+which is the actual problem the operator flagged, not just how it's browsed.
+
+**3. The toolbar pane-resize bug (`useReaderStripLayout.ts`) is bundled into M42**, even
+though it's shared reader chrome and not PDF-specific — it surfaced from this PDF testing
+session and the operator wants it fixed now rather than filed separately. Recorded so a
+future session isn't confused why a PDF milestone touches code with no PDF in its name;
+verify the fix doesn't regress EPUB's reading strip, since the hook serves both.
+
 ## 2026-09-03 (later, before the continuous-scroll entry below) — The put-down's asymmetry with the opening
 
 M33 §C, implementation session. TASKS.md's own C2 says the put-down must reuse the

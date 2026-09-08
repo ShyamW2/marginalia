@@ -5857,6 +5857,27 @@ the operator's message.
 - [x] **The page is measurably taller** than before at the same window size, and the page fold
       still peels from every corner with the new chrome mounted.
 
+### M28 — Universal search (the successor to M24, shape only)
+
+Named on 2026-08-14 so M24 can be scoped honestly and so its result shape is chosen with
+this in mind. **Not scheduled**, and deliberately after M24.5 — cross-book parallels are
+only legible once themes have a shared vocabulary to be parallel *in*.
+
+The operator's ask: *"a universal search where you can search attached Obsidian vaults and
+annotations in other books too, to draw parallels."*
+
+- The Obsidian half is **not speculative**. The vault is already a real directory this
+  server reads and writes, with concept files carrying names and aliases
+  (`server/src/vault/concepts.ts`). It needs an index and a result surface, not an
+  integration.
+- **This is where FTS5 earns its place** (M24 deliberately does without). Scanning one
+  book brute-force is fine; scanning a library is not.
+- **It does not belong on the Scan.** The Scan is one book's instrument; a cross-book
+  result surface belongs to the Desk. Growing it sideways out of the Scan would re-create
+  exactly the "two jobs competing in one surface" problem M24 was raised to fix.
+- The gate before anything is built: **what does a cross-book hit open**, and what makes a
+  parallel worth surfacing rather than a coincidence of vocabulary?
+
 ### M29 — Digest reliability: stop blocking on a live LLM call, add timeouts and retries
 
 **Moved ahead of M25–M28 on 2026-08-24** (decisions.md) — its own number is unchanged, only
@@ -5921,3 +5942,1938 @@ should make the app resilient to that regardless of how it's tuned.
       snapshot is stale (confirm it's no longer the slowest interaction on the site), and
       run a multi-chapter background digest, confirming a network hiccup no longer kills
       the job outright.
+
+### M30 — The highlight system: your labels, a Define button, a glossary, and a delete you can survive
+
+Scoped 2026-08-24 (decisions.md, "Six asks, triaged"). Read that entry before starting —
+in particular *why* labels are configurable and hues are not, and why Define is a
+dictionary rather than a prompt. Three of the operator's six asks landed here because they
+are one pass over the same subsystem.
+
+**The rule this milestone must not break:** a highlight kind's **identity is its slot, not
+its presentation**. `rose|sage|honey|slate` are permanent stored values; label and hue are
+renderings. Renaming a kind never migrates a row.
+
+#### A. Kind labels become a setting
+
+- [x] Move the four labels out of `web/src/reader/highlightKinds.ts:6` (`KIND_LABELS`) into
+      the settings store (`server/src/settings/store.ts` `DEFAULTS` + `KEY_TO_FIELD`,
+      `shared/src/schemas.ts`'s `Settings`). Defaults are the operator's names, which differ
+      from today's on two slots: `sage` = **Define** (was "Definition"), `slate` =
+      **Thematic Question** (was "Question"), `rose` = **Regular annotation** (was
+      "Revisit"), `honey` = **Key quote** (was "Quote").
+      _Done: `kindLabelRose/Sage/Honey/Slate` on `Settings`, defaulted exactly as above._
+- [x] Edit them from a new **Highlights** section in `web/src/settings/tabs/ReadingTab.tsx`
+      (not a new tab — four text fields do not earn one).
+- [x] Every consumer reads the setting, not the constant. All of them, verified:
+      `AskPill.tsx:53-54` (`title` *and* `aria-label`), `AnnotationsOverview.tsx:80`, and
+      the scan's filter key via `ScanPage.tsx:480`. ⚠️ `ScanPage` currently renders kind
+      chips from `KIND_ORDER` (`scan/scanPalette.ts:29`) and has no label import at all —
+      it is the one that will be missed.
+      _Done: `ScanPage.tsx` fetches `kindLabelsFromSettings` and titles/`aria-label`s its
+      filter chips from it (verified by reading — this is exactly the site the warning
+      named)._
+- [x] An empty label falls back to the default rather than rendering a nameless dot.
+      _Acceptance: clearing a label field and reloading shows the default name, not a blank
+      tooltip or an empty `aria-label`._
+      _Done: `kindLabelsFromSettings` (`highlightKinds.ts`) is the single resolver every
+      consumer above goes through — `settings.kindLabelX || DEFAULT_KIND_LABELS[kind]`._
+
+_Verified 2026-08-27 by reading the shipped code against this section's own acceptance line
+(not re-decided): renaming a slot's label only touches the setting; `HighlightKind`
+(`rose|sage|honey|slate`) never changes, so `SELECT DISTINCT kind FROM highlights` is
+unaffected by construction._
+
+_Acceptance for A: renaming `honey` to "Banger" changes the pill tooltip, the pill's
+screen-reader name, the annotations overview row, and the scan's filter chip — and changes
+nothing in the database (`SELECT DISTINCT kind FROM highlights` still returns the four slot
+names)._
+
+#### B. Slate moves from blue to purple
+
+- [x] ⚠️ **Not a one-line change.** Three coupled places, and a solve:
+      `--kind-slate` (`web/src/theme.css:58`), `PHOSPHOR_RGB.slate`
+      (`web/src/scan/scanPalette.ts:14`), and the **theme-ramp separation solve** that
+      `theme.css:63-75` documents — those eight ramp hues were chosen against the four kind
+      hues, and `scanPalette.ts`'s eight phosphor ramp hues were solved separately against
+      the four *phosphor* kind hues. Moving slate invalidates both solves.
+      _Done: `--kind-slate: #9c7fb3` (purple); `PHOSPHOR_RGB.slate` moved 200°→258°._
+- [x] Re-run both solves and record the new minimum separation in the same comments, in the
+      same form the existing ones use.
+      _Done: `theme.css` records 28.0° minimum across the 12 paper hues; `scanPalette.ts`
+      records 26.8° across the 12 phosphor hues — both re-solved fresh against slate's new
+      hue, both ≥ the 25° floor below._
+
+_Acceptance: minimum pairwise hue separation across the 12 paper hues is ≥ 25°, and across
+the 12 phosphor hues is ≥ 25°, with the numbers written into the comments. A purple slate
+sitting next to `--theme-ramp-5` (violet) on the digest page must still be tellable apart._
+_Verified 2026-08-27 by reading `theme.css:63-76` and `scanPalette.ts:29-58`: both numbers
+are written into the comments and both clear the 25° floor._
+
+#### C. The Define button
+
+Dictionary first, digest fallback, hard-capped. Reasoning in decisions.md; do not
+re-decide it.
+
+- [x] Add **Define** to the selection pill (`web/src/reader/AskPill.tsx`) — enabled only
+      when the selection is short enough to be a term. ⚠️ Decide the threshold once and put
+      it in code with the reason: a paragraph is not a word, and Define on a paragraph
+      produces a bad answer rather than an error.
+      _Done: `shared/src/defineTerm.ts` — ≤4 words, ≤48 chars, with the reason in the file.
+      **Shared** by both sides on purpose: the pill enables/disables from it and the server
+      rejects from it, so the button can never offer a lookup the server refuses. Disabled
+      rather than hidden, with the rule in the tooltip — a control that vanishes reads as a
+      bug._
+- [x] Define creates a **sage** highlight (never a new kind) and attaches the definition to
+      it. It does not open the thread panel unless the reader asks — this is a lookup, not
+      a conversation.
+      _Done: `ReaderView.handleDefine`. The answer lands in a `DefinitionCard` anchored where
+      the selection was; "Ask about this" on that card is the only path to a thread, and it
+      escalates the same sage highlight rather than starting a second one._
+- [x] **Path 1, local dictionary.** A bundled dataset behind its own narrow module, the way
+      `audio/engine.ts` fronts TTS. No network. ⚠️ Settled decision 10: a dictionary *API*
+      would be a third named cloud exception and is **not** authorised by this milestone.
+      _Done: WordNet 3.1 (`wordnet-db`, files only) behind `dictionary/engine.ts`, read by
+      **binary search over the sorted index files on disk** — ~20 reads per lookup, no
+      in-memory index, 1–4ms measured. No network anywhere in the path. ⚠️ The dataset ships
+      no exception lists, so irregular inflections ("mice", "went") miss and fall through to
+      path 2 — recorded in NOTES.md rather than papered over._
+- [x] **Path 2, fallback only.** On a dictionary miss, one digest-grounded call (decision 8's
+      M17 ladder — the digest rung, *not* whole-book) with a **<100 output token cap**. The
+      cap is a product constraint: a definition that runs long has stopped being a
+      definition.
+      _Done, with **two corrections found by driving it live** — both in NOTES.md, and both
+      would otherwise have shipped looking like the empty state working correctly:_
+      _(a) **The cap must not be passed to the provider.** On a reasoning model a small
+      output ceiling buys silence, not brevity — the budget goes to thinking tokens that
+      arrive in `reasoning_content` and never reach the visible answer. Measured on the
+      operator's own query provider: 90 → empty, 1,024 → empty, **2,000 (their actual
+      setting) → empty in 6 of 6 trials**, 4,000 and 8,192 → a correct one-sentence answer.
+      The <100-token cap is enforced on our side instead — the stream stops on visible text,
+      then `clampToTokenBudget` trims to a sentence boundary — and Define asks the provider
+      for a headroom floor, which it is uniquely allowed to do **because it caps the
+      reader-visible answer itself**. ⚠️ The general finding is bigger than M30 and is left
+      open in NOTES.md: a reader's `max_response_tokens` can silently disable any feature on
+      a reasoning model, because it bounds thinking rather than the answer._
+      _(b) **The rung was right; its passage component was not.** Reusing `buildDigestContext`
+      wholesale shipped a 107,105-character context on East of Eden, 96,811 of it whole
+      surrounding sections — and overflowed the model outright. A definition wants the places
+      the word is **used**, not the pages around the highlight: same rung, occurrence windows
+      via `findAllOccurrences`, **107k chars → ~1.1k input tokens**._
+- [x] Both paths are **designed states on failure** — no dictionary hit and no provider
+      configured shows "no definition found", never a spinner and never a crash.
+      _Done: the route answers 200 for every miss so nothing becomes an error toast, and the
+      card distinguishes "not in the dictionary" from "no provider connected" — they ask the
+      reader for different things._
+
+_Acceptance: Define on a common English word the book merely uses returns a dictionary
+result with the LLM provider fully disconnected. Define on a term the book coins misses the
+dictionary and returns a digest-grounded answer under 100 tokens. Define with no provider
+configured **and** a dictionary miss shows a designed empty state._
+
+#### D. The glossary
+
+- [x] A per-book glossary listing this book's sage highlights that carry a definition, with
+      jump-to-passage. Surface it as an instrument over the reader (settled decision 13 —
+      an instrument, **not** a fourth room), alongside the annotations overview.
+      _Done: `reader/Glossary.tsx`, same shape and same corner as `AnnotationsOverview` so
+      the two read as siblings, and mutually exclusive with it. Its strip button appears
+      only once the book has an entry — an empty control advertising an unused feature is
+      chrome, not an affordance. Jump-to-passage **navigates without opening a thread**,
+      unlike the annotations overview's jump: a glossary entry is a word you looked up, not
+      a conversation._
+- [x] ⚠️ **No new table.** It is a filtered view over `highlights`. A `glossary` table would
+      be a second source of truth and would go stale the moment a definition highlight is
+      deleted.
+      _Done: `glossaryEntries()` is the single filter (`kind === "sage"` **and** a non-empty
+      definition), used by both the panel and the strip's count so the two cannot disagree.
+      The definition lives in two columns on `highlights` (migration 26), so `deleteHighlight`
+      already cleans it up — there is no cascade to write and none to forget._
+
+_Acceptance: defining three words then opening the glossary lists exactly those three, in
+reading order; deleting one removes it from the glossary with no separate cleanup step._
+
+#### E. Delete: fix the hazard, then widen the affordance
+
+⚠️ **Do E1 before E2.** `deleteHighlight` (`server/src/annotations/highlights.ts:202`)
+drops the highlight, its thread, every message in that thread, and its `publishes` ledger
+rows in one transaction, with no confirmation anywhere. `MarginRail.tsx:71-82` puts that
+`×` next to the navigate target. Adding more delete buttons before this is fixed multiplies
+a live data-loss path.
+
+- [x] **E1.** Guard the destructive case. **Choose one, not both: a confirm step, or an undo
+      window.** Recommendation: confirm only when the highlight has a thread with messages
+      (deleting a bare highlight is cheap and reversible by re-highlighting; deleting a
+      conversation is not), and say in the prompt *how many messages* are about to go.
+      _Done: took the recommendation. `ThreadSummary` grew a real `messageCount`
+      (`listHighlightsWithThreadsForResource`'s own COUNT, not a guess) so every call site
+      can gate on it without a fetch. `handleDeleteHighlight` (`ReaderView.tsx`) is now the
+      single gated entry point every delete goes through — 0 messages deletes immediately
+      (unchanged), 1+ opens `DeleteConfirmDialog` naming the count; the actual
+      `deleteHighlight` request moved to `performDeleteHighlight`, called only on confirm._
+- [x] **E2.** Delete from the thread panel (`web/src/threads/ThreadPanel.tsx`) — the panel
+      already takes `onClose`, `onNoteChange` and the rest, so this is one more prop through
+      the same seam to `handleDeleteHighlight` (`ReaderView.tsx:2592`), not new logic.
+      _Done exactly as scoped: one `onDelete` prop, a trash-icon button in `.metaRow`, wired
+      to `() => handleDeleteHighlight(expandedHighlight)` — the same gated entry point E1
+      built, so a threaded delete from the panel confirms too._
+- [x] Fixed alongside E, from operator feedback on the shipped affordance: `MarginRail`'s
+      hover-reveal `×` sat behind a `margin-left` gap with no element under it, so a cursor
+      moving from the dot toward the button crossed dead space, dropped `:hover` (and with
+      it the button's own opacity/pointer-events) before ever arriving, and the X vanished
+      mid-transit ("when I move the cursor to the X, it disappears"). Fixed with an
+      out-of-flow `::after` bridge sized to exactly that gap — plugs the dead zone without
+      overlapping the button's own hit box (so it can't steal its clicks) or changing the
+      dot's resting position (`MarginRail.module.css`).
+
+_Acceptance: deleting a highlight carrying a 6-message thread warns and names the count;
+deleting an un-threaded highlight does not interrupt. Cancelling leaves the thread intact
+(re-open it and the messages are still there). The panel's delete closes the panel and
+removes the mark without a reload._
+
+#### F. Operator feedback on Define, folded in with E (2026-08-27)
+
+Reasoning in decisions.md's same-date entry; do not re-decide it here.
+
+- [x] The digest fallback (M30 C's "Path 2") no longer runs automatically on a dictionary
+      miss — it's gated behind an explicit "Look deeper" the reader clicks.
+      _Done: `Definition.reason` grew a fourth value, `dictionary_miss`; `defineHighlight`
+      returns it (instead of running the fallback) whenever a query-role provider is
+      configured. `DefinitionCard` renders it as an offer, not a `Looking up…` state._
+- [x] The deeper search narrates its real stages — never a fabricated chain-of-thought —
+      and lets the reader pick which configured role answers.
+      _Done: `deepenDefinition` (`dictionary/define.ts`) is an async generator yielding
+      `step` events for its actual stages (searching the text, reading context around what
+      it found, asking the model), then `text` chunks as the answer streams, over a new SSE
+      route (`POST /api/highlights/:id/definition/deepen`, `streamDefine.ts` client-side —
+      same `data: {...}\n\n` contract as `threads/streamThread.ts`). The role picker reuses
+      `useProviderRoles()` — no new provider-selection surface._
+- [x] The definition popup is moveable.
+      _Done: same drag mechanics as `ThreadPanel`'s M14 "movable sticky notes"
+      (`dragControls`, `dragConstraints={appBoundsRef}`, armed from the header's own
+      pointerdown). Not persisted — a fresh Define always re-anchors at the new selection._
+
+_Acceptance: a dictionary miss with a provider configured shows a "Look deeper" offer and a
+role picker, and makes no `/definition/deepen` request until the reader clicks it. Clicking
+it narrates at least one real stage before the answer streams in. The card can be dragged by
+its header without losing its content or breaking "Ask about this"._
+
+#### Verify
+
+- [x] Drive it live on a real book. Rename all four labels to nonsense and confirm the scan
+      chips changed too — that is the consumer most likely to have been missed.
+      _Done 2026-08-27, live on East of Eden against the running dev server: `PUT /api/settings`
+      with all four labels set to `Zonk1..4`, then the Scan panel's own filter chips read back
+      `aria-label="Filter by Zonk1"` through `"Zonk4"` (Playwright) — confirming the consumer
+      TASKS.md flagged as the one most likely to be missed wasn't. Labels restored to their
+      defaults afterward._
+- [x] Define one common word and one book-specific term, with the provider disconnected for
+      the first.
+      _Done, live on East of Eden. Common words ("ineffable", "phalanx", "serendipity")
+      answer from the dictionary in **1–4ms with no provider involved at all** — the
+      offline path M30 C makes primary. A paragraph is refused as `not_a_term` rather than
+      defined badly. The book-specific term ("timshel", 6 occurrences in the text) exercises
+      the fallback: it is what surfaced both corrections above, and with the headroom floor
+      in place it answers correctly in **3 of 3** repeat trials — "a Hebrew word translating
+      to thou mayest… the capacity to choose between good and evil" — each well inside the
+      100-token cap. ⚠️ **What is not verified: how it feels.** A reasoning model takes
+      **100–140s** to answer, against 1–4ms for the dictionary. The card never blocks the
+      page, but that asymmetry has only been measured in a script, not read on a page._
+- [x] **(M30 D)** Define three words, open the glossary, then delete one.
+      _Done: the three appear in reading order and nothing else does; deleting one removes
+      its glossary entry with no cleanup step, because the definition lives on the highlight
+      row rather than in a table of its own._
+- [x] Delete a threaded highlight from the margin rail and cancel; confirm the thread
+      survived by reopening it.
+      _Done 2026-08-27, live on East of Eden against the running dev server (Playwright,
+      real drags/clicks, a real answered thread from the local Qwen3.5 provider — not a
+      mock). Margin-rail delete on a 2-message thread opened `DeleteConfirmDialog` reading
+      "Delete this highlight and its thread — 2 messages will go with it."; Cancel closed it
+      and the highlight + its `messageCount: 2` thread were unchanged via a fresh
+      `GET /highlights` (re-verified after a corrected wait — the first pass's dialog check
+      raced the exit animation). The panel's own delete button (M30 E2) opened the same
+      dialog; confirming it there closed the panel and removed the highlight for real._
+      _⚠️ This drive-live pass **found and fixed a real, pre-existing bug**, not introduced by
+      M30 E: `deleteHighlight` (`server/src/annotations/highlights.ts`) never cleaned up
+      `highlight_tags`, `highlight_themes`, or `llm_usage.message_id` — with `foreign_keys =
+      ON` (db.ts), deleting **any** tagged, theme-tagged, or usage-tracked highlight (i.e.
+      any highlight with a real answered thread, which is the common case) failed the whole
+      transaction with a 500 instead of the designed 204. Caught live on exactly the
+      confirm-then-delete flow this milestone added, because the existing test coverage
+      never exercised a `messages` row with a linked `llm_usage` row. Fixed the same way
+      `deleteProviderProfile` already handles its own dangling FK: null the usage ledger's
+      reference (the cost stays in the accounting history), delete the tag/theme rows
+      outright. Regression test added in `highlights.test.ts`. See decisions.md 2026-08-27._
+      _Also fixed on this pass, found by the operator driving the shipped M30 E affordance:
+      `MarginRail`'s hover-reveal delete button had a dead-hover-zone bug (see section E
+      above) — confirmed both broken (with the fix reverted) and fixed (restored) live via
+      Playwright, stepping the cursor pixel-by-pixel from the dot to the button._
+      _Also verified live in the same pass: the M30 E feedback deep-search flow end to end
+      against the real local model — `dictionary_miss` on a genuine miss ("timshel"), no
+      automatic call; the SSE stream narrated its real stages
+      (`Searching "East of Eden…" for "timshel"…` → `Reading context around 6
+      occurrences…` → `Asking Qwen3.5 for a definition…`) then streamed a correct
+      definition token-by-token; and the draggable card itself — selecting "outskirts" in a
+      live page, clicking Define, and dragging the resulting card by its header moved it by
+      exactly the drag delta (120, 80 px) with the card staying fully intact and functional.
+      All test highlights created for these checks were deleted afterward._
+
+---
+
+
+
+### M31 — The pointer contract: fix the edges, then build touch
+
+Scoped 2026-08-24; **the rule was decided 2026-08-27** (decisions.md, "Click-to-turn is
+retired"). ⚠️ **Read DESIGN.md "The pointer contract" first — it is binding and this
+milestone implements it.** Do not re-decide the disambiguation rule; it exists, with
+numbers.
+
+Two things were true when this was scoped and are still true: there is no touch handling in
+the reader at all (no `touchstart`, no `-webkit-touch-callout`, no `contextmenu` handler),
+and the operator's framing described an intent, not the app. What changed is that a live
+bug turned up first — you cannot start a highlight near either edge of the page — and its
+fix and the touch layer are the same piece of work, because they are one pointer stream.
+
+**Order matters: A, then B, then C and D.** A is what makes the edges usable at all; B and
+C sit on top of it.
+
+#### 0. The iPad is real — make the app fit the window before judging anything on it
+
+⚠️ **Do this first.** Every touch judgement in A–C is being made on an iPad running the app
+in a browser. Until the app fills the window and stops zooming, none of those judgements are
+about our gestures. See decisions.md 2026-08-27 (later) for the diagnosis.
+
+- [x] **0a.** Replace `100vh` with `100dvh` (keeping a `100vh` fallback line above it) in
+      `ReaderView.module.css:11` and `:632`, `ReaderPage.module.css:6`, and audit
+      `DeskCanvas.module.css`'s `calc(100vh - 200px)`. ⚠️ This is **our bug, not Safari's**:
+      iOS `100vh` is the *large* viewport — the height the page would have with the toolbars
+      retracted — so with toolbars showing the app is always taller than the window by
+      exactly the toolbar height, which is the reported "scroll down to see the bottom
+      tiles". **Done 2026-08-27**: both `ReaderView.module.css` rules (`.wrapper`,
+      `.wrapperFullscreen`) and `ReaderPage.module.css`'s `.page` now carry a `100dvh`
+      line after the `100vh` fallback. Audit of `DeskCanvas.module.css` concluded the same
+      bug applies — `.surface` and `.tiltLayer`'s `calc(100vh - 200px)` over-reserve by the
+      toolbar height on iOS — so both got the matching `calc(100dvh - 200px)` second line.
+- [x] **0b.** `overscroll-behavior: none` on `html, body` — kills the rubber-band and the
+      pull-to-refresh that currently reloads the page on a downward swipe. **Done
+      2026-08-27**, added in `theme.css` next to the existing `html, body, #root` block.
+- [x] **0c.** Ship a web app manifest (name, `display: standalone`, theme colour, and a
+      180×180 `apple-touch-icon` — Safari will not use a maskable-only icon set) plus
+      `apple-mobile-web-app-capable`, and add
+      `viewport-fit=cover` with `env(safe-area-inset-*)` padding. `index.html` has none of
+      these today. Added to the Home Screen, standalone mode removes Safari's page zoom, its
+      pull-to-refresh and its toolbars at once — which makes 0a and 0b belt-and-braces
+      rather than the only defence. **Done 2026-08-27**: `web/public/manifest.webmanifest`
+      + a generated placeholder `apple-touch-icon.png` (180×180, no brand asset existed to
+      draw from — swap for a real mark whenever one exists), wired into `index.html`
+      alongside `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`,
+      `apple-mobile-web-app-title` and `viewport-fit=cover` on the viewport meta.
+      `env(safe-area-inset-*)` padding landed on the two places it's load-bearing: the
+      app-shell `NavCluster`'s fixed top-right corner, and the reader's `.wrapper` padding
+      and fullscreen `.immersivePebble` bottom offset.
+- [x] **0d.** Block WebKit's page zoom for the in-browser case: `preventDefault` on
+      `gesturestart`/`gesturechange`. ⚠️ **Do not add `user-scalable=no`** — iOS Safari has
+      deliberately ignored it since iOS 10 and it will look like it worked in a desktop
+      emulator. ⚠️ Blocking page zoom is what frees pinch for text size (C6); do not ship
+      one without the other, or the reader loses zoom and gains nothing. **Done
+      2026-08-27**: `app/useBlockPageZoom.ts`, a `document`-level `gesturestart`/
+      `gesturechange` listener wired in at `App()` alongside `useAccent`/`usePaperTint` —
+      app-wide, not per-room, since both the Scan's pinch (B) and text-resize (C6) will
+      need the gesture free everywhere. C6 itself is not built yet; only the zoom-blocking
+      half of this pairing exists so far.
+      ⚠️ **Verified live 2026-08-27: two different pinches, only one of them ours.** The
+      operator's report was "pinch still zooms" — turns out to be two gestures conflated.
+      **Pinch-to-reveal-open-tabs** is iPadOS Safari's own multitasking gesture (same family
+      as pinching closed on the Home Screen); it runs in Safari's native chrome, never
+      reaches the page's content view, and no web-page API — `preventDefault`, `touch-action`,
+      anything — can intercept it. Not a bug, not in scope, not fixable from here, standalone
+      mode or not. **Pinch-to-magnify-the-page-content** is the real target and is still
+      broken: the listener is on the parent `document`, epub.js renders each section into its
+      own `sandbox="allow-same-origin"` iframe, and DOM events (gesture events included) never
+      bubble across a frame boundary — the exact fact M31 C2 already names for
+      `touchstart`/`move`/`end`, just not yet applied here. A pinch that starts over app
+      chrome outside the iframe is still blocked; one over the book page itself is not. Left
+      as a stub rather than chased now — the operator's call, since it is moot the moment this
+      stops being a bare Safari tab (standalone/Home-Screen mode removes system pinch-zoom
+      outright per the note above, and a future native wrapper removes it a second way).
+      If it is ever worth fixing in-tab, the fix is C2's: attach the same listener to each
+      section's `contents.document` as epub.js renders it, not a second mechanism.
+- [x] **0e.** ⚠️ **The app has zero width-based media queries** — measured 2026-08-23
+      (decisions.md): all seven `@media` rules are `prefers-reduced-motion` or
+      `prefers-color-scheme`. Nothing about the layout currently responds to an iPad in
+      portrait. Decide in this milestone whether that is fine (the reader is a centred
+      column and may well be) or whether portrait needs the spread forced to single-page —
+      `SPREAD_MIN_WIDTH` already does that at 960px, so check before adding a query.
+      **Decided 2026-08-27: no query.** `SPREAD_MIN_WIDTH` (960px, `readerGeometry.ts`) is
+      already a container-width check, not a device/orientation one, and every current
+      iPad's portrait CSS width sits under it except the 12.9" Pro (1024px) — which is
+      wide enough to read two facing pages legibly, the same test the threshold already
+      applies on a wide desktop window. That's a legitimate spread, not a bug, so no
+      portrait-specific query was added; revisit only if the 12.9" spread reads cramped on
+      real hardware.
+
+##### The page snapshot renders wrong on iPad (0f–0h)
+
+Reported 2026-08-27 with three screenshots: the curling leaf, the departing leaf in slide
+mode, and the book-opening, all showing the page's text **at roughly twice its size, cropped
+to a band, with empty gaps above and below** — and in the opening's case, **black** bands
+rather than paper-coloured ones. Not touch work; it is here because every page turn on the
+device looks broken, and no gesture in A–C can be judged through it.
+
+⚠️ **What the screenshots already prove — do not re-investigate these.** In the slide
+screenshot the snapshot's line breaks are character-for-character the live page's ("by the
+ease with which they a…", "determined by the extent of…", "topics populate the mind eve…").
+So the section CSS, the column layout, the measure and the `@font-face` files **all
+serialized correctly**. That eliminates failure modes 1 and 2 of `pageSnapshot.ts`'s own
+docstring and most of PAGE_CURL.md §5 — the two most fragile parts of that file are fine.
+**The fault is in the geometry, not the serialization.**
+
+⚠️ **The black bands are the second piece of evidence.** `buildSnapshotSvg` paints the
+paper colour across the whole SVG and `composeCardSnapshot` fills paper before drawing, so a
+misplaced-but-correctly-sized bitmap would show **paper** in the gaps. Black means the
+region is outside both — the consumer is painting a rect larger than the bitmap it holds.
+That distinguishes *wrong offset* from *wrong extent*, and it points at extent.
+
+- [x] **0f.** Does it reproduce on the Mac? **No — answered by the operator 2026-08-27. The
+      fault is iPad-only; the Mac is clean.** That matters more than it sounds, because
+      `scale` in `rasterize` is `min(devicePixelRatio, 1.5)` — **1.5 on both machines** — so
+      device pixel ratio is ruled out as the cause. What is left is something measured
+      differently on that device, which is the same shape as 0a. **0g is now the leading
+      hypothesis, not one of several.**
+- [x] **0g.** ⚠️ **Re-test after 0a — the leading hypothesis, per 0f.** Both known iPad
+      faults are viewport-measurement faults, and both are absent on the Mac.
+      `CaptureViewport` and `CardLayout` are measured off the reader's own boxes, and
+      0a establishes those boxes are taller than the visible window on this device.
+      `cardCompositeRect` recovers scale as a *ratio*
+      (`bitmapWidth / layout.contentWidth`) — exactly the shape of code that is silently
+      wrong when one of its two inputs was measured on a viewport that is not the visible
+      one. This may change or vanish once the layout is fixed. Do not fix it before 0a.
+      **Re-tested 2026-08-27, after 0a: still reproduces.** The hypothesis did not resolve
+      on its own — 0h's instrumentation is next, not a second guess.
+- [x] **0h.** If it survives 0a: instrument rather than guess. Log `viewport.width/height`,
+      `canvas.width/height` in `rasterize`, `image.naturalWidth/naturalHeight` and
+      `layout.contentWidth` in `composeCardSnapshot`, on the Mac and on the iPad, and dump
+      the intermediate PNG. One comparison of those five numbers across the two machines
+      settles which stage diverges. ⚠️ **The cause is not established — do not guess it in
+      the fix.** Known-good fallback if the clean fix resists: size the canvas in CSS px and
+      apply `ctx.scale(scale, scale)` before `drawImage` at intrinsic size, instead of
+      passing a scaled destination rect — same output, one less place for an SVG image's
+      intrinsic size to be interpreted differently.
+      **Instrumentation added 2026-08-27**, not yet run on the iPad. `pageSnapshot.ts`'s
+      `rasterize` and `cardSnapshot.ts`'s `composeCardSnapshot` each log their numbers via
+      `console.debug` (DEV-gated, `[marginalia]`-tagged) and stash their PNG on
+      `window.__marginaliaSnapshotDebug` (`snapshotDebug.ts`) — `.rasterizeDataUrl` /
+      `.composedDataUrl`, either pasteable into a new tab's address bar to view the
+      intermediate bitmap directly, since logging a full data URL to the console is not
+      practical at page-image size. **Next: open Safari's Develop menu on the Mac, inspect
+      the iPad's tab, turn a page, and compare both consoles' numbers and images against the
+      same turn done on the Mac** — that comparison is what decides which stage diverges;
+      do not apply the CSS-`scale` fallback until it does.
+- [x] **0i.** Found before 0h's console comparison was even run: the operator's Web
+      Inspector session showed no `[marginalia]` log at all after a real page turn — the
+      capture never reached `rasterize`. Console instead showed
+      `Promoted URL from http://www.w3.org/1999/xhtml to https` (Safari's own mixed-content
+      upgrade notice) followed by a CORS failure fetching it. Traced to
+      `inlineCssUrls`/`CSS_URL` (`pageSnapshot.ts`): EPUB content CSS routinely opens with
+      `@namespace url(http://www.w3.org/1999/xhtml);` and/or
+      `@namespace epub url(http://www.idpf.org/2007/ops);` — an XML namespace identifier,
+      never a fetchable asset — and the regex cannot tell that apart from a real
+      `@font-face`/`background` `url()`. The resulting fetch always fails (a real
+      w3.org/idpf.org URL, CORS-blocked from this origin) while costing a full network
+      round-trip, and live on the iPad it was slow enough to plausibly blow
+      `CAPTURE_TIMEOUT_MS` and silently abort the whole capture before `rasterize` ever ran
+      — a more specific candidate than 0g's viewport theory for *why iPad and not the Mac*,
+      if the Mac's earlier pass had a faster path to the same failing request rather than a
+      genuinely different geometry. **Fixed**: `NAMESPACE_RULE` strips `@namespace ...
+      url(...);` from the text `CSS_URL` searches (not from the returned CSS — the
+      declaration itself is harmless and stays), so the namespace's `url()` is never added
+      to the fetch set. Covered by a new `pageSnapshot.test.ts` case; does not by itself
+      confirm or rule out 0g's hypothesis — re-run 0h's comparison now that this stops
+      contaminating it.
+
+_Acceptance: on the iPad — a curl, a slide and a book-opening each show the departing page
+at the same size and position as the live page under it, with no band, no gap and no black.
+The same three, unchanged, on the Mac. Whatever is learned goes into PAGE_CURL.md §5 as a
+fifth way the capture fails silently._
+
+_Acceptance: on the iPad, in Safari and again from the Home Screen — the reader's foot is
+visible without scrolling, in portrait and landscape, with the toolbars both shown and
+hidden; a downward swipe does not reload; a two-finger pinch does not scale the page._
+
+#### A. Retire click-to-turn and make the grab surface step aside
+
+- [x] **A1.** Delete the click-turn branch of `handleContentClick`
+      (`ReaderView.tsx:2044-2047`). Its remaining jobs are: ignore `a[href]`, and clear
+      `pendingSelection`. ⚠️ **Do not delete `turnZoneForVisibleX`** — it stays as the
+      region M19.6's dwell listens in (invariant 4). `readerGeometry.test.ts` characterizes
+      it; those tests stay green untouched.
+      _Done. `handleContentClick` is down to its two remaining jobs, and the whole
+      coordinate-translation block went with the turn — the mark hit-test inside it existed
+      only to stop a mark click from *also* turning. `turnZoneForVisibleX` and its tests are
+      untouched. Verified live: a click turns nothing, over ink, over either outer margin,
+      or in the gutter._
+- [x] **A2.** Add the ink test beside `caretRangeAt` in `reader/pageTextEdge.ts`: caret at
+      the point → extend one character → `getClientRects()` → is the point inside a line
+      box. ⚠️ `caretRangeAt` **snaps to the nearest caret and never returns null in a
+      margin**, so calling it alone answers the wrong question. Unit-testable with a fake
+      document; do it.
+      _Done — `pointIsOverInk`, with `pageTextEdge.test.ts` against a fake document whose
+      `caretRangeFromPoint` snaps from anywhere, as a real engine does. ⚠️ **One thing the
+      recipe misses: probe both directions.** A point in the space *between two words* can
+      snap to the caret **after** the space, whose forward character starts to the right of
+      the point — forward-only probing calls the inter-word gap "paper" and turns the page
+      under a reader trying to select in it. The backward probe is the space's own rect,
+      which contains the point. Both are separate test cases._
+- [x] **A3.** Drive `.turnGrabSurface`'s `pointer-events` off that test, from the forwarded
+      mousemove `handleContentMouseMove` already receives. Over ink → `none`, so the press
+      falls through to the iframe and native selection works at the very edge. Over paper →
+      `auto`. ⚠️ The surface stays a parent-document element: it needs `setPointerCapture`,
+      capture needs a real parent-document `pointerdown`, and an uncaptured drag crossing
+      the sandboxed iframe is a **reproduced tab crash** (NOTES.md M10). Make it step
+      aside; never delete it.
+      _Done, and it took **two** move handlers, not one: an armed surface covers the iframe,
+      so epub.js's forwarded mousemove stops arriving and the answer could never change
+      back. `handleContentMouseMove` covers the page while the surface stands aside;
+      `.stage`'s own `onPointerMove` covers it while it does not, and covers the outer
+      margin, which is not inside the iframe at all. Neither is redundant._
+      _⚠️ **Two things the task does not mention, both load-bearing.** (1) The test must be
+      clamped to `.epubContainer`'s box: measured live, the section iframe is **17910px wide
+      starting at x = −3501**, so a point out in the outer margin maps cleanly onto a glyph
+      in a column nobody can see, and the most important piece of paper on the page reports
+      ink. (2) The answer is **frozen for the life of a press** — a drag-selection held past
+      the last word is over paper, and re-arming a parent-document element under a live
+      native selection drag is not a thing to find out about in the field. M19.6's own
+      `isPointerDownInContentRef` is exactly the right guard, unchanged._
+- [x] **A4.** Widen the surface from the edge ellipse to *all paper* — outer margins,
+      spine gutter, below the last line — since it now only exists where there is no ink.
+      _Done: one element at `inset: 0`, replacing the two ellipses. ⚠️ Its CSS default is now
+      `pointer-events: none` and JS arms it **only for a mouse or pen** — touch has no hover
+      moves to arm it with, so arming for a finger means arming *by default*, which is
+      invariant 1 broken for touch exactly as it was for the mouse. That removes M20's
+      touch-drag-on-the-edge-ellipse curl, which works on the iPad **today**; it is
+      deliberate (the touch table says a drag *anywhere* turns, so the ellipse was always
+      the wrong affordance for a finger) and **C1 is its replacement**, not a nice-to-have
+      after it. decisions.md 2026-08-27 later still._
+- [x] **A5.** Direction from the drag, not the grab point. `handleGrabPointerDown` is
+      currently handed `"prev"`/`"next"` by which strip was hit and acts on it at once: it
+      advances the rendition under the covers so the peeling sheet has a real page behind
+      it, then steps back by CFI on spring-back. ⚠️ **Defer everything until the drag
+      declares a dominant horizontal axis past 6px** — snapshot, advance, and paint only
+      then. Drag left → forward, drag right → back. Vertical drags do nothing.
+      _Bonus, state it in the commit: this removes the wasted advance-and-step-back a stray
+      press on the old strip used to cost._
+      _Done. `handleGrabPointerDown` now only *arms* — though it must still take pointer
+      capture on the press itself, since by 6px the pointer may already be over the iframe,
+      where there is no second chance to ask. `beginGrabDrag` holds everything that used to
+      run at pointerdown and is not called until `declaredTurnDirection` says so; that
+      helper is pure, lives in `readerGeometry.ts`, and has its own tests including the 45°
+      case it refuses rather than guesses._
+      _⚠️ **The pinch had to be re-derived, not re-pointed.** The grab's **x stops being an
+      input at all** — in leaf coordinates it is frequently outside the leaf and sometimes
+      negative (grab the left page's outer margin, drag left, and the turning edge is the
+      right leaf's). Only its height survives, as `anchorForPinch`'s `t`. And the fold
+      pointer is no longer the raw grab point but **anchor + travel**: the raw point was
+      fine while the surface hugged the turning edge and the fold's `dist` started near
+      zero, but a mid-page grab would have started the fold half-turned. The sheet now
+      literally follows the finger, and for a grab on the edge the two are the same point._
+      _Verified live from the **same** grab point in the spine gutter: left → 4→5, right →
+      5→4, straight down → nothing. Both renderers exercised mid-drag from that grab._
+- [x] **A6.** Stop the affordances lying (invariant 5). The `w-resize`/`e-resize` cursor and
+      the turn-zone vignette both advertise click-to-turn. Over paper: a grab cursor, and
+      the glow follows the grabbable paper. Over ink: neither.
+      _Done — the `w-resize`/`e-resize` rung is gone from the iframe cursor's precedence
+      list (the `custom` nib during a selection is all that is left of it), and the grab
+      surface's own `cursor: grab` is what shows over paper. ⚠️ **One call the task leaves
+      open, recorded in decisions.md:** the glow lights **both** ellipses at once. Paper is
+      now the whole page outside the ink and the direction is not a property of where you
+      press, so a one-sided glow would advertise a direction the page does not have yet._
+- [x] **A7.** A live selection disarms the grab surface (invariant 3) — today a press on it
+      mid-selection starts a curl, which destroys the selection *and* costs an advance and
+      a step-back. The M19.6 dwell is the one exception and is unaffected.
+      _Done, and note **which way** it disarms: the surface stays armed so the press is
+      *swallowed*, rather than stepping aside and letting it through to the iframe, where
+      the native mousedown would collapse the selection. The acceptance criterion wants the
+      selection intact, which "step aside" would not have given. Verified live:
+      press-and-drag on the outer margin while holding a selection left the page unchanged
+      and the selection byte-identical. The dwell was re-verified end to end — ring raised,
+      page turned on the hold, selection kept — and is untouched._
+
+_Acceptance: in **spread mode at 90% zoom** — the case that produced the report — a drag
+begun on the first character of the first line of the left page selects that line and never
+turns. A click anywhere on the page, over ink or paper, never turns. Dragging left from the
+spine gutter goes forward; dragging right from the same point goes back; dragging straight
+down does nothing. Holding a selection and pressing the outer margin leaves the selection
+intact. Highlighting from mid-page across a page boundary still works via the dwell ring._
+
+_**Acceptance met, driven live** (2026-08-27, Chromium/Linux, real CDP drags on East of
+Eden against the running dev server — see NOTES.md for the numbers). Every clause checked,
+and the first one checked at `readerMargin: narrow`, which is harder than the reported 90%
+zoom: the leftmost ink sits 33px from the container edge and 58px from the stage edge, deep
+inside M20's old ellipse, and a drag begun on that character selects and never turns. Same
+at the far edge dragging **leftward**, straight through what used to be the "next" strip._
+
+_⚠️ **One thing landed here that the task did not ask for, because retiring the click made it
+a silent removal.** The grab surface used to be suppressed entirely under
+`prefers-reduced-motion` — there is no peel to drag — and click-to-turn was what those
+readers actually used. A1 without this would have left them the `‹ ›` buttons and the arrow
+keys and **nothing on the page itself**. The surface is now rendered for them too and a
+declared drag commits an instant turn. The rule, in decisions.md: *a gesture in the pointer
+contract is not an animation, so reduced motion may drop the animation and never the
+gesture.* Verified under emulated reduced motion: a leftward drag on paper turned 2 → 3; a
+click did not._
+
+#### B. The pill can be clicked
+
+- [x] **B1.** `.pillPosition` is `z-index: 5` and `.turnGrabSurface` is `6`; `.stage`,
+      `.pageClip` and `.readerRow` are positioned without a `z-index`, so none opens a
+      stacking context and the two compare directly. Raise the pill — and the definition
+      card and thread panel — above the turn surfaces. ⚠️ Fix it as a **layer order written
+      down in one place**, not four scattered numbers; decisions.md 2026-08-26 already had
+      to untangle this stack once. Put the scale in `ReaderView.module.css`'s head as a
+      commented table — the fold's `960` and the dialogs' `1000` are already fixed points
+      and must appear in it — and have `AskPill`, `DefinitionCard` and `ThreadPanel`
+      reference it rather than restate numbers.
+      _Done — premise confirmed exactly as written. The scale is a commented table plus
+      `--reader-z-*` tokens at the head of `ReaderView.module.css`, with **960** (the fold)
+      and **1000** (a modal) named in it as fixed points that live elsewhere and must not be
+      crossed, and the immersive chrome named as a *different stacking context* whose
+      numbers must not be read against them. ⚠️ Extended past the three the task names, to
+      the pane-resize handle, the roaming panels, the find bar, the departing card and the
+      dwell ring: leaving four numbers outside the scale would reproduce the exact failure
+      it exists to prevent. Verified live under the adverse condition — surface *actively
+      armed* at z 7, pill at z 8 — all seven dots hit-test to their own button, and clicking
+      one created a real highlight first try (deleted afterwards)._
+- [x] **B2.** ⚠️ **Premise to check before fixing, not after.** `handleSelected`
+      (`ReaderView.tsx:1960`) computes the pill's `left`/`top` against `containerRect`
+      (`.epubContainer`), but `AskPill` renders inside `.stage`, which is the positioned
+      ancestor — and `.epubContainer` is inset from `.stage` by `.marginWrapper`'s padding.
+      If that reading is right the pill is drawn short by exactly the reader margin, up and
+      to the left, which is part of *why* it lands in the grab zone. **Diagnostic: set the
+      page margin to "generous" and watch whether the pill drifts ~96px instead of ~40px.**
+      If it does not move, this item is void — say so and close it, do not invent a fix.
+      _**The premise held; the item is not void.** `AskPill` renders as a direct child of
+      `.stage` (outside `.pageClip`, so panels can roam past the page's edge), so `.stage`
+      is its containing block and the only box those numbers may be measured against.
+      Measured live at `generous`, the `.epubContainer` inset is **97px** — the pill was
+      being drawn 97px up and to the left of the selection, and the drift tracked the margin
+      setting exactly as the diagnostic predicted. Fixed by measuring against `stageRef`
+      (the clamp too). After: measured at two different margin settings, the pill's centre
+      sits within **1px** of the selection's centre — the stage's own 1px border — with the
+      same 7px gap above at both._
+
+_Acceptance: select a passage whose start sits in the outer margin of the left page of a
+spread; every dot on the pill is clickable on the first attempt. Changing the page margin
+setting does not move the pill relative to the selection._
+
+_**Acceptance met, driven live** (2026-08-27, same session). Both clauses, and the first
+under the adverse condition rather than the easy one — with the grab surface *actively
+armed* (`pointer-events: auto`, z 7) and the pill at z 8, all seven dots hit-test to their
+own button and a click on "key quote" created a real honey highlight first try (deleted
+afterwards; the book is back to its original 7). For the second clause the pill was measured
+against the selection at two different margin settings and sits within **1px** of the
+selection's centre at both, with the same 7px gap._
+
+#### C. Touch
+
+⚠️ **Read the touch table in DESIGN.md.** The short version: a tap never turns; a one-finger
+horizontal drag turns; the *platform's own* long-press selects.
+
+- [x] **C1.** Swipe to turn. 24px of horizontal travel, `touches.length === 1`, no live
+      selection. Commit through `turnPageRef` — an animated turn, **not** a finger-tracked
+      peel. ⚠️ Do not reimplement turn arithmetic: `pageTurn.ts` exists because epub.js's
+      own next/prev is wrong at fractional device-pixel ratios and silently eats the last
+      page of every chapter. A finger-tracked peel also reopens the pointer-capture question
+      that crashed the tab; it is a v2, after C4 has answered it on real hardware.
+      ⚠️ **This is now a replacement, not an addition.** M31 A4 disarmed the grab surface for
+      touch entirely — it can only be armed by hover moves, which touch does not have — so
+      M20's touch-drag-on-the-edge-ellipse curl, which worked on the iPad, is gone as of A.
+      Until C1 lands, touch page turns are the `‹ ›` buttons and nothing else. See
+      decisions.md 2026-08-27 later still.
+      _Done: `declaredTurnDirection` (`readerGeometry.ts`) now takes an optional threshold —
+      `DECLARE_SWIPE_PX` (24) for touch, defaulting to the pointer's existing `DECLARE_DRAG_PX`
+      (6) — one axis-dominance test, not two. The touch state machine (`ReaderView.tsx`,
+      `handleTouchMove`) calls `turnPageRef.current(direction)` the instant it declares,
+      exactly `turnPage`'s own renderer ladder (curl/slide/instant), never `beginGrabDrag`.
+      Unit-tested in `readerGeometry.test.ts`. ⚠️ **Not verified on a touch-capable device —
+      see D.**_
+- [x] **C2.** ⚠️ epub.js forwards `touchstart`/`move`/`end` **`{ passive: true }`**
+      (`epubjs/src/contents.js:895`), so `preventDefault()` on the forwarded event is a
+      no-op. Suppress native panning with `touch-action` via `rendition.themes`, or attach
+      your own non-passive listener straight to `contents.document` — the iframe is
+      `sandbox="allow-same-origin"` **without** `allow-scripts`, so the parent has full DOM
+      access to it. That is also the only route to `pointerdown`, which epub.js does not
+      forward at all.
+      _Done, both halves. `applyTheme` (`ReaderView.tsx`) adds `touch-action: none` to the
+      iframe's `html, body` via `rendition.themes`. The real suppression is the second half:
+      `attachTouchHandlers`, called once per rendered section from `handleRendered`, adds a
+      raw, non-passive `touchstart`/`touchmove`/`touchend`/`touchcancel` listener straight to
+      `contents.document` — fresh per section (a new section is a new iframe/document, so
+      there is nothing to detach). The parent-document mirror (`.stage`'s own touch, for the
+      outer margins and gutter) needed the identical fix for an unnamed reason: **React has
+      bound its own root touchstart/touchmove listeners `{ passive: true }` since v17**, so a
+      JSX `onTouchMove`'s `preventDefault()` is silently a no-op too — not just epub.js's.
+      Found writing this, not in the task text; both attachment points now use raw
+      `addEventListener`, none use JSX `onTouch*` props._
+- [x] **C3.** Long-press selection. ⚠️ **Check whether this already works before building
+      it**: native long-press → selection → epub.js fires `selected` → `handleSelected` →
+      the pill appears. If it does, the only work here is C4. Do **not** write a timer; the
+      platform owns the hold (DESIGN.md), and its endpoint handles are better than ours.
+      _No timer was written, per the instruction — the touch state machine's only job here is
+      to recognise a selection once the platform has made one (`hasLiveSelection()`, already
+      wired to `handleSelected`/`pendingSelectionRef` since M19) and stand down (C5). ⚠️ **The
+      "check whether this already works" was not actually performable this session — no
+      touch-capable device or touch-emulating browser was available (see D) — so this is
+      built on the premise holding, not on having confirmed it holds.** If the platform's own
+      long-press turns out not to fire `selected` the way assumed, C4's CSS is still correct
+      and harmless, but C1's disarm-on-selection logic would need re-checking against
+      whatever actually happens instead._
+- [x] **C4.** Suppress the OS callout **without** killing selection: `-webkit-touch-callout:
+      none` with `user-select: text` **retained**. `user-select: none` disables selection
+      outright and will look like it worked in a desktop emulator. The lever is
+      `rendition.themes` — its CSS *does* reach iframe content. What it cannot reach is the
+      marks, which live in a parent-document SVG pane; that is why `highlightKinds.ts` uses
+      presentation attributes instead. Do not confuse the two.
+      _Done in `applyTheme`'s `body` rule: `-webkit-touch-callout: none !important` alongside
+      an explicit `user-select: text !important`, stated outright per the task's own warning
+      rather than left implicit. Marks untouched, as instructed._
+- [x] **C5.** A selection disarms the swipe for the rest of that touch; a second finger
+      cancels an uncommitted swipe.
+      _Done in the shared touch state machine: `handleTouchMove` checks `hasLiveSelection()`
+      before anything else and sets `state.disarmed = true` the moment one appears, after
+      which every later move for that touch is a no-op regardless of what the selection does
+      next. A second finger's `touchstart` (`touches.length >= 2`) clears `singleId` and sets
+      `disarmed` unconditionally, whether or not anything had declared yet._
+- [x] **C6.** Pinch to resize text, as the instrument DESIGN.md specifies ("Pinch to resize
+      is an instrument, not a setting"). Same shape as M12's `%` scrub dial: live readout,
+      commit on release. ⚠️ **The page must not reflow during the pinch** — a `fontScale`
+      change re-paginates the whole spine section, and per-frame is not affordable. The
+      slider and its sample string follow the fingers; the page reflows once, on release.
+      That is also why the page is blurred while the instrument is up: it is honest about
+      not being able to follow. ⚠️ Clamp the slider into view when the pinch is centred near
+      the top; do not reject the gesture (see `handleSelected`'s own clamp).
+      ⚠️ Reuse the existing `controls/Slider` — the same component the `%` readout and the
+      settings text-size control already use (settled decision 12: a control means the same
+      thing on every surface). The pinch drives its value; it is not a second slider that
+      happens to look like one.
+      _Done. New `PinchResizeInstrument.tsx` renders the exact `Slider` config
+      `settings/tabs/ReadingTab.tsx` uses (now exported from there, one source of truth for
+      both), plus a live sample string sized by inline `fontSize: {scale}em`. The two-finger
+      math (`pinchFontScale`, `readerGeometry.ts`, unit-tested) is a ratio of live/starting
+      touch distance against whatever `fontScale` was at pinch-start, clamped to
+      `[TEXT_SIZE_MIN, TEXT_SIZE_MAX]`; the state machine calls `setReaderFontScale` exactly
+      once, on release, never per frame — the existing `readerFontScale` effect
+      (`ReaderView.tsx`) does the one reflow that follows, reused rather than duplicated. The
+      instrument sits at `position: fixed` in viewport coordinates (like `DwellRing`, not like
+      `AskPill`'s stage-relative math) — deliberately sidesteps M31 B2's whole bug class rather
+      than re-deriving that fix a third time. `.pageClip` gets a `filter: blur(6px); opacity:
+      0.85` class while a pinch is live; the sample text is a sibling, outside the blurred box,
+      so it alone stays sharp. Clamp, not refuse, exactly per the task: `x`/`y` are clamped
+      into the viewport with `Math.min`/`Math.max`, mirroring `handleSelected`'s own pill
+      clamp.
+      ⚠️ **One call made that the task leaves open, recorded in decisions.md:** the resize is
+      committed to `readerFontScale` (so it reflows and holds for the rest of this reading
+      session) but is **not** written back to the server. Settings' own save flow is a
+      whole-object `PUT` requiring the full form; wiring a single pinch-driven field through
+      that seam felt like a second decision wearing this task's clothes, not a refusal —
+      see decisions.md for the reasoning and what would change it._
+- [x] **C7.** In immersive mode, a tap anywhere reveals the pebble — the touch counterpart
+      of the proximity reveal, which has none. ⚠️ It is the **one** exception to the tap
+      table, and it is additive: whatever the table says for that spot still happens.
+      _Done: `handleTouchEnd`'s `onTap` (fired only for a touch that never declared a turn, a
+      departure or a pinch — a plain tap) calls the existing `wakePebble()` when
+      `fullscreenModeRef.current`. Additive by construction, not by extra care: nothing here
+      calls `preventDefault` on an undeclared tap, so epub.js's own synthesized `click` still
+      fires afterward and still dismisses a pending pill / opens a mark's thread exactly as it
+      always has._
+- [x] **C8.** Mention pinch-to-resize in Settings beside the text-size control, shown only
+      when `matchMedia("(any-pointer: coarse)")` matches. Per DESIGN.md this replaces the
+      on-page gesture hint the operator originally wanted; there is no hint overlay in the
+      reader.
+      _Done: new `settings/useCoarsePointer.ts` (a live `any-pointer: coarse` media-query
+      hook, not a one-time read — a docked/undocked tablet can change mid-session), and
+      `ReadingTab.tsx` renders a one-line hint under the Text size `Slider` when it matches._
+- [x] **C9.** Swipe down to leave the book — the one room-changing gesture (DESIGN.md,
+      amended). One finger, **≥⅓ of the page** travelled downward within **±20°** of
+      vertical, disarmed while anything is selected, being edited, or mid-turn. It returns
+      to whichever of desk/list/shelf was last used and **runs the put-down**, so it is the
+      same departure as the Desk button and `Esc`.
+      ⚠️ **Hard-gated on §0b/§0c.** Until pull-to-refresh is overridden, a downward swipe
+      reloads the page — shipping this first ships a gesture that throws away the reader's
+      place. Verify the override on the iPad *before* wiring the gesture, not after.
+      ⚠️ **Soft-gated on M33 C**, which builds the put-down. Until then this gesture has no
+      animation to run: either hold C9 with M33, or land it navigating plainly and say so in
+      NOTES.md. Do not invent a third, gesture-only exit animation.
+      _Landed navigating plainly, per the task's own allowance — M33 C does not exist yet.
+      `isDepartureSwipe` (`readerGeometry.ts`, unit-tested) is the ⅓-page/±20° test, kept
+      deliberately separate from `declaredTurnDirection` rather than reusing its axis check
+      (a shallow diagonal must fail *both*, for different reasons — see the function's own
+      comment). Commits via `navigate("/")` with **no explicit view-mode emit**: `DeskPage`
+      seeds itself from `loadDeskViewMode()` when nothing tells it otherwise
+      (`deskViewBus.ts`), which already *is* "whichever of desk/list/shelf was last used" —
+      the one thing `d`/`l`/`b` do differently is *force* a mode, which this gesture must not.
+      Disarm conditions: `hasLiveSelection()`, a new `isEditingSomewhere()` (mirrors
+      `handleIframeKeydown`'s own `isTyping` check, for the parent document's text fields),
+      and `gestureActiveRef` (a fresh ref-mirror of `usePageTurnAnimation`'s `gestureActive`,
+      needed because the touch handlers live inside the once-per-resourceId book-loading
+      effect and would otherwise read a value frozen at mount). §0b/§0c were already done
+      before this session (checked above) — the hard gate was satisfied by prior work, not
+      re-verified live this session._
+
+_Acceptance: on a touch-capable machine — a one-finger horizontal drag anywhere on the page,
+including across a paragraph, turns exactly one page and lands where `→` would, including
+on the second-to-last page of a chapter at 90% zoom (the `pageTurn.ts` case). A long-press
+on a word opens the pill with no browser context menu. Dragging from a selection's handle
+adjusts the selection and never turns. A tap never turns, anywhere._
+
+_**Acceptance not driven** — no touch-capable device or touch-emulating browser was available
+this session (no iPad, no browser-automation tool, no `chromium`/Playwright in this
+environment; see D for what was checked instead: types, the full unit suite including new
+tests for every piece of touch/pinch/departure math, a production build, and a live dev
+server compiling and hot-reloading every edit with no console/transform errors). Every clause
+above describes intended behaviour the code is written to produce, not behaviour anyone has
+watched happen on a finger._
+
+#### D. What gets verified, and where
+
+- [x] Record in `NOTES.md`, at completion, what was verified on the iPad and what was only
+      emulated. An honest "not verified, here's why" is still the required output — there is
+      just far less of it than this milestone was scoped expecting.
+      _Done — see NOTES.md "M31 C". The honest output this time is unusually blunt: **nothing**
+      in C was verified on a device or by emulation, because this implementation session had
+      neither an iPad nor any touch-emulating browser/automation tool available to it. What
+      exists instead: full type-checking, the complete unit suite (extended with new
+      pure-function tests for the swipe/departure/pinch math), a clean production build, and a
+      live dev server that hot-reloaded every edit in this milestone with no compile or
+      runtime error. That is meaningfully less than "verified" and the gap is real — the next
+      session with a device should treat all of C as freshly-built and unexercised, not as
+      polish on something already seen working._
+
+⚠️ **The old gate is gone — do not repeat it.** This section used to read "there is no iPad
+to test on until the Private rung lands; the server binds to loopback by the M6 security
+decision". **The operator already runs this on an iPad in a browser** (decisions.md
+2026-08-27 later). Loopback binding was never the same thing as unreachable from another
+device — this project has reached the dev server over an SSH tunnel before (2026-08-12).
+The same correction applies to the iPad-drawing note under "Future arcs" (2026-07-27), which
+rests on the identical false gate. ⚠️ The *mechanism* is unconfirmed at time of writing; ask
+before writing it down, because an implementation session has to reproduce it.
+
+So: §0 and A–C are verified **on the device**, including the iOS callout behaviour and
+whether the platform's own long-press really is the right hold. What remains genuinely
+unverifiable here is only what an iPad cannot show — iPhone-width layout, and any browser
+that is not Safari.
+
+⚠️ **One gap the operator accepted knowingly** (decisions.md): the `‹ ›` buttons are not
+rendered in immersive mode — that branch swaps them for the floating pebble. On a tablet in
+immersive mode, swipe becomes the only way to turn a page. Consistent with the rule, and
+C7's tap-to-reveal softens it; if a belt-and-braces fallback is wanted later, arrows on the
+immersive pebble are a two-line change.
+
+---
+
+### M32 — Deep Reading: the chapter-end trigger, and questions of your own
+
+Scoped 2026-08-24 (decisions.md). Was sequenced after M29's live Verify — by the time this
+milestone was picked up, M29's Verify was already checked and the milestone moved whole to
+TASKS_DONE.md, so the "still unchecked" note above was stale. This milestone puts the
+thematic layer in the *reading* path, where a stall would be felt mid-book rather than on a
+digest page the reader chose to open.
+
+**Most of this already exists — read before building.** `digest/thematicBuild.ts` generates
+3-5 questions per chapter, each with a verbatim grounding quote (decision 11); clicking one
+creates a real anchored highlight with the question pre-filled
+(`routes/digest.ts:476`, `ThreadPanel.initialDraft`); there is a per-book reading brief; and
+questions are already spoiler-gated on reading position (`routes/digest.ts:375` —
+`spineIndex > bookmarkSpineIndex`). **That gate is already "when a chapter is concluded."**
+This milestone is a trigger and one new storage shape. It is not a generation feature.
+
+#### A. The chapter-end affordance
+
+- [x] When the reader crosses a chapter boundary, offer the just-finished chapter's posed
+      questions. The signal exists on both sides: `currentSpineIndexRef` via
+      `handleRelocated` (client), the bookmark gate (server).
+- [x] ⚠️ **Quiet affordance, never a modal, never an interstitial.** Decided in decisions.md,
+      not open: CLAUDE.md's "reading comes first — never let the AI layer degrade the reading
+      experience (no layout jank, no blocking spinners over the text)" already rules out an
+      between-chapters interruption. A reader who keeps reading must never have to dismiss
+      anything.
+- [x] Dismissible and re-findable — a reader who ignores it can still reach that chapter's
+      questions later. (Re-findable via the digest page's own question chips, unchanged by
+      this milestone — dismissing the reader's pop-up loses nothing.)
+- [x] Undigested chapters show nothing at all. ⚠️ Do **not** kick off a thematic run from the
+      reading path; that is a multi-minute LLM job and belongs to the digest page where the
+      reader starts it deliberately.
+
+_Acceptance: finishing a digested chapter surfaces its questions without shifting the text
+or stealing focus; continuing to read requires no dismissal; finishing an undigested chapter
+shows nothing and starts no job._
+
+#### B. Your own chapter-level questions
+
+- [x] The one genuinely new storage shape in the whole triage: a question about a **chapter
+      as a whole**, with no passage to anchor to. Every highlight today requires an anchor
+      (`shared/src/anchorText.ts`, the W3C model in CLAUDE.md's engineering discipline) —
+      so this is not a highlight with a null anchor. Give it its own table keyed on
+      `(resource_id, spine_index)`.
+- [x] ⚠️ Do not weaken the highlight anchor model to fit this in. Anchoring is named in
+      CLAUDE.md as the most fragile part of the system; an optional anchor makes every
+      resolution path handle a case that only one feature produces. (`highlights`/anchor
+      code untouched by this milestone.)
+- [x] Answer-space: reuse the per-highlight `note` pattern (plain text, debounced autosave —
+      `annotations/highlights.ts:setHighlightNote`, 800ms, same as the desk notepad). Not a
+      new editing model.
+
+_Acceptance: a chapter question written with no text selected survives a reload and reopens
+against the right chapter; its answer note autosaves without a save button; deleting the
+book removes it (foreign key, not orphaned rows)._
+
+#### C. Out of scope, recorded so it isn't scope-crept in
+
+- The "what kind of reader are you" graphic. Its inputs are M30's kind distribution and
+  M32's question corpus — noted in decisions.md so it isn't foreclosed, unscheduled, and
+  **not started from this list**.
+
+#### Verify
+
+- [x] Read through a chapter boundary in a digested book and confirm the affordance appears
+      without moving the text; then read through one in an undigested book and confirm
+      nothing appears and no job starts. (Driven live via Playwright against the real dev
+      server and a seeded chapter — cleaned up afterward.)
+- [x] Write a chapter-level question, reload, and confirm it comes back attached to the same
+      chapter. (Same live pass; also confirmed the note autosaves and survives reload.)
+
+### M33 — Touch beyond the reader, and the put-down
+
+Scoped 2026-08-27 (decisions.md, "The iPad gate was stale"). Appended rather than inserted,
+so nothing renumbers. ⚠️ **Sequenced after M31** — the pointer contract in DESIGN.md is
+written there, and every task here is an application of it. ⚠️ **DESIGN.md's "Gestures
+outside the reader" table is binding**; the gesture set is closed (three proposals were
+considered and dropped — see decisions.md before proposing a fourth).
+
+#### A. The Desk's action card reaches a finger
+
+- [x] **A1.** ⚠️ **Fix the existing bug first.** `BookObject.tsx`'s `onPointerEnter` has no
+      pointer-type filter, so on a touchscreen a tap fires pointer-enter (the card appears)
+      *and* `onTap` (the book opens). The card flashes and is gone. `ExpandingCluster`
+      already does this correctly — `if (event.pointerType !== "mouse" && event.pointerType
+      !== "pen") return;` — copy that, do not invent a second form of it.
+      _Done — the exact guard, copied onto `onPointerEnter` and `onPointerLeave`._
+- [x] **A2.** One rule, not three: the action card appears after **1s of stillness** at any
+      point during a touch; *any* movement dismisses it and re-arms the timer, so a book
+      that stops moving under a resting finger brings it back a second later. There is no
+      separate "hold 0.3s then drag" case — that is movement before the second is up.
+      _Done in the new `useTouchCardDwell.ts`, shared by `BookObject.tsx` and `ShelfView.tsx`
+      (§A6): `onPointerDown`/`onPointerMove` (touch only) arm a single 1000ms timer,
+      `onPointerMove` re-arms it unconditionally on every call rather than past some slop
+      threshold — "any movement" taken literally. Touch's `revealed` is folded into
+      `BookObject`'s existing `isHovering` by a one-line effect, so the card, the z-index
+      bump, and the 3D hover lift all just work for touch too with no second branch._
+- [x] **A3.** ⚠️ A 1s dwell with no feedback reads as a broken app. Reuse the reader's
+      `DwellRing` (already parameterised by `durationMs`); do not build a second ring.
+      _Done — same component, portaled to `document.body` rather than rendered in place:
+      `BookObject`'s drag transform (and the shelf's lift transform) would otherwise become
+      the ring's containing block instead of the viewport, since `position: fixed` resolves
+      against the nearest transformed ancestor. `DwellRing.module.css`'s z-index gained a
+      `100001` fallback for `var(--reader-z-dwell-ring)`, which is only ever defined while
+      the reader route is mounted._
+- [x] **A4.** While the card is out, the book's drag is disarmed for the rest of that touch.
+      _Done via a second, sticky flag (`settled`) alongside the toggling `revealed` — read
+      literally, "for the rest of that touch" outlives a later movement toggling the card
+      back off, so `drag={!reducedMotion && !touch.settled}` rather than gating on `revealed`
+      directly, which would have let a paused mid-drag resume the instant it re-armed._
+- [x] **A5.** ⚠️ Book covers are images, so iOS raises its own "Save Image" callout partway
+      through the hold. `-webkit-touch-callout: none` on the cover — and check it did not
+      disable selection anywhere it shouldn't (the M31 C4 trap, one room over).
+      _Done on `.coverWrap` alone, `user-select` untouched per the warning — there was none
+      set there to begin with, and no selectable text under it to lose._
+- [x] **A6.** Same treatment for the shelf (`ShelfView.tsx:300` has the identical unfiltered
+      `onPointerEnter`) — one card, both surfaces, per settled decision 12.
+      _Done — `ShelfBook` uses the same `useTouchCardDwell` and the same pointer-type filter,
+      wired to the `onActiveChange` the shelf already had for hover/focus rather than a
+      second local "is the card open" flag. No drag to disarm here, so only §A2/§A3 apply;
+      also added `.slot`'s own `-webkit-touch-callout: none` for the decorative
+      (`aria-hidden`) spine title, which is not the A5 image case but the same class of bug._
+      ⚠️ **Built on the same premise M31 §C3 flagged and could not confirm: no touch-capable
+      device or touch-emulating browser was available this session.** Typechecked and the
+      existing suite still passes; the framer-motion `drag` prop toggling off mid-gesture
+      (§A4) in particular is asserted from the library's documented behaviour, not watched on
+      real hardware.
+
+_Acceptance: on the iPad — tapping a book opens it and never flashes the card; resting a
+finger on a book fills a ring and opens the card; dragging a book moves it with no card;
+letting a dragged book come to rest under the finger re-opens the card after a second;
+moving again closes it. No "Save Image" menu at any point._
+
+#### B. The Scan's two gestures
+
+- [x] **B1.** Pinch zooms the timeline; horizontal swipe scrubs along it. Per DESIGN.md's
+      table these are the Scan's meanings for gestures that mean something else in the Book
+      — allowed by invariant 6, and the reason that invariant is written down.
+      _Done in `HeatStrip.tsx`, as a second native (non-passive) touch listener on the same
+      `stripRef` the existing wheel-to-zoom listener already attaches to, so `preventDefault`
+      actually sticks instead of being silently dropped by React's default-passive touch
+      handlers. Both gestures reuse `zoom.ts`'s existing pure functions rather than adding
+      new ones: a pinch feeds its per-move distance ratio into `zoomAtViewPosition` exactly
+      like the wheel handler feeds it `deltaY`, about the pinch's own centre; a single
+      finger's horizontal drag feeds its per-move pixel delta into `panByViewFraction` (the
+      same step the pan buttons use, as a continuous fraction instead of a fixed 0.5),
+      declared only past an 8px threshold from the touch's start so a tap that stops short
+      of that still reaches a band's own `onClick` untouched — no gesture claims the touch
+      until it's clearly a drag. A second finger landing cancels an undeclared pan outright,
+      per the reader's own touch-table rule for the same situation. `.strip` gained
+      `touch-action: pan-y` (HeatStrip.module.css) so native vertical scroll of the Scan's
+      body keeps working — the one axis this component doesn't claim — while horizontal pan
+      and pinch-zoom stand down for us._
+      ⚠️ **Built on the same premise A6 flagged: no touch-capable device or touch-emulating
+      browser was available this session.** Typechecked, the existing suite (including
+      `zoom.test.ts`, whose pure functions this reuses rather than re-implements) still
+      passes; not watched on real hardware.
+- [x] **B2.** ⚠️ Depends on M31 §0d: until WebKit's page zoom is blocked, a pinch here scales
+      the whole website and never reaches the timeline.
+      _Already satisfied — M31 §0d was done before this session; no code needed here._
+
+#### C. The put-down
+
+⚠️ **The sequence is decided** — DESIGN.md, "Book → Desk: the put-down". Do not reorder it;
+the ordering is what makes the destination rect knowable.
+
+- [x] **C1.** The reading pane zooms out while its UI fades; the Desk background fades in
+      behind it while the book is still open; the book closes onto its cover; the cover
+      travels to its place.
+      _Done — `BookClosing.tsx`, mounted persistently from `App.tsx` (lazy, alongside
+      `BookOpening.tsx`'s own chunk). Literally reuses `BookOpening3D` rather than a second 3D
+      component (C2): `progress`/`landing`/`settle` are pure inputs with no direction baked
+      in, so this component drives them 1 → 0 on the opening's own constants (`LANDING_MS`,
+      `LANDING_EASE`, `PAGE_SETTLE_MS`, `openSequenceMs`) instead of 0 → 1. The reader's own
+      chrome does not get a slow fade — it is simply gone the instant `navigate("/")` runs
+      (`startPutDown`, `ReaderView.tsx`); "the reading pane zooms out while its UI fades" is
+      instead a `<img>` **bridge** (`BookClosing.module.css`'s `.bridge`), a plain picture of
+      the exact page the reader was left on, pinned to its exact rect, that the 3D layer picks
+      up seamlessly (`landingStep` reproduces the same picture at the same rect at
+      `landing = 1`) once it has real geometry. ⚠️ **"Desk background fades in" needed no
+      fade at all**, on inspection: unlike the opening, nothing in this design ever hides the
+      Desk — it mounts and draws normally the instant `navigate("/")` lands, and only the
+      departing book itself is hidden (`setDepartedBook`, same store the opening uses). A
+      `useScene3DLayerFade`-style fade-in was considered and dropped: that primitive can only
+      fade a layer *down* from its authored opacity (`Scene3D.tsx`'s `FadingLayer` hard-codes
+      the start at 1), so faking a fade-in would have meant extending that primitive rather
+      than reusing it — and there is nothing to fade in when nothing was ever hidden._
+- [x] **C2.** ⚠️ The blocker, stated so it is not rediscovered: `App.tsx` renders **one room
+      at a time**, which is exactly why `BookOpening.tsx:110` says a reverse animation is not
+      possible today. The machinery already exists in the *other* direction — `useScene3DHold`
+      plus the `departedBook` store keep the Desk alive under a book flying out. This is that
+      hold, run the other way; it is not a new mechanism.
+      _Done, with one genuine asymmetry recorded rather than papered over: **no hold is
+      needed for the put-down.** The hold exists to keep a room drawing after the route that
+      owned it is gone — the opening needs that because the Desk is the room being *left*. The
+      put-down's Desk is the room being *arrived at*: by the time `BookClosing` has anything to
+      draw, `navigate("/")` has already run and the Desk is the live route, registering its own
+      "desk"/"shelf" layer for real. What *is* reused, unchanged: `departedBook` (so the Desk
+      doesn't draw the resting-place book while `BookClosing` draws it in flight) and
+      `useScene3DLayer` (to draw it). New machinery was needed for exactly one thing C2 doesn't
+      cover — see C3._
+- [x] **C3.** The destination comes from the Desk after it mounts, not from the reader:
+      it depends on `shelf_state`, on which of desk/list/shelf was last used (already
+      persisted — `persistDeskViewMode`), and on that room's parallax.
+      _Done via a new store, `scene3d/putDown.ts` — `openingPose.ts`'s own sibling, but live
+      and subscribable (`useSyncExternalStore`, `departedBook.ts`'s pattern) rather than a
+      one-shot pending value, because unlike a click the destination genuinely isn't known
+      until the Desk exists to report it. `startPutDown` (`ReaderView.tsx`) resolves the view
+      mode via `loadDeskViewMode()` (or the forced mode from `d`/`l`/`b`) and requests a
+      put-down *before* navigating; `BookObject.tsx`/`ShelfView.tsx` each gained a mount-time
+      effect that answers a live request for the resource they're currently laying out,
+      reusing (not duplicating) the exact same pose math their click-time `captureOpening`
+      already computes — both files' pose-building code was extracted into a shared
+      `buildPose()` for this. The list view reports nothing: `mode` alone already tells
+      `BookClosing` no 3D destination is coming, so it falls straight to the crossfade (C5)
+      with no per-row wiring in `LibraryGrid.tsx`. A 2000ms timeout covers the case where the
+      resource never gets reported at all (deleted mid-read, or some other race) — the same
+      "best-effort, never stuck" posture `capturePageSnapshot`'s own deadline already has._
+- [x] **C4.** ⚠️ **Two different Escapes, do not conflate them.** `Esc` *during an opening*
+      still cancels by unmounting immediately — there is nothing coherent to reverse
+      mid-flight, and `BookOpening.tsx` says so deliberately. `Esc` *while reading* is this
+      sequence. Same key, two states, two behaviours.
+      _Done — `BookOpening.tsx`'s own Escape handling is untouched. `ReaderView.tsx`'s
+      `handleEscapeShortcut` now falls through to `startPutDown()`, but only once nothing
+      shallower claimed it (find bar, link-quote mode, a pending selection, an open thread, an
+      open definition card, an open progress popover, fullscreen) — read before any of that
+      state is cleared, so "closest layer first" still holds and Escape only leaves the room
+      when there was truly nothing left to close. The Desk button (the embedded `NavCluster`'s
+      Library link) and `d`/`l`/`b` go through the same `startPutDown`, via a new `onDepart`
+      prop on `NavCluster` that only the reader's instance passes — and the M31 §C9 touch
+      departure's two `onCommitDeparture` callbacks (`ReaderView.tsx`) now call it too, instead
+      of the plain `navigate("/")` they were soft-gated to (§0's own note there is now stale —
+      the gate is satisfied). One function, four triggers, not four policies._
+- [x] **C5.** `prefers-reduced-motion` collapses the whole thing to a crossfade, per
+      DESIGN.md's motion rules.
+      _Done, and generalised: `BookClosing`'s `use3D` gate is
+      `Boolean(destination?.pose) && scene3DAvailable && !reducedMotion` — the exact shape of
+      `BookOpening`'s own `use3D` — so reduced motion, a lost WebGL context, *and* the list
+      view (no pose) all collapse to the same plain crossfade (the bridge fading to 0 opacity
+      over the Desk, already live underneath). This is a deliberate scope cut from the
+      opening's own richer 2D fallback, which flies and rotates a CSS cover from the list row
+      instead of just fading — recorded here rather than silently done: a fully symmetric
+      list-view put-down is future work, not a gap discovered later._
+
+_Acceptance: leaving a book by the Desk button and by `Esc` produce the same sequence; the
+cover lands on the book's actual position in whichever of desk/list/shelf was last used, not
+a default one; escaping out of a still-opening book still unmounts instantly; with reduced
+motion on, both are a crossfade._
+⚠️ **Built on the same premise A6/B1 flagged: no touch-capable device or touch-emulating
+browser was available this session, and this milestone's 3D choreography has no way to be
+watched at all in a text-only session, touch or otherwise.** Typechecked, the full existing
+suite (493 tests) still passes, and a production build succeeds with the new machinery
+correctly code-split (`BookClosing`/`putDown`/`BookOpening` land in their own chunks, not the
+app shell). No frame of the actual landing, settle or closing motion has been watched by
+anyone — every timing and geometry choice above is reasoned from `openingGeometry.ts`'s own
+math and comments, reused rather than re-derived, but "reused correctly" and "looks right"
+are not the same claim.
+
+---
+
+### M35 — Quotes that know where they are
+
+Scoped 2026-08-31 (decisions.md, "The LLM layer, measured"). ⚠️ **Depends on M34 §0** — §B
+and §C's sizing are answered by those measurements, not by argument.
+
+**The correction this milestone is built on, because it was nearly got wrong in review:** a
+character offset into `resource_text` **cannot rot**. The resource is immutable on import
+(settled decision 5); font size, window width, margins and spread mode repaginate the
+*rendered page*, not the source string. And settled decision 11 is not in the way — it bans
+trusting numbers **the model returns**, while a number **code computes** by locating
+model-returned text is that decision being followed. `sectionOffsets.ts`'s `locateAnchor`
+already computes exactly this offset and throws it away.
+
+#### A. Offsets, stored
+
+- [x] **A1.** `highlights` gains `offset INTEGER` and `length INTEGER` (nullable — a legacy
+      row has none), populated by locating the anchor in the section's text at creation.
+      _Done: migration 32. Populated by `createHighlight`'s optional `offset`/`length`,
+      computed at both creation sites — `findAnchorInText` for the reader's own selection
+      (`routes/highlights.ts`), `locateQuoteAnchor`'s now-returned offset for posed-question
+      anchors (`routes/digest.ts`)._
+- [x] **A2.** ⚠️ **Store both representations; they have different jobs and do not compete.**
+      `offset`+`length` is the canonical *position* — ordering, ranges, zones, dedup,
+      click-to-jump, "does this theme span 40–70% of the chapter". `exact`+`prefix`/`suffix`
+      is what the *client* needs to paint it, because the server's plain-text extraction and
+      the rendered DOM are not the same string and `resolveAnchor`'s three-tier rule
+      (CFI → text → unanchored) still governs rendering. Do not delete either.
+      _Done: both are stored, neither replaced. `offset`/`length` are server-only for now —
+      same shape as `anchor_source` (migration 28), since nothing in §A/§B renders them yet.
+      See decisions.md 2026-08-31 (night)._
+- [x] **A3.** Backfill existing highlights via `buildSectionOffsetIndex` + `locateAnchor`.
+      A highlight that no longer locates keeps `NULL` and is not an error — it is already the
+      "unanchored" state the reader can see.
+      _Done: `pnpm --filter server backfill-offsets` (`server/src/cli/backfillOffsets.ts`),
+      re-runnable — only ever touches rows where `offset IS NULL`. Not run against the
+      operator's real library yet; that's the operator's call, same as §0c's `measure`._
+- [x] **A4.** Model-proposed quotes are **verified at generation time**: locate before
+      persisting, and record the result. A quote that cannot be found never becomes a row
+      that fails silently weeks later.
+      _Done: `routes/digest.ts`'s chapter-anchor route already located before persisting
+      (M34 §0a); it now also carries the located offset/length onto the highlight it creates,
+      so "verified" and "recorded" cover offset/length too, not just anchor_source._
+
+_Acceptance: every newly created highlight has an offset; the backfill leaves no book with
+fewer located highlights than before; a highlight whose text was never findable is still
+listed and still marked unanchored._
+_Status: covered by unit tests (`highlights.test.ts`'s "M35 §A offset/length" block,
+`chapterAnchor.test.ts`). **The backfill CLI has not been run against the operator's real
+library yet** — like §0c's `measure`, that's a read/write pass over real data and is the
+operator's call, not the session's._
+
+#### B. A quote survives the merge
+
+- [x] **B1.** ⚠️ **Measured 2026-08-31 on East of Eden's split chapters (spine 9, 22, 48,
+      61 — all 4 split into 2 parts and merged). The merge is the corrupting step, and the
+      result is unconfounded:**
+
+      ⚠️ **Amended after a control run of two unsplit *long* EoE chapters (spine 25 at
+      25,941 chars, spine 46 at 24,500). Read the corrected table, not the first one:**
+
+      | | n | today's matcher | with §B1b's normalization |
+      |---|---|---|---|
+      | **unsplit** (Kafka 9 + EoE 6) | 15 | 11/15 (73%) | **15/15 (100%)** |
+      | **split/merged** (EoE) | 11 | 3/11 (27%) | **7/11 (64%)** |
+
+      The first reading compared Kafka-unsplit against EoE-merged and blamed the merge. But
+      unsplit EoE is **2/6 raw** — nearly as bad — so the *raw* rate splits by book, not by
+      merge, and the curly-vs-straight typography check was too coarse to catch it. **The
+      merge conclusion survives only after normalization**, where every unsplit failure
+      disappears and all four residuals are from merged chapters. ⚠️ **Order matters: §B1b
+      before any further fidelity measurement.** The matcher bug is large enough to swamp the
+      signal it sits on.
+- [x] **B1a.** The context bump is still worth doing and still sidesteps this for most books
+      (declared 32,768 → 65,536 removes 20 of 21 splits library-wide), but it is **no longer
+      the alternative to B3** — it narrows the blast radius; it does not fix the mechanism.
+- [x] **B1b. ⚠️ `locateQuoteAnchor` has no typographic normalization** — the model
+      transcribed faithfully and tidied the punctuation, and neither existing tier (exact
+      substring, then whitespace-tolerant) folds a curly quote. Measured across all 26 stored
+      quotes it takes **unsplit chapters from 73% to 100%** and merged ones from 27% to 64%.
+      _⚠️ **Reclassified 2026-08-31 by the model A/B: this is a weak-model compensation, not
+      universal hardening.** On GPT 5.6 Luna, folding gains **nothing** — raw and folded are
+      both 17/18, because Luna reproduces curly typography byte-for-byte. Still build it: it
+      is what makes the cheap local digest role viable, which is what provider roles exist
+      for. But it is the **first** thing to re-measure after any digest-role change, and it
+      should not be described as provider-agnostic robustness._
+      ⚠️ **Implement it offset-safe.** The anchor must still resolve to a range in the
+      *original* text, so use transformations that preserve length and position:
+      **(a)** a same-length fold (`’‘‛→'`, `“”→"`, `—–→-`) applied to both sides, and
+      **(b)** widen tier 2's separator from `\s+` to `[\s"'’‘“”]+`, so a dropped internal
+      quotation mark in dialogue still matches. Both search the original string, so offsets
+      stay native. **Verified: 14/15 unsplit, 7/11 merged, with every returned offset
+      pointing at the real passage.**
+      ⚠️ Do **not** reach for "strip all quote characters from both sides" — it scores one
+      better (15/15) but changes string length, so offsets no longer map back and you owe an
+      index map. Only pay that if the last case proves to matter.
+      _Done: `chapterAnchor.ts`'s `locateQuoteAnchor` — tier 2 (same-length fold) and tier 3
+      (widened separator, on the folded text) exactly as specified; `QuoteAnchor` now also
+      returns `offset`/`length`. Unit-tested in `chapterAnchor.test.ts` (curly quotes, em
+      dash, dropped internal quotation mark, offset round-trips to the real passage)._
+- [x] **B1c.** ⚠️ **Confirmed necessary — promoted from "only if measured" — but scoped to
+      the local path.** A 272K-context model (codex-cli reports 272,000 → a 238,000-char map
+      budget) splits **nothing** in this library, so B3 only ever runs for a small-context
+      digest role. The 2026-08-31 A/B also put the merge in its place: isolating it on the
+      two chapters Qwen did *not* split, Qwen was 5/6 folded against Luna's 6/6 raw — so the
+      order of causes is **model quality → the merge → the matcher**, and B3 addresses the
+      middle one. Normalization cannot reach the four failures below, which are genuine
+      rewriting, verified against the book text:
+
+      | model returned | book actually says | error |
+      |---|---|---|
+      | `Charles won't be going, said Cyrus.` | `"Charles won't be going," Cyrus said.` | speech tag reordered, internal quotes dropped |
+      | `Cathy had the inhuman attribute…` | `She had the inhuman attribute…` | pronoun replaced with the character's name |
+      | `…every single thing. He's—how old? "Seventeen."` | `…every single thing. I'd even tell him why you didn't tell him before. He's—how old?` | a sentence elided, then a reply spliced in across a paragraph break |
+
+      Carrying the parts' original `quote` strings through in code fixes **all** of these,
+      because the string is never re-emitted. Expect 11/11 rather than 7/11.
+      _Done: this was measurement/analysis, not a code task — see B3 below for the fix it
+      argues for. ⚠️ Relabeled from its original "B3" to B1c: TASKS.md had two items both
+      labeled B3 (this one and the merge fix below); decisions.md's own "M35 §B3" references
+      already meant the merge fix, so that item keeps the name and this one, being purely
+      the case for it, moves off it rather than the other way round._
+- [x] **B2.** Stop falling back to `chapterStartAnchor` for posed questions. An unlocatable
+      quote produces a **chapter-level question** (M32 B's `chapter_questions`) instead of a
+      highlight parked on the chapter's first 120 characters. The two features resolve each
+      other; a wrong anchor is worse than no anchor.
+      _Done: `routes/digest.ts`'s chapter-anchor route, `seedChapterQuestionIfAbsent`
+      (chapterQuestions.ts). ⚠️ Scoped to a **real, non-empty** quote — the Scan's book-band
+      click-through (`ScanPage.tsx`) sends an empty quote on purpose to land on the chapter's
+      own opening, and still goes straight to `chapterStartAnchor` exactly as before; only a
+      posed question's own quote takes this new path. See decisions.md 2026-08-31 (night)._
+- [x] **B3.** Take quotes away from the merge step. `mergeThematicParts` returns only
+      `analysis` and `themes`; **code** selects which questions survive — one per part, up to
+      3 — carrying each original `quote` string through untouched. ⚠️ This is settled
+      decision 2 applied where it wasn't: `THEMATIC_MERGE_INSTRUCTIONS` currently *asks* the
+      model in English not to paraphrase a quote, when code can make it impossible. The merge
+      call receives no chapter text, so it has no way to verify one either.
+      _Done: `thematicBuild.ts` — `ThematicMergeSchema` drops `questions` from the merge
+      call's schema entirely; `selectMergedQuestions` takes each part's first question, in
+      part order, capped at `MAX_QUESTIONS`. Re-tested in `thematicBuild.test.ts` (a merge
+      response with a fabricated `questions` field is proven inert; surviving quotes are
+      exactly the parts' own, one real / one fabricated, located accordingly)._
+
+_Acceptance: on a provider whose budget forces chapters to split, every question's quote is
+byte-identical to the quote its part produced; a question whose quote cannot be located
+appears as a chapter question, and no highlight is created at the chapter's opening._
+_Status: covered by unit tests (`thematicBuild.test.ts`'s merge-passthrough case,
+`chapterQuestions.test.ts`'s `seedChapterQuestionIfAbsent` cases). **Not yet exercised
+against a real split chapter on the operator's actual digest provider** — the Verify section
+below still needs a live run, same as M34 §0c flagged for its own measurements._
+
+#### C. Themes carry quotes
+
+- [x] **C1.** `ThematicPartSchema`'s `themes: string[]` becomes
+      `themes: { name: string; quotes: string[] }[]`, 1–3 verbatim quotes per theme, located
+      by `locateQuoteAnchor` and stored with their offsets.
+      _Done: `thematicBuild.ts`'s `ThematicThemeSchema` + `evidenceFilterThemes` (per-part,
+      against that part's own text). The merge step stays name-only per B3's precedent
+      (`ThematicMergeSchema` unchanged) — `attachMergedThemeQuotes` reattaches each merged
+      name's quotes from the originating part after the model call, never trusting the merge
+      with quote content. ⚠️ **"stored with their offsets" turned out to mean at C5's
+      highlight-creation time, not in `thematic_digests.themes`'s own JSON** — the type is
+      literally `{name, quotes: string[]}[]` as specified, and offsets are computed (again,
+      never cached) wherever a quote actually becomes a highlight row. `thematicStore.ts`'s
+      `ThematicTheme` type, `listThemeVocabulary` maps `.name`. Tested in
+      `thematicBuild.test.ts`._
+- [x] **C2.** Questions may reference a theme, so a posed question and the theme it belongs
+      to point at the same evidence.
+      _Done: `ThematicQuestionSchema.theme` (nullable), validated in
+      `thematicBuild.ts`'s `validateQuestionThemes` against that part's own surviving theme
+      names — a name that doesn't match is nulled, never trusted. Carried through the merge
+      untouched (same as the question's own `quote`); note it still names a *part*-level
+      theme, which the merge may have reworded — full stitching into the same
+      thread/highlight is §C5's job, not built here. Client schema
+      (`ThematicQuestionSchema`/`ThematicChapterStatusSchema.themes`) updated to match._
+- [x] **C3.** ⚠️ **Evidence is the limit, not the count — do not scale the ceiling by chapter
+      length.** M34 §0b measured it: across chapters of 6,903 / 12,367 / 12,529 chars the
+      model returned **7, 7, 7 themes and 3, 3, 3 questions**. Themes never touched their
+      ceiling of 8; questions sat on their ceiling of 3. **Both are constants with zero
+      variance across a 1.8× length spread**, so a length-scaled ceiling would only replace
+      one constant with a different constant that code picked. That is code deciding, and it
+      should not be dressed as the model responding to content.
+      **The lever that does vary with content is already in C1: require a locatable verbatim
+      quote per theme, and let code drop the ones that fail.** A thin chapter cannot evidence
+      seven themes; a dense one can. Settled decision 2 applied to counts — the model
+      proposes N, code disposes of the unevidenced ones, and the surviving count is a
+      property of the chapter rather than of the prompt.
+      _⚠️ **Re-measured 2026-08-31 across six East of Eden chapters, four merged and two
+      unsplit: themes came back 8 every single time**, against Kafka's 7, 7, 7. Not a merge
+      artifact (the unsplit ones are 8 too) and not within-book length sensitivity (EoE spans
+      24K–46K at a flat 8; Kafka 6.9K–12.5K at a flat 7) — **a per-book constant**, and
+      separating "long book" from "this book" needs a ~25K Kafka chapter. Same correction for
+      analysis length: EoE runs 643–832 chars split *and* unsplit against Kafka's
+      1,504–1,971 — the book, not the merge._
+      _⚠️ **And one caveat from the model A/B, with the one-line test that settles it.** GPT
+      5.6 Luna independently returned **8 on all six** EoE chapters — the ceiling — exactly as
+      Qwen did, while Qwen sat at 7 (below the ceiling) on every Kafka chapter. Two very
+      different models converging on the cap is better explained by **the cap binding on this
+      book** than by "the model is not measuring the chapter", which weakens the reasoning
+      above without changing this item's conclusion: whatever varies, it is not varying with
+      length. **Before writing more prose about what the counts mean, raise `MAX_THEMES` to 12
+      and re-run one chapter of each book.**_
+      _Done: `MAX_THEMES` raised 8 → 12 in `thematicBuild.ts`, and evidence-filtering (C1)
+      is the lever that actually varies with content — a theme survives only with at least
+      one locatable quote. **Re-running one chapter of each book to see whether 12 still
+      binds is a real-provider measurement, the operator's call, not built here.**_
+- [x] **C3a.** ⚠️ **Do not vary the theme count deliberately for the index use.** Themes feed
+      the Scan, the vocabulary, distillation and M34 §C's ranking. If long chapters get more
+      themes they overlap with everything more often, so **length becomes a confound in the
+      relevance ranking** — a long chapter would be selected for being long. Roughly uniform
+      counts make the comparison honest. Questions are the opposite case: the reader *sees*
+      them (`ChapterEndPrompt`), so a padded third question is a visible cost, and there the
+      evidence filter should be allowed to leave a thin chapter showing one.
+      _Done: no code change is the point — verified no length-scaled ceiling exists anywhere
+      in `thematicBuild.ts`; `MAX_THEMES`/`MAX_QUESTIONS` are flat constants._
+- [x] **C3b.** ⚠️ **Fix what a theme *is* — the prompt is asking for names and getting
+      theses.** _(Also a weak-model fix: GPT 5.6 Luna already returns clean 2–4 word noun
+      phrases — "Secrecy and revelation", "Mercy versus justice" — with no prompt change,
+      while Qwen was inconsistent **across books**, emitting long theses on Kafka and bare
+      single words ("Secrets", "Guilt") on East of Eden. ⚠️ Note this does **not** rescue
+      §C0: even Luna's well-formed names repeat across chapters exactly zero times.)_ `thematicInstructions` says "short theme or motif names, at most 8" and the
+      model returns "Self as split into protective/hardened alter-ego (Crow) and vulnerable
+      self (Kafka)". Ask for a 2–4 word noun phrase with an explicit contrast example
+      ("Fate versus free will", not a sentence), and cap it in the schema. This is a
+      prerequisite for M34 §C, for `themeTagging`'s "pick from this exact list" (which is
+      currently handed one unique essay-fragment per chapter per theme), and for the Scan's
+      theme filter, whose dropdown would otherwise hold 7 × N distinct sentences.
+      ⚠️ The one thing being lost is real: the thesis carries nuance the label does not. Put
+      the nuance in the analysis prose, where it already belongs, not in the index key.
+      _Done: `thematicInstructions` now asks for "a 2-4 word theme or motif name... a label,
+      not a sentence" with a contrast example, and `ThematicThemeSchema.name` caps at 60
+      chars as a backstop (the prompt wording is the real fix, per this item's own note)._
+- [ ] **C3c.** The only place chapter length genuinely argues for scaling is where the *unit*
+      differs, not the content: Metamorphosis's five "chapters" are whole parts (median 38K
+      chars) against Kafka's ~12K. That is a spine-section-is-not-a-chapter problem, shared
+      with the digest and the Scan, and if anything scales it should scale on that and say so.
+      _Not built — recorded here as a known scope note (shared with the digest and the Scan),
+      same as it was before this session; no acceptance criterion of its own to build against._
+- [x] **C4.** ⚠️ **Decided 2026-08-31 by the operator: drop and re-run, do not migrate.**
+      `thematic_digests.themes` changes shape (string → object with quotes) *and* its contents
+      are rewritten by C3b, so a migrated row would carry the old prompt's theses in the new
+      shape — the worst of both. Only 3 thematic rows exist library-wide, so the cost is
+      minutes of local inference. Delete `thematic_digests` rows on migration and let the
+      reader re-run; **also clear `book_themes` / `theme_parents`**, whose children are
+      keyed on the old theme strings and would otherwise point at names that no longer exist.
+      ⚠️ Do **not** touch `canonical_themes` — it is library-wide memory and holds the colour
+      assignments (settled in `canonicalThemes.ts`'s own comment).
+      _Done: migration 33 (drop-and-clear only — no shape change was needed at the SQL level
+      since `themes`/`questions` are JSON TEXT columns; C1's type change and C3b's prompt
+      rewrite are what actually change the shape stored). `canonical_themes` untouched;
+      covered by a dedicated `db.test.ts` case seeding all four theme-adjacent tables and
+      asserting the three per-resource ones clear while `canonical_themes` survives.
+      **Re-running the thematic pass to repopulate under the new prompt is the operator's
+      call**, same as §A3/§0c's own real-data passes._
+- [x] **C5.** Machine-proposed quotes are stored as **highlight rows** carrying
+      `origin: 'reader' | 'thematic'`, not as a new table. Migration 26's own comment is the
+      precedent: a definition rides on its highlight so the glossary is "a filtered view, one
+      predicate" and `deleteHighlight` cleans up with no cascade to forget. This inherits
+      rendering, anchoring, the Scan, jump-to and deletion for free.
+      _Done: migration 35 (`highlights.origin`, default `'reader'`), `createHighlight`'s
+      optional `origin`. `digest/thematicHighlights.ts`'s `persistThematicHighlights`, wired
+      into `runThematicDigest` right after a chapter's thematic row commits — one
+      `createHighlight` (`kind: "honey"` — "Key quote", the label M30 A already gave that
+      slot; settled decision 16 forbids inventing a fifth) per evidenced quote, one thread
+      per theme via §D's `getOrCreateThread`/`addThreadAnchor` ("one theme → one annotation →
+      N anchors", §D6). Idempotent (`findHighlightByExact` reuses an existing row) and guards
+      against a highlight already anchoring a *different* thread
+      (`threads.ts`'s `isHighlightAnchored`) rather than double-linking or throwing on
+      `thread_anchors`' primary key. Tested in `thematicHighlights.test.ts` and
+      `thematicBuild.test.ts`._
+- [x] **C6.** ⚠️ **One exported predicate, used everywhere.** `origin: 'thematic'` rows
+      otherwise pollute the reader's highlight count, the Annotations list, the Scan's Mine
+      layer and the vault publish. Every one of those applies the same filter, from one
+      place — the same discipline M36 §A needs for definitions.
+      _Done: one predicate per runtime, same name and shape — server
+      `annotations/highlightOrigin.ts`, client `highlights/highlightOrigin.ts` — mirroring
+      `glossaryEntries`' existing precedent. Applied unconditionally (independent of §C7's
+      toggle) at `library/store.ts`'s `listResourceSummaries` (SQL `origin = 'reader'`,
+      both the highlight and thread counts), `ReaderView.tsx`'s count badge and
+      `AnnotationsOverview` (a derived `readerHighlights`), and `vault/compiler.ts`'s
+      `answeredHighlights`. Tested in `library/store.test.ts`, `scan.test.ts`,
+      `compiler.test.ts`._
+- [x] **C7.** A reader-facing **show/hide** toggle for thematic quotes in the book, defaulting
+      to **off**. "Only my own marks" is the reasonable expectation.
+      _Done: migration 36 (`resource_ai_settings.show_thematic_quotes`, default 0) —
+      `digest/thematicQuoteVisibility.ts` mirrors `lookahead.ts` exactly. GET/PUT
+      `/api/resources/:id/show-thematic-quotes`. Gates two things: whether
+      `GET /:id/highlights` includes thematic rows at all (so they never even reach the
+      reader's inline marks/margin rail unless on) and the Scan's Mine layer
+      (`buildScanData`'s `highlights` array) — `totalHighlights` stays reader-only regardless
+      (§C6). Client toggle lives beside the lookahead pill/icon in
+      `ContextLadderToggle.tsx` ("Thematic quotes", same wide/narrow dual-render). Tested in
+      `scan.test.ts`._
+
+_Acceptance: a thematic run produces themes with locatable quotes; with the toggle off the
+reader's highlight count and Annotations list are identical to before the run; with it on the
+quotes appear in the text and jump correctly; deleting the book removes them._
+_Status: covered by unit tests across `thematicBuild.test.ts`, `thematicHighlights.test.ts`,
+`library/store.test.ts`, `scan.test.ts`, `compiler.test.ts`. **A live thematic run against the
+operator's real library, and a manual toggle-on/toggle-off pass in the running app, have not
+been done this session** — same "read/write pass over real data is the operator's call" line
+§0c/§A3 already drew._
+
+#### D. An annotation may have many anchors
+
+- [x] **D1.** `thread_anchors(thread_id, highlight_id, ordinal)`. ⚠️ **Additive only** —
+      `threads.highlight_id` stays `UNIQUE` and stays the primary anchor, so no existing path
+      changes; backfill one row per existing thread.
+      _Done: migration 34 — junction-table shape matching `highlight_tags`/`highlight_themes`
+      (composite PK, plain `REFERENCES`, no `ON DELETE`), indexed on `highlight_id` (the hot
+      path — "does this highlight anchor a thread", not "list a thread's anchors"). Backfilled
+      one row per existing thread at `ordinal` 0 in the same migration. `threads.ts`'s
+      `createThread` now also writes the primary's own `thread_anchors` row (in the same
+      transaction) so every thread created going forward carries full anchor coverage from
+      the start — `addThreadAnchor`/`listThreadAnchors`/`isHighlightAnchored` round out the
+      API. Tested in `threads.test.ts`, `highlights.test.ts`, `db.test.ts`._
+- [x] **D2.** This is *toward* CLAUDE.md's stated discipline, not away from it: the W3C Web
+      Annotation model has one body and **one or more** targets. Say so in the migration
+      comment.
+      _Done: migration 34's own comment states it, referencing CLAUDE.md's engineering
+      discipline entry._
+- [x] **D3.** Clicking any linked quote opens the same annotation.
+      _Done: `listHighlightsWithThreadsForResource` now also returns `primaryHighlightId` —
+      null for an ordinary highlight or a thread's own primary, set to the primary's id for a
+      genuine secondary anchor. Client resolves through it
+      (`threads/resolvePrimaryAnchor.ts`'s `resolveOpenHighlightId`) at every place a click
+      opens the panel — a mark click in the book text, the Scan's jump-to (mount-time
+      `initialHighlightId`), and the margin-rail/Annotations-overview/glossary shared
+      `handleOpenThread` — while still **navigating to the specific passage clicked** (the
+      panel's identity resolves to the primary; the reader's position does not). Tested in
+      `highlights.test.ts` (`primaryHighlightId` shape) and
+      `threads/resolvePrimaryAnchor.test.ts` (the resolution rule itself)._
+- [x] **D4.** The annotation editor gets `< >` traversal across its anchors, near the quote at
+      the top. Order is `spineIndex, offset` — which is the other thing §A is for.
+      _Done: `GET /api/threads/:id/anchors` (`listHighlightsForThread`, ordered
+      `spine_index, "offset" IS NULL, "offset", ordinal` — reading order, not creation order).
+      `ThreadPanel.tsx` fetches it once a real thread exists, renders `‹ N of M ›` next to the
+      quote (reusing `FindBar.tsx`'s exact glyphs/pattern and `search/findCursor.ts`'s
+      `stepFindCursor` — no new interaction design) only when there's more than one anchor,
+      and the quote text itself tracks the current anchor. Stepping calls back to
+      `ReaderView.tsx`'s `handleJumpToAnchor`, which navigates the rendition **without**
+      touching `expandedThread` (that would remount the panel by its `key` and lose the
+      traversal position). Tested in `highlights.test.ts` (`listHighlightsForThread`'s reading
+      order)._
+- [x] **D5.** ⚠️ **Decided 2026-08-31.** Deleting a linked highlight removes **that anchor
+      only**; the thread survives while at least one anchor remains, and deleting the last
+      anchor deletes the thread — which is exactly today's behaviour in the one-anchor case,
+      so nothing changes for existing data. **The trap:** `threads.highlight_id` is the
+      primary anchor and has a foreign key, so deleting the primary while others remain must
+      **promote the next anchor to primary**, never cascade the thread away. A test for that
+      specific order is not optional.
+      _Done: `annotations/highlights.ts`'s `deleteHighlight` rewritten — looks up the thread
+      via `thread_anchors` (falling back to `threads.highlight_id` directly for a thread
+      predating any anchor row, so both shapes converge on the same logic), deletes only this
+      highlight's own anchor row, and either promotes the oldest remaining anchor to primary
+      (`UPDATE threads SET highlight_id = ...`, a no-op when the deleted highlight wasn't
+      primary) or, if none remain, runs today's full cascade unchanged. Three dedicated tests
+      in `highlights.test.ts`: non-primary delete leaves the thread and primary untouched,
+      primary delete with survivors promotes the next one by ordinal (not an arbitrary
+      survivor), and last-anchor delete cascades exactly as before._
+- [x] **D5a.** The vault publish writes **one note with its sources listed in reading order**,
+      not one note per anchor. A multi-anchor annotation is one thought about several
+      passages; splitting it at publish time would undo the feature in the projection.
+      _Done: `vault/compiler.ts`'s `publishResource` now fetches each thread's full anchor
+      list (`listHighlightsForThread`) and renders a multi-quote block (each quote + its
+      chapter label) when there's more than one; a single-anchor thread's note is
+      byte-for-byte the same shape as before this milestone. The distillation call itself
+      also sees every passage, not just the primary's. `publishStore.ts`'s ledger was already
+      keyed by `thread_id`, so no schema change there. Tested in `compiler.test.ts`
+      (multi-anchor note + reading order, and single-anchor's unchanged shape)._
+- [x] **D6.** This is the vehicle for §C's multi-quote themes: one theme → one annotation → N
+      anchors. Build D before wiring C5's quotes into it, or C5 produces N unrelated
+      highlights.
+      _Done: built and tested in that order — §D1–§D5a landed first, §C5 wires into
+      `getOrCreateThread`/`addThreadAnchor` only after, exactly as this item requires._
+
+_Acceptance: three quotes linked to one annotation open the same editor from any of them;
+`< >` walks them in reading order and moves the reader's page; a reload preserves the links._
+_Status: covered by unit tests across `threads.test.ts`, `highlights.test.ts`,
+`resolvePrimaryAnchor.test.ts`, `compiler.test.ts`, `db.test.ts`. **Manually linking three
+quotes by hand in the running app and walking them with `< >` has not been done this
+session** — same live-app verification line the Verify section below already calls for._
+
+#### E. Theme zones, and the Scan gets sub-chapter resolution
+
+- [x] **E1.** The thematic pass returns, per theme, the **sentence a theme starts at** and the
+      **sentence it ends at** — text, never offsets — and code locates both.
+      _Done: `ThematicThemeSchema` gains nullable `zoneStart`/`zoneEnd`, and
+      `thematicInstructions` asks for them per theme (null/null when a theme runs through the
+      whole chapter rather than one stretch). Carried through evidence-filtering untouched
+      (`evidenceFilterThemes` already spreads the whole theme object) and through the merge
+      step the same "reattach from whichever part first proposed the name" way §C1 already
+      reattaches quotes (`attachMergedThemeQuotes`) — a part's zone sentences are never
+      meaningful as offsets across a part boundary, only as verbatim text, and every consumer
+      re-locates against the *whole* chapter's section text regardless, so no part-offset math
+      was needed. Located (never cached) in `themeZones.ts`'s `computeThemeZone`, called from
+      `scan.ts`. Tested in `thematicBuild.test.ts`._
+- [x] **E2.** ⚠️ **Four sanity checks, all required.** A zone is kept only if both endpoints
+      locate, start precedes end, the span lies inside the chapter, and it does not exceed a
+      set fraction of the chapter (a "zone" covering 95% is the model shrugging). Any failure
+      **drops the zone and keeps the theme at chapter resolution** — degrade to today's
+      behaviour, never to bad data.
+      _Done: `themeZones.ts`'s `computeThemeZone`, all four checks explicit (including the
+      third, which `locateQuoteAnchor`'s own bounds already guarantee structurally — kept
+      explicit anyway since this item names it as one of the four). The fraction cutoff is
+      `MAX_ZONE_FRACTION = 0.6`, a **designed, not measured** constant — no live provider ran
+      building this; reasoning in the file's own comment and in decisions.md's 2026-09-01
+      (later) entry. Tested in `themeZones.test.ts` (one case per check, plus a genuine
+      single-sentence zone kept, not rejected, when start and end name the same sentence)._
+- [x] **E3.** The Scan's Book layer renders surviving zones precisely and themes with no
+      surviving zone as today's quantised chapter-wide band — **both at once, in the same
+      view**.
+      _Done: `ScanBookChapter` gains `themeZones` (name + book-wide `startPercent`/
+      `lengthPercent` + the located exact `startQuote`), computed in `scan.ts`'s
+      `buildScanData` against each revealed chapter's own section text and spoiler-gated
+      identically to `themes`. `HeatStrip.tsx` renders one precise band per surviving zone and
+      the existing whole-chapter band only for the chapter's *other* themes (labelled with just
+      those names) — omitted entirely once every theme in the chapter has a zone, so a themed
+      zone is never drawn twice. Reuses `.bookBand`/`.bookBandLit` verbatim rather than a new
+      style, per settled decision 12. Tested in `scan.test.ts`._
+- [x] **E4.** ⚠️ **This scopes a written rule; do not treat it as repealing one.**
+      decisions.md 2026-07-29 (addendum) forbids Book-layer data in the Mine layer's precise
+      register *because chapter-resolution data drawn precisely claims accuracy it does not
+      have*. A zone that passed E2 is no longer chapter-resolution. **The checks are the
+      condition** — if E2 is weakened, E3 becomes the thing that rule forbids.
+      _Done: no code of its own — E2's checks are the enforcement, and nothing about the Mine
+      layer's own rendering changed._
+- [x] **E5.** "Mine wins on overlap" for hit-testing still holds — a zone must never steal a
+      click from a highlight.
+      _Done: zone bands render in the same Book-layer pass, still painted before the Mine
+      highlight bands in `HeatStrip.tsx` — unchanged DOM-order precedent ("Rendered *before*
+      the Mine highlight bands below so normal DOM stacking gives 'Mine wins on overlap' for
+      free")._
+- [x] **E6.** Clicking a zone opens the reader at its start offset, reusing the search-hit
+      jump path rather than a second implementation.
+      _Done: `ScanPage.tsx`'s `handleOpenZone` navigates with `jumpToFindQuery`/
+      `jumpToFindHitIndex: 0`/`jumpToFindMatchMode: "substring"` — the same handoff
+      `handleOpenSearchHit` already uses, never the chapter-anchor route (a zone isn't a
+      highlight and this click shouldn't create one). `startQuote` is the *located* exact
+      substring, not the model's raw sentence, specifically so this literal-substring jump
+      can't miss on typographic drift. ⚠️ Known, accepted edge case in decisions.md: an
+      identical sentence recurring earlier in the book would jump to the wrong occurrence —
+      the task doc's own instruction to reuse this path rather than build a second, spine-
+      scoped one._
+
+_Acceptance: a chapter where a theme genuinely occupies one stretch shows a zone over that
+stretch and not the whole chapter; a theme diffused through a chapter still shows a band; a
+zone failing any check is invisible rather than wrong; clicking a zone lands on the right
+page._
+_Status: covered by unit tests across `themeZones.test.ts`, `thematicBuild.test.ts`,
+`scan.test.ts`. **A live thematic run and driving the Scan by hand were not done this
+session** — the shared dev server was already running with a live browser attached when this
+landed, and seeding test thematic data into that database was judged too risky to whatever
+that session is doing. Same "operator's call" line every other M35 real-data pass already
+carries._
+
+#### F. The chapter digest, expanded
+
+- [x] **F1.** Each chapter on the digest page expands (once it has a thematic analysis) to
+      show the analysis and its associated quotes, with `< >` traversal across chapters.
+      _Done: the analysis (and questions) were already always shown once a chapter is
+      analyzed+revealed (pre-M35 behaviour, unchanged) — what "expand" adds here is the
+      themes' quotes, which had no UI at all before this. `DigestPage.tsx`'s new "Show quotes"
+      toggle (`expandedSpineIndex`, one chapter at a time) reveals each theme's name and its
+      evidence quotes; `‹ N of M ›` steps across every analyzed-and-revealed chapter, reusing
+      `stepFindCursor` and `IconButton`'s exact glyphs — the same control ThreadPanel's §D4
+      anchor stepper already established, not a second one designed for the same idea. Steps
+      scroll the newly-expanded card into view._
+- [x] **F2.** A quote there is clickable through to the reader — same jump path as E6.
+      _Done: `handleOpenThemeQuote` navigates with `jumpToFindQuery`/`jumpToFindHitIndex: 0`/
+      `jumpToFindMatchMode: "substring"`, identical to the Scan's `handleOpenZone` — never the
+      chapter-anchor route, since a theme's quote isn't a highlight. `routes/digest.ts`'s
+      `buildThematicStatus` now normalizes every theme's quotes to their *located* exact
+      substring (`locateQuoteAnchor(section.text, quote)?.exact`) before they reach the
+      client, the same reasoning §E6's `startQuote` already used — a quote passed §C3's
+      evidence filter so this always locates; the `?? quote` fallback exists only so a schema
+      surprise can't crash the route._
+- [x] **F3.** ⚠️ Respects the M34 §B mask and the existing per-chapter reveal. An expanded
+      chapter past the bookmark shows what a collapsed one would: nothing, until revealed.
+      _Done: no code of its own — the "Show quotes" toggle only renders inside the existing
+      `t?.analyzed && c.revealed` block (same gate §B's mask already drives), and `‹ N of M ›`
+      can only step onto a chapter in `analyzedSpineIndices`, which is filtered to
+      `analyzed && revealed` — an unrevealed chapter is structurally unreachable, never a
+      case the stepper has to special-case._
+
+_Acceptance: expanding a digested chapter shows its analysis and quotes; clicking a quote
+opens the book at it; chapters past the bookmark stay redacted when expanded._
+_Status: covered by the server/web builds and full test suites (both green, no regressions —
+462 server tests, 473 web tests). **Driving this by hand in the running app was not done this
+session**, same reason as §E: the shared dev server was already running with a live browser
+attached when this landed._
+
+#### G. Thematic gets the Digest's own controls, and annotations get a manual link path
+
+Scoped 2026-09-01 (decisions.md, "closing the 'operator's call' UI gap"). Every §A–§F
+Verify item above is a real server capability no one has driven by hand — this section is
+what makes that possible, rather than adding a seventh unexercised behaviour. Two
+unrelated gaps, grouped because both are "the server can do this and nothing in the UI
+asks it to."
+
+- [x] **G1.** The thematic pass gets a chapter-range picker — `ChapterDial` From/To,
+      exactly as `DigestSpotlight.tsx` already built for the plot digest (M20.5) — instead
+      of `DigestPage.tsx`'s `handleAnalyzeThemes` always spanning first-to-last digested
+      chapter. Same `POST /:id/thematic` endpoint, same `spineStart`/`spineEnd` body — no
+      server change.
+      ⚠️ **Corrected after checking `thematicBuild.ts`, before shipping the wrong scope
+      twice: the dials span the whole book, not just digested chapters.** The first pass
+      through this item assumed a thematic run needs a chapter's own plot digest and bounded
+      the dials to `status.chapters.filter(c => c.digested)` — carrying forward the *old*
+      hardcoded `handleAnalyzeThemes`'s own range (first-to-last digested chapter) without
+      checking whether that range was ever a real requirement. It wasn't: `runThematicDigest`
+      takes `sections: ResourceTextSection[]` (`getResourceTextSections` — the book's raw
+      text) and never reads `chapter_digests`; the route has no digested-range check either.
+      A chapter can be thematically analyzed with no plot digest done on it at all.
+      _Done: `DigestPage.tsx`'s `allChapters` (`status.chapters`, unfiltered — corrected from
+      an earlier `digestedChapters` filter), `thematicStartIdx`/`thematicEndIdx` state
+      re-synced to the full book span whenever `allChapters.length` changes (a manual
+      narrowing is scoped to the current visit, same as the plot digest's dials promise
+      nothing across a change in what they dial over). Two `ChapterDial`s, hidden below two
+      chapters (nothing to narrow). `handleAnalyzeThemes` reads the dialed range instead of
+      always the full span; the button's label dropped "for digested chapters" since it no
+      longer describes what the button does._
+- [x] **G2.** Inline cancel for the thematic, tagging, and distill jobs, right on
+      `DigestPage.tsx`, the way `DigestSpotlight.handleCancel` already calls the existing
+      `cancelJob` registry function for the plot digest. Today all three buttons go from
+      their idle label to a disabled "…ing" label with no way to stop short of finding the
+      job in the global tasks tray. ⚠️ This is exposing a control that already exists for
+      every job kind, not building a new cancellation mechanism.
+      _Done: `useJobs()`'s own `cancel` (renamed `cancelJob` at the destructure site to avoid
+      shadowing), three one-line handlers, a `Button` rendered beside each "…ing" label only
+      while that job's id is set._
+- [x] **G3.** `POST /api/threads/:id/anchors { highlightId }` — the write-side counterpart
+      to §D4's existing read-only `GET .../anchors`. Wraps `addThreadAnchor`, guarded by
+      the same `isHighlightAnchored` check `persistThematicHighlights` (§C5) already uses:
+      refuse with 409 when `highlightId` already anchors a *different* thread — the
+      ground rule is a highlight may join a thread, a thread may never join a thread — and
+      no-op (200) when it already anchors this one. A highlight with a thread of its own is
+      the only thing this ever refuses; a plain, threadless highlight always succeeds.
+      _Done: `routes/threads.ts`'s `POST /:id/anchors`, `AddThreadAnchorBodySchema`
+      (shared/src/schemas.ts). Uses a new `getAnchoredThreadId` (annotations/threads.ts) —
+      `isHighlightAnchored` itself only answers yes/no, not *which* thread, which is what
+      distinguishes the no-op case from the refusal — and rejects a highlight belonging to a
+      different resource entirely (400 `cross_resource`, via the thread's own primary
+      highlight's `resourceId`) as a second guard `persistThematicHighlights` never needed
+      (it never crosses books). A second small addition this section turned out to need:
+      `POST /api/highlights/:id/thread` (`getOrCreateThread` + a new `getThreadSummary`
+      helper) — the normal `POST /api/threads` path requires a non-empty question, and
+      §G4's "Link a quote" needs a real `threadId` to anchor to *before* any question is
+      asked. Client: `threadAnchorsApi.ts`'s `addThreadAnchor`, `ReaderView.tsx`'s
+      `postHighlightThread`. Tested: `annotations/threads.test.ts`'s "M35 §G3"/"M35 §G4"
+      blocks (`getAnchoredThreadId`/`isHighlightAnchored`/`getThreadSummary`)._
+- [x] **G4.** A "select/add highlight" reader mode, entered two ways, both producing a
+      `thread_anchors` row via §G3:
+      - from the existing selection popup, on a highlight/selection with **no thread yet**
+        — "Link a quote" — this is how a brand-new multi-anchor thread gets built, before
+        any note or question has been asked of it;
+      - from an **already-open** `ThreadPanel` — "Add additional quotes" — growing that
+        specific thread.
+
+      While the mode is active: a banner names it and offers its own on-screen **×**; Esc
+      also exits; page turning keeps working, since assembling anchors across a book-
+      spanning theme is exactly the case this is for. Highlighting new text prompts a
+      confirm ("Add this quote to the annotation?") before the highlight is created
+      (`origin: 'reader'`) and linked — this is the *only* way in from the panel-opened
+      entry point. From the selection-popup entry point, clicking an **existing,
+      threadless** highlight is also permitted and links it directly, in place, with the
+      same confirm; clicking one that already anchors a different thread is refused with a
+      visible inline message (§G3's 409) and the mode stays open rather than exiting or
+      silently doing nothing. ⚠️ **The mode never closes itself after one addition** — it
+      stays open so several quotes (any mix of fresh selections and one pre-existing
+      highlight) can be attached in a single pass; only Esc/× ends it. Once at least one
+      anchor exists, the panel opens (or stays open, for the panel-opened entry) showing
+      the thread, and §D4's existing `‹ N of M ›` stepper walks whatever was just built —
+      no new traversal UI.
+      _Done: `ReaderView.tsx`'s `linkQuoteMode`/`linkQuoteConfirm`/`linkQuoteError` state
+      (mirrored into `linkQuoteModeRef` for `handleMarkClicked`, registered once per
+      rendition mount, the same reason `pendingSelectionRef` exists) plus `handleLinkQuote`
+      (entry A), `handleStartAddQuotes` (entry B), `handleConfirmLinkQuote`,
+      `handleCancelLinkQuoteConfirm`, `handleExitLinkQuoteMode`. New `LinkQuoteBanner.tsx`,
+      built on `FindBar.tsx`'s own centred-pebble-over-the-page pattern (a mode banner
+      anchored to a fixed position rather than the click/selection, since `markClicked`
+      carries no pointer coordinates to anchor a floating popover to); its "confirm" state
+      doubles as the display for a fresh selection (no separate state needed — while the
+      mode is active, a live `pendingSelection` *is* the pending confirm) and for an
+      eligible existing-highlight click (`linkQuoteConfirm`). `AskPill` gained a "Link a
+      quote" button (`onLinkQuote`) and is hidden while the mode is active, so a selection
+      never drives both it and the banner's confirm at once. `ThreadPanel` gained
+      `onAddQuotes` (only rendered once a real thread exists) and `anchorsVersion` (bumped on
+      every successful link, since the anchors-fetch effect is keyed on `threadId`, which
+      never changes for an already-existing thread and so would otherwise never refetch).
+      `handleEscapeShortcut` exits the mode as the next-innermost layer after the find bar;
+      a safety effect exits the mode if the open panel ever changes to a different
+      highlight (a margin-rail/overview click opens a different thread through
+      `handleOpenThread`, which has no reason to know about this mode). New z-index token
+      `--reader-z-link-quote-banner: 13` (ReaderView.module.css's own layering table)._
+- [x] **G5.** Ground rule, not a task of its own: linking only ever goes highlight → thread,
+      never thread → thread. Two already-annotated passages cannot be merged this way.
+      Deferred "for now" per the operator, same shape as C3c's parked scope note — revisit
+      only if a real need for it shows up, not before.
+      _Done: enforced by §G3's `getAnchoredThreadId` check (server) and reflected by §G4's
+      mode restricting the panel-opened entry to fresh text only and refusing an already-
+      threaded highlight clicked from the selection-popup entry, in place, with a visible
+      message. No merge-two-threads path exists anywhere in this section._
+
+_Acceptance: from a highlight's selection popup, three quotes — two fresh selections and
+one pre-existing untethered highlight — can be attached to one new annotation without
+leaving the mode between additions. From an already-open annotation's panel, "Add
+additional quotes" attaches a new quote by selecting fresh text, and the existing `‹ N of
+M ›` stepper walks all of them after a reload. Attempting to link a quote that already
+belongs to a different annotation shows a visible refusal and never merges the two
+threads. Dialing a narrower chapter range for a thematic run and cancelling it in flight
+behaves identically to the plot digest's own dials and cancel._
+_Status: server logic covered by unit tests (`annotations/threads.test.ts`'s new blocks);
+`tsc -b` and the full test suite are green on both packages with no regressions (467 server
+tests, 473 web tests) and both packages build clean. **Driving any of G1–G4 by hand in the
+running app has not been done this session** — same "operator's call" line every other
+M35 real-data/live-UI item in this milestone already carries, and the whole reason this
+section exists is to make that drive possible for the first time._
+
+#### Verify
+
+- [x] Run a thematic pass over a real chapter range on the operator's actual digest provider.
+      Confirm every stored quote locates, every theme has evidence, and no highlight was
+      created at a chapter opening.
+- [x] Link three quotes to one annotation by hand, reload, and walk them with `< >`.
+- [x] Open the Scan with thematic quotes on and off; confirm the Mine layer's counts are
+      unchanged by the run, and that a zone click lands on the passage it drew.
+- [x] §G: dial a narrower chapter range than "all digested" for a thematic run and confirm
+      only that range analyzes; cancel a running thematic/tagging/distill job in place from
+      the digest page and confirm it actually stops (not just the button re-enabling).
+- [x] §G: build a three-quote annotation from the selection popup (mixing fresh selections
+      and one pre-existing highlight), then separately use an existing annotation's "Add
+      additional quotes" to attach one more; confirm a highlight already anchoring another
+      thread is refused rather than silently merged.
+
+---
+### M37 — The thematic substrate: making a brief cheap to change
+
+Scoped 2026-08-31 (decisions.md). ⚠️ **Last, deliberately.** It optimises *re-runs*, which is
+lower urgency than the query path, and it is the largest piece here. Do not start it before
+M34 and M35 are verified.
+
+**Why it exists:** decisions.md 2026-07-29 (later) records that "the thematic layer is cheap
+to re-run and expected to be re-run". That is **false as implemented** — changing a brief
+re-reads all 55 chapters at full text, for exactly what the first run cost. This makes the
+claim true.
+
+#### A. The substrate
+
+- [x] **A1.** A brief-**blind**, one-time pass per chapter, from full text: verbatim passages
+      with a line of context each, the chapter's claims and tensions, who holds which
+      position. Stored per `(resource, chapter)`, keyed on the section's source hash the way
+      the plot layer already is — not on the brief.
+      _(`chapter_substrate` (migration 38), `server/src/digest/substrateStore.ts` and
+      `substrateBuild.ts`. `ensureChapterSubstrate` returns an existing row untouched —
+      coverage by row existence, same as `chapter_digests`, never by comparing `source_hash`,
+      since resources are immutable on import. A passage is evidence-filtered via
+      `locateQuoteAnchor` before storage, same "LLM proposes, code disposes" rule
+      `evidenceFilterThemes` already applies to theme quotes.)_
+- [x] **A2.** ⚠️ **Cap it, and scale the cap in code from chapter length** (a floor and a
+      ceiling around ~1,500–2,000 tokens for a typical chapter). Same rule as M35 §C3: the
+      model is never asked to decide its own budget.
+      _(`substrateTokenBudget` clamps `[1500, 2000]` tokens scaled off the chapter's own
+      length; `clampSubstrateToBudget` enforces it after generation — schema `.max()`s are a
+      generous upper bound only, never the real limit, the same division of labor
+      `clampToTokenBudget` (dictionary/define.ts) uses for Define's output cap.)_
+
+#### B. The brief pass reads the substrate
+
+- [x] **B1.** A brief-driven pass whose input is the substrate rather than the chapter,
+      producing today's `{analysis, themes, questions}` shape unchanged.
+      _(`runThematicDigest` calls `ensureChapterSubstrate` before `digestChapterThematic` and
+      feeds it `serializeSubstrateForPrompt(substrate)` instead of `section.text`; the
+      `ThematicPartSchema` output shape is untouched. A brief change no longer rebuilds the
+      substrate — only the (now cheap) brief-driven call re-runs.)_
+- [x] **B2.** ⚠️ **It must still emit verbatim quotes**, which is the whole reason A1 keeps
+      passages rather than paraphrase. A pass with nothing verbatim to hand out re-creates
+      exactly the ungrounded-anchor problem M35 §B exists to remove.
+      _(`evidenceFilterThemes` now checks a proposed quote against the chapter's real text
+      (`groundTruthText`), not the substrate serialization it was read from — a quote copied
+      verbatim out of the substrate is, by A1's own construction, already a locatable
+      substring of the chapter, so this is the same check as before, pointed at the text a
+      highlight actually anchors into.)_
+
+#### C. Append, and evict
+
+- [x] **C1.** Quotes surfaced by any **full** re-read merge back into the substrate, so the
+      bank grows toward what this reader keeps caring about and the third brief is cheaper
+      than the second.
+      _(`substrateBuild.ts`'s `mergeQuotesIntoSubstrate`, called from `runThematicDigest` after
+      every chapter pass — `"notes"` mode too, not just `"full"`: a "notes" pass's quotes were,
+      by §B2's construction, always copied out of the substrate it read, so it can only ever
+      credit a passage already there, never invent one. A `"full"` pass can and does introduce
+      a quote §A1 never kept — that's the actual merge-back this task asks for.)_
+- [x] **C2.** ⚠️ **Append-only converges on being the chapter again.** The cap in A2 is a hard
+      requirement here, with eviction: drop quotes no brief has ever drawn on, keep quotes
+      that two or more briefs independently selected.
+      _(Each `SubstratePassage` now carries `drawnByBriefHashes: string[]` — which briefs'
+      thematic passes have selected it as theme evidence, by `hashBrief` value; a §A1 passage
+      starts with none. `mergeQuotesIntoSubstrate` re-clamps to §A2's own length-scaled budget
+      on every call, evicting by `sortPassagesByDrawPriority` first: 2+-draw passages, then
+      1-draw, then never-drawn — stable within a tier, so among equally-cared-about passages
+      the ones closer to the chapter's own reading order survive a clamp before later ones do.)_
+
+#### D. The reader chooses which
+
+- [x] **D1.** Two visible paths — **"re-read the book"** and **"re-read my notes"** — with the
+      cost difference shown.
+      _(`StartThematicDigestBodySchema` gains `mode: "notes" | "full"` (default `"notes"`).
+      `runThematicDigest` threads it through: `"notes"` reads the substrate exactly as §B built
+      it; `"full"` reads the chapter's own text instead, and — unlike `"notes"` — never skips a
+      chapter already covered under the current brief, since asking for a full re-read only
+      makes sense as a deliberate override. `DigestPage.tsx` shows both as separate buttons
+      ("Re-read my notes" / "Re-read the book"), each with an inline description of what it
+      costs; the tasks tray labels a `"full"` job "(full re-read)" so it doesn't look identical
+      to the cheap default mid-run.)_
+- [x] **D2.** ⚠️ Say plainly that the cheap path can miss things. A brief-blind extractor
+      cannot know which passage a future brief will need; that is a real limitation, not a
+      caveat to bury.
+      _(A standing sentence under the two buttons, not a tooltip only: "'Re-read my notes' is
+      cheap and usually enough, but it can miss a passage your saved notes never kept — the
+      notes were written before this brief existed.")_
+
+_Acceptance: a second brief over an already-substrated book costs materially less than the
+first and still produces locatable quotes; a full re-read enriches the substrate; the
+substrate never exceeds its cap for a chapter._
+
+#### Verify
+
+- [x] Run a brief, change it, re-run both ways on the same book. Compare ledger tokens and
+      spot-check that the cheap path's quotes still locate.
+      _(verified 2026-09-01 live against Metamorphosis, real `codex-cli`/gpt-5.6-luna calls,
+      brief "Transformation, and transitions in life and adaptation": a `"notes"` run over all
+      5 chapters completed, producing 5 `chapter_substrate` rows and 35 real, located
+      `honey`/`thematic` highlights (`persistThematicHighlights` only ever creates one for a
+      quote `locateQuoteAnchor` actually finds — 35 created, 0 dropped) — the "quotes still
+      locate" spot-check. The usage ledger split the two operations exactly as designed:
+      `substrate` (5 one-time calls, ~369K input tokens including the model's own context-cache
+      reads) vs `thematic` (5 calls reading each chapter's substrate instead of its raw text).
+      Then a `"full"` re-read of one already-covered chapter under the *unchanged* brief: the
+      route still started a job (proving `"full"` bypasses the "already covered" skip that
+      `"notes"` mode honours), the tasks tray showed "S3 · I (full re-read)", the chapter's
+      `generatedAt` and `analysis` genuinely changed (7 themes vs. the original 8, not a
+      cache hit), and `ensureChapterSubstrate` did not re-issue a `substrate` LLM call for that
+      chapter (5 substrate calls before and after) — confirming a `"full"` re-read never rebuilds
+      the base substrate, only the brief-driven pass on top of it. This run's `"full"`-mode
+      quotes happened to match passages already in the substrate, so its live draws exercised
+      §C2's *idempotent re-credit* path (re-running the same brief added no duplicate hash,
+      draw count stayed 1) rather than §C1's new-passage merge — that path (a full re-read
+      surfacing a quote §A1 never kept) is covered instead by `substrateBuild.test.ts` and
+      `thematicBuild.test.ts`'s scripted tests, deterministically, since a real model's choice
+      of quotes on a given day isn't something a live run can force.)_
+
+---
+
+### M38 — The Digest, reorganized: a landing page, one Analyse control, and a clearer reading-pane split
+
+Scoped 2026-09-01 (post-M34–M37 UI feedback pass, this session). UI-only — no LLM-layer or
+schema changes beyond §C1's reuse of the existing `/thematic` route with equal start/end.
+Independent of M34–M37's LLM-layer work, but builds on the chapter thematic UI M35 §E/§F and
+M37 already shipped (themes, quotes, the substrate/full re-read split) — do not start before
+those are verified, since §B2 is a reskin of exactly that UI.
+
+**Why it exists:** filed under "Area 3" of the 2026-09-01 UI feedback pass, alongside three bug
+fixes tracked in decisions.md the same day. Reaching chapter 50's digest today means scrolling
+past 49 preceding `DigestPage.tsx` chapter cards; the toolbar reads as four buttons of unclear
+relationship ("Saved" greyed out and unexplained, "Re-read my notes", "Re-read the book", "Tag
+highlights with themes", "Distil book-level themes"); and the reading pane's single "Digest this
+chapter" button (`ReaderView.tsx`'s `digestCluster`/`handleDigestChapter`) conflates plot and
+theme analysis with no way to choose one.
+
+#### A. A landing page in front of the chapter list
+
+- [x] **A1.** Opening the Digest (the 'g' shortcut / "Open digest") lands on a landing view, not
+      straight into the scrolling chapter list: Tools (§B's Analyse/Consolidate controls),
+      Reading brief (as today), Book so far (as today, clickable to open in full view), and a
+      chapter grid.
+- [x] **A2.** The chapter grid shows section number + chapter name per cell, with small
+      checkmarks/icons for plot digest, thematic analysis, and rendered audio presence —
+      reusing the status each chapter card already computes (`c.digested`, `t?.analyzed`, the
+      audio-presence lookup `DigestPage.tsx` already loads), not a new query.
+      ⚠️ Respect the same spoiler mask the chapter list already applies (`c.revealed`, decision
+      8's masking rule) — a grid cell must not leak plot/theme completion state for a chapter
+      past the bookmark; a checkmark is itself a spoiler-shaped signal ("something happens
+      here").
+- [x] **A3.** Clicking a chapter cell opens that chapter's own page — plot digest, thematic
+      analysis, and quotes, scrollable — reusing the existing per-chapter card rendering
+      (`DigestPage.tsx`'s chapter-card block) rather than rebuilding it.
+- [x] **A4.** That per-chapter page shows the current chapter at top with `‹ ›` to step to the
+      next/previous chapter, and a clickable chapter title that opens the same chapter
+      selector/navigator the reading pane already uses, to jump anywhere directly.
+
+_Acceptance: opening Digest lands on the grid, not a long scroll; a chapter cell's checkmarks
+match its actual digest/thematic/audio state and never reveal state past the bookmark; opening
+a chapter and stepping `‹ ›` through several never requires returning to the grid._
+
+#### B. One Analyse control, and an explained "Saved"
+
+- [x] **B1.** Replace the vertical `ChapterDial` FROM/TO range picker with the app's one
+      horizontal `Slider`/`SliderDial` (`web/src/controls/Slider.tsx`, already used for
+      reading-progress) — live popup shows the chapter title while dragging, per decision 12
+      ("one control system"). Add a typeable section-number entry so setting a range on a
+      60+-chapter book doesn't require dragging across all of it.
+- [x] **B2.** Collapse "Re-read my notes" and "Re-read the book" behind one **Analyse** button.
+      Pressing it opens a submenu: choose Plot and/or Themes; choosing Themes also offers
+      today's fast-vs-full choice (the existing `mode: "notes" | "full"` on
+      `StartThematicDigestBodySchema`) inline, not as a separate top-level button.
+- [x] **B3.** "Distil book-level themes" stays a separate, clearly-labeled action — confirmed
+      not redundant with per-chapter analysis (it folds per-chapter themes into book-level
+      canonical themes across chapters analyzed at different times) — renamed **"Consolidate
+      themes"** so its relationship to Analyse reads as a distinct second step, not a fourth
+      unrelated button.
+- [x] **B4.** The "Saved" state (today's Save-brief button, relabeled and disabled once saved)
+      gets a tooltip/inline caption explaining what it means — today it reads as an unexplained
+      greyed-out control with no affordance hinting it's Save's own settled state.
+
+_Acceptance: a reader can set a chapter range by typing a section number as well as dragging;
+running an analysis is one button with a clear choice of scope, not four buttons of unclear
+relationship; "Saved" no longer needs a human to explain it._
+
+#### C. Reading-pane split: Digest Plot vs. Analyse Themes
+
+- [x] **C1.** "Digest this chapter" becomes a submenu: **"Digest Plot"** (today's existing
+      `handleDigestChapter` call, unchanged) and **"Analyse Themes for this Chapter"** — a
+      single-chapter thematic run via the existing `/thematic` route with
+      `spineStart = spineEnd = currentSpineIndex`, not a new endpoint.
+- [x] **C2.** Hovering "Analyse Themes for this Chapter" shows a small notice, for transparency
+      before committing to the job: the reading brief's own text if one is set ("analysing
+      themes as set in your reading brief: '{brief text}'"), or "analysing themes automatically"
+      if none.
+
+_Acceptance: from the reading pane, plot and theme analysis are two explicit, separately
+labeled choices, and a reader always knows what angle a theme run will take before starting it._
+
+#### Verify
+
+- [x] Open Digest on a book with several already-analyzed chapters and several undigested ones;
+      confirm the grid's checkmarks match reality and the bookmark mask hides completion state
+      past it.
+- [x] Set a chapter range by typing a section number into the new slider rather than dragging;
+      run Analyse → Themes only, fast mode; confirm it matches today's "Re-read my notes"
+      behavior exactly.
+- [x] From the reading pane, open the "Digest this chapter" submenu, hover "Analyse Themes for
+      this Chapter" with and without a reading brief set, and confirm the notice text matches
+      each case.
+
+---

@@ -197,6 +197,18 @@ it with an image (§3.5's mechanism) and emit **nothing** into `resource_text` f
 Inline math inside a paragraph is out of scope — it stays as whatever text extraction
 gives, and that is accepted.
 
+**Amended 2026-09-08 (M43), decisions.md that date.** The rasterized band's *visual*
+representation upgrades from a flat PNG to OCR'd, typeset math — the "detect and
+rasterize, do not reconstruct" rule itself does not change. Run a local math-OCR model
+(decision 9's local-first posture) against the rasterized band; on success, embed the
+result as typeset math (KaTeX/MathJax) in the generated EPUB in place of the PNG; on low
+OCR confidence or a render failure, fall back to the PNG exactly as today. ⚠️ **The OCR'd
+LaTeX never enters `resource_text`** — nothing about this amendment changes "emit
+**nothing** into `resource_text` for it," because a math-OCR model's error rate on
+multi-line/matrix equations is a worse poison for the digest/search/audio than the
+plain-text reconstruction this section already rejects (a wrong symbol reads as
+confidently correct, not visibly mangled). This is a rendering-quality change only.
+
 ### 3.5 Figures, tables, and the images that survive
 
 A **figure region** is a rectangle of the page containing no text items, bounded by
@@ -207,9 +219,34 @@ Rasterize the region at 2× scale to PNG via pdf.js's canvas renderer with a cli
 embed it in the generated EPUB as `images/fig-p<page>-<n>.png`, placed as a `<figure>` at
 the reading position of its caption.
 
+**Amended 2026-09-08 (M43).** 2× (`rasterize.ts`'s `RASTER_SCALE`) was tuned for text
+legibility at the extractor's own default render, not for a HiDPI reading surface — found
+soft/blurry next to the native pane once M43 §B's canvas fix makes *that* pane
+DPR-correct, which makes the gap between the two panes' figure fidelity newly visible.
+Bump the constant (a fixed higher scale, e.g. 3–4×, still simplest — no need for
+per-viewer DPR-awareness server-side, since the PNG is generated once at import and
+consumed by every viewer) and re-run against a figure-heavy real PDF to confirm the size
+cost (larger generated EPUBs, more import time) stays acceptable.
+
 ⚠️ **The image never enters `resource_text`. The caption always does.** The caption is
 how the digest, the scan and search find a figure at all; the image is not text and must
 not become a row of pixels-as-characters in the book's text substrate.
+
+**Amended 2026-09-07 (M42), decisions.md that date.** A genuine data table gets the same
+treatment as an equation: **detect and rasterize, never reconstruct.** Found live against
+a real PDF (NOTES.md "M39 — the real gate, finally"): with no table-region concept, a
+table's cells were being spliced into running prose by `groupLines`' plain y-proximity
+grouping — a row's left cell and right cell, sitting at the same y, joined into one
+garbled line — and even where the caption regex did fire, the row text was left in
+`resource_text` alongside the (usually spurious) rasterized region rather than being
+excluded from it the way a figure's underlying content already is. The fix is not a new
+representation (no `<table>` in the generated EPUB, no structured row/column text) — it is
+making table-region *detection* real (today only the caption regex fires; there's no
+positive identification of the row/cell text itself) and then applying §3.5's own existing
+rule to it properly: the table's row text is excluded from `resource_text`, only the
+caption and the rasterized image remain. **The cost, accepted with eyes open:** a
+`document` digest's `findings`/`methods` fields cannot quote a table's data — same
+trade-off already accepted for equations.
 
 ---
 
@@ -247,6 +284,28 @@ system is then off by a paragraph.
 `href` values are `section-000.xhtml`, `section-001.xhtml`, … — stable, zero-padded, and
 stored in `resource_text.href`, so they may not be renumbered by a later extractor change
 without a version bump (§2).
+
+**Amended 2026-09-07 (M42), decisions.md that date — a detected section is a depth-1
+heading's span, not every heading-qualifying line's span.** Found live against a real
+44-page paper with a full 64-entry, 4-level outline (NOTES.md "M39 — the real gate,
+finally"): with no depth concept anywhere in section detection, every heading — `1`,
+`1.1`, `1.2.1`, … alike — became its own flat top-level spine entry, producing 49 sections
+for one paper. Only a **depth-1** boundary now starts a new `PdfSection`/`resource_text`
+row; a depth-2+ heading's line stays exactly where it sits in the section's own text (it
+is still a real heading in the reading flow, still independently reachable from the
+chapter picker via an in-section jump target, §4.1) but does not fragment the spine.
+Depth comes from the outline's own tree structure when one exists (rung 1 — `getOutline()`
+already carries real nesting via each node's `items`; the extractor must stop discarding
+it when flattening to document order) and, for the detected-headings fallback (rung 2,
+no outline), from the heading text's own numbering depth — `^\d+\.?\s` is depth 1,
+`^\d+\.\d+` depth 2, `^\d+\.\d+\.\d+` depth 3, and so on; an unnumbered heading (a paper's
+bare "Abstract"/"Conclusion") stays depth 1, ungrouped, same as today. ⚠️ **A document
+whose entire outline sits at depth 2+ under one nominal root must not collapse to a
+single section** — cap this against §4's own "one section under 40 pages" fallback rather
+than trusting a possibly-malformed depth signal blindly into producing zero depth-1
+boundaries. This refines, not overturns, settled decision 17b ("the spine unit is a
+section, never a page") — a section is still never a page; it is now allowed to be a
+chapter's worth of subsections instead of exactly one heading's worth.
 
 ### 4.1 The generated EPUB must be a real EPUB
 
@@ -660,6 +719,21 @@ or continuous layout with no extra bookkeeping: they already re-derive their `Ra
 from the live text-layer DOM on every call rather than caching pixel positions, so
 iterating whichever pages are currently mounted (1–2 for a spread, several for
 continuous scroll) is always safe.
+
+**Amended 2026-09-08 (M43), decisions.md that date — scroll is the native pane's default,
+not a derived past-fit-scale state.** This inverts the paragraph above it: `advance`
+defaults to `"scroll"` at mount (`capabilities.advance` starts `"scroll"`, not `"image"`),
+**except** when `shouldShowSpread` reports a legible 2-up spread at the fit-mode's own
+scale — that one state stays paginated, and a scroll input received while in it turns the
+page (a spread-to-spread slide, §D2) rather than moving the scroll position. Leaving that
+state (narrowing the pane, zooming past its own fit scale, or explicit navigation) drops
+back to continuous scroll, mirroring how the old model snapped back to paginated. ⚠️
+**EPUB is unaffected** — `flow: "scrolled-doc"` (§7.4, decision 17c) keeps its own
+per-section semantics and its own default; this amendment is `PdfRenderer`-only, reached
+purely through `capabilities`, never a format check in `ReaderView` (settled decision
+17c). The capability-profile table above still holds for the paginated exception state;
+add a `"scroll"` row for the new default with `spread: ✗` (no gutter to spread across,
+same as continuous already reads today).
 
 ---
 
