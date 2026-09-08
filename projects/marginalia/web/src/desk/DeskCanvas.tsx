@@ -26,6 +26,7 @@ interface DeskCanvasProps {
   cursorTrailEnabled: boolean;
   publishingId: string | null;
   onPublish: (resourceId: string) => void;
+  onDelete: (resourceId: string) => void;
   onToast: (toast: { message: string; tone: "success" | "error" }) => void;
   /** M22 "the desk tool": while engaged, a plain click on a book opens it
    * listening instead of reading. */
@@ -47,6 +48,7 @@ export function DeskCanvas({
   cursorTrailEnabled,
   publishingId,
   onPublish,
+  onDelete,
   onToast,
   listeningEngaged,
   onToggleListening,
@@ -231,6 +233,7 @@ export function DeskCanvas({
               onBringToFront={bringToFront}
               onPositionChange={persistPosition}
               onPublish={onPublish}
+              onDelete={onDelete}
               publishing={publishingId === resource.id}
               listeningEngaged={listeningEngaged}
               show3D={show3D}

@@ -4,12 +4,15 @@ import type { ResourceSummary } from "@marginalia/shared";
 import { BookCover } from "./BookCover.js";
 import { coverLayoutId } from "./coverLayoutId.js";
 import { Button } from "../controls/Button.js";
+import { IconButton } from "../controls/IconButton.js";
+import { TrashIcon } from "../controls/icons.js";
 import styles from "./LibraryGrid.module.css";
 
 interface LibraryGridProps {
   resources: ResourceSummary[];
   publishingId: string | null;
   onPublish: (resourceId: string) => void;
+  onDelete: (resourceId: string) => void;
   /** M22 "the desk tool": while lit, the plain "open" link also opens
    * listening — the explicit Listen button below does this unconditionally
    * regardless of the tool. Optional: LibraryGrid predates the tool and not
@@ -22,7 +25,13 @@ interface LibraryGridProps {
  * screen-reader path is the list"). Plain DOM order, real links, no
  * freeform positioning — the canonical a11y path for the desk.
  */
-export function LibraryGrid({ resources, publishingId, onPublish, listeningEngaged = false }: LibraryGridProps) {
+export function LibraryGrid({
+  resources,
+  publishingId,
+  onPublish,
+  onDelete,
+  listeningEngaged = false,
+}: LibraryGridProps) {
   const reducedMotion = useReducedMotion();
   const navigate = useNavigate();
 
@@ -89,6 +98,13 @@ export function LibraryGrid({ resources, publishingId, onPublish, listeningEngag
               >
                 {publishingId === resource.id ? "Publishing…" : "Publish"}
               </Button>
+              <IconButton
+                variant="danger"
+                size="sm"
+                icon={<TrashIcon size={16} />}
+                label="Delete book"
+                onClick={() => onDelete(resource.id)}
+              />
             </div>
           </div>
         </div>

@@ -1,11 +1,15 @@
+import type { ReactNode } from "react";
 import { useRef } from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { Button } from "../controls/Button.js";
-import { useDialogA11y } from "../controls/useDialogA11y.js";
+import { Button } from "./Button.js";
+import { useDialogA11y } from "./useDialogA11y.js";
 import styles from "./DeleteConfirmDialog.module.css";
 
 interface DeleteConfirmDialogProps {
-  messageCount: number;
+  /** Names what's being lost rather than asking a generic "are you sure?" —
+   * the acceptance criterion for the first call site (M30 E1) this was
+   * built for, and every one since. */
+  message: ReactNode;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -14,16 +18,15 @@ interface DeleteConfirmDialogProps {
  * M30 E1: "the hazard is more urgent than the feature" (decisions.md
  * 2026-08-24) — `deleteHighlight` cascades to a whole thread with no undo,
  * so this is the one gate every delete call site (margin rail, annotations
- * overview, M30 E2's thread panel) now passes through whenever there's a
- * conversation to lose. Names the count rather than a generic "are you
- * sure?" — the acceptance criterion is specifically that.
+ * overview, M30 E2's thread panel, and — M42 — deleting a book from the
+ * library) now passes through whenever there's real content to lose.
  *
- * A real modal (this milestone's first): a backdrop, not another anchored
- * instrument, because the highlight it's about can be scrolled out of view
- * (the margin rail) or off to the side (the annotations overview) by the
- * time the reader answers it.
+ * A real modal (this component's first use): a backdrop, not another
+ * anchored instrument, because whatever it's about can be scrolled out of
+ * view (the margin rail) or off to the side (the annotations overview, the
+ * library grid) by the time the reader answers it.
  */
-export function DeleteConfirmDialog({ messageCount, onConfirm, onCancel }: DeleteConfirmDialogProps) {
+export function DeleteConfirmDialog({ message, onConfirm, onCancel }: DeleteConfirmDialogProps) {
   const reducedMotion = useReducedMotion();
   const panelRef = useRef<HTMLDivElement>(null);
   useDialogA11y(panelRef, onCancel);
@@ -50,11 +53,7 @@ export function DeleteConfirmDialog({ messageCount, onConfirm, onCancel }: Delet
         transition={reducedMotion ? { duration: 0.08 } : { type: "spring", stiffness: 480, damping: 34 }}
         onClick={(event) => event.stopPropagation()}
       >
-        <p className={styles.message}>
-          Delete this highlight and its thread — {messageCount} message{messageCount === 1 ? "" : "s"}
-          {" "}
-          will go with it. This can't be undone.
-        </p>
+        <p className={styles.message}>{message}</p>
         <div className={styles.actions}>
           <Button variant="ghost" size="sm" onClick={onCancel}>
             Cancel

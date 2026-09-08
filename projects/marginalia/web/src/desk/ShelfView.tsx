@@ -35,6 +35,7 @@ interface ShelfViewProps {
   resources: ResourceSummary[];
   publishingId: string | null;
   onPublish: (resourceId: string) => void;
+  onDelete: (resourceId: string) => void;
   /** M22 "the desk tool": while lit, a plain open opens the book listening —
    * the same rule the Desk's own books follow. */
   listeningEngaged: boolean;
@@ -57,7 +58,7 @@ interface ShelfViewProps {
  * the strip, the scene lands on it the same frame, and no scroll offset is
  * duplicated into React state where it could lag behind momentum.
  */
-export function ShelfView({ resources, publishingId, onPublish, listeningEngaged }: ShelfViewProps) {
+export function ShelfView({ resources, publishingId, onPublish, onDelete, listeningEngaged }: ShelfViewProps) {
   const navigate = useNavigate();
   const railRef = useRef<HTMLDivElement>(null);
   const stripRef = useRef<HTMLDivElement>(null);
@@ -244,6 +245,7 @@ export function ShelfView({ resources, publishingId, onPublish, listeningEngaged
                 show3D={show3D}
                 publishing={publishingId === slot.resourceId}
                 onPublish={onPublish}
+                onDelete={onDelete}
                 onActivate={() => open(slot)}
                 onCaptureOpening={() => captureOpening(slot)}
                 onActiveChange={(isActive) =>
@@ -270,6 +272,7 @@ function ShelfBook({
   show3D,
   publishing,
   onPublish,
+  onDelete,
   onActivate,
   onCaptureOpening,
   onActiveChange,
@@ -282,6 +285,7 @@ function ShelfBook({
   show3D: boolean;
   publishing: boolean;
   onPublish: (resourceId: string) => void;
+  onDelete: (resourceId: string) => void;
   onActivate: () => void;
   onCaptureOpening: () => void;
   onActiveChange: (active: boolean) => void;
@@ -391,6 +395,7 @@ function ShelfBook({
           resource={resource}
           publishing={publishing}
           onPublish={onPublish}
+          onDelete={onDelete}
           placement="above"
           openOriginRef={ref}
           onCaptureOpening={onCaptureOpening}

@@ -9,9 +9,17 @@ import {
 } from "@marginalia/shared";
 import { getDb } from "../db.js";
 import { importEpub } from "../library/importResource.js";
-import { ensureReflowEpubPath, hashPdfBuffer, importPdf, PdfInvalidError, PdfPasswordError } from "../library/importPdf.js";
+import {
+  ensureReflowEpubPath,
+  hashPdfBuffer,
+  importPdf,
+  PdfInvalidError,
+  PdfPasswordError,
+  reflowEpubPath,
+} from "../library/importPdf.js";
 import { extractCoverImage, guessImageMimeType } from "../library/epub.js";
 import {
+  deleteResource,
   getPdfPageSections,
   getReadingPosition,
   getResourceById,
@@ -28,6 +36,8 @@ import { listHighlightsWithThreadsForResource } from "../annotations/highlights.
 import { isReaderOrigin } from "../annotations/highlightOrigin.js";
 import { buildScanData } from "../annotations/scan.js";
 import { searchResource } from "../annotations/search.js";
+import { deleteResourceAudioCache } from "../audio/render.js";
+import { digestMarkdownPath } from "../digest/markdown.js";
 import { getShowThematicQuotes } from "../digest/thematicQuoteVisibility.js";
 import { startJob } from "../jobs/registry.js";
 
@@ -110,6 +120,31 @@ resourcesRouter.get("/:id", (req, res) => {
     return;
   }
   res.json(resource);
+});
+
+// Removes the resource and every DB row that references it
+// (`deleteResource`, store.ts), then its on-disk files — library bytes
+// (source + generated reflow EPUB), the audio render cache, and the digest
+// markdown projection. Deliberately leaves the Obsidian vault untouched
+// (store.ts's own doc comment explains why). Irreversible — the client is
+// expected to confirm before calling this.
+resourcesRouter.delete("/:id", async (req, res) => {
+  const db = getDb();
+  const resource = getResourceById(db, req.params.id);
+  if (!resource) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+
+  const filePath = getResourceFilePath(db, resource.id);
+  deleteResource(db, resource.id);
+
+  if (filePath) fs.rmSync(filePath, { force: true });
+  if (resource.format === "pdf") fs.rmSync(reflowEpubPath(resource.id), { force: true });
+  fs.rmSync(digestMarkdownPath(resource.id), { force: true });
+  await deleteResourceAudioCache(resource.id);
+
+  res.status(204).end();
 });
 
 resourcesRouter.get("/:id/file", async (req, res) => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createDb } from "../db.js";
 import {
+  deleteResource,
   getPdfPageSections,
   getReadingPosition,
   getResourceById,
@@ -171,6 +172,97 @@ describe("pdf_page_sections", () => {
     const resourceId = seedResource(db);
 
     expect(getPdfPageSections(db, resourceId)).toEqual([]);
+    db.close();
+  });
+});
+
+describe("deleteResource", () => {
+  it("removes the resource and every row across resource-scoped tables, including highlights and their threads", () => {
+    const db = createDb(":memory:");
+    const resourceId = seedResource(db);
+
+    const highlight = createHighlight(db, {
+      resourceId,
+      exact: "a marked passage",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose",
+    });
+    const thread = createThread(db, highlight.id);
+    db.prepare(
+      `INSERT INTO messages (id, thread_id, role, content, created_at) VALUES ('msg-1', ?, 'user', 'hi', ?)`,
+    ).run(thread.id, new Date().toISOString());
+
+    setPdfPageSections(db, resourceId, [0, 0, 1]);
+    db.prepare(
+      `INSERT INTO chapter_digests (resource_id, spine_index, summary, themes, characters, title, document_fields, source_hash, generated_at)
+       VALUES (?, 0, 's', '[]', '[]', 't', '{}', 'h', ?)`,
+    ).run(resourceId, new Date().toISOString());
+    db.prepare(
+      `INSERT INTO audio_state (resource_id, narrator_voice, voice_mode, speed, cast_scanned_at, updated_at)
+       VALUES (?, 'af_heart', 'single', 1.0, NULL, ?)`,
+    ).run(resourceId, new Date().toISOString());
+    db.prepare(
+      `INSERT INTO canonical_themes (id, name, slug, color_index, created_at) VALUES ('theme-1', 'Theme', 'theme', 0, ?)`,
+    ).run(new Date().toISOString());
+    db.prepare(
+      `INSERT INTO book_themes (resource_id, canonical_theme_id, generated_at) VALUES (?, 'theme-1', ?)`,
+    ).run(resourceId, new Date().toISOString());
+    db.prepare(
+      `INSERT INTO llm_usage (id, resource_id, provider, model, operation, input_tokens, output_tokens, provenance, duration_ms, created_at)
+       VALUES ('usage-1', ?, 'anthropic', 'claude', 'digest', 10, 20, 'auto', 100, ?)`,
+    ).run(resourceId, new Date().toISOString());
+
+    const deleted = deleteResource(db, resourceId);
+
+    expect(deleted).toBe(true);
+    expect(getResourceById(db, resourceId)).toBeUndefined();
+    expect(db.prepare("SELECT * FROM highlights WHERE resource_id = ?").all(resourceId)).toEqual([]);
+    expect(db.prepare("SELECT * FROM threads WHERE id = ?").all(thread.id)).toEqual([]);
+    expect(db.prepare("SELECT * FROM messages WHERE thread_id = ?").all(thread.id)).toEqual([]);
+    expect(getPdfPageSections(db, resourceId)).toEqual([]);
+    expect(db.prepare("SELECT * FROM chapter_digests WHERE resource_id = ?").all(resourceId)).toEqual([]);
+    expect(db.prepare("SELECT * FROM audio_state WHERE resource_id = ?").all(resourceId)).toEqual([]);
+    expect(db.prepare("SELECT * FROM book_themes WHERE resource_id = ?").all(resourceId)).toEqual([]);
+
+    // Cost/audit history survives, with the reference nulled rather than
+    // the row dropped — the same treatment `deleteHighlight` already gives
+    // `llm_usage.message_id`.
+    const usage = db.prepare("SELECT resource_id FROM llm_usage WHERE id = 'usage-1'").get() as
+      | { resource_id: string | null }
+      | undefined;
+    expect(usage?.resource_id).toBeNull();
+
+    db.close();
+  });
+
+  it("returns false for a resource that doesn't exist", () => {
+    const db = createDb(":memory:");
+    expect(deleteResource(db, "no-such-resource")).toBe(false);
+    db.close();
+  });
+
+  it("leaves other resources' rows untouched", () => {
+    const db = createDb(":memory:");
+    const keep = seedResource(db, "keep-me");
+    const gone = seedResource(db, "delete-me");
+
+    createHighlight(db, {
+      resourceId: keep,
+      exact: "should survive",
+      prefix: "",
+      suffix: "",
+      cfi: "epubcfi(/6/4!/4/2)",
+      spineIndex: 0,
+      kind: "rose",
+    });
+
+    deleteResource(db, gone);
+
+    expect(getResourceById(db, keep)).toBeDefined();
+    expect(db.prepare("SELECT * FROM highlights WHERE resource_id = ?").all(keep)).toHaveLength(1);
     db.close();
   });
 });

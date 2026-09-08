@@ -43,6 +43,7 @@ interface BookObjectProps {
   onBringToFront: (resourceId: string) => number;
   onPositionChange: (resourceId: string, next: ShelfState) => void;
   onPublish: (resourceId: string) => void;
+  onDelete: (resourceId: string) => void;
   publishing: boolean;
   /** M22 "the desk tool": while lit, a plain open (click, Enter, or the
    * wheel-wound crown) opens the book listening — the explicit "Listen"
@@ -80,6 +81,7 @@ export function BookObject({
   onBringToFront,
   onPositionChange,
   onPublish,
+  onDelete,
   publishing,
   listeningEngaged,
   show3D,
@@ -386,6 +388,7 @@ export function BookObject({
           resource={resource}
           publishing={publishing}
           onPublish={onPublish}
+          onDelete={onDelete}
           openOriginRef={coverRef}
           onCaptureOpening={captureOpening}
         />

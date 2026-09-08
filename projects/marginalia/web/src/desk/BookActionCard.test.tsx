@@ -31,7 +31,7 @@ describe("BookActionCard", () => {
   it("says there's no text layer, and omits Digest/Scan/Listen, for a scan resource", () => {
     render(
       <MemoryRouter>
-        <BookActionCard resource={makeResource({ textLayer: false })} publishing={false} onPublish={vi.fn()} />
+        <BookActionCard resource={makeResource({ textLayer: false })} publishing={false} onPublish={vi.fn()} onDelete={vi.fn()} />
       </MemoryRouter>,
     );
 
@@ -46,11 +46,31 @@ describe("BookActionCard", () => {
   it("shows the normal meta row and every action for a resource with a text layer", () => {
     render(
       <MemoryRouter>
-        <BookActionCard resource={makeResource({ textLayer: true })} publishing={false} onPublish={vi.fn()} />
+        <BookActionCard resource={makeResource({ textLayer: true })} publishing={false} onPublish={vi.fn()} onDelete={vi.fn()} />
       </MemoryRouter>,
     );
 
     expect(screen.getByText("2 highlights")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Listen" })).toBeTruthy();
+  });
+
+  // M42: the one destructive control on the card — always present,
+  // independent of whether the resource has a text layer.
+  it("calls onDelete with the resource id when the delete button is clicked", () => {
+    const onDelete = vi.fn();
+    render(
+      <MemoryRouter>
+        <BookActionCard
+          resource={makeResource({ id: "res-42" })}
+          publishing={false}
+          onPublish={vi.fn()}
+          onDelete={onDelete}
+        />
+      </MemoryRouter>,
+    );
+
+    screen.getByRole("button", { name: "Delete book" }).click();
+
+    expect(onDelete).toHaveBeenCalledWith("res-42");
   });
 });

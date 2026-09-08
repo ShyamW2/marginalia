@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { useReducedMotion } from "motion/react";
+import { AnimatePresence, useReducedMotion } from "motion/react";
 import type { CursorStyleChoice, Settings } from "@marginalia/shared";
 import { Toast } from "../app/Toast.js";
 import { ChromeSlotPortal } from "../app/chromeSlot.js";
 import { LibraryGrid } from "../library/LibraryGrid.js";
 import { useLibrary } from "../library/useLibrary.js";
 import { Button } from "../controls/Button.js";
+import { DeleteConfirmDialog } from "../controls/DeleteConfirmDialog.js";
 import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { DeskCanvas } from "./DeskCanvas.js";
@@ -46,11 +47,18 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
     importFiles,
     dismissUpload,
     handlePublish,
+    handleDelete,
     handleDrop,
     handleDragEnter,
     handleDragLeave,
     handleDragOver,
   } = useLibrary();
+
+  // M42: shared across all three view modes (Desk/Shelf/List) — one dialog,
+  // gating the one destructive action every delete call site in the app
+  // passes through (decisions.md 2026-08-24, M30 E1).
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const pendingDeleteResource = resources.find((r) => r.id === pendingDeleteId) ?? null;
 
   const [mode, setMode] = useState<ViewMode>(loadDeskViewMode);
   const [cursorStyle, setCursorStyle] = useState<CursorStyleChoice>("custom");
@@ -201,6 +209,7 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
             resources={resources}
             publishingId={publishingId}
             onPublish={handlePublish}
+            onDelete={setPendingDeleteId}
             listeningEngaged={listeningEngaged}
           />
         ) : mode === "desk" ? (
@@ -211,6 +220,7 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
             cursorTrailEnabled={cursorTrailEnabled}
             publishingId={publishingId}
             onPublish={handlePublish}
+            onDelete={setPendingDeleteId}
             onToast={setToast}
             listeningEngaged={listeningEngaged}
             onToggleListening={() => setListeningEngaged((prev) => !prev)}
@@ -220,6 +230,7 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
             resources={resources}
             publishingId={publishingId}
             onPublish={handlePublish}
+            onDelete={setPendingDeleteId}
             listeningEngaged={listeningEngaged}
           />
         )
@@ -240,6 +251,25 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
       {toast && (
         <Toast message={toast.message} tone={toast.tone} onDismiss={() => setToast(null)} />
       )}
+
+      <AnimatePresence>
+        {pendingDeleteResource && (
+          <DeleteConfirmDialog
+            key="delete-book-confirm"
+            message={
+              <>
+                Delete <strong>{pendingDeleteResource.title}</strong>? Its highlights, threads, and digest go with
+                it. This can't be undone.
+              </>
+            }
+            onCancel={() => setPendingDeleteId(null)}
+            onConfirm={() => {
+              void handleDelete(pendingDeleteResource.id);
+              setPendingDeleteId(null);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

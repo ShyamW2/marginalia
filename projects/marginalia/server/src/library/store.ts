@@ -7,6 +7,33 @@ import type {
   ResourceSummary,
   ShelfState,
 } from "@marginalia/shared";
+import { deleteHighlight } from "../annotations/highlights.js";
+
+/** Every table keyed directly by `resource_id`, with no cascade of its own
+ * beyond the row itself — `deleteResource` below wipes each in one
+ * transaction. Highlights are handled separately, through `deleteHighlight`,
+ * so their own thread/message/publish cascade still runs correctly. */
+const RESOURCE_SCOPED_TABLES = [
+  "resource_text",
+  "reading_state",
+  "shelf_state",
+  "resource_locations",
+  "pdf_page_sections",
+  "chapter_digests",
+  "book_digests",
+  "book_digest_snapshots",
+  "digest_runs",
+  "resource_ai_settings",
+  "resource_briefs",
+  "thematic_digests",
+  "thematic_runs",
+  "chapter_substrate",
+  "chapter_questions",
+  "book_themes",
+  "theme_parents",
+  "audio_state",
+  "book_cast",
+] as const;
 
 interface ResourceRow {
   id: string;
@@ -63,6 +90,44 @@ export function getResourceFilePath(
     .prepare("SELECT file_path FROM resources WHERE id = ?")
     .get(id) as { file_path: string } | undefined;
   return row?.file_path;
+}
+
+/**
+ * Deletes a resource and every row that references it — the DB carries
+ * plain `REFERENCES` with no `ON DELETE` (migrations.ts's own documented
+ * convention: every cascade in this codebase is hand-rolled, `deleteHighlight`
+ * the smaller worked example this follows), so this walks every
+ * `resource_id`-scoped table in one transaction. Highlights go through
+ * `deleteHighlight` itself, not a raw `DELETE`, so their thread/message/
+ * publish cascade still runs. `llm_usage` rows are cost/audit history, not
+ * resource content — `resource_id` is nulled, the same way `deleteHighlight`
+ * already nulls `llm_usage.message_id` rather than dropping usage rows.
+ *
+ * Deliberately does not touch on-disk files (library/audio/digest — the
+ * route layer's job, paths.ts) or the Obsidian vault: the vault is a
+ * one-way compiled projection (settled decision 6) the reader may have
+ * since edited or cross-linked, and its `Concepts/` notes are shared across
+ * the whole vault, not owned by any one book — deleting a resource here
+ * never reaches into it.
+ */
+export function deleteResource(db: Database.Database, id: string): boolean {
+  const highlightIds = db
+    .prepare("SELECT id FROM highlights WHERE resource_id = ?")
+    .all(id) as { id: string }[];
+
+  const result = db.transaction(() => {
+    for (const { id: highlightId } of highlightIds) deleteHighlight(db, highlightId);
+
+    db.prepare("UPDATE llm_usage SET resource_id = NULL WHERE resource_id = ?").run(id);
+
+    for (const table of RESOURCE_SCOPED_TABLES) {
+      db.prepare(`DELETE FROM ${table} WHERE resource_id = ?`).run(id);
+    }
+
+    return db.prepare("DELETE FROM resources WHERE id = ?").run(id);
+  })();
+
+  return result.changes > 0;
 }
 
 /**

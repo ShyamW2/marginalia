@@ -165,6 +165,19 @@ export function useLibrary() {
     );
   }
 
+  /** M42: irreversible — callers gate this behind `DeleteConfirmDialog`,
+   * never call it directly off a click. Removes the resource optimistically
+   * from local state rather than a full refetch, so the card disappears the
+   * instant the request succeeds. */
+  async function handleDelete(resourceId: string) {
+    const res = await fetch(`/api/resources/${resourceId}`, { method: "DELETE" });
+    if (res.ok) {
+      setResources((prev) => prev.filter((r) => r.id !== resourceId));
+    } else {
+      setToast({ message: "Couldn't delete that book", tone: "error" });
+    }
+  }
+
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     dragDepth.current = 0;
@@ -200,6 +213,7 @@ export function useLibrary() {
     importFiles,
     dismissUpload,
     handlePublish,
+    handleDelete,
     handleDrop,
     handleDragEnter,
     handleDragLeave,

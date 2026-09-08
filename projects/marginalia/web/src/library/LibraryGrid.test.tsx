@@ -32,7 +32,12 @@ describe("LibraryGrid", () => {
   it("says there's no text layer, and omits Listen, for a scan resource", () => {
     render(
       <MemoryRouter>
-        <LibraryGrid resources={[makeResource({ textLayer: false })]} publishingId={null} onPublish={vi.fn()} />
+        <LibraryGrid
+          resources={[makeResource({ textLayer: false })]}
+          publishingId={null}
+          onPublish={vi.fn()}
+          onDelete={vi.fn()}
+        />
       </MemoryRouter>,
     );
 
@@ -47,11 +52,31 @@ describe("LibraryGrid", () => {
           resources={[makeResource({ textLayer: true, highlightCount: 3 })]}
           publishingId={null}
           onPublish={vi.fn()}
+          onDelete={vi.fn()}
         />
       </MemoryRouter>,
     );
 
     expect(screen.getByText("3 highlights")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Listen" })).toBeTruthy();
+  });
+
+  // M42: every card gets a delete affordance, independent of text layer.
+  it("calls onDelete with the resource id when the delete button is clicked", () => {
+    const onDelete = vi.fn();
+    render(
+      <MemoryRouter>
+        <LibraryGrid
+          resources={[makeResource({ id: "res-42" })]}
+          publishingId={null}
+          onPublish={vi.fn()}
+          onDelete={onDelete}
+        />
+      </MemoryRouter>,
+    );
+
+    screen.getByRole("button", { name: "Delete book" }).click();
+
+    expect(onDelete).toHaveBeenCalledWith("res-42");
   });
 });

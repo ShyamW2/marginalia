@@ -52,3 +52,9 @@
   padding-top: 0.35rem;
   border-top: 1px solid var(--color-border);
 }
+
+/* Pushed to the row's far end — the one destructive control, kept apart
+   from the four identity actions rather than sitting flush beside them. */
+.deleteButton {
+  margin-left: auto;
+}

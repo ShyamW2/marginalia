@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import type { ResourceSummary } from "@marginalia/shared";
 import { captureOverlayOrigin, setPendingOverlayOrigin } from "../controls/overlayOrigin.js";
 import { IconButton } from "../controls/IconButton.js";
-import { BrainIcon, MagnifierIcon, PlayIcon, PublishIcon } from "../controls/icons.js";
+import { BrainIcon, MagnifierIcon, PlayIcon, PublishIcon, TrashIcon } from "../controls/icons.js";
 import styles from "./BookActionCard.module.css";
 
 /** M22.6 §D: how close the card is allowed to sit to the viewport edge before
@@ -25,6 +25,10 @@ interface BookActionCardProps {
   resource: ResourceSummary;
   publishing: boolean;
   onPublish: (resourceId: string) => void;
+  /** M42: opens `DeleteConfirmDialog` — the card itself never deletes
+   * directly, matching every other destructive-delete call site in the app
+   * (decisions.md 2026-08-24, M30 E1). */
+  onDelete: (resourceId: string) => void;
   /** Which side of the book it hangs from. The Desk looks *down* at a cover
    * and hangs it below; the shelf looks at an upright spine and floats it
    * over the book's head. */
@@ -58,6 +62,7 @@ export function BookActionCard({
   resource,
   publishing,
   onPublish,
+  onDelete,
   placement = "below",
   openOriginRef,
   onCaptureOpening,
@@ -195,6 +200,19 @@ export function BookActionCard({
           onClick={(e) => {
             e.stopPropagation();
             onPublish(resource.id);
+          }}
+        />
+        {/* Separated from the four identity actions above, not a fifth
+            peer — the one destructive control on this card. */}
+        <IconButton
+          variant="danger"
+          size="sm"
+          className={styles.deleteButton}
+          icon={<TrashIcon size={16} />}
+          label="Delete book"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(resource.id);
           }}
         />
       </div>
