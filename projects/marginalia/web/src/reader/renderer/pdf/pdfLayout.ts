@@ -22,15 +22,21 @@ export function shouldShowSpread(containerWidth: number, naturalPageWidth: numbe
   return containerWidth / (naturalPageWidth * 2) >= MIN_SPREAD_SCALE;
 }
 
-export type FitMode = "fit-width" | "fit-page";
+/** M43 §C2: the two explicit states the native pane's fit toggle cycles
+ * through — `fit-page` shows one page fit to both axes, `fit-spread` shows
+ * two, also fit to both axes (never just one, per §7.6's amended "one
+ * paginated state"). The old third value, `fit-width` (width fills the
+ * container, height overflows freely), is retired: nothing reachable from
+ * the chrome asks for it any more, and `computeFitScale` below always fits
+ * both axes now — see decisions.md 2026-09-08 / TASKS.md M43 §C2/§D for why
+ * a width-only scale no longer has a caller. */
+export type FitMode = "fit-page" | "fit-spread";
 
-/** `fit-width`: the page(s) width fills the container, height overflows
- * freely. `fit-page`: the whole page must also fit vertically, so it's
- * `min(widthScale, heightScale)` — always `<=` what `fit-width` would give
- * for the same inputs. `pagesAcross` divides the width budget between 1 or
- * 2 side-by-side pages. */
+/** Always `min(widthScale, heightScale)` — both the single-page and the
+ * spread state fit both axes edge-to-edge (M43 §C2); `pagesAcross` divides
+ * the width budget between 1 or 2 side-by-side pages, and is the only thing
+ * that distinguishes the two states' scale. */
 export function computeFitScale(
-  fitMode: FitMode,
   containerWidth: number,
   containerHeight: number,
   naturalPageWidth: number,
@@ -38,7 +44,6 @@ export function computeFitScale(
   pagesAcross: 1 | 2,
 ): number {
   const widthScale = naturalPageWidth > 0 ? containerWidth / (naturalPageWidth * pagesAcross) : 1;
-  if (fitMode === "fit-width") return widthScale;
   const heightScale = naturalPageHeight > 0 ? containerHeight / naturalPageHeight : widthScale;
   return Math.min(widthScale, heightScale);
 }

@@ -118,6 +118,8 @@ describe("PdfRenderer", () => {
 
   it("has the M40 §D capability profile: fixed pages, no reflow, real text selection", () => {
     const renderer = new PdfRenderer();
+    // M43 §D1: `advance` starts "scroll" (not "image") before the first
+    // `relayout()` — see that field's own comment.
     expect(renderer.capabilities).toEqual({
       spread: false,
       fontScale: false,
@@ -126,7 +128,7 @@ describe("PdfRenderer", () => {
       pageNumbers: false,
       textSelection: true,
       zoom: true,
-      advance: "image",
+      advance: "scroll",
     });
   });
 
@@ -632,33 +634,49 @@ describe("PdfRenderer — section-aware (M41 §A2)", () => {
   });
 });
 
-describe("PdfRenderer — zoom/layout (M41 §C1)", () => {
+describe("PdfRenderer — zoom/layout (M41 §C1, amended M43 §C2/§D1–D2)", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("zooming in past the fit-width scale switches to continuous scroll; zooming back down snaps to paginated", async () => {
+  it("defaults to continuous scroll — the one paginated state needs an explicit, legible fit-spread selection", async () => {
     const bytes = loadFixturePdf();
     stubResourceFetch(bytes);
 
     const container = document.createElement("div");
-    // Small on purpose — a low fit scale means only a few zoomIn() steps are
-    // needed to cross it.
-    mockContainerSize(container, 200, 260);
+    // Comfortably wide enough for a legible spread, so the only thing
+    // keeping this out of the paginated state is the toggle's own default.
+    mockContainerSize(container, 1600, 1000);
     const renderer = new PdfRenderer();
     await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
 
-    expect(renderer.capabilities.advance).toBe("image");
-    expect(renderer.getZoomMode()).toBe("fit-width");
+    expect(renderer.capabilities.advance).toBe("scroll");
+    expect(renderer.capabilities.spread).toBe(false);
+    expect(renderer.getZoomMode()).toBe("fit-page");
+
+    renderer.destroy();
+  });
+
+  it("selecting fit-spread at a legible width is the one paginated state; zooming in drops back to scroll, zooming out snaps back", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    const container = document.createElement("div");
+    mockContainerSize(container, 1600, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
 
     let layoutChanges = 0;
     renderer.onLayoutChanged(() => {
       layoutChanges += 1;
     });
 
-    for (let i = 0; i < 20 && renderer.capabilities.advance !== "scroll"; i++) {
-      renderer.zoomIn();
-    }
+    renderer.setZoomMode("fit-spread");
+    expect(renderer.capabilities.advance).toBe("image");
+    expect(renderer.capabilities.spread).toBe(true);
+    expect(renderer.getZoomMode()).toBe("fit-spread");
+
+    renderer.zoomIn();
     expect(renderer.capabilities.advance).toBe("scroll");
     expect(renderer.getZoomMode()).toBe("free");
     // Let the async DOM rebuild the capability flip already committed to
@@ -670,11 +688,28 @@ describe("PdfRenderer — zoom/layout (M41 §C1)", () => {
     }
     expect(layoutChanges).toBeGreaterThan(0);
 
-    for (let i = 0; i < 20 && renderer.capabilities.advance !== "image"; i++) {
-      renderer.zoomOut();
-    }
+    renderer.zoomOut();
     expect(renderer.capabilities.advance).toBe("image");
-    expect(renderer.getZoomMode()).toBe("fit-width");
+    expect(renderer.getZoomMode()).toBe("fit-spread");
+
+    renderer.destroy();
+  });
+
+  it("fit-spread resolves to 1-up (no paginated state) at a width too narrow for a legible spread", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    const container = document.createElement("div");
+    mockContainerSize(container, 200, 260);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    renderer.setZoomMode("fit-spread");
+    expect(renderer.getZoomMode()).toBe("fit-spread");
+    // Selected, but not legible at this width — same fallback the
+    // capability-profile table (PDF.md §7.6) already documented.
+    expect(renderer.capabilities.advance).toBe("scroll");
+    expect(renderer.capabilities.spread).toBe(false);
 
     renderer.destroy();
   });
@@ -692,7 +727,7 @@ describe("PdfRenderer — continuous zoom (M42 §D1)", () => {
     mockContainerSize(container, 800, 1000);
     const renderer = new PdfRenderer();
     await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
-    expect(renderer.getZoomMode()).toBe("fit-width");
+    expect(renderer.getZoomMode()).toBe("fit-page");
 
     let layoutChanges = 0;
     renderer.onLayoutChanged(() => (layoutChanges += 1));
@@ -750,11 +785,15 @@ describe("PdfRenderer — continuous zoom (M42 §D1)", () => {
     renderer.onLayoutChanged(() => (layoutChanges += 1));
 
     renderer.setZoomScale(0.01); // far below any real fit scale
-    expect(renderer.getZoomMode()).toBe("fit-width");
+    expect(renderer.getZoomMode()).toBe("fit-page");
 
     await waitFor(() => layoutChanges > 0);
-    expect(renderer.getZoomMode()).toBe("fit-width");
-    expect(renderer.capabilities.advance).toBe("image");
+    expect(renderer.getZoomMode()).toBe("fit-page");
+    // M43 §D1: fit-page (never selected as fit-spread here) is never the
+    // paginated state — this container would have been legible for a
+    // spread under the old auto-derived model, which is exactly what this
+    // test used to assert; scroll is now right regardless of width.
+    expect(renderer.capabilities.advance).toBe("scroll");
 
     renderer.destroy();
   });
@@ -763,9 +802,19 @@ describe("PdfRenderer — continuous zoom (M42 §D1)", () => {
     const bytes = loadFixturePdf();
     stubResourceFetch(bytes);
     const container = document.createElement("div");
-    mockContainerSize(container, 800, 1000);
+    mockContainerSize(container, 1600, 1000);
     const renderer = new PdfRenderer();
     await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    // M43 §D2: `applyZoomPreview` only has a wrapper to scale in the one
+    // paginated state (an explicit, legible fit-spread) — every other state
+    // is continuous scroll, which mounts a scroll host instead (see
+    // `applyZoomPreview`'s own comment on why it's a no-op there).
+    let layoutChanges = 0;
+    renderer.onLayoutChanged(() => (layoutChanges += 1));
+    renderer.setZoomMode("fit-spread");
+    await waitFor(() => layoutChanges > 0);
+    expect(renderer.capabilities.advance).toBe("image");
 
     const wrapper = container.firstElementChild as HTMLElement;
     expect(wrapper.style.transform).toBe("");
@@ -779,23 +828,84 @@ describe("PdfRenderer — continuous zoom (M42 §D1)", () => {
     renderer.destroy();
   });
 
-  it("a real (non-Ctrl) wheel scroll passes through untouched — only Ctrl/Cmd+wheel zooms", async () => {
+  it("a real (non-Ctrl) wheel scroll passes through untouched in continuous scroll — only Ctrl/Cmd+wheel zooms", async () => {
     const bytes = loadFixturePdf();
     stubResourceFetch(bytes);
     const container = document.createElement("div");
     mockContainerSize(container, 800, 1000);
     const renderer = new PdfRenderer();
     await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    expect(renderer.capabilities.advance).toBe("scroll");
 
     const plain = new WheelEvent("wheel", { deltaY: -100, cancelable: true });
     container.dispatchEvent(plain);
     expect(plain.defaultPrevented).toBe(false);
-    expect(renderer.getZoomMode()).toBe("fit-width");
+    expect(renderer.getZoomMode()).toBe("fit-page");
 
     const ctrlZoom = new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, cancelable: true });
     container.dispatchEvent(ctrlZoom);
     expect(ctrlZoom.defaultPrevented).toBe(true);
     expect(renderer.getZoomMode()).toBe("free");
+
+    renderer.destroy();
+  });
+
+  it("M43 §D3: a plain wheel scroll in the one paginated (spread) state turns the page instead, filtering sub-threshold deltas and cooldown-window repeats", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+    const container = document.createElement("div");
+    mockContainerSize(container, 1600, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    let layoutChanges = 0;
+    renderer.onLayoutChanged(() => (layoutChanges += 1));
+    renderer.setZoomMode("fit-spread");
+    await waitFor(() => layoutChanges > 0);
+    expect(renderer.capabilities.advance).toBe("image");
+
+    const nextSpy = vi.spyOn(renderer, "next");
+
+    // Below the threshold — not a real turn gesture (some trackpads fire a
+    // near-zero tick on touch-down) — ignored entirely.
+    const tiny = new WheelEvent("wheel", { deltaY: 2, cancelable: true });
+    container.dispatchEvent(tiny);
+    expect(tiny.defaultPrevented).toBe(false);
+    expect(nextSpy).not.toHaveBeenCalled();
+
+    // A real downward scroll turns the page forward...
+    const down = new WheelEvent("wheel", { deltaY: 100, cancelable: true });
+    container.dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+    expect(nextSpy).toHaveBeenCalledTimes(1);
+
+    // ...and a second one immediately after, inside the cooldown, is
+    // swallowed — one turn per gesture, not one per wheel tick.
+    const down2 = new WheelEvent("wheel", { deltaY: 100, cancelable: true });
+    container.dispatchEvent(down2);
+    expect(nextSpy).toHaveBeenCalledTimes(1);
+
+    renderer.destroy();
+  });
+
+  it("M43 §D3: an upward scroll in the paginated state turns the page backward", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+    const container = document.createElement("div");
+    mockContainerSize(container, 1600, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    let layoutChanges = 0;
+    renderer.onLayoutChanged(() => (layoutChanges += 1));
+    renderer.setZoomMode("fit-spread");
+    await waitFor(() => layoutChanges > 0);
+
+    const prevSpy = vi.spyOn(renderer, "prev");
+    const up = new WheelEvent("wheel", { deltaY: -100, cancelable: true });
+    container.dispatchEvent(up);
+    expect(up.defaultPrevented).toBe(true);
+    expect(prevSpy).toHaveBeenCalledTimes(1);
 
     renderer.destroy();
   });
@@ -814,6 +924,9 @@ describe("PdfRenderer — spread advance (M41 §C1)", () => {
     mockContainerSize(container, 6000, 4000);
     const renderer = new PdfRenderer();
     await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    // M43 §C2: spread is no longer automatic from container width alone —
+    // it needs the explicit toggle too.
+    renderer.setZoomMode("fit-spread");
 
     expect(renderer.capabilities.spread).toBe(true);
     // Legacy (no section data) path: `currentLocation().offset` is

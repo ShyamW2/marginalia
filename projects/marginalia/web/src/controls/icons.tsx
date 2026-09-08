@@ -272,24 +272,25 @@ export function ZoomOutIcon({ size = 18 }: IconProps) {
   );
 }
 
-/** A page outline whose full extent the width bracket spans — the "width"
- * half of fit-width/fit-page, the same fixed page-outline base
- * `RenderModeIcon` already uses. */
-export function FitWidthIcon({ size = 18 }: IconProps) {
+/** M43 §C2: the native pane's single/spread fit toggle, replacing the old
+ * separate fit-width/fit-page buttons — the operator wants exactly one
+ * explicit two-state choice (one page fit to both axes, or a legible 2-up
+ * spread also fit to both axes), not a third width-only concept. One page
+ * outline with the "fits both axes" bracket for the resting state; a second
+ * half-width leaf beside it, brackets dropped (the pair reads as a spread on
+ * its own), for `spread` — the same "affordance for the mechanism, not a
+ * literal metaphor" spirit as `ScrollModeIcon`/`RenderModeIcon`. */
+export function FitLayoutIcon({ size = 18, spread = false }: IconProps & { spread?: boolean }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="7" y="3.5" width="10" height="17" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
-      <path d="M3.5 12h3.5M17 12h3.5M5 9.5 2.5 12 5 14.5M19 9.5 21.5 12 19 14.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-/** Same page outline, bracket rotated onto the vertical extent — "fit
- * page" fits height too, not just width. */
-export function FitPageIcon({ size = 18 }: IconProps) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="7" y="4.5" width="10" height="15" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      {spread ? (
+        <>
+          <rect x="2.5" y="4.5" width="9" height="15" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
+          <rect x="12.5" y="4.5" width="9" height="15" rx="1.4" stroke="currentColor" strokeWidth="1.6" />
+        </>
+      ) : (
+        <rect x="7" y="4.5" width="10" height="15" rx="1.6" stroke="currentColor" strokeWidth="1.6" />
+      )}
       <path d="M12 1v2.5M9.5 2 12 0.5 14.5 2M12 23v-2.5M9.5 22l2.5 1.5 2.5-1.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );

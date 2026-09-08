@@ -105,10 +105,13 @@ export interface ResourceRenderer {
   applyTheme(vars: ReaderThemeVars): void;
   setFontScale(scale: number): void;
   setMargins(px: number): void;
-  /** M41 §C1. No-op under `capabilities.zoom === false`. "free" only ever
-   *  results from `zoomIn`/`zoomOut` stepping past the active fit mode's own
-   *  scale — there is no `setZoomMode("free")`. */
-  setZoomMode(mode: "fit-width" | "fit-page"): void;
+  /** M41 §C1, amended M43 §C2. No-op under `capabilities.zoom === false`.
+   *  "free" only ever results from `zoomIn`/`zoomOut` stepping past the
+   *  active fit mode's own scale — there is no `setZoomMode("free")`.
+   *  `fit-page` fits one page to both axes; `fit-spread` fits two, also to
+   *  both axes, resolving to a single page at a width too narrow for a
+   *  legible spread (`shouldShowSpread`). */
+  setZoomMode(mode: "fit-page" | "fit-spread"): void;
   zoomIn(): void;
   zoomOut(): void;
   /** M42 §D1: the continuous counterpart to `zoomIn`/`zoomOut` — an

@@ -57,8 +57,7 @@ import { Slider } from "../controls/Slider.js";
 import { ExpandingCluster } from "../controls/ExpandingCluster.js";
 import {
   BrainIcon,
-  FitPageIcon,
-  FitWidthIcon,
+  FitLayoutIcon,
   FullscreenIcon,
   MagnifierIcon,
   PublishIcon,
@@ -781,7 +780,7 @@ export function ReaderView({
   // where calling the renderer's own `getZoomPercent()` on the
   // `EpubRenderer | PdfRenderer` union wouldn't type-check); null for an
   // EPUB, where `capabilities.zoom` is always false anyway.
-  const [pdfZoom, setPdfZoom] = useState<{ mode: "fit-width" | "fit-page" | "free"; percent: number } | null>(null);
+  const [pdfZoom, setPdfZoom] = useState<{ mode: "fit-page" | "fit-spread" | "free"; percent: number } | null>(null);
   const pdfZoomRef = useRef(pdfZoom);
   useEffect(() => {
     pdfZoomRef.current = pdfZoom;
@@ -3941,7 +3940,7 @@ export function ReaderView({
   // internal state). `scale="log2"` so a drag feels the same at both ends of
   // the 0.25x–4x range, matching a screen-space zoom's own feel rather than
   // a linear percent. Shown only under `capabilities.zoom` at each call
-  // site, same as the fit-width/fit-page/±buttons beside it.
+  // site, same as the fit toggle/±buttons beside it.
   const zoomSlider = (
     <Slider
       ariaLabel="Zoom"
@@ -4575,16 +4574,12 @@ export function ReaderView({
             {capabilities.zoom && (
               <>
                 <IconButton
-                  icon={<FitWidthIcon />}
-                  label="Fit width"
-                  pressed={pdfZoom?.mode === "fit-width"}
-                  onClick={() => rendererRef.current?.setZoomMode("fit-width")}
-                />
-                <IconButton
-                  icon={<FitPageIcon />}
-                  label="Fit page"
-                  pressed={pdfZoom?.mode === "fit-page"}
-                  onClick={() => rendererRef.current?.setZoomMode("fit-page")}
+                  icon={<FitLayoutIcon spread={pdfZoom?.mode === "fit-spread"} />}
+                  label={pdfZoom?.mode === "fit-spread" ? "Fit single page" : "Fit two-page spread"}
+                  pressed={pdfZoom?.mode === "fit-spread"}
+                  onClick={() =>
+                    rendererRef.current?.setZoomMode(pdfZoom?.mode === "fit-spread" ? "fit-page" : "fit-spread")
+                  }
                 />
                 <IconButton icon={<ZoomOutIcon />} label="Zoom out" onClick={() => rendererRef.current?.zoomOut()} />
                 {zoomSlider}
@@ -4658,16 +4653,12 @@ export function ReaderView({
             {capabilities.zoom && (
               <>
                 <IconButton
-                  icon={<FitWidthIcon />}
-                  label="Fit width"
-                  pressed={pdfZoom?.mode === "fit-width"}
-                  onClick={() => rendererRef.current?.setZoomMode("fit-width")}
-                />
-                <IconButton
-                  icon={<FitPageIcon />}
-                  label="Fit page"
-                  pressed={pdfZoom?.mode === "fit-page"}
-                  onClick={() => rendererRef.current?.setZoomMode("fit-page")}
+                  icon={<FitLayoutIcon spread={pdfZoom?.mode === "fit-spread"} />}
+                  label={pdfZoom?.mode === "fit-spread" ? "Fit single page" : "Fit two-page spread"}
+                  pressed={pdfZoom?.mode === "fit-spread"}
+                  onClick={() =>
+                    rendererRef.current?.setZoomMode(pdfZoom?.mode === "fit-spread" ? "fit-page" : "fit-spread")
+                  }
                 />
                 <IconButton icon={<ZoomOutIcon />} label="Zoom out" onClick={() => rendererRef.current?.zoomOut()} />
                 {zoomSlider}

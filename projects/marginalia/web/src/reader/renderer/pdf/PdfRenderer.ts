@@ -124,6 +124,14 @@ const ZOOM_EPSILON = 0.005;
 // mode, before a mounted page is torn back down to a placeholder — keeps a
 // small scroll from constantly promoting/demoting the same page.
 const CONTINUOUS_BUFFER_VIEWPORTS = 1;
+// M43 §D3: the one paginated state (a legible 2-up spread) has no scroll
+// position to move, so a plain wheel/trackpad input there turns the page
+// instead. A small deltaY threshold keeps a stray near-zero tick (some
+// trackpads fire one on touch-down) from turning a page nobody meant to
+// move; the cooldown caps it at one turn per gesture rather than one per
+// wheel event, the same problem a fast trackpad swipe fires many of.
+const WHEEL_TURN_THRESHOLD = 4;
+const WHEEL_TURN_COOLDOWN_MS = 500;
 
 // Narrow, local shapes for what this file uses from pdfjs-dist's proxies —
 // same pattern as server/src/library/pdf/extract.ts, which keeps the
@@ -287,6 +295,11 @@ function applyMarkAttrs(el: HTMLElement, attrs: Record<string, string>): void {
  * (§7.6) as the reader zooms past the active fit mode's own scale.
  */
 export class PdfRenderer implements ResourceRenderer {
+  // M43 §D1 (PDF.md §7.6 amended): scroll is the native pane's default —
+  // this only matters before the first `relayout()` (in `mount()`) resolves
+  // and recomputes it for real; kept in sync with that default rather than
+  // left at the old "image" so nothing reads a stale paginated capability in
+  // the gap.
   capabilities: RendererCapabilities = {
     spread: false,
     fontScale: false,
@@ -295,7 +308,7 @@ export class PdfRenderer implements ResourceRenderer {
     pageNumbers: false,
     textSelection: true,
     zoom: true,
-    advance: "image",
+    advance: "scroll",
   };
 
   private container: HTMLElement | null = null;
@@ -341,7 +354,10 @@ export class PdfRenderer implements ResourceRenderer {
   }
 
   // ── M41 §C1: layout/zoom state ───────────────────────────────────────
-  private fitMode: FitMode = "fit-width";
+  // M43 §C2: the explicit single/spread choice — `fit-width` (width fills
+  // the container, height overflows) is retired, so this defaults to the
+  // single-page state rather than the old width-only one.
+  private fitMode: FitMode = "fit-page";
   /** `null` = tracking the active fit mode's own live scale. Non-null = the
    * reader has stepped away via `zoomIn`/`zoomOut`, past which the view
    * becomes continuous scroll (`relayout`'s own rule, PDF.md §7.6). */
@@ -377,6 +393,9 @@ export class PdfRenderer implements ResourceRenderer {
    * `relayout()` runs. */
   private pendingZoomTarget: number | null = null;
   private zoomCommitTimer: number | null = null;
+  /** M43 §D3: non-null while a wheel-driven page turn's cooldown is live —
+   * see `WHEEL_TURN_COOLDOWN_MS`. */
+  private wheelTurnCooldownTimer: number | null = null;
 
   // ── M41 §C1: continuous-scroll state (non-null only while
   // capabilities.advance === "scroll") ─────────────────────────────────
@@ -515,6 +534,10 @@ export class PdfRenderer implements ResourceRenderer {
     if (this.zoomCommitTimer !== null) {
       clearTimeout(this.zoomCommitTimer);
       this.zoomCommitTimer = null;
+    }
+    if (this.wheelTurnCooldownTimer !== null) {
+      clearTimeout(this.wheelTurnCooldownTimer);
+      this.wheelTurnCooldownTimer = null;
     }
     this.container?.removeEventListener("wheel", this.handleWheel);
     this.container?.removeEventListener("click", this.handleContainerClick);
@@ -750,7 +773,7 @@ export class PdfRenderer implements ResourceRenderer {
     return () => this.deselectListeners.delete(cb);
   }
 
-  getZoomMode(): "fit-width" | "fit-page" | "free" {
+  getZoomMode(): "fit-page" | "fit-spread" | "free" {
     return this.userScale === null ? this.fitMode : "free";
   }
 
@@ -1176,10 +1199,26 @@ export class PdfRenderer implements ResourceRenderer {
   }
 
   private handleWheel = (event: WheelEvent): void => {
-    if (!(event.ctrlKey || event.metaKey)) return;
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      const base = this.pendingZoomTarget ?? this.userScale ?? this.currentFitScale;
+      this.setZoomScale(wheelZoomTarget(base, event.deltaY));
+      return;
+    }
+    // M43 §D3 (PDF.md §7.6 amended): the one paginated state — a legible
+    // 2-up spread at the fit scale — has no scroll position for a plain
+    // wheel/trackpad input to move, so it turns the page instead. Every
+    // other state is continuous scroll by default (D1), where a plain wheel
+    // already does the right thing via native scrolling of `scrollHost` and
+    // must not be intercepted here.
+    if (this.capabilities.advance !== "image") return;
+    if (Math.abs(event.deltaY) <= WHEEL_TURN_THRESHOLD) return;
     event.preventDefault();
-    const base = this.pendingZoomTarget ?? this.userScale ?? this.currentFitScale;
-    this.setZoomScale(wheelZoomTarget(base, event.deltaY));
+    if (this.wheelTurnCooldownTimer !== null) return;
+    this.wheelTurnCooldownTimer = window.setTimeout(() => {
+      this.wheelTurnCooldownTimer = null;
+    }, WHEEL_TURN_COOLDOWN_MS);
+    void (event.deltaY > 0 ? this.next() : this.prev());
   };
 
   // ── Internals: layout ────────────────────────────────────────────────
@@ -1197,13 +1236,20 @@ export class PdfRenderer implements ResourceRenderer {
   }
 
   /**
-   * M41 §C1 (PDF.md §7.6): the central layout decision, called from the
-   * `ResizeObserver`, `setZoomMode`/`zoomIn`/`zoomOut`, and `renderPage`.
-   * Continuous scroll is *derived* state, never a separately-tracked flag
-   * that could drift from it: `advance` is `"scroll"` exactly when
-   * `userScale` is non-null, recomputed here every time, so a container
-   * growing back up (or zooming back down) to meet the fit scale snaps back
-   * to paginated single/spread automatically in either direction.
+   * M41 §C1 (PDF.md §7.6), amended M43 §C2/§D1–D2: the central layout
+   * decision, called from the `ResizeObserver`, `setZoomMode`/`zoomIn`/
+   * `zoomOut`, and `renderPage`. `advance` is *derived*, never a
+   * separately-tracked flag that could drift from its inputs: `"scroll"` is
+   * the default, and the one exception — paginated, spread — holds exactly
+   * while three things are all true: the reader hasn't stepped away via
+   * `zoomIn`/`zoomOut` (`userScale === null`), the explicit fit toggle is
+   * set to `"fit-spread"` (§C2 — no longer an automatic, width-only
+   * decision), and the container is actually wide enough for it
+   * (`shouldShowSpread`). Recomputed here every time, so leaving any one of
+   * those three conditions — zooming in, narrowing the pane, switching the
+   * toggle back to `"fit-page"` — snaps back to continuous scroll
+   * automatically, the same direction-agnostic snap the pre-M43 model had
+   * for its own (inverted) default.
    */
   private async relayout(): Promise<void> {
     const container = this.container;
@@ -1224,20 +1270,32 @@ export class PdfRenderer implements ResourceRenderer {
     const containerHeight = container.clientHeight;
     const natural = this.naturalPageSizes[this.pageIndex] ?? { width: 0, height: 0 };
 
+    let legibleSpread = false;
     if (containerWidth <= 0) {
       // Not yet laid out (or jsdom, which never lays out at all) —
       // FALLBACK_SCALE keeps every existing test's pixel expectations
-      // exactly what they were before this landed.
+      // exactly what they were before this landed. Also kept paginated
+      // below (M43 §D1's own fallback) rather than defaulting to scroll:
+      // there is no sensible continuous-scroll host to build without a
+      // real width to lay it out against, and a real container reports its
+      // real width once `ResizeObserver` fires, at which point `relayout()`
+      // re-runs and picks up the real default.
       this.pagesAcross = 1;
       this.currentFitScale = FALLBACK_SCALE;
     } else {
-      this.pagesAcross = this.userScale === null && shouldShowSpread(containerWidth, natural.width) ? 2 : 1;
+      legibleSpread = shouldShowSpread(containerWidth, natural.width);
+      // M43 §C2: pagesAcross now follows the explicit toggle, not container
+      // width alone — `"fit-spread"` resolves to 1-up at a width too narrow
+      // for a legible spread (PDF.md §7.6's capability table already
+      // documented that fallback), and `"fit-page"` never auto-spreads
+      // regardless of how wide the container is.
+      this.pagesAcross = this.userScale === null && this.fitMode === "fit-spread" && legibleSpread ? 2 : 1;
       // Stable, even-aligned pairing (0|1, 2|3, ...) whenever a spread is
       // showing — idempotent if already even, and what re-pairs a page that
       // was alone (odd index) the moment a spread becomes available.
       if (this.pagesAcross === 2 && this.pageIndex % 2 === 1) this.pageIndex -= 1;
       this.currentFitScale =
-        computeFitScale(this.fitMode, containerWidth, containerHeight, natural.width, natural.height, this.pagesAcross) ||
+        computeFitScale(containerWidth, containerHeight, natural.width, natural.height, this.pagesAcross) ||
         FALLBACK_SCALE;
     }
 
@@ -1249,7 +1307,14 @@ export class PdfRenderer implements ResourceRenderer {
     }
 
     this.effectiveScale = this.userScale ?? this.currentFitScale;
-    const nextAdvance: "image" | "scroll" = this.userScale !== null ? "scroll" : "image";
+    // M43 §D1/§D2 (PDF.md §7.6 amended): scroll is the default; the one
+    // paginated exception is a legible spread explicitly selected via §C2's
+    // toggle, at the fit-mode's own (unzoomed) scale. An unmeasured
+    // container keeps the single-page paginated fallback above rather than
+    // defaulting to scroll — see that branch's own comment.
+    const paginated =
+      containerWidth <= 0 || (this.userScale === null && this.fitMode === "fit-spread" && legibleSpread);
+    const nextAdvance: "image" | "scroll" = paginated ? "image" : "scroll";
     this.capabilities = {
       ...this.capabilities,
       advance: nextAdvance,

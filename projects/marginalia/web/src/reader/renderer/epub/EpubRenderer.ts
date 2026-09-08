@@ -603,7 +603,7 @@ export class EpubRenderer implements ResourceRenderer {
 
   /** M41 §C1: zoom is native-PDF-only (`capabilities.zoom` is always false
    * here) — EPUB reflows instead, via `setFontScale`. */
-  setZoomMode(_mode: "fit-width" | "fit-page"): void {}
+  setZoomMode(_mode: "fit-page" | "fit-spread"): void {}
   zoomIn(): void {}
   zoomOut(): void {}
   /** M42 §D1's continuous counterpart — same no-op, same reason. */

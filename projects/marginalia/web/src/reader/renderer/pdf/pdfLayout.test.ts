@@ -21,25 +21,27 @@ describe("shouldShowSpread", () => {
   });
 });
 
+// M43 §C2: fit-width (width fills the container, height overflows freely)
+// retired — both remaining states fit both axes, so `computeFitScale` no
+// longer takes a mode at all.
 describe("computeFitScale", () => {
-  it("fit-width ignores container height entirely", () => {
-    const withTallHeight = computeFitScale("fit-width", 1000, 5000, 500, 700, 1);
-    const withShortHeight = computeFitScale("fit-width", 1000, 100, 500, 700, 1);
-    expect(withTallHeight).toBe(withShortHeight);
-    expect(withTallHeight).toBe(2); // 1000 / (500 * 1)
-  });
+  it("is min(widthScale, heightScale) — the binding axis can be either", () => {
+    const widthBound = computeFitScale(1000, 5000, 500, 700, 1);
+    expect(widthBound).toBeCloseTo(2); // 1000 / 500, comfortably under 5000/700
 
-  it("fit-page is min(widthScale, heightScale), always <= fit-width for the same inputs", () => {
-    const fitWidth = computeFitScale("fit-width", 1000, 400, 500, 700, 1);
-    const fitPage = computeFitScale("fit-page", 1000, 400, 500, 700, 1);
-    expect(fitPage).toBeLessThanOrEqual(fitWidth);
-    expect(fitPage).toBeCloseTo(400 / 700); // height is the binding constraint here
+    const heightBound = computeFitScale(1000, 400, 500, 700, 1);
+    expect(heightBound).toBeCloseTo(400 / 700); // height is the binding constraint here
   });
 
   it("halves the effective per-page width budget for a 2-up spread", () => {
-    const single = computeFitScale("fit-width", 1000, 400, 500, 700, 1);
-    const spread = computeFitScale("fit-width", 1000, 400, 500, 700, 2);
+    const single = computeFitScale(1000, 5000, 500, 700, 1);
+    const spread = computeFitScale(1000, 5000, 500, 700, 2);
     expect(spread).toBeCloseTo(single / 2);
+  });
+
+  it("a spread still fits both axes, not just the halved width", () => {
+    const spread = computeFitScale(1000, 400, 500, 700, 2);
+    expect(spread).toBeCloseTo(400 / 700); // height binds even at 2-up
   });
 });
 
