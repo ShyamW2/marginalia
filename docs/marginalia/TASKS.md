@@ -2063,10 +2063,29 @@ touched.
       pixel dimensions came back 553/1106/1383 for a 553px-CSS-wide page (1×, 2×, and the
       2.5×-capped 3× case), CSS width identical at all three, no console errors, and a
       screenshot at 2× shows crisp text with highlight alignment unaffected.
+      ⚠️ **Corrective, found live 2026-09-08 (operator report against the real app): the
+      default, non-zoomed view now showed only a small top-left fraction of the page,
+      magnified by roughly the DPR multiplier.** Root cause was `<canvas>` being a
+      *replaced* element: `position: absolute; inset: 0` (no explicit CSS width/height)
+      stretches a plain `<div>` to fill its containing block, but a replaced element with
+      over-constrained insets keeps its *intrinsic* size (its `width`/`height` content
+      attributes — the backing store) instead, letting an inset go slack. Before this task,
+      backing-store size and desired CSS size were the same number, so this never showed;
+      once DPR scaling made them diverge, the canvas rendered at its full backing-store size
+      in CSS pixels, cropped by `pageDiv`'s smaller box. Confirmed with an isolated
+      Playwright repro (two bare `<canvas>`s, one styled only `inset:0`, one also given
+      explicit CSS width/height) before touching the real file — full root-cause writeup and
+      repro numbers in NOTES.md "M43 §B1 corrective + §C1".
+      Fix: `renderPageInto` now also sets `canvas.style.width`/`canvas.style.height`
+      explicitly to the unscaled `viewport` size. Extended the existing §B1 DPR unit test to
+      assert the canvas's own inline CSS size, not just `pageDiv`'s and the backing store's
+      (the previous test's blind spot — it never would have caught this). Live-verified
+      (Playwright, real `deviceScaleFactor: 2`, real PDF): canvas backing store 1306×1847,
+      canvas CSS box 653×924 matching `pageDiv`, full spread visible, crisp text.
 
 #### C. Zoom chrome
 
-- [ ] **C1.** The zoom-percentage control's popup renders beneath the reader strip's tab
+- [x] **C1.** The zoom-percentage control's popup renders beneath the reader strip's tab
       cluster instead of above the reading pane (operator screenshot). Not yet
       root-caused — no stacking-context read done this session. Candidate cause: a
       missing/lower `z-index` on the zoom popup relative to a sibling element that opens
@@ -2079,6 +2098,19 @@ touched.
       whatever pattern the existing floating-chrome elements already use.
       _Acceptance: opening the zoom popup at any pane width shows it fully above the tab
       cluster and the reading pane, never clipped or hidden beneath either._
+      Done 2026-09-08: live devtools/Playwright read found a different root cause than the
+      candidate above — z-index was never the problem on the paths checked. `SliderDial`'s
+      `placement` prop defaults to `"below"` (grows the popup *down* from its trigger); the
+      reading-progress footer slider a few lines above `zoomSlider` in `ReaderView.tsx`
+      already passes `dialPlacement="above"` for exactly this reason (its own CSS comment:
+      a bottom-docked trigger "grows the dial upward instead, or it renders off-screen").
+      `zoomSlider` — shared by the fullscreen pebble and the windowed footer, both
+      bottom-docked — never got that prop, so its popup rendered entirely below the
+      viewport's bottom edge, invisible. Fix: added `dialPlacement="above"` to `zoomSlider`.
+      Live-verified (Playwright, both the windowed footer and the fullscreen pebble, real
+      PDF): dragging the slider now shows "132% · Release to set · Esc to cancel" floating
+      above the trigger, fully over the reading pane. Full writeup in NOTES.md "M43 §B1
+      corrective + §C1".
 - [ ] **C2.** Replace the two separate fit-width/fit-page `IconButton`s
       (`ReaderView.tsx`, ~4547–4562) with a single toggle that cycles fit-single-page →
       fit-two-page-spread → (stays there; further zoom is free via the slider/pinch/drag,
@@ -2096,6 +2128,27 @@ touched.
       same test `MIN_SPREAD_SCALE` already applies — fits two pages edge-to-edge; from
       either state the zoom slider/pinch/drag still free-zooms away from the fit scale
       exactly as today._
+- [x] **C3.** Whenever part of a page doesn't fit the reading pane — i.e. the pane is
+      zoomed past its own fit scale — the pane scrolls on both axes: vertically to move
+      through the page and on into the next/previous one, horizontally to reach a line
+      that doesn't fit the pane's width.
+      _Acceptance: zoomed in far enough that a line's right edge is cut off, a horizontal
+      scroll (wheel/trackpad/scrollbar) reaches it; scrolling vertically at that zoom moves
+      down the page and across the page boundary into the next one; back at or below the
+      fit scale, no scrolling is needed or offered — the whole page already fits._
+      Done 2026-09-08: already satisfied by M41 §C1's existing derived-state model, no code
+      change needed. `relayout()` sets `capabilities.advance = "scroll"` exactly when
+      `userScale !== null` (zoomed past fit scale), and in that state
+      `rebuildContinuousColumn` lays every page into a `scrollHost` styled
+      `overflow: auto`. Pages use `margin: 0 auto 16px`, which — CSS's own
+      over-constrained-auto-margins rule — collapses to `0` (left-aligned, overflowing
+      right) rather than clipping once a page's zoomed width exceeds the host's, so
+      horizontal scroll falls out of the same mechanism vertical cross-page scroll already
+      used. Live-verified (Playwright, real PDF zoomed to 337%): `scrollHost.scrollWidth`
+      (2006px) exceeds `clientWidth` (806px) and `scrollHeight` (262427px, the whole
+      document) exceeds `clientHeight` (635px); a horizontal wheel scroll revealed a
+      cut-off line's right edge, and a vertical wheel scroll advanced the book-percent
+      readout into further content. Full writeup in NOTES.md "M43 §B1 corrective + §C1".
 
 #### D. Navigation model — scroll by default, page-fit as the one paginated state
 

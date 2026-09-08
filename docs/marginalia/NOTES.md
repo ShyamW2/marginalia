@@ -9141,3 +9141,90 @@ against the real "Spatiotemporal Composability" PDF at 1200×900:
 CSS width identical across all three (confirming the geometry consumers are unaffected), no
 console errors at any DSF, and a screenshot at 2× shows visibly crisp text with highlight
 alignment (§A above) unaffected by the change.
+
+## M43 §B1 corrective + §C1 — canvas replaced-element crop, and the zoom dial's missing
+`dialPlacement` — 2026-09-08
+
+Operator report against the live app (not the fixture used above): with §B1 landed, the
+native pane's default (non-zoomed) view showed only a small top-left fraction of the page,
+apparently magnified by the same factor as the new DPR multiplier — i.e. exactly what §B1
+was supposed to have live-verified as fine.
+
+**Root cause, confirmed both by CSS-spec reasoning and by an isolated Playwright repro
+(not the app — a bare two-`<canvas>` HTML page) before touching the real file:** `<canvas>`
+is a *replaced element*. `renderPageInto`'s canvas got `position: absolute; inset: 0` and
+relied on that to stretch it to `pageDiv`'s box, exactly as it would for a plain `<div>`.
+But a replaced element with over-constrained insets (`inset: 0`, `width`/`height` both
+`auto`) does **not** stretch to fill its containing block the way a non-replaced box
+does — the browser keeps the box at its *intrinsic* size (the `width`/`height` **content
+attributes**, i.e. the backing store) and lets one inset go slack instead. Before §B1 the
+backing-store attributes were set 1:1 with `viewport`'s CSS size, so intrinsic size and
+desired display size happened to coincide and this never showed up. Once §B1 scaled the
+backing store by `dpr`, the two diverged and the canvas started rendering at its full
+backing-store size in CSS pixels — at `dpr=2.5` that's exactly a 2.5× crop of the top-left
+corner, matching the operator's description precisely.
+
+Confirmed with a standalone repro (`chromium`, `deviceScaleFactor: 2.5`, two 553×716
+`pageDiv`s, one canvas styled only `inset:0`, one also given explicit
+`width:553px;height:716px`): the unstyled canvas's rendered box came back
+`{width: 1383, height: 1790}` (its backing-store size, spilling out of its `overflow:hidden`
+parent); the explicitly-sized one came back the correct `{width: 553, height: 716}`.
+
+§B1's own live verification (above) didn't catch this because it measured `pageDiv`'s CSS
+width (set inline, unaffected either way) and eyeballed a screenshot cropped to a text
+sample for sharpness — not full-page framing. Recorded here as the same category of gap
+`docs/marginalia/PDF.md`'s live-verification discipline exists to close, and TASKS.md's own
+"§0 is not optional preamble" framing exists to catch one milestone up.
+
+**Fix:** `renderPageInto` now also sets `canvas.style.width`/`canvas.style.height`
+explicitly to the unscaled `viewport` size, alongside the existing `inset: 0`. New
+`PdfRenderer.test.ts` assertions (in the existing §B1 DPR test) check the canvas's inline
+CSS width/height directly, not just the backing-store attributes and `pageDiv`'s own size —
+the previous test's blind spot. Live-verified (Playwright, real `deviceScaleFactor: 2`,
+against "Spatiotemporal Composability"): canvas backing store 1306×1847 (2×), canvas CSS
+box 653×924 — matching `pageDiv` — full two-page spread visible in the pane, crisp text, no
+console errors.
+
+**§C1, found live while re-verifying the operator's original PDF-zoom report against this
+same session's build (bundled by the operator's own request — "this is a fix of the PDF
+zoom"):** the zoom-percent slider's drag popup (`SliderDial`) never appeared in a normal
+(non-fullscreen) window — dragging it visibly did nothing, no popup anywhere on screen.
+Root cause: `SliderDial`'s `placement` prop defaults to `"below"` (grows the popup *down*
+from the trigger); the reading-progress footer slider a few lines above `zoomSlider` in
+`ReaderView.tsx` explicitly passes `dialPlacement="above"` because its trigger is
+bottom-docked (`SliderDial.module.css`'s own comment: "a trigger docked at the bottom of
+the viewport... grows the dial upward instead, or it renders off-screen") — `zoomSlider`,
+docked at the same bottom edge (the fullscreen pebble and the windowed footer both use the
+one `zoomSlider` element), never got the same prop and rendered its popup below the
+viewport's bottom edge every time.
+
+This isn't quite TASKS.md's own guess at the cause ("a missing/lower `z-index`... a sibling
+that opens its own stacking context") — computed z-index was never the issue on the paths
+checked live; the popup was simply positioned off-screen. Left TASKS.md's z-index framing
+uncorrected only insofar as a *narrow* window could plausibly still show a z-index-shaped
+symptom once the popup is on-screen at all — not reached in this session, since fixing the
+placement made the popup visible and usable everywhere tried.
+
+Fix: `zoomSlider` (`ReaderView.tsx`) now passes `dialPlacement="above"`, same as the
+progress slider beside it. Live-verified (Playwright, windowed and fullscreen, real PDF):
+dragging the zoom slider shows "132% · Release to set · Esc to cancel" floating above the
+footer/pebble, fully over the reading pane, in both layouts.
+
+**Scrollability when zoomed (the operator's third ask, framed as "part of §C"):**
+checked whether the existing M41 §C1 continuous-scroll path already satisfies "whenever a
+part of the zoomed page doesn't fit the pane, both axes scroll" — it does, unmodified.
+`relayout()` derives `advance: "scroll"` exactly when `userScale !== null` (zoomed past fit
+scale), and `rebuildContinuousColumn` lays every page into a `scrollHost` with
+`overflow: auto`; placeholders/pages use `margin: 0 auto 16px`, which — per the CSS
+over-constrained-auto-margins rule — collapses to `0` (left-aligned, right side
+overflowing into the scrollbar) the moment a page's own zoomed width exceeds the host's,
+rather than clipping. Live-verified (Playwright, real PDF, zoomed to 337% via repeated
+zoom-in clicks): `scrollHost.scrollWidth` (2006px) exceeds `clientWidth` (806px) and
+`scrollHeight` (262427px, the whole document) exceeds `clientHeight` (635px); a horizontal
+wheel scroll shifted a cut-off line left to reveal its right edge, and a vertical wheel
+scroll advanced the book-percent readout and moved to further content. No code change
+needed for this part — recorded here as the live verification TASKS.md's §D (navigation
+model rewrite, still open) will otherwise have re-derived from scratch.
+
+Dev server (`:5173`/`:5175`) was not running at the start of this pass; started it
+(`pnpm dev`) after confirming no prior instance held those ports, and left it running.
