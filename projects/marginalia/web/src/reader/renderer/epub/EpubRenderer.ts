@@ -235,6 +235,10 @@ export class EpubRenderer implements ResourceRenderer {
   private themeVars: ReaderThemeVars | null = null;
   private focusModeHidden = false;
   private fontScale = 1;
+  /** M43 §A corrective: the highlight whose annotation panel is currently
+   * open, painted at `hoverFillOpacity` strength rather than its resting
+   * kind wash. Null when no panel is open. */
+  private activeHighlightId: string | null = null;
 
   /** The CFI the audio tint mark currently sits at, if any — tracked
    * separately from cfiOwners (real highlights) since exactly one tint is
@@ -526,6 +530,18 @@ export class EpubRenderer implements ResourceRenderer {
     this.retintAll();
   }
 
+  /** M43 §A corrective: reusing `retintAll`'s own re-paint rather than a
+   * one-off DOM mutation (the M16 hover boost's approach) because this
+   * state must survive a page turn/relocation — an open panel can outlive
+   * one (M40 §C7 follows it while scrolling) — the same reason `kind` and
+   * `focusModeHidden` are baked into the resting style instead of poked in
+   * imperatively. */
+  setActiveHighlight(id: string | null): void {
+    if (this.activeHighlightId === id) return;
+    this.activeHighlightId = id;
+    this.retintAll();
+  }
+
   private retintAll(): void {
     if (!this.rendition || !this.themeVars) return;
     // Re-tint every already-attached mark: fill-opacity/blend-mode differ
@@ -544,7 +560,7 @@ export class EpubRenderer implements ResourceRenderer {
         { highlightId },
         undefined,
         HIGHLIGHT_MARK_CLASS,
-        markStyleForKind(kind, this.themeVars, this.focusModeHidden),
+        markStyleForKind(kind, this.themeVars, this.focusModeHidden, highlightId === this.activeHighlightId),
       );
     }
     if (this.tintCfi) {
@@ -590,6 +606,8 @@ export class EpubRenderer implements ResourceRenderer {
   setZoomMode(_mode: "fit-width" | "fit-page"): void {}
   zoomIn(): void {}
   zoomOut(): void {}
+  /** M42 §D1's continuous counterpart — same no-op, same reason. */
+  setZoomScale(_scale: number): void {}
 
   // ── Highlights / search marks (EPUB-only) ───────────────────────────
 
@@ -782,7 +800,7 @@ export class EpubRenderer implements ResourceRenderer {
       { highlightId },
       undefined,
       HIGHLIGHT_MARK_CLASS,
-      markStyleForKind(kind, this.themeVars, this.focusModeHidden),
+      markStyleForKind(kind, this.themeVars, this.focusModeHidden, highlightId === this.activeHighlightId),
     );
   }
 
@@ -815,7 +833,7 @@ export class EpubRenderer implements ResourceRenderer {
       { highlightId: newOwner.id },
       undefined,
       HIGHLIGHT_MARK_CLASS,
-      markStyleForKind(newOwner.kind, this.themeVars, this.focusModeHidden),
+      markStyleForKind(newOwner.kind, this.themeVars, this.focusModeHidden, newOwner.id === this.activeHighlightId),
     );
   }
 

@@ -62,11 +62,26 @@ function blendStyle(blendMode: "multiply" | "screen"): string {
  * Muted ~20%-opacity wash on paper (DESIGN.md); a brighter "lifted" tint on
  * ink via a lightening blend, so the color glows rather than muddies
  * against the dark page.
+ *
+ * `active` (M43 §A corrective, 2026-09-08): the mark whose annotation panel
+ * is currently open lifts to the same full-strength presence `hoverFillOpacity`
+ * already defined for "highlights pop on hover" (M16) — reusing that number
+ * rather than inventing a second one, since the intent is identical ("as
+ * present as the passage still looks freshly selected"). Deliberately part
+ * of this *resting* style rather than an imperative one-off DOM mutation
+ * like the hover boost: an open panel can outlive a page turn/relocation
+ * (M40 §C7 follows it while scrolling), so the boosted state has to survive
+ * every re-paint the same way `kind`/`hidden` already do, not just the one
+ * frame a mock mutation would touch. Still multiply/screen-blended, same as
+ * every other state this function returns — "more pronounced" never means
+ * "opaque"; the glyphs underneath stay exactly as legible as they are at
+ * hover strength.
  */
 export function markStyleForKind(
   kind: HighlightKind,
   vars: MarkThemeInput,
   hidden = false,
+  active = false,
 ): Record<string, string> {
   // Reading focus mode (DESIGN.md): marks stay attached (so state survives
   // the toggle) but paint invisible — cheaper and simpler than tearing
@@ -76,7 +91,7 @@ export function markStyleForKind(
   const isDark = vars.colorScheme === "dark";
   return {
     fill: vars.kindColors[kind],
-    "fill-opacity": isDark ? "0.34" : "0.22",
+    "fill-opacity": active ? String(hoverFillOpacity(vars.colorScheme)) : isDark ? "0.34" : "0.22",
     style: blendStyle(isDark ? "screen" : "multiply"),
   };
 }

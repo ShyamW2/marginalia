@@ -86,6 +86,13 @@ export interface ResourceRenderer {
 
   paintMark(highlightId: string, loc: Locator, kind: HighlightKind): void;
   removeMark(highlightId: string): void;
+  /** M43 §A corrective: the mark whose annotation panel is open lifts to
+   *  `hoverFillOpacity` strength (still blended, never opaque — the glyphs
+   *  underneath stay legible) so it's visually clear which highlight the
+   *  open panel belongs to. Null clears it. Idempotent, and safe to call on
+   *  every open/close/switch — implementations no-op when the id is
+   *  unchanged. */
+  setActiveHighlight(id: string | null): void;
   /** The transient, non-highlight tint — audio's sentence follow. At most one
    *  at a time; null clears. Deliberately separate from paintMark, because
    *  `ReaderView` already keeps these two bookkeepings apart (`tintCfiRef` vs
@@ -104,6 +111,12 @@ export interface ResourceRenderer {
   setZoomMode(mode: "fit-width" | "fit-page"): void;
   zoomIn(): void;
   zoomOut(): void;
+  /** M42 §D1: the continuous counterpart to `zoomIn`/`zoomOut` — an
+   *  absolute target scale from a live gesture (wheel, touch pinch, or a
+   *  drag on the chrome's zoom slider), called many times a second while
+   *  the gesture is live. No-op under `capabilities.zoom === false`, same
+   *  as the discrete pair. */
+  setZoomScale(scale: number): void;
 
   readonly capabilities: RendererCapabilities;
 }

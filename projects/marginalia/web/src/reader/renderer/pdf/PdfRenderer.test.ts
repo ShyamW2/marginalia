@@ -54,6 +54,7 @@ function stubResourceFetchWithSections(
   sections: { spineIndex: number; href: string; text: string }[],
   pageSections: number[],
   chapterTitles: Record<string, string> = {},
+  subheadings: Record<string, { title: string; depth: number; offset: number }[]> = {},
 ): void {
   vi.stubGlobal(
     "fetch",
@@ -67,7 +68,7 @@ function stubResourceFetchWithSections(
       if (url.endsWith("/pdf-sections")) {
         return { ok: true, json: async () => pageSections };
       }
-      return { ok: true, json: async () => ({ metadata: { chapterTitles } }) };
+      return { ok: true, json: async () => ({ metadata: { chapterTitles, subheadings } }) };
     }),
   );
 }
@@ -79,6 +80,20 @@ function stubResourceFetchWithSections(
 function mockContainerSize(container: HTMLElement, width: number, height: number): void {
   Object.defineProperty(container, "clientWidth", { configurable: true, value: width });
   Object.defineProperty(container, "clientHeight", { configurable: true, value: height });
+}
+
+/** M42 §D1's `setZoomScale` debounces the real re-render behind
+ * `relayout()`'s several real `await`s (getPage/getTextContent/render) —
+ * same reason the zoom-threshold test above polls on real timers rather
+ * than a single `await` (its own comment explains why fake timers don't
+ * mix cleanly with pdf.js's own internal scheduling). Deduplicated here
+ * since the continuous-zoom tests below need the same poll repeatedly. */
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timed out");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 /** Selects the DOM range covering `needle` inside `container`'s flattened
@@ -167,6 +182,242 @@ describe("PdfRenderer", () => {
     renderer.removeMark("h1");
     expect(container.querySelector('.marginalia-pdf-highlight[data-highlight-id="h1"]')).toBeNull();
     expect(renderer.markRect("h1")).toBeNull();
+
+    renderer.destroy();
+  });
+
+  it("A1: merges per-span text-layer client rects into one box per visual line", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    // Simulates pdf.js's real text layer: two spans on one visual line (a
+    // sub-pixel gap and slight height jitter between them, both of which
+    // must merge into a single box) plus one span on a second line.
+    const spanRects = [
+      { top: 100, bottom: 116, left: 10, right: 40, width: 30, height: 16 },
+      { top: 100.4, bottom: 116.4, left: 40.3, right: 70, width: 29.7, height: 16 },
+      { top: 140, bottom: 156, left: 10, right: 55, width: 45, height: 16 },
+    ] as DOMRect[];
+    const originalGetClientRects = Range.prototype.getClientRects;
+    Range.prototype.getClientRects = function () {
+      return Object.assign([...spanRects], { item: (i: number) => spanRects[i] ?? null }) as unknown as DOMRectList;
+    };
+    try {
+      renderer.paintMark("h1", { sectionIndex: 0, offset: 0, length: 1 }, "rose");
+    } finally {
+      Range.prototype.getClientRects = originalGetClientRects;
+    }
+
+    const mark = container.querySelector('.marginalia-pdf-highlight[data-highlight-id="h1"]') as HTMLElement;
+    expect(mark).toBeTruthy();
+    // One box per visual line, not one per text-layer span — three spans
+    // collapse to two boxes.
+    expect(mark.children.length).toBe(2);
+
+    const [line1, line2] = Array.from(mark.children) as HTMLElement[];
+    // Line one spans the full leftmost-to-rightmost extent of its two
+    // merged spans, with no gap or double-painted overlap between them.
+    expect(line1.style.left).toBe("10px");
+    expect(line1.style.width).toBe("60px");
+    expect(line1.style.top).toBe("100px");
+    // Line two is its own, separate box ending at its own text extent —
+    // not the container's full width.
+    expect(line2.style.left).toBe("10px");
+    expect(line2.style.width).toBe("45px");
+    expect(line2.style.top).toBe("140px");
+
+    renderer.destroy();
+  });
+
+  it("M43 §B1: the canvas backing store scales with (a capped) devicePixelRatio, while the CSS/viewport-keyed geometry stays unscaled", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    async function mountAtDpr(dpr: number) {
+      const originalDescriptor = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+      Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: dpr });
+      const container = document.createElement("div");
+      document.body.appendChild(container);
+      const renderer = new PdfRenderer();
+      try {
+        await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+        const pageDiv = container.querySelector("canvas")?.parentElement as HTMLElement;
+        const canvas = container.querySelector("canvas") as HTMLCanvasElement;
+        const cssWidth = parseFloat(pageDiv.style.width);
+        return { cssWidth, backingWidth: canvas.width, backingHeight: canvas.height, renderer };
+      } finally {
+        if (originalDescriptor) Object.defineProperty(window, "devicePixelRatio", originalDescriptor);
+      }
+    }
+
+    const at1x = await mountAtDpr(1);
+    at1x.renderer.destroy();
+    // DPR 1: backing store matches the CSS size exactly — today's behaviour,
+    // unchanged.
+    expect(at1x.backingWidth).toBe(Math.round(at1x.cssWidth));
+
+    const at2x = await mountAtDpr(2);
+    at2x.renderer.destroy();
+    // DPR 2: the CSS box (and therefore the text layer / mark-painting
+    // geometry, which is keyed to `viewport`, not the backing store) is
+    // identical — only the backing store doubles.
+    expect(at2x.cssWidth).toBeCloseTo(at1x.cssWidth, 5);
+    expect(at2x.backingWidth).toBe(Math.round(at2x.cssWidth * 2));
+
+    // Capped at 2.5 rather than trusting an unbounded reported value — a
+    // DPR of 4 must not render 16x the pixels.
+    const at4x = await mountAtDpr(4);
+    at4x.renderer.destroy();
+    expect(at4x.backingWidth).toBe(Math.round(at4x.cssWidth * 2.5));
+  });
+
+  it("M43 §A corrective: buildTextLayer applies a scaleX correction so each span's on-screen width matches the PDF's own glyph metrics, not the browser's substitute-font advance width", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    // jsdom has no 2D context at all without the native `canvas` package
+    // (every other test in this file relies on that to exercise
+    // `renderPageInto`'s "rasterization degrades, never fails" path) — stub
+    // one in only for `getMeasureCtx`'s own canvas (marked with a data
+    // attribute for exactly this), leaving the page's own raster canvas on
+    // jsdom's real `null` fallback, unaffected. A fixed, text-independent
+    // `measureText` guarantees the browser-measured width differs from the
+    // PDF's own — proving the correction actually ran, not asserting its
+    // exact factor (which would just duplicate the formula under test).
+    //
+    // `getMeasureCtx()` caches its result in a module-level variable, so a
+    // fresh module instance is needed here (`vi.resetModules` + a dynamic
+    // re-import) — reusing the top-level `PdfRenderer` import would just
+    // see whatever an *earlier* test's mount already resolved that cache
+    // to (`null`, on plain jsdom), before this stub ever had a chance to run.
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, ...rest: unknown[]) {
+      if (type === "2d" && this.dataset.marginaliaMeasureCanvas === "1") {
+        return { font: "", measureText: () => ({ width: 100 }) } as unknown as ReturnType<typeof originalGetContext>;
+      }
+      return (originalGetContext as (...args: unknown[]) => unknown).call(this, type, ...rest);
+    } as typeof HTMLCanvasElement.prototype.getContext;
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    let renderer: InstanceType<typeof PdfRenderer>;
+    try {
+      vi.resetModules();
+      const { PdfRenderer: FreshPdfRenderer } = await import("./PdfRenderer.js");
+      renderer = new FreshPdfRenderer();
+      await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    } finally {
+      HTMLCanvasElement.prototype.getContext = originalGetContext;
+      vi.resetModules();
+    }
+
+    const textLayer = container.querySelector(".marginalia-pdf-text-layer") as HTMLElement;
+    const span = textLayer.querySelector("span") as HTMLElement | null;
+    expect(span?.textContent).toBeTruthy();
+    const match = /scaleX\(([-\d.]+)\)/.exec(span?.style.transform ?? "");
+    expect(match).toBeTruthy();
+    const scale = Number(match?.[1]);
+    expect(Number.isFinite(scale)).toBe(true);
+    expect(scale).toBeGreaterThan(0);
+
+    renderer.destroy();
+  });
+
+  it("A2: emits 'deselected' on a container click away from a selection, but not on a mark or a live selection", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const renderer = new PdfRenderer();
+    const deselections: number[] = [];
+    renderer.onDeselected(() => deselections.push(1));
+
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    const textLayer = container.querySelector(".marginalia-pdf-text-layer") as HTMLElement;
+
+    // A live (non-collapsed) selection: a click bubbling up through it must
+    // not dismiss — matches `handleContentClick`'s own
+    // `getSelection()?.toString()` guard.
+    selectText(textLayer, "quick brown fox");
+    container.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(deselections).toHaveLength(0);
+
+    // A click that collapses (or lands after) the selection — the case
+    // `handleSelection`'s own `if (range.collapsed) return;` leaves nothing
+    // else to fire on — does dismiss.
+    window.getSelection()?.removeAllRanges();
+    container.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(deselections).toHaveLength(1);
+
+    // A click on a painted mark is the mark's own `markClicked` path, not a
+    // click-away — must not also dismiss.
+    renderer.paintMark("h1", { sectionIndex: 0, offset: 0, length: 1 }, "rose");
+    const mark = container.querySelector('.marginalia-pdf-highlight[data-highlight-id="h1"]') as HTMLElement;
+    mark.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(deselections).toHaveLength(1);
+
+    renderer.destroy();
+  });
+
+  it("M43 §A corrective: a painted mark is stacked after (on top of) the text layer, so a real click resolves to it rather than the fully-covering text layer beneath", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    renderer.paintMark("h1", { sectionIndex: 0, offset: 0, length: 1 }, "rose");
+    const textLayer = container.querySelector(".marginalia-pdf-text-layer") as HTMLElement;
+    const mark = container.querySelector('.marginalia-pdf-highlight[data-highlight-id="h1"]') as HTMLElement;
+    expect(textLayer).toBeTruthy();
+    expect(mark).toBeTruthy();
+    // DOCUMENT_POSITION_FOLLOWING on the text layer means the mark comes
+    // *after* it in the shared `pageDiv` — later in DOM order paints (and
+    // hit-tests) on top with no explicit z-index needed, matching
+    // `EpubRenderer`'s marks-pane sitting above its iframe.
+    expect(textLayer.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    renderer.destroy();
+  });
+
+  it("M43 §A corrective: setActiveHighlight lifts a mark's fill-opacity, and clearing it restores the resting wash", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const renderer = new PdfRenderer();
+    renderer.applyTheme({
+      bg: "#fff",
+      text: "#000",
+      accent: "#000",
+      fontSerif: "serif",
+      highlight: "#ff0",
+      highlightActive: "#f80",
+      border: "#ccc",
+      kindColors: { rose: "#ff0000", sage: "#00ff00", honey: "#ffff00", slate: "#0000ff" },
+      colorScheme: "light",
+    });
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    renderer.paintMark("h1", { sectionIndex: 0, offset: 0, length: 1 }, "rose");
+    const box = () =>
+      (container.querySelector('.marginalia-pdf-highlight[data-highlight-id="h1"]') as HTMLElement).firstElementChild as HTMLElement;
+    const restingOpacity = box().style.opacity;
+
+    renderer.setActiveHighlight("h1");
+    expect(Number(box().style.opacity)).toBeGreaterThan(Number(restingOpacity));
+
+    renderer.setActiveHighlight(null);
+    expect(box().style.opacity).toBe(restingOpacity);
 
     renderer.destroy();
   });
@@ -321,15 +572,42 @@ describe("PdfRenderer — section-aware (M41 §A2)", () => {
 
     const toc = renderer.getToc();
     expect(toc).toEqual([
-      { label: "Chapter One", href: "section-000.xhtml", spineIndex: 0, percent: 0, depth: 0 },
+      { label: "Chapter One", href: "section-000.xhtml", spineIndex: 0, percent: 0, depth: 0, offset: null },
       {
         label: "Chapter Two",
         href: "section-001.xhtml",
         spineIndex: 1,
         percent: (sections[0].text.length / (sections[0].text.length + sections[1].text.length)) * 100,
         depth: 0,
+        offset: null,
       },
     ]);
+
+    renderer.destroy();
+  });
+
+  // M42 §C4: the native pane's own copy of a section's depth-2+
+  // subheadings, read from `resource.metadata.subheadings` rather than
+  // parsed out of a generated EPUB's nav (that's the reflow pane's route).
+  it("getToc interleaves a section's subheadings right after it, each with its own offset", async () => {
+    const bytes = loadFixturePdf();
+    const subheadings = { "0": [{ title: "1.1 Background", depth: 2, offset: 14 }] };
+    stubResourceFetchWithSections(bytes, sections, pageSections, chapterTitles, subheadings);
+
+    const container = document.createElement("div");
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    const toc = renderer.getToc();
+
+    expect(toc.map((e) => ({ label: e.label, spineIndex: e.spineIndex, depth: e.depth, offset: e.offset }))).toEqual([
+      { label: "Chapter One", spineIndex: 0, depth: 0, offset: null },
+      { label: "1.1 Background", spineIndex: 0, depth: 2, offset: 14 },
+      { label: "Chapter Two", spineIndex: 1, depth: 0, offset: null },
+    ]);
+    // The subheading shares its section's own href — a jump target within
+    // it, not a spine item of its own.
+    expect(toc[1].href).toBe("section-000.xhtml");
 
     renderer.destroy();
   });
@@ -381,7 +659,130 @@ describe("PdfRenderer — zoom/layout (M41 §C1)", () => {
 
     renderer.destroy();
   });
+});
 
+describe("PdfRenderer — continuous zoom (M42 §D1)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("setZoomScale commits userScale synchronously but defers the real re-render until the gesture pauses", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+    const container = document.createElement("div");
+    mockContainerSize(container, 800, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    expect(renderer.getZoomMode()).toBe("fit-width");
+
+    let layoutChanges = 0;
+    renderer.onLayoutChanged(() => (layoutChanges += 1));
+
+    renderer.setZoomScale(3);
+    // Synchronous: the gesture's target scale is live immediately (the
+    // whole point — a slider/wheel/pinch reads this back mid-drag), well
+    // before any real re-render has happened.
+    expect(renderer.getZoomMode()).toBe("free");
+    expect(layoutChanges).toBe(0);
+
+    await waitFor(() => layoutChanges > 0);
+    expect(renderer.getZoomPercent()).toBe(300);
+
+    renderer.destroy();
+  });
+
+  it("several quick setZoomScale calls (a live drag/wheel/pinch) coalesce into exactly one real re-render", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+    const container = document.createElement("div");
+    mockContainerSize(container, 800, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    let layoutChanges = 0;
+    renderer.onLayoutChanged(() => (layoutChanges += 1));
+
+    // Each call resets the debounce — 15ms apart is well inside
+    // ZOOM_COMMIT_DEBOUNCE_MS (120ms), so none of these should land a real
+    // re-render on its own.
+    for (let i = 0; i < 8; i++) {
+      renderer.setZoomScale(1.5 + i * 0.1);
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    expect(layoutChanges).toBe(0);
+
+    await waitFor(() => layoutChanges > 0);
+    expect(layoutChanges).toBe(1);
+    // Lands on the last requested scale, not an intermediate one.
+    expect(renderer.getZoomPercent()).toBe(Math.round((1.5 + 7 * 0.1) * 100));
+
+    renderer.destroy();
+  });
+
+  it("snaps back to the active fit mode when the gesture settles back at (or below) the fit scale", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+    const container = document.createElement("div");
+    mockContainerSize(container, 800, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    let layoutChanges = 0;
+    renderer.onLayoutChanged(() => (layoutChanges += 1));
+
+    renderer.setZoomScale(0.01); // far below any real fit scale
+    expect(renderer.getZoomMode()).toBe("fit-width");
+
+    await waitFor(() => layoutChanges > 0);
+    expect(renderer.getZoomMode()).toBe("fit-width");
+    expect(renderer.capabilities.advance).toBe("image");
+
+    renderer.destroy();
+  });
+
+  it("applies a live CSS-transform preview to the rendered page immediately, ahead of the debounced real re-render", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+    const container = document.createElement("div");
+    mockContainerSize(container, 800, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.style.transform).toBe("");
+
+    renderer.setZoomScale(2.5);
+    // Same node — the preview scales what's already on screen rather than
+    // waiting for a fresh raster.
+    expect(container.firstElementChild).toBe(wrapper);
+    expect(wrapper.style.transform).toMatch(/^scale\(/);
+
+    renderer.destroy();
+  });
+
+  it("a real (non-Ctrl) wheel scroll passes through untouched — only Ctrl/Cmd+wheel zooms", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+    const container = document.createElement("div");
+    mockContainerSize(container, 800, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+
+    const plain = new WheelEvent("wheel", { deltaY: -100, cancelable: true });
+    container.dispatchEvent(plain);
+    expect(plain.defaultPrevented).toBe(false);
+    expect(renderer.getZoomMode()).toBe("fit-width");
+
+    const ctrlZoom = new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, cancelable: true });
+    container.dispatchEvent(ctrlZoom);
+    expect(ctrlZoom.defaultPrevented).toBe(true);
+    expect(renderer.getZoomMode()).toBe("free");
+
+    renderer.destroy();
+  });
+});
+
+describe("PdfRenderer — spread advance (M41 §C1)", () => {
   it("a spread (pagesAcross === 2) makes a single next() call advance by 2 pages", async () => {
     const bytes = loadFixturePdf();
     stubResourceFetch(bytes);

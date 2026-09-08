@@ -80,7 +80,7 @@ import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.mjs?url";
 if (!import.meta.env?.VITEST) {
   GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 }
-import type { HighlightKind, HighlightWithThread } from "@marginalia/shared";
+import type { HighlightKind, HighlightWithThread, ResourceSubheading } from "@marginalia/shared";
 import { findAnchorInText } from "@marginalia/shared";
 import { getSelectionContext, offsetsForRange, rangeFromTextOffsets } from "../../selectionContext.js";
 import { audioTintStyle, markStyleForKind, searchMarkStyle } from "../../highlightKinds.js";
@@ -98,6 +98,8 @@ import {
   clampZoomScale,
   computeFitScale,
   shouldShowSpread,
+  wheelZoomTarget,
+  ZOOM_COMMIT_DEBOUNCE_MS,
   ZOOM_STEP,
   type FitMode,
 } from "./pdfLayout.js";
@@ -130,6 +132,11 @@ interface PdfjsTextItem {
   str: string;
   transform: number[];
   hasEOL?: boolean;
+  /** PDF.js's own "width in device space" — the run's real physical width
+   * in unscaled PDF page units, independent of the current viewport zoom.
+   * Used by `buildTextLayer`'s own scale-x correction (M43 §A1 corrective,
+   * below) the same way `pdfjs-dist`'s own `TextLayer#layout` uses it. */
+  width?: number;
 }
 interface PdfjsViewport {
   width: number;
@@ -189,26 +196,72 @@ interface PageMount {
   tintEl: HTMLElement | null;
 }
 
+interface LineBox {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
 /**
- * Positions one absolutely-positioned box per client rect a Range spans
+ * Merges pdf.js text-layer client rects into one box per visual line
+ * (TASKS.md M43 §A1). pdf.js gives each text item — often a single word or
+ * run, sometimes a lone punctuation glyph — its own absolutely-positioned
+ * span, so `Range.getClientRects()` returns one rect per span rather than
+ * per line; painting each verbatim leaves hairline gaps at span boundaries
+ * (adjoining boxes rarely abut to the sub-pixel) and, wherever pdf.js emits
+ * overlapping spans (kerning/script correction), a doubled-opacity seam.
+ * Applies PDF.md §3.3's line-detection tolerance ("items whose y differ by
+ * less than 0.5 × the line height") to on-screen rect geometry: a rect
+ * whose vertical center falls within the current run's y-range, padded by
+ * half the smaller rect's height, extends that run; otherwise it starts a
+ * new one. Rects arrive in the Range's own (visual, line-by-line) order, so
+ * this single left-to-right pass is enough — no re-sorting needed.
+ */
+function mergeRectsIntoLines(rects: DOMRect[]): LineBox[] {
+  const lines: LineBox[] = [];
+  let current: LineBox | null = null;
+  for (const rect of rects) {
+    const center = rect.top + rect.height / 2;
+    if (current) {
+      const tolerance = 0.5 * Math.min(rect.height, current.bottom - current.top);
+      if (center >= current.top - tolerance && center <= current.bottom + tolerance) {
+        current.top = Math.min(current.top, rect.top);
+        current.bottom = Math.max(current.bottom, rect.bottom);
+        current.left = Math.min(current.left, rect.left);
+        current.right = Math.max(current.right, rect.right);
+        continue;
+      }
+    }
+    current = { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right };
+    lines.push(current);
+  }
+  return lines;
+}
+
+/**
+ * Positions one absolutely-positioned box per *visual line* a Range spans
  * (PDF.md §7.5: "client rects from the text-layer Range → absolutely
- * positioned divs. `marks-pane` is CFI-keyed and is not reused here") —
- * `wrapper` itself covers the whole page 1:1 with `pageDiv` (so its
- * children's coordinates, measured from `pageDiv`'s own rect, need no
- * further translation) and is never the click/hover target itself.
+ * positioned divs. `marks-pane` is CFI-keyed and is not reused here"),
+ * merging the text layer's per-span client rects via `mergeRectsIntoLines`
+ * so a highlight crossing several spans paints one continuous band per line
+ * rather than one box per span. `wrapper` itself covers the whole page 1:1
+ * with `pageDiv` (so its children's coordinates, measured from `pageDiv`'s
+ * own rect, need no further translation) and is never the click/hover
+ * target itself.
  */
 function paintRangeInto(wrapper: HTMLElement, range: Range, pageDiv: HTMLElement, attrs?: Record<string, string>): void {
   wrapper.replaceChildren();
   const pageRect = pageDiv.getBoundingClientRect();
-  for (const rect of Array.from(range.getClientRects())) {
+  for (const line of mergeRectsIntoLines(Array.from(range.getClientRects()))) {
     const box = document.createElement("div");
     box.style.position = "absolute";
-    box.style.left = `${rect.left - pageRect.left}px`;
-    box.style.top = `${rect.top - pageRect.top}px`;
-    box.style.width = `${rect.width}px`;
-    box.style.height = `${rect.height}px`;
+    box.style.left = `${line.left - pageRect.left}px`;
+    box.style.top = `${line.top - pageRect.top}px`;
+    box.style.width = `${line.right - line.left}px`;
+    box.style.height = `${line.bottom - line.top}px`;
     box.style.pointerEvents = "auto";
-    // The fill belongs on each line-rect box, not on `wrapper` — `wrapper`
+    // The fill belongs on each line box, not on `wrapper` — `wrapper`
     // spans the whole page (`inset: 0`) purely as these boxes' positioning
     // context, so painting it directly tints the entire page instead of
     // just the matched text (found live, M41 §A2 follow-up).
@@ -249,6 +302,11 @@ export class PdfRenderer implements ResourceRenderer {
   private doc: PdfjsDocument | null = null;
   private themeVars: ReaderThemeVars | null = null;
   private focusModeHidden = false;
+  /** M43 §A corrective: the highlight whose annotation panel is currently
+   * open, painted at `hoverFillOpacity` strength (`markStyleForKind`'s
+   * `active` flag) rather than its resting kind wash. Null when no panel is
+   * open. Mirrors `EpubRenderer`'s field of the same name/purpose. */
+  private activeHighlightId: string | null = null;
 
   private pageIndex = 0;
 
@@ -271,6 +329,10 @@ export class PdfRenderer implements ResourceRenderer {
   private sectionTexts = new Map<number, string>();
   private sectionHrefs = new Map<number, string>();
   private sectionTitles = new Map<number, string>();
+  // M42 §C4: the reflow pane's own copy of these comes from the generated
+  // EPUB's nested nav (`generateEpub.ts`) — the native pane never parses
+  // that file, so it reads `resource.metadata.subheadings` directly instead.
+  private sectionSubheadings = new Map<number, ResourceSubheading[]>();
   private sectionStartOffset = new Map<number, number>();
   private totalCanonicalLength = 0;
 
@@ -296,6 +358,25 @@ export class PdfRenderer implements ResourceRenderer {
   private renderGeneration = 0;
   private pageMounts = new Map<number, PageMount>();
   private layoutListeners = new Set<Listener<void>>();
+  private deselectListeners = new Set<Listener<void>>();
+
+  // ── M42 §D1: continuous zoom (drag/scroll/pinch) ───────────────────────
+  /** `renderPaginated`'s own `wrapper` — the element `setZoomScale`'s live
+   * CSS-transform preview scales, so a continuous gesture visibly
+   * interpolates the *raster already on screen* between real re-renders
+   * rather than jumping once at the end. Null in continuous-scroll mode
+   * (no single wrapper to scale — `applyZoomPreview` is a no-op there, so a
+   * zoom change while already scrolling just waits out the debounce with no
+   * preview, same as any other resize mid-gesture). */
+  private paginatedWrapperEl: HTMLElement | null = null;
+  /** The scale a live gesture (wheel/pinch/slider-drag) is currently headed
+   * toward — distinct from `userScale`/`effectiveScale`, which only advance
+   * once the debounced real re-render actually lands. Wheel deltas compound
+   * against this (not the stale committed scale) so several quick ticks
+   * before the debounce fires still feel continuous. Cleared once
+   * `relayout()` runs. */
+  private pendingZoomTarget: number | null = null;
+  private zoomCommitTimer: number | null = null;
 
   // ── M41 §C1: continuous-scroll state (non-null only while
   // capabilities.advance === "scroll") ─────────────────────────────────
@@ -323,6 +404,20 @@ export class PdfRenderer implements ResourceRenderer {
 
   async mount(container: HTMLElement, resource: { id: string }, _opts: RendererOptions): Promise<void> {
     this.container = container;
+    // M42 §D1: Ctrl/Cmd+wheel is the standard cross-browser signal for both
+    // "Ctrl+scroll to zoom" and trackpad pinch (Chrome/Firefox synthesize a
+    // ctrlKey wheel event for a trackpad pinch gesture) — a real touchscreen
+    // pinch is a separate `touchstart`/`touchmove` stream the chrome (not
+    // this file) owns, redirected to `setZoomScale` there under
+    // `capabilities.zoom`. `{ passive: false }` since a zoom wheel must
+    // `preventDefault()` the browser's own page-zoom/scroll.
+    container.addEventListener("wheel", this.handleWheel, { passive: false });
+    // M43 §A2: this pane has no iframe of its own (unlike EPUB), so
+    // `handleContainerClick` is this file's own equivalent of the "click
+    // away from a selection dismisses the pill" behaviour `ReaderView`'s
+    // `handleContentClick` gives the EPUB pane for free via a per-section
+    // iframe document listener.
+    container.addEventListener("click", this.handleContainerClick);
     const [pdfRes, textSectionsRes, pageSectionsRes, resourceRes] = await Promise.all([
       fetch(`/api/resources/${resource.id}/pdf-source`),
       fetch(`/api/resources/${resource.id}/text-sections`).catch(() => null),
@@ -395,14 +490,20 @@ export class PdfRenderer implements ResourceRenderer {
 
     try {
       if (resourceRes?.ok) {
-        const json = (await resourceRes.json()) as { metadata?: { chapterTitles?: Record<string, string> } };
+        const json = (await resourceRes.json()) as {
+          metadata?: { chapterTitles?: Record<string, string>; subheadings?: Record<string, ResourceSubheading[]> };
+        };
         const chapterTitles = json.metadata?.chapterTitles ?? {};
+        const subheadings = json.metadata?.subheadings ?? {};
         for (const sectionIndex of this.sectionTexts.keys()) {
           this.sectionTitles.set(sectionIndex, chapterTitles[String(sectionIndex)] ?? `Section ${sectionIndex + 1}`);
+          const subs = subheadings[String(sectionIndex)];
+          if (subs && subs.length > 0) this.sectionSubheadings.set(sectionIndex, subs);
         }
       }
     } catch {
-      // titles fall back to "Section N" per entry in getToc().
+      // titles fall back to "Section N" per entry in getToc(); no
+      // subheadings just means a flatter TOC, not a broken one.
     }
   }
 
@@ -411,11 +512,18 @@ export class PdfRenderer implements ResourceRenderer {
     this.renderGeneration++;
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    if (this.zoomCommitTimer !== null) {
+      clearTimeout(this.zoomCommitTimer);
+      this.zoomCommitTimer = null;
+    }
+    this.container?.removeEventListener("wheel", this.handleWheel);
+    this.container?.removeEventListener("click", this.handleContainerClick);
     this.teardownContinuous();
     this.container?.replaceChildren();
     this.container = null;
     this.doc = null;
     this.pageMounts = new Map();
+    this.paginatedWrapperEl = null;
   }
 
   private async buildPageTexts(): Promise<void> {
@@ -632,6 +740,16 @@ export class PdfRenderer implements ResourceRenderer {
     this.layoutListeners.forEach((cb) => cb());
   }
 
+  /** M43 §A2 (PDF.md §7.5): the PDF-only click-away dismiss. Same
+   * named-extra reasoning as `onLayoutChanged` — the EPUB pane dismisses its
+   * pending selection via `ReaderView`'s `handleContentClick`, attached
+   * directly to each section's own iframe document, which this pane has
+   * none of; `ReaderView` subscribes here instead. */
+  onDeselected(cb: Listener<void>): () => void {
+    this.deselectListeners.add(cb);
+    return () => this.deselectListeners.delete(cb);
+  }
+
   getZoomMode(): "fit-width" | "fit-page" | "free" {
     return this.userScale === null ? this.fitMode : "free";
   }
@@ -707,9 +825,26 @@ export class PdfRenderer implements ResourceRenderer {
       el.addEventListener("click", () => this.emit("markClicked", id));
       mount.pinnedMarkEls.set(id, el);
     }
-    const attrs = this.themeVars ? markStyleForKind(kind, this.themeVars, this.focusModeHidden) : undefined;
+    const attrs = this.themeVars
+      ? markStyleForKind(kind, this.themeVars, this.focusModeHidden, id === this.activeHighlightId)
+      : undefined;
     paintRangeInto(el, range, mount.pageDiv, attrs);
-    if (!el.isConnected) mount.pageDiv.insertBefore(el, mount.textLayerDiv);
+    // ⚠️ M43 §A corrective (2026-09-08): appended *after* `textLayerDiv`,
+    // not before it. `textLayerDiv` is `inset: 0` over the whole page and
+    // (needed for drag-selection) `pointer-events: auto` by default, so
+    // with the mark stacked underneath it, a real click never reached this
+    // element's own listener at all — the browser's hit-test always
+    // resolved to the topmost, fully-covering text layer first, so
+    // `markClicked` never fired for a click squarely on a highlight.
+    // Stacking the mark on top instead — same relative order as
+    // `EpubRenderer`'s marks-pane SVG over its iframe — fixes the
+    // click-target without touching how it *looks*: `textLayerDiv`'s spans
+    // are `color: transparent`, so nothing paints from it either way, and
+    // `paintOneMark`'s multiply/screen blend (`markStyleForKind`) still
+    // composites against the raster `canvas`, which is earlier in the DOM
+    // (and therefore still behind the mark) regardless of where
+    // `textLayerDiv` sits — the glyphs stay visible through the tint.
+    if (!el.isConnected) mount.pageDiv.appendChild(el);
   }
 
   /** Resolves every pinned highlight against every currently-mounted page —
@@ -899,14 +1034,32 @@ export class PdfRenderer implements ResourceRenderer {
     const entries: TocEntry[] = [];
     for (const [sectionIndex, href] of this.sectionHrefs) {
       const startOffset = this.sectionStartOffset.get(sectionIndex) ?? 0;
-      const percent = this.totalCanonicalLength > 0 ? (startOffset / this.totalCanonicalLength) * 100 : null;
+      const percentAt = (offsetIntoSection: number): number | null =>
+        this.totalCanonicalLength > 0 ? ((startOffset + offsetIntoSection) / this.totalCanonicalLength) * 100 : null;
+
       entries.push({
         label: this.sectionTitles.get(sectionIndex) ?? `Section ${sectionIndex + 1}`,
         href,
         spineIndex: sectionIndex,
-        percent,
+        percent: percentAt(0),
         depth: 0,
+        offset: null,
       });
+
+      // M42 §C4: this section's own depth-2+ subheadings, right after it
+      // and before the next section's entry — `getToc`'s own final sort
+      // (spineIndex only) is stable, so document order within one spine
+      // index is whatever order they're pushed in here.
+      for (const sub of this.sectionSubheadings.get(sectionIndex) ?? []) {
+        entries.push({
+          label: sub.title,
+          href,
+          spineIndex: sectionIndex,
+          percent: percentAt(sub.offset),
+          depth: sub.depth,
+          offset: sub.offset,
+        });
+      }
     }
     return entries.sort((a, b) => (a.spineIndex ?? 0) - (b.spineIndex ?? 0));
   }
@@ -931,6 +1084,17 @@ export class PdfRenderer implements ResourceRenderer {
     this.focusModeHidden = hidden;
     this.resolveAndPaintCurrentPage();
     this.paintTintForCurrentPage();
+  }
+
+  /** M43 §A corrective: mirrors `EpubRenderer.setActiveHighlight` — baked
+   * into the resting style (`resolveAndPaintPage`'s own re-paint, same
+   * choke point `applyTheme`/`setFocusMode` already use) rather than a
+   * one-off DOM mutation, so it survives whatever repaints a page (a resize,
+   * a theme change, continuous-scroll remounting a page's DOM). */
+  setActiveHighlight(id: string | null): void {
+    if (this.activeHighlightId === id) return;
+    this.activeHighlightId = id;
+    this.resolveAndPaintCurrentPage();
   }
 
   /** Nothing here ever reflows, so this is just a safe re-run of the same
@@ -963,6 +1127,61 @@ export class PdfRenderer implements ResourceRenderer {
     void this.relayout();
   }
 
+  /**
+   * M42 §D1: the continuous counterpart to `zoomIn`/`zoomOut` — an absolute
+   * target scale from a live gesture (wheel, touch pinch, or a drag on the
+   * chrome's zoom slider), called many times a second while the gesture is
+   * live. Unlike those two, this never triggers an immediate real
+   * re-render: it commits `userScale` synchronously (so `getZoomMode()`
+   * reads "free" right away, same as a discrete zoom) but only *paints* the
+   * change via a cheap CSS-transform preview on the already-rendered raster
+   * (`applyZoomPreview`) and debounces the actual pdf.js re-render
+   * (`page.render`/`getTextContent`, both real awaits) until the gesture
+   * pauses for `ZOOM_COMMIT_DEBOUNCE_MS` — otherwise a fast drag/wheel/pinch
+   * would queue a full raster re-render per event and fall behind the
+   * input. The preview is a plain scale transform, so it's blurrier than
+   * the eventual real render at large factors; that's the accepted
+   * trade-off for interpolating at all (same one Maps/Photos-style
+   * "zoom now, sharpen once idle" viewers make).
+   */
+  setZoomScale(scale: number): void {
+    const clamped = clampZoomScale(scale);
+    const nextUserScale = clamped <= this.currentFitScale + ZOOM_EPSILON ? null : clamped;
+    this.userScale = nextUserScale;
+    const target = nextUserScale ?? this.currentFitScale;
+    this.pendingZoomTarget = target;
+    this.applyZoomPreview(target);
+
+    if (this.zoomCommitTimer !== null) clearTimeout(this.zoomCommitTimer);
+    this.zoomCommitTimer = window.setTimeout(() => {
+      this.zoomCommitTimer = null;
+      void this.relayout();
+    }, ZOOM_COMMIT_DEBOUNCE_MS);
+  }
+
+  /** Scales `paginatedWrapperEl` in place — imperative, no React/event
+   * notification, exactly like a native pinch-zoom preview: the chrome's own
+   * zoom-percent readout only needs to move once the gesture settles (the
+   * slider control already shows its own live value while dragging; see
+   * ReaderView.tsx), not once per intermediate frame. A no-op under
+   * continuous scroll (`paginatedWrapperEl` is null there — no single
+   * wrapper to scale), which just leaves the view as-is until the debounced
+   * `relayout()` rebuilds the scroll column at the new scale. */
+  private applyZoomPreview(targetScale: number): void {
+    const wrapper = this.paginatedWrapperEl;
+    if (!wrapper) return;
+    const factor = targetScale / this.effectiveScale;
+    wrapper.style.transform = `scale(${factor})`;
+    wrapper.style.transformOrigin = "50% 0%";
+  }
+
+  private handleWheel = (event: WheelEvent): void => {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    event.preventDefault();
+    const base = this.pendingZoomTarget ?? this.userScale ?? this.currentFitScale;
+    this.setZoomScale(wheelZoomTarget(base, event.deltaY));
+  };
+
   // ── Internals: layout ────────────────────────────────────────────────
 
   /** The navigation entry point (`goTo`/`next`/`prev` all funnel through
@@ -991,6 +1210,15 @@ export class PdfRenderer implements ResourceRenderer {
     const doc = this.doc;
     if (!container || !doc) return;
     const generation = ++this.renderGeneration;
+    // M42 §D1: this is the real commit a debounced `setZoomScale` gesture
+    // was waiting for — cancel any pending one (this call supersedes it,
+    // whatever triggered it) and drop the preview-only target so a stray
+    // late-firing timer can't re-run relayout redundantly after this.
+    if (this.zoomCommitTimer !== null) {
+      clearTimeout(this.zoomCommitTimer);
+      this.zoomCommitTimer = null;
+    }
+    this.pendingZoomTarget = null;
 
     const containerWidth = container.clientWidth;
     const containerHeight = container.clientHeight;
@@ -1032,6 +1260,11 @@ export class PdfRenderer implements ResourceRenderer {
       if (!this.scrollHost) {
         container.replaceChildren();
         this.pageMounts = new Map();
+        // M42 §D1: stale once `container` is cleared — a live gesture that
+        // crosses into continuous scroll mid-drag must fall back to "no
+        // preview" (relayout is about to actually run at the new scale
+        // anyway) rather than scaling a detached node.
+        this.paginatedWrapperEl = null;
         const scrollHost = document.createElement("div");
         scrollHost.style.cssText = "width:100%;height:100%;overflow:auto;position:relative;";
         container.appendChild(scrollHost);
@@ -1067,8 +1300,23 @@ export class PdfRenderer implements ResourceRenderer {
     pageDiv.style.flex = "none";
 
     const canvas = document.createElement("canvas");
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
+    // M43 §B1: the backing store used to be sized 1:1 with `viewport`'s CSS
+    // pixels, so on any HiDPI display the browser stretched a 1×-resolution
+    // raster to fill a 2×/3×-density box — soft/pixelated next to a native
+    // OS PDF viewer at the same size. `pageDiv`/the CSS box stay at the
+    // unscaled `viewport` size (set above); only the backing store and the
+    // render call's own viewport scale up, via a second `getViewport` at
+    // `scale * dpr` — pdf.js then renders straight into that many real
+    // pixels with no separate `ctx.scale()` needed. `buildTextLayer` (and
+    // every rect-geometry consumer downstream of it — mark painting,
+    // selection) stays keyed to the original, unscaled `viewport`,
+    // untouched. Capped rather than trusting an unbounded reported value —
+    // DPR-2/DPR-3 is 4×/9× the pixels per page, and several pages are
+    // mounted at once under continuous scroll (§7.6).
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+    const renderViewport = dpr === 1 ? viewport : page.getViewport({ scale: scale * dpr });
+    canvas.width = Math.round(viewport.width * dpr);
+    canvas.height = Math.round(viewport.height * dpr);
     canvas.style.position = "absolute";
     canvas.style.inset = "0";
     pageDiv.appendChild(canvas);
@@ -1086,7 +1334,7 @@ export class PdfRenderer implements ResourceRenderer {
     // `canvas` package, which this file deliberately doesn't add just to
     // satisfy a test environment. A real browser always has one.
     const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | null;
-    if (ctx) await page.render({ canvasContext: ctx, viewport }).promise;
+    if (ctx) await page.render({ canvasContext: ctx, viewport: renderViewport }).promise;
     if (this.cancelled || generation !== this.renderGeneration) return null;
 
     const content = await page.getTextContent();
@@ -1126,6 +1374,10 @@ export class PdfRenderer implements ResourceRenderer {
 
     container.replaceChildren(wrapper);
     this.pageMounts = newMounts;
+    // M42 §D1: this fresh wrapper carries no transform of its own — the
+    // *next* live zoom gesture (not this render) is what `setZoomScale`
+    // scales, via `applyZoomPreview`.
+    this.paginatedWrapperEl = wrapper;
     this.resolveAndPaintCurrentPage();
     this.paintTintForCurrentPage();
 
@@ -1264,6 +1516,22 @@ export class PdfRenderer implements ResourceRenderer {
     if (scrollProgress.atBottom) this.emitSectionEndOnce();
   }
 
+  /** M43 §A2: mirrors `handleContentClick`'s EPUB-side "a click that isn't
+   * on a mark or a link clears the pending selection" rule (`ReaderView.tsx`)
+   * — root-caused there as the gap this pane had no equivalent for, since
+   * `handleSelection` above early-returns on a collapsed selection by
+   * design (M41 §A1) and so never fires on the very click that collapses
+   * the Range. Only this file can classify "on a mark": the mark divs
+   * (`MARK_CLASS`) are its own DOM, painted by `paintOneMark` above. */
+  private handleContainerClick = (event: MouseEvent): void => {
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("a[href]")) return;
+    if (target?.closest(`.${MARK_CLASS}`)) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && selection.toString()) return;
+    this.deselectListeners.forEach((cb) => cb());
+  };
+
   private handleSelection(pageIndex: number, textLayerDiv: HTMLElement): void {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
@@ -1311,6 +1579,26 @@ export class PdfRenderer implements ResourceRenderer {
   }
 }
 
+/** Lazily-created, module-shared canvas 2D context used only to measure
+ * text width for `buildTextLayer`'s scale-x correction below — never
+ * painted to. `null` in a test environment without the native `canvas`
+ * package (jsdom), same fallback shape as `renderPageInto`'s own raster
+ * skip; a missing context just means the correction below is skipped, not
+ * that anything throws. */
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+function getMeasureCtx(): CanvasRenderingContext2D | null {
+  if (measureCtx === undefined) {
+    const canvas = document.createElement("canvas");
+    // A test-only marker distinguishing this canvas from `renderPageInto`'s
+    // raster one — both call the same `HTMLCanvasElement.getContext`, and a
+    // test stubbing a fake 2D context in for this one (jsdom has none at
+    // all) needs a way to leave the other on its real (null) fallback.
+    canvas.dataset.marginaliaMeasureCanvas = "1";
+    measureCtx = canvas.getContext("2d") as CanvasRenderingContext2D | null;
+  }
+  return measureCtx;
+}
+
 /**
  * No official pdf.js `TextLayer` here, on purpose: its font-ascent
  * measurement (`TextLayer#getAscent`) needs a real 2D canvas context, which
@@ -1321,10 +1609,26 @@ export class PdfRenderer implements ResourceRenderer {
  * viewport the same way pdf.js's own builder does internally
  * (`Util.transform(viewport.transform, item.transform)`): real text nodes,
  * real Ranges, invisible (the raster canvas is the visible page) — enough
- * for selection/highlighting to work correctly. Not pixel-perfect glyph
- * spacing, which doesn't matter yet for a surface nothing renders to a
- * screen (M41 can swap in the official builder if this turns out not to be
- * enough once it actually is on one).
+ * for selection/highlighting to work correctly.
+ *
+ * ⚠️ **Scale-x correction (M43 §A1 corrective, 2026-09-08).** The comment
+ * this replaced said "not pixel-perfect glyph spacing, which doesn't matter
+ * yet for a surface nothing renders to a screen" — true when this file only
+ * fed selection Ranges, false since M43 §A1 started painting highlight
+ * boxes straight from these spans' `getClientRects()`. Without a
+ * `fontFamily`, the browser lays out `item.str` at its own default-font
+ * advance widths, which routinely differ from the PDF's own embedded-font
+ * widths (most visibly on justified body text), so a highlight built from
+ * several spans' rects drifted right of the real glyphs by an amount that
+ * compounded across the run — "going far over the line". `pdfjs-dist`'s own
+ * `TextLayer#layout` fixes exactly this by measuring the span's natural
+ * width via `ctx.measureText` and applying a `scaleX` to match the item's
+ * real (`width`, "device space", i.e. unscaled PDF page units) width; the
+ * same technique here, `getMeasureCtx()` standing in for its cached canvas.
+ * `Math.hypot(viewport.transform[0], viewport.transform[1])` is the
+ * viewport's own zoom scale (its rotation-invariant magnitude) —
+ * deliberately *not* `Math.hypot(tx[0], tx[1])`, which would double-count
+ * the item's own font-matrix scale already baked into `item.width`.
  */
 function buildTextLayer(
   container: HTMLElement,
@@ -1332,6 +1636,8 @@ function buildTextLayer(
   viewport: PdfjsViewport,
 ): void {
   container.replaceChildren();
+  const ctx = getMeasureCtx();
+  const viewportScale = Math.hypot(viewport.transform[0], viewport.transform[1]);
   for (const item of items) {
     if (!isTextItem(item)) continue;
     if (!item.str) {
@@ -1346,17 +1652,27 @@ function buildTextLayer(
     const tx = Util.transform(viewport.transform, item.transform) as number[];
     const angle = Math.atan2(tx[1], tx[0]);
     const fontHeight = Math.hypot(tx[2], tx[3]);
+    const text = item.str + (item.hasEOL ? "\n" : "");
     const span = document.createElement("span");
-    span.textContent = item.str + (item.hasEOL ? "\n" : "");
+    span.textContent = text;
     span.style.position = "absolute";
     span.style.left = `${tx[4]}px`;
     span.style.top = `${tx[5] - fontHeight}px`;
     span.style.fontSize = `${fontHeight}px`;
+    span.style.fontFamily = "sans-serif";
     span.style.lineHeight = "1";
     span.style.whiteSpace = "pre";
     span.style.color = "transparent";
     span.style.transformOrigin = "0 0";
-    if (angle !== 0) span.style.transform = `rotate(${angle}rad)`;
+    const transforms: string[] = [];
+    if (angle !== 0) transforms.push(`rotate(${angle}rad)`);
+    if (ctx && item.width && fontHeight > 0) {
+      ctx.font = `${fontHeight}px sans-serif`;
+      const measured = ctx.measureText(text).width;
+      const expected = item.width * viewportScale;
+      if (measured > 0 && expected > 0) transforms.push(`scaleX(${expected / measured})`);
+    }
+    if (transforms.length) span.style.transform = transforms.join(" ");
     container.appendChild(span);
   }
 }

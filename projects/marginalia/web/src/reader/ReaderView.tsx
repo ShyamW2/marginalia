@@ -75,6 +75,7 @@ import { ChromeSlotPortal } from "../app/chromeSlot.js";
 import { DEFAULT_KIND_LABELS, hoverFillOpacity, kindLabelsFromSettings } from "./highlightKinds.js";
 import { EpubRenderer, HIGHLIGHT_MARK_CLASS, PAGINATED_CAPABILITIES } from "./renderer/epub/EpubRenderer.js";
 import { PdfRenderer } from "./renderer/pdf/PdfRenderer.js";
+import { MAX_ZOOM_SCALE, MIN_ZOOM_SCALE, ZOOM_STEP } from "./renderer/pdf/pdfLayout.js";
 import {
   parseSerializedLocator,
   serializeLocator,
@@ -109,7 +110,7 @@ import { addThreadAnchor } from "../threads/threadAnchorsApi.js";
 import { isReaderOrigin } from "../highlights/highlightOrigin.js";
 import { AnnotationsOverview } from "./AnnotationsOverview.js";
 import { DefinitionCard, type DefinitionCardState } from "./DefinitionCard.js";
-import { DeleteConfirmDialog } from "./DeleteConfirmDialog.js";
+import { DeleteConfirmDialog } from "../controls/DeleteConfirmDialog.js";
 import { Glossary, glossaryEntries, isGlossaryEntry, type GlossarySortMode } from "./Glossary.js";
 import { chapterAtPercent, chapterStops as deriveChapterStops, currentChapter as deriveCurrentChapter, type TocEntry } from "./renderer/epub/toc.js";
 import { ChapterNav } from "./ChapterNav.js";
@@ -126,6 +127,7 @@ import {
   DECLARE_SWIPE_PX,
   declaredTurnDirection,
   isDepartureSwipe,
+  NATIVE_PDF_MARGIN_PX,
   pinchFontScale,
   READER_MARGIN_PX,
   turnZoneForVisibleX,
@@ -276,7 +278,16 @@ interface TouchGestureCallbacks {
    * the sandboxed iframe (the exact conversion `handleContentMouseMove`
    * already does for the mouse). */
   toViewport: (clientX: number, clientY: number) => { x: number; y: number };
+  /** The scale a pinch begins from — font scale for EPUB, the native PDF
+   * pane's own current zoom (M42 §D1) under `capabilities.zoom`. Whatever
+   * this returns must be in the same units `scaleMin`/`scaleMax` bound. */
   fontScale: () => number;
+  /** M42 §D1: bounds for the pinch's own clamp (`pinchFontScale`) — text-size
+   * bounds for EPUB, `MIN_ZOOM_SCALE`/`MAX_ZOOM_SCALE` for the native PDF
+   * pane. Callbacks rather than constants so `handleTouchMove` stays
+   * format-neutral; only the caller knows which pane is live. */
+  scaleMin: () => number;
+  scaleMax: () => number;
   onCommitTurn: (direction: "prev" | "next") => void;
   onCommitDeparture: () => void;
   /** C7: "in immersive mode, a tap anywhere reveals the pebble" — fired for
@@ -351,8 +362,8 @@ function handleTouchMove(
       state.pinchStartDist,
       dist,
       state.pinchStartScale,
-      TEXT_SIZE_MIN,
-      TEXT_SIZE_MAX,
+      callbacks.scaleMin(),
+      callbacks.scaleMax(),
     );
     state.pinchLastScale = scale;
     const centreX = (va.x + vb.x) / 2;
@@ -764,9 +775,17 @@ export function ReaderView({
   // instance's lifetime* (zooming in/out) — unlike EPUB, where `flow` is
   // fixed at construction and `capabilities` never needs updating again
   // after mount. `pdfZoom` mirrors that live state for the zoom cluster's
-  // own display (mode pressed-state, no live percent readout requested);
-  // null for an EPUB, where `capabilities.zoom` is always false anyway.
-  const [pdfZoom, setPdfZoom] = useState<{ mode: "fit-width" | "fit-page" | "free" } | null>(null);
+  // own display (mode pressed-state; `percent` added M42 §D1 for the zoom
+  // slider's `value` and the touch-pinch redirect's starting scale — both
+  // need a read *outside* the `instanceof PdfRenderer`-narrowed block below,
+  // where calling the renderer's own `getZoomPercent()` on the
+  // `EpubRenderer | PdfRenderer` union wouldn't type-check); null for an
+  // EPUB, where `capabilities.zoom` is always false anyway.
+  const [pdfZoom, setPdfZoom] = useState<{ mode: "fit-width" | "fit-page" | "free"; percent: number } | null>(null);
+  const pdfZoomRef = useRef(pdfZoom);
+  useEffect(() => {
+    pdfZoomRef.current = pdfZoom;
+  }, [pdfZoom]);
   // M40 §C9: the reading mode is a reader setting remembered *per book*
   // (`reading_state.flow`, migration 42) — `null` means "not decided by the
   // reader this session; use whatever the book was last saved with",
@@ -1759,6 +1778,45 @@ export function ReaderView({
     );
   }
 
+  // M42 §D1: a pinch drives the native PDF pane's own continuous zoom under
+  // `capabilities.zoom`, font scale otherwise — the exact same branch is
+  // needed at both touch attachment points below (stage + the epub.js
+  // iframe's own content document), pulled out once so they can't drift.
+  // Reads `pdfZoomRef` rather than calling the renderer directly: outside
+  // the `instanceof PdfRenderer`-narrowed block elsewhere in this file,
+  // `rendererRef.current` is the `EpubRenderer | PdfRenderer` union, which
+  // doesn't expose PDF-only extras like `getZoomPercent()`.
+  function pinchStartScaleForCurrentPane(): number {
+    return capabilitiesRef.current.zoom ? (pdfZoomRef.current?.percent ?? 100) / 100 : fontScaleRef.current;
+  }
+  function pinchScaleMin(): number {
+    return capabilitiesRef.current.zoom ? MIN_ZOOM_SCALE : TEXT_SIZE_MIN;
+  }
+  function pinchScaleMax(): number {
+    return capabilitiesRef.current.zoom ? MAX_ZOOM_SCALE : TEXT_SIZE_MAX;
+  }
+  /** The pinch *is* the live commit for PDF zoom (`setZoomScale` already
+   * debounces its own real re-render — PdfRenderer.ts, M42 §D1) — no
+   * PinchResizeInstrument popover, since the page scaling live under the
+   * fingers already is that feedback. EPUB keeps the popover (DESIGN.md:
+   * "the pinch drives its value"), unchanged from before this landed. */
+  function handlePinchPreview(scale: number, viewportX: number, viewportY: number): void {
+    if (capabilitiesRef.current.zoom) {
+      rendererRef.current?.setZoomScale(scale);
+      return;
+    }
+    setPinchInstrument({
+      scale,
+      x: Math.min(Math.max(viewportX, 60), window.innerWidth - 60),
+      y: Math.max(viewportY - 100, 40),
+    });
+  }
+  function handlePinchCommit(scale: number): void {
+    // Already live-committed via setZoomScale on every preview tick.
+    if (capabilitiesRef.current.zoom) return;
+    setReaderFontScale(scale);
+  }
+
   // ── M31 C: touch, the parent-document half ─────────────────────────────
   //
   // `.stage`'s own `onTouch*` — the outer margins and the spine gutter,
@@ -1775,7 +1833,9 @@ export function ReaderView({
       isMidTurn: () => gestureActiveRef.current,
       getPageHeight: () => pageClipRef.current?.getBoundingClientRect().height ?? 0,
       toViewport: (clientX, clientY) => ({ x: clientX, y: clientY }),
-      fontScale: () => fontScaleRef.current,
+      fontScale: pinchStartScaleForCurrentPane,
+      scaleMin: pinchScaleMin,
+      scaleMax: pinchScaleMax,
       onCommitTurn: (direction) => turnPageRef.current(direction),
       onCommitDeparture: () => {
         if (hasLiveSelection() || isEditingSomewhere() || gestureActiveRef.current) return;
@@ -1784,17 +1844,8 @@ export function ReaderView({
       onTap: () => {
         if (fullscreenModeRef.current) wakePebble();
       },
-      onPinchPreview: (scale, viewportX, viewportY) => {
-        setPinchInstrument({
-          scale,
-          // M31 C6: "100px above the pinch's centre point", clamped into
-          // view the same way `handleSelected` clamps the pill (M31 B2) —
-          // clamp, never refuse (DESIGN.md).
-          x: Math.min(Math.max(viewportX, 60), window.innerWidth - 60),
-          y: Math.max(viewportY - 100, 40),
-        });
-      },
-      onPinchCommit: (scale) => setReaderFontScale(scale),
+      onPinchPreview: handlePinchPreview,
+      onPinchCommit: handlePinchCommit,
       onPinchEnd: () => setPinchInstrument(null),
     };
   }
@@ -2430,7 +2481,9 @@ export function ReaderView({
         isMidTurn: () => gestureActiveRef.current,
         getPageHeight: () => pageClipRef.current?.getBoundingClientRect().height ?? 0,
         toViewport,
-        fontScale: () => fontScaleRef.current,
+        fontScale: pinchStartScaleForCurrentPane,
+        scaleMin: pinchScaleMin,
+        scaleMax: pinchScaleMax,
         onCommitTurn: (direction) => turnPageRef.current(direction),
         onCommitDeparture: () => {
           if (hasLiveSelection() || isEditingSomewhere() || gestureActiveRef.current) return;
@@ -2439,14 +2492,8 @@ export function ReaderView({
         onTap: () => {
           if (fullscreenModeRef.current) wakePebble();
         },
-        onPinchPreview: (scale, viewportX, viewportY) => {
-          setPinchInstrument({
-            scale,
-            x: Math.min(Math.max(viewportX, 60), window.innerWidth - 60),
-            y: Math.max(viewportY - 100, 40),
-          });
-        },
-        onPinchCommit: (scale) => setReaderFontScale(scale),
+        onPinchPreview: handlePinchPreview,
+        onPinchCommit: handlePinchCommit,
         onPinchEnd: () => setPinchInstrument(null),
       };
     }
@@ -2815,9 +2862,16 @@ export function ReaderView({
         unsubscribers.push(
           activeRenderer.onLayoutChanged(() => {
             applyCapabilities(activeRenderer.capabilities);
-            setPdfZoom({ mode: activeRenderer.getZoomMode() });
+            setPdfZoom({ mode: activeRenderer.getZoomMode(), percent: activeRenderer.getZoomPercent() });
           }),
         );
+        // M43 §A2: the native pane's own "click away from a selection
+        // dismisses the pill" — this pane has no per-section iframe document
+        // for `handleContentClick` to attach to, so `PdfRenderer` classifies
+        // the click itself (mark vs. link vs. plain background) and reports
+        // through this named extra instead (same shape as `onLayoutChanged`
+        // above).
+        unsubscribers.push(activeRenderer.onDeselected(() => setPendingSelection(null)));
       }
 
       await activeRenderer.mount(containerRef.current, { id: resourceId }, {
@@ -2835,6 +2889,12 @@ export function ReaderView({
         const activeRenderer = renderer;
         activeRenderer.applyTheme(themeVars);
         activeRenderer.setFocusMode(focusModeRef.current);
+        // M43 §A corrective: a fresh renderer instance (e.g. toggling
+        // render mode while a panel is already open) starts with no active
+        // highlight of its own — push whatever's already open, same reason
+        // theme/focus mode are re-applied here rather than waiting for
+        // their own effects to fire (they won't: the state didn't change).
+        activeRenderer.setActiveHighlight(expandedThreadRef.current?.highlightId ?? null);
         applyCapabilities(activeRenderer.capabilities);
 
         const [resourceHighlights, chapterMeta] = await Promise.all([
@@ -2978,6 +3038,15 @@ export function ReaderView({
     rendererRef.current?.setFocusMode(focusMode);
   }, [focusMode]);
 
+  // M43 §A corrective: the mark whose annotation panel is open reads as
+  // more pronounced than its resting kind wash, so it's visually clear
+  // which highlight an open panel belongs to — null (no panel open) clears
+  // it. Keyed on `expandedThread?.highlightId` alone, not the whole object,
+  // so switching the panel's `top` (drag) doesn't cause a needless re-paint.
+  useEffect(() => {
+    rendererRef.current?.setActiveHighlight(expandedThread?.highlightId ?? null);
+  }, [expandedThread?.highlightId]);
+
   // M16 "reading text size": applied through the renderer, which patches
   // already-rendered content immediately, plus the same gap-recompute +
   // debounced re-display the margin-change bug fix above uses, since
@@ -3079,8 +3148,19 @@ export function ReaderView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeChapterStopIndex, chapterStopsList.length]);
 
+  // M42 §C4: a depth-2+ subheading carries its own in-section offset
+  // (`toc.ts`/`PdfRenderer.getToc()`) — jump to it through the
+  // format-neutral `Locator` seam (decision 11), already implemented on
+  // both renderers, rather than `goToHref`, which only ever names a whole
+  // spine section. A real chapter (`offset === null`) is unchanged.
   function handleTocSelect(entry: TocEntry) {
-    void rendererRef.current?.goToHref(entry.href);
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    if (entry.offset !== null && entry.spineIndex !== null) {
+      void renderer.goTo({ sectionIndex: entry.spineIndex, offset: entry.offset, length: 0 });
+      return;
+    }
+    void renderer.goToHref(entry.href);
   }
 
   async function handleDigestChapter() {
@@ -3847,6 +3927,40 @@ export function ReaderView({
     </ExpandingCluster>
   );
 
+  // M42 §D1: "drag" — the third of D1's three continuous-zoom surfaces
+  // (wheel/Ctrl+scroll and touch pinch are wired directly in PdfRenderer.ts
+  // and the touch handlers above; this is the one that needs its own
+  // control). Reuses the reader's one shared drag control (decisions.md
+  // 2026-07-30, "one control system") rather than a bespoke slider —
+  // `onPreviewChange` drives the live gesture through the same
+  // `setZoomScale` the wheel/pinch paths use, exactly like the progress
+  // Slider above drives `setScrubPreviewPercent` without feeding its own
+  // `value` prop back mid-drag (the Slider already shows its own live
+  // formatted value while dragging; round-tripping the committed `percent`
+  // back into `value` isn't needed and would only fight the drag's own
+  // internal state). `scale="log2"` so a drag feels the same at both ends of
+  // the 0.25x–4x range, matching a screen-space zoom's own feel rather than
+  // a linear percent. Shown only under `capabilities.zoom` at each call
+  // site, same as the fit-width/fit-page/±buttons beside it.
+  const zoomSlider = (
+    <Slider
+      ariaLabel="Zoom"
+      value={(pdfZoom?.percent ?? 100) / 100}
+      min={MIN_ZOOM_SCALE}
+      max={MAX_ZOOM_SCALE}
+      scale="log2"
+      dragPxPerUnit={120}
+      keyboardStep={ZOOM_STEP}
+      step={0.01}
+      clickToType={false}
+      formatValue={(v) => `${Math.round(v * 100)}%`}
+      onPreviewChange={(v) => {
+        if (v !== null) rendererRef.current?.setZoomScale(v);
+      }}
+      onCommit={(v) => rendererRef.current?.setZoomScale(v)}
+    />
+  );
+
   return (
     <div
       ref={wrapperRef}
@@ -4013,7 +4127,7 @@ export function ReaderView({
 
       <div className={styles.readerRow} ref={readerRowRef}>
         <div
-          className={styles.stage}
+          className={`${styles.stage} ${capabilities.zoom ? styles.stageNativePane : ""}`}
           ref={(node) => {
             stageRef.current = node;
             if (externalStageRef) externalStageRef.current = node;
@@ -4042,7 +4156,17 @@ export function ReaderView({
             <div
               ref={marginWrapperRef}
               className={`${styles.marginWrapper} ${slide ? styles.marginWrapperSliding : ""}`}
-              style={{ "--reader-margin": `${READER_MARGIN_PX[readerMargin]}px` } as CSSProperties}
+              style={
+                {
+                  // M42 §D4: the reader's margin setting has nothing to act
+                  // on for a fixed-page raster (`capabilities.margins` is
+                  // false only for `PdfRenderer` — the control itself is
+                  // already hidden, M40 §D1) — a small fixed sliver for the
+                  // page's own drop-shadow/edge, not one of the four reader
+                  // margin steps sized for a reflowed text column's measure.
+                  "--reader-margin": `${capabilities.margins ? READER_MARGIN_PX[readerMargin] : NATIVE_PDF_MARGIN_PX}px`,
+                } as CSSProperties
+              }
             >
               <motion.div
                 ref={containerRef}
@@ -4304,7 +4428,12 @@ export function ReaderView({
             {pendingDelete && (
               <DeleteConfirmDialog
                 key="delete-confirm"
-                messageCount={pendingDelete.messageCount}
+                message={
+                  <>
+                    Delete this highlight and its thread — {pendingDelete.messageCount} message
+                    {pendingDelete.messageCount === 1 ? "" : "s"} will go with it. This can't be undone.
+                  </>
+                }
                 onCancel={() => setPendingDelete(null)}
                 onConfirm={() => {
                   void performDeleteHighlight(pendingDelete.highlight);
@@ -4452,6 +4581,7 @@ export function ReaderView({
                   onClick={() => rendererRef.current?.setZoomMode("fit-page")}
                 />
                 <IconButton icon={<ZoomOutIcon />} label="Zoom out" onClick={() => rendererRef.current?.zoomOut()} />
+                {zoomSlider}
                 <IconButton icon={<ZoomInIcon />} label="Zoom in" onClick={() => rendererRef.current?.zoomIn()} />
               </>
             )}
@@ -4534,6 +4664,7 @@ export function ReaderView({
                   onClick={() => rendererRef.current?.setZoomMode("fit-page")}
                 />
                 <IconButton icon={<ZoomOutIcon />} label="Zoom out" onClick={() => rendererRef.current?.zoomOut()} />
+                {zoomSlider}
                 <IconButton icon={<ZoomInIcon />} label="Zoom in" onClick={() => rendererRef.current?.zoomIn()} />
               </>
             )}
