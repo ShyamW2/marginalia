@@ -2111,7 +2111,7 @@ touched.
       PDF): dragging the slider now shows "132% · Release to set · Esc to cancel" floating
       above the trigger, fully over the reading pane. Full writeup in NOTES.md "M43 §B1
       corrective + §C1".
-- [ ] **C2.** Replace the two separate fit-width/fit-page `IconButton`s
+- [x] **C2.** Replace the two separate fit-width/fit-page `IconButton`s
       (`ReaderView.tsx`, ~4547–4562) with a single toggle that cycles fit-single-page →
       fit-two-page-spread → (stays there; further zoom is free via the slider/pinch/drag,
       not part of the cycle) → back to fit-single-page on a third press.
@@ -2128,6 +2128,35 @@ touched.
       same test `MIN_SPREAD_SCALE` already applies — fits two pages edge-to-edge; from
       either state the zoom slider/pinch/drag still free-zooms away from the fit scale
       exactly as today._
+      Done 2026-09-08: `fit-width` retired outright rather than kept as a hidden third
+      state — nothing reachable from the chrome asked for a width-only scale any more, and
+      both remaining states (`FitMode = "fit-page" | "fit-spread"`, `pdfLayout.ts`) fit
+      **both** axes; `pagesAcross` is the only thing that still differs between them.
+      `computeFitScale` dropped its `fitMode` parameter entirely (the two states' scale
+      formula was already identical) rather than gaining a third branch. `PdfRenderer`'s
+      `pagesAcross`/`spread` derivation now gates on the explicit toggle
+      (`this.fitMode === "fit-spread"`) *and* `shouldShowSpread`, not on container width
+      alone — `"fit-spread"` resolves to 1-up at a width too narrow for a legible spread
+      (PDF.md §7.6's capability-profile table already documented this fallback shape,
+      just never had a caller that could reach it on purpose). One `IconButton` replaces
+      both old ones at both call sites (fullscreen pebble, windowed footer), cycling via
+      `setZoomMode(pdfZoom?.mode === "fit-spread" ? "fit-page" : "fit-spread")`; new
+      `FitLayoutIcon` (`icons.tsx`) swaps a one-rectangle glyph for a two-rectangle one on
+      the same `spread` boolean prop pattern `ScrollModeIcon`/`RenderModeIcon` already use.
+      `ResourceRenderer.setZoomMode`'s shared-interface type and `EpubRenderer`'s no-op
+      stub updated to match; `getZoomMode()`'s return type follows.
+      Tests: `pdfLayout.test.ts` rewritten for the mode-less `computeFitScale`;
+      `PdfRenderer.test.ts`'s zoom/layout and continuous-zoom describe blocks rewritten for
+      the explicit-toggle model (a `"fit-spread"` mode legible at the mocked container
+      width, not container width alone, is what produces the paginated capability now) —
+      see §D below for the default-advance half of that rewrite, since the two landed
+      together. Live-verified (Playwright/Chromium, the real "Spatiotemporal
+      Composability" PDF): toggle button reads "Fit two-page spread" by default (i.e.
+      currently single); clicking it flips the label to "Fit single page" and the reading
+      pane visibly shows two full pages (15/16) fit edge-to-edge on both axes; clicking
+      again returns to single and to continuous scroll (confirmed by a real `overflow:
+      auto` host with `scrollHeight` ≫ `clientHeight` reappearing). No console errors
+      beyond two pre-existing, unrelated 404s (missing cover image, jobs-events SSE).
 - [x] **C3.** Whenever part of a page doesn't fit the reading pane — i.e. the pane is
       zoomed past its own fit scale — the pane scrolls on both axes: vertically to move
       through the page and on into the next/previous one, horizontally to reach a line
@@ -2156,11 +2185,11 @@ Per PDF.md §7.6's amendment (2026-09-08); decisions.md that date records why th
 scoped to the native pane only and does not reopen decision 17c's "pagination won" for
 EPUB.
 
-- [ ] **D1.** `PdfRenderer`'s `capabilities.advance` defaults to `"scroll"` at mount,
+- [x] **D1.** `PdfRenderer`'s `capabilities.advance` defaults to `"scroll"` at mount,
       replacing today's derived-from-zoom-comparison logic as the *default* — continuous
       scroll is now the native pane's baseline reading mode, not a state only reached by
       zooming past the fit scale.
-- [ ] **D2.** The one exception: when `shouldShowSpread` reports a legible 2-up spread at
+- [x] **D2.** The one exception: when `shouldShowSpread` reports a legible 2-up spread at
       the active fit-mode's own scale (the state C2 above makes explicitly reachable),
       the pane is paginated instead — `advance` reports `"image"` for exactly that state,
       same as today's spread behaviour.
@@ -2168,7 +2197,7 @@ EPUB.
       navigation past the visible spread — drops back to `"scroll"` automatically, the
       same direction-agnostic snap `§7.6`'s existing threshold logic already gets right
       for the old model; don't regress that half while inverting the default.
-- [ ] **D3.** A scroll input (wheel, trackpad, touch drag) received while in the D2
+- [x] **D3.** A scroll input (wheel, trackpad, touch drag) received while in the D2
       paginated state turns the page — a spread-to-spread slide (§D2 of M42, the page-turn
       slide, if that's landed; otherwise the plainest directional transition available) —
       rather than moving a scroll position that doesn't exist in that state.
@@ -2179,6 +2208,50 @@ EPUB.
       a scroll position; narrowing back below the spread threshold returns to continuous
       scroll. EPUB's own reflow/`flow: "scrolled-doc"` behaviour is unchanged by any of
       this._
+      Done 2026-09-08 (landed together with §C2 above — one `relayout()` rewrite covers
+      both). `capabilities`'s class-field default flipped from `advance: "image"` to
+      `"scroll"` (D1's literal instruction, visible before the first real `relayout()`
+      resolves). `relayout()`'s derivation: `paginated = containerWidth <= 0 ||
+      (userScale === null && fitMode === "fit-spread" && legibleSpread)`, `advance =
+      paginated ? "image" : "scroll"` — leaving any one of the three conditions (zooming
+      in, narrowing the pane, switching the toggle back to `fit-page`) snaps back to
+      scroll automatically, since it's recomputed fresh on every `relayout()` call
+      (resize, zoom, toggle) exactly like the pre-M43 zoom-only derivation was. ⚠️
+      **`containerWidth <= 0` (not yet laid out — every jsdom test, and a real container
+      before its first paint) is a forced exception, kept paginated rather than defaulting
+      to scroll**: there is no scroll host to build without a real width to lay it out
+      against, and dozens of existing tests call `next()`/`prev()`/`goTo()` against an
+      unmocked (zero-width) container assuming the old safe single-page state — found
+      live via a `scrollHost?.scrollBy is not a function` crash (jsdom has no
+      `Element.scrollBy`) before adding this back. A real container reports its real width
+      once `ResizeObserver` fires and `relayout()` re-runs, at which point D1/D2's real
+      default takes over.
+      **D3** (the wheel handler): a non-Ctrl/Cmd wheel event while `capabilities.advance
+      === "image"` calls `next()`/`prev()` (by `deltaY` sign) instead of the zoom path —
+      the plain-directional-transition fallback the task explicitly allowed, not the M42
+      slide: routing through `ReaderView`'s `turnPage`/`PageSlide` machinery from inside
+      `PdfRenderer`'s own low-level wheel handler would need a new named-extra event
+      round-trip for comparatively little payoff on a surface pdf.js already redraws a
+      fresh raster for on every page change. Gated by `WHEEL_TURN_THRESHOLD` (4, so a
+      trackpad's near-zero touch-down tick doesn't turn a page nobody meant to move) and a
+      `WHEEL_TURN_COOLDOWN_MS` (500) lockout so a fast trackpad swipe's many wheel events
+      turn one page, not several. Touch-drag panning is **not implemented** — the file has
+      no `touchstart`/`touchmove` handling at all (desktop trackpads fire `wheel`, which
+      *is* handled; a genuine touchscreen swipe is a gap this task didn't add and didn't
+      close either).
+      Tests: `PdfRenderer.test.ts`'s zoom/layout describe block gained a "defaults to
+      scroll" case and a "fit-spread resolves to 1-up below the legible width" case; the
+      continuous-zoom block's snap-back/preview/wheel-passthrough tests were rewritten
+      around the new default (several previously asserted `capabilities.advance ===
+      "image"` at container sizes that are legible for a spread under the *old*
+      auto-derived model — now correctly `"scroll"`, since nothing selected `fit-spread`);
+      two new cases cover the wheel-turn threshold/cooldown/direction. `tsc -b` clean, all
+      556 web tests pass. Live-verified (Playwright/Chromium, real PDF, same session as
+      §C2): the default view is a real scrolling column (`scrollHost.scrollHeight`
+      69092 ≫ `clientHeight` 735); selecting fit-spread at a wide viewport replaces it with
+      a static two-page spread (pages 15/16, both fit edge-to-edge); a wheel scroll over
+      the pane in that state turned the page (15/16 → 17/18) rather than doing nothing (no
+      scrollable area existed to move).
 
 #### E. Reflow — equations render as typeset math, not a flat raster
 
