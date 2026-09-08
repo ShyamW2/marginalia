@@ -7,6 +7,40 @@ import { useEffect, useRef, useState } from "react";
 // then 720px) this replaced.
 const MIN_IDENTITY_WIDTH_PX = 140;
 
+/** Pure decision logic used by `measure()` below, pulled out so it's
+ * unit-testable without a real `ResizeObserver` (jsdom has none — same
+ * reasoning `pdfLayout.ts`'s `shouldShowSpread` and `readerGeometry.ts`
+ * already follow for their own layout math).
+ *
+ * M42 §E: `containerRef` (below) is sized to the reading *pane*, so it
+ * shrinks both when the tab/window shrinks (should restack — the case this
+ * hook was built for) and when a sibling panel opens (`ThreadPanel`, the
+ * margin rail) with the tab/window untouched (should **not** restack — found
+ * live, decisions.md 2026-09-07). Both produce an identical `ResizeObserver`
+ * signal on `container`, so telling them apart needs a second, independent
+ * width: `window.innerWidth` only moves on an actual tab/window resize, never
+ * on a sibling panel toggling. A transition is applied only when the window
+ * width itself moved in the same direction as the transition — shrank for
+ * stacking, grew for unstacking — so a panel open/close (window width
+ * unchanged) leaves `stacked` exactly where it was, while a real tab/window
+ * resize keeps restacking exactly as before this landed.
+ * `priorWindowWidth === null` means "no prior measurement to compare
+ * against" (first mount), in which case the pane measurement (`next`) wins
+ * outright — what makes an already-narrow initial mount stack correctly. */
+export function shouldRestack(params: {
+  next: boolean;
+  currentStacked: boolean;
+  currentWindowWidth: number;
+  priorWindowWidth: number | null;
+}): boolean {
+  const { next, currentStacked, currentWindowWidth, priorWindowWidth } = params;
+  if (next === currentStacked) return currentStacked;
+  const causedByWindow =
+    priorWindowWidth === null ||
+    (next ? currentWindowWidth < priorWindowWidth : currentWindowWidth > priorWindowWidth);
+  return causedByWindow ? next : currentStacked;
+}
+
 /**
  * Decides when the reader's top strip (and the foot, kept in lockstep —
  * ReaderView.tsx applies the same result to both) no longer has room for one
@@ -25,6 +59,10 @@ const MIN_IDENTITY_WIDTH_PX = 140;
  * its rendered width in that layout means something different (the whole
  * row) — re-measuring it there would feed a stale number back into the very
  * decision that produced the stacked layout in the first place.
+ *
+ * M42 §E: see `shouldRestack`'s own comment for why a window-width reading is
+ * threaded through here (`windowWidthRef`) alongside the existing pane
+ * measurement.
  */
 export function useReaderStripLayout(
   containerRef: React.RefObject<HTMLElement | null>,
@@ -35,6 +73,7 @@ export function useReaderStripLayout(
   const stackedRef = useRef(stacked);
   const leftWidthRef = useRef(0);
   const rightWidthRef = useRef(0);
+  const windowWidthRef = useRef<number | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -50,9 +89,15 @@ export function useReaderStripLayout(
       }
       const available = containerWidth - leftWidthRef.current - rightWidthRef.current;
       const next = available < MIN_IDENTITY_WIDTH_PX;
-      if (next !== stackedRef.current) {
-        stackedRef.current = next;
-        setStacked(next);
+
+      const currentWindowWidth = window.innerWidth;
+      const priorWindowWidth = windowWidthRef.current;
+      windowWidthRef.current = currentWindowWidth;
+
+      const resolved = shouldRestack({ next, currentStacked: stackedRef.current, currentWindowWidth, priorWindowWidth });
+      if (resolved !== stackedRef.current) {
+        stackedRef.current = resolved;
+        setStacked(resolved);
       }
     }
 

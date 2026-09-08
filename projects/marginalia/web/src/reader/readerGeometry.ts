@@ -38,6 +38,15 @@ export const READER_MARGIN_PX: Record<ReaderMargin, number> = {
   generous: 96, // 6rem
 };
 
+// M42 §D4: the native PDF pane's own `.marginWrapper` padding — the reader's
+// margin *setting* is meaningless there (`capabilities.margins` is false;
+// M40 §D1's own comment), but the wrapper still needs a sliver of room for
+// the page's drop-shadow/edge, not zero. Small and fixed, not one of the
+// four `READER_MARGIN_PX` steps — those exist to trade off measure comfort
+// for a reflowed column of *text*, which a fixed-page raster has no measure
+// to comfort.
+export const NATIVE_PDF_MARGIN_PX = 8;
+
 // Shared by click-to-turn and the M11 semicircular turn-zone hover/cursor —
 // the outer 30% of the visible page on either side.
 export const TURN_ZONE_FRACTION = 0.3;

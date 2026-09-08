@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { TocEntry } from "./renderer/epub/toc.js";
 import { ChevronIcon } from "./ChevronIcon.js";
@@ -38,12 +38,41 @@ function withSectionNumber(entry: TocEntry, chapterNumbers: Map<number, number> 
   return n !== undefined ? `S${n} · ${label}` : label;
 }
 
+interface ChapterGroup {
+  chapter: TocEntry;
+  /** M42 §C4: this chapter's own depth-2+ subheadings — a real chapter
+   * from `flattenNavItems`/`PdfRenderer.getToc()` is always depth 0, so
+   * grouping on that boundary works identically for both renderers. */
+  children: TocEntry[];
+}
+
+function groupByChapter(toc: TocEntry[]): ChapterGroup[] {
+  const groups: ChapterGroup[] = [];
+  for (const entry of toc) {
+    if (entry.depth === 0) {
+      groups.push({ chapter: entry, children: [] });
+    } else {
+      groups[groups.length - 1]?.children.push(entry);
+    }
+  }
+  return groups;
+}
+
+function groupKey(entry: TocEntry): string {
+  return `${entry.href}-${entry.label}`;
+}
+
 /**
  * M12 "jump up and down the book" (TASKS.md): prev/next chapter arrows plus
  * a table-of-contents popover, all anchored to one compact cluster in the
  * reader's top row. `[`/`]` keyboard shortcuts for prev/next live in
  * ReaderView's existing keydown handler; this component is itself a plain
  * Tab-reachable button, so the TOC is reachable without a pointer too.
+ *
+ * M42 §C4: a chapter with subheadings (a depth-2+ heading that stays inline
+ * in its own text rather than fragmenting the spine) gets a down-arrow that
+ * expands them beneath it, each independently clickable — jumping within
+ * the same chapter/section rather than to a different one.
  */
 export function ChapterNav({
   toc,
@@ -58,12 +87,33 @@ export function ChapterNav({
   compact = false,
 }: ChapterNavProps) {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const reducedMotion = useReducedMotion();
+
+  // The current chapter's own subheadings start visible rather than
+  // requiring an extra click right after opening the popover on the
+  // chapter you're already reading.
+  useEffect(() => {
+    if (!open || !currentChapter) return;
+    const key = groupKey(currentChapter);
+    setExpanded((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  }, [open, currentChapter]);
 
   function handleSelect(entry: TocEntry) {
     onSelect(entry);
     setOpen(false);
   }
+
+  function toggleExpanded(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  const groups = groupByChapter(toc);
 
   return (
     <div className={styles.wrap}>
@@ -101,27 +151,59 @@ export function ChapterNav({
             exit={{ opacity: 0, y: reducedMotion ? 0 : -4 }}
             transition={{ duration: reducedMotion ? 0.001 : 0.14, ease: "easeOut" }}
           >
-            {toc.length === 0 ? (
+            {groups.length === 0 ? (
               <div className={styles.tocEmpty}>This book has no table of contents.</div>
             ) : (
-              toc.map((entry) => (
-                <button
-                  key={`${entry.href}-${entry.label}`}
-                  type="button"
-                  role="option"
-                  aria-selected={
-                    chapterStops.some((s) => s.href === entry.href) &&
-                    currentChapter?.href === entry.href
-                  }
-                  className={`${styles.tocEntry} ${
-                    currentChapter?.href === entry.href ? styles.tocEntryActive : ""
-                  }`}
-                  style={{ paddingLeft: `${0.5 + entry.depth * 0.9}rem` }}
-                  onClick={() => handleSelect(entry)}
-                >
-                  {withSectionNumber(entry, chapterNumbers)}
-                </button>
-              ))
+              groups.map((group) => {
+                const key = groupKey(group.chapter);
+                const isActive = currentChapter?.href === group.chapter.href;
+                const hasChildren = group.children.length > 0;
+                const isExpanded = expanded.has(key);
+                return (
+                  <div key={key}>
+                    <div className={styles.tocRow}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={chapterStops.some((s) => s.href === group.chapter.href) && isActive}
+                        className={`${styles.tocEntry} ${isActive ? styles.tocEntryActive : ""}`}
+                        onClick={() => handleSelect(group.chapter)}
+                      >
+                        {withSectionNumber(group.chapter, chapterNumbers)}
+                      </button>
+                      {hasChildren && (
+                        <IconButton
+                          icon={
+                            <span className={`${styles.tocExpand} ${isExpanded ? styles.tocExpandOpen : ""}`}>
+                              <ChevronIcon direction="right" size={12} />
+                            </span>
+                          }
+                          label={isExpanded ? "Collapse subsections" : "Expand subsections"}
+                          size="sm"
+                          onClick={() => toggleExpanded(key)}
+                        />
+                      )}
+                    </div>
+                    {hasChildren && isExpanded && (
+                      <div className={styles.tocChildren}>
+                        {group.children.map((child) => (
+                          <button
+                            key={`${groupKey(child)}-${child.offset ?? ""}`}
+                            type="button"
+                            role="option"
+                            aria-selected={false}
+                            className={styles.tocEntry}
+                            style={{ paddingLeft: `${0.5 + child.depth * 0.9}rem` }}
+                            onClick={() => handleSelect(child)}
+                          >
+                            {withSectionNumber(child, chapterNumbers)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
             )}
           </motion.div>
         )}

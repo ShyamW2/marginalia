@@ -431,11 +431,59 @@ function paperBackground(doc: Document): string {
   return "#ffffff";
 }
 
+/**
+ * M42 §D2: the native PDF pane's own capture path. `PdfRenderer` (unlike
+ * epub.js) renders straight into `container` — no iframe, so none of the
+ * "reach through a sandboxed document" machinery above applies, and none of
+ * it is needed: pdf.js has already rasterized each visible page onto its own
+ * `<canvas>` (`renderPageInto`, PdfRenderer.ts), same document, same origin,
+ * so those bitmaps composite directly via `drawImage` with no SVG/
+ * foreignObject serialization step at all. A strictly simpler case than the
+ * iframe one, not a lesser version of it — before this landed, `buildSnapshot`
+ * returned `null` unconditionally here (no iframe to find), so every native
+ * page turn fell all the way back to `turnPageSlide`'s opacity dip-and-fade
+ * rather than the real slide `turnPageCardSlide` produces once a capture
+ * succeeds.
+ *
+ * Highlight/tint overlay divs (plain absolutely-positioned `<div>`s,
+ * PdfRenderer.ts's `paintOneMark`/`paintTintForPage`) are deliberately not
+ * composited in — this is a best-effort visual flourish for one ~380ms
+ * slide (this file's own standing rule, `capturePageSnapshot`'s own doc
+ * comment), and the destination page repaints its own marks correctly the
+ * instant the turn lands, same as the departing page's marks not mattering
+ * once it's gone.
+ */
+async function buildNativeSnapshot(container: HTMLElement): Promise<string | null> {
+  const canvases = Array.from(container.querySelectorAll("canvas"));
+  if (canvases.length === 0) return null;
+  const containerRect = container.getBoundingClientRect();
+  if (containerRect.width <= 0 || containerRect.height <= 0) return null;
+
+  const scale = Math.min(window.devicePixelRatio || 1, MAX_CAPTURE_SCALE);
+  const out = document.createElement("canvas");
+  out.width = Math.max(1, Math.round(containerRect.width * scale));
+  out.height = Math.max(1, Math.round(containerRect.height * scale));
+  const ctx = out.getContext("2d");
+  if (!ctx) return null;
+
+  for (const canvas of canvases) {
+    const rect = canvas.getBoundingClientRect();
+    ctx.drawImage(
+      canvas,
+      (rect.left - containerRect.left) * scale,
+      (rect.top - containerRect.top) * scale,
+      rect.width * scale,
+      rect.height * scale,
+    );
+  }
+  return out.toDataURL("image/png");
+}
+
 async function buildSnapshot(container: HTMLElement): Promise<string | null> {
   const frame = container.querySelector("iframe");
-  // No iframe, or a cross-origin one: nothing to reach through. The caller
-  // falls back to the slide, which is the correct degradation.
-  if (!frame) return null;
+  // No iframe: not a capture failure, just the other renderer — M42 §D2's
+  // own path (native PDF, no sandboxed document to reach through).
+  if (!frame) return buildNativeSnapshot(container);
   const doc = frame.contentDocument;
   if (!doc?.documentElement) return null;
 

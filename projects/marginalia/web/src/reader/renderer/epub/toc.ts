@@ -10,6 +10,21 @@ export interface TocEntry {
    * couldn't be resolved (e.g. locations not generated yet). */
   percent: number | null;
   depth: number;
+  /** M42 §C4: a character offset into this entry's own section text — set
+   * for a depth-2+ subheading (jumped to via `goTo`'s format-neutral
+   * `Locator`, decision 11), null for a real chapter (jumped to via
+   * `goToHref`, unchanged). Parsed from a generated reflow EPUB's own
+   * `#loc-<offset>` nav fragment convention (`generateEpub.ts`) — a
+   * hand-authored EPUB's own in-page anchors use arbitrary fragment ids
+   * that never match this pattern, so they simply stay null and fall
+   * through to `goToHref`, today's unchanged behaviour for them. */
+  offset: number | null;
+}
+
+const LOC_FRAGMENT = /#loc-(\d+)$/;
+function offsetFromHref(href: string): number | null {
+  const match = LOC_FRAGMENT.exec(href);
+  return match ? Number(match[1]) : null;
 }
 
 function flattenNavItems(items: NavItem[], depth: number): { item: NavItem; depth: number }[] {
@@ -60,7 +75,7 @@ export function buildToc(book: Book): TocEntry[] {
       const section = book.spine.get(item.href);
       const spineIndex = section ? section.index : null;
       const percent = spineIndex !== null ? (chapterPercents.get(spineIndex) ?? null) : null;
-      return { label: item.label.trim(), href: item.href, spineIndex, percent, depth };
+      return { label: item.label.trim(), href: item.href, spineIndex, percent, depth, offset: offsetFromHref(item.href) };
     })
     .filter((entry): entry is TocEntry => entry.spineIndex !== null);
 }

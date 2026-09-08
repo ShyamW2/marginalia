@@ -50,3 +50,30 @@ export const MAX_ZOOM_SCALE = 4;
 export function clampZoomScale(scale: number): number {
   return Math.min(MAX_ZOOM_SCALE, Math.max(MIN_ZOOM_SCALE, scale));
 }
+
+// ── M42 §D1: continuous zoom (PDF.md §7.6's polish pass) ───────────────────
+
+/** `factor = e^(-deltaY * WHEEL_ZOOM_SENSITIVITY)`, so a positive `deltaY`
+ * (scrolling down/pinching closed) zooms out and a negative one zooms in,
+ * continuously rather than in `ZOOM_STEP` jumps — matches Ctrl+wheel/
+ * trackpad-pinch conventions elsewhere on the web (browsers themselves,
+ * Google Maps, VS Code). Untuned against a real trackpad yet — same honesty
+ * `MIN_SPREAD_SCALE`'s own comment already carries — expect operator tuning
+ * live. */
+export const WHEEL_ZOOM_SENSITIVITY = 0.003;
+
+/** How long a continuous zoom gesture (wheel, pinch, or a drag on the zoom
+ * slider) must sit idle before the real raster re-render commits. The live
+ * CSS-transform preview (`PdfRenderer.applyZoomPreview`) is what makes the
+ * page visibly interpolate through intermediate scales during that idle
+ * window rather than jumping once at the end — this is only how long a
+ * *real* pdf.js re-render (page.render + getTextContent, both real awaits)
+ * is deferred while more input keeps arriving. */
+export const ZOOM_COMMIT_DEBOUNCE_MS = 120;
+
+/** Pure wheel-delta → target-scale math, pulled out for the same reason
+ * `shouldShowSpread`/`computeFitScale` are: unit-testable without a real
+ * `WheelEvent`/DOM. */
+export function wheelZoomTarget(baseScale: number, deltaY: number): number {
+  return clampZoomScale(baseScale * Math.exp(-deltaY * WHEEL_ZOOM_SENSITIVITY));
+}

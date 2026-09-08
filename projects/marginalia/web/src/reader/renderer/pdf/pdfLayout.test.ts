@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampZoomScale, computeFitScale, shouldShowSpread } from "./pdfLayout.js";
+import { clampZoomScale, computeFitScale, MAX_ZOOM_SCALE, MIN_ZOOM_SCALE, shouldShowSpread, wheelZoomTarget } from "./pdfLayout.js";
 
 describe("shouldShowSpread", () => {
   it("is content-driven, not a fixed pixel breakpoint — a landscape slide needs a much wider container than a portrait paper before a spread pays off", () => {
@@ -49,5 +49,27 @@ describe("clampZoomScale", () => {
     expect(clampZoomScale(100)).toBeLessThan(100);
     const clamped = clampZoomScale(1.5);
     expect(clampZoomScale(clamped)).toBe(clamped);
+  });
+});
+
+// M42 §D1.
+describe("wheelZoomTarget", () => {
+  it("zooms in for a negative deltaY (scroll up / pinch open) and out for a positive one", () => {
+    expect(wheelZoomTarget(1, -100)).toBeGreaterThan(1);
+    expect(wheelZoomTarget(1, 100)).toBeLessThan(1);
+  });
+
+  it("a zero delta is a no-op", () => {
+    expect(wheelZoomTarget(1.3, 0)).toBeCloseTo(1.3);
+  });
+
+  it("is symmetric — zooming in then out by the same delta returns to the start", () => {
+    const zoomedIn = wheelZoomTarget(1, -50);
+    expect(wheelZoomTarget(zoomedIn, 50)).toBeCloseTo(1);
+  });
+
+  it("clamps to the same range as clampZoomScale, however large the delta", () => {
+    expect(wheelZoomTarget(1, -100000)).toBe(MAX_ZOOM_SCALE);
+    expect(wheelZoomTarget(1, 100000)).toBe(MIN_ZOOM_SCALE);
   });
 });

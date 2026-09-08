@@ -108,3 +108,33 @@
   color: var(--color-accent);
   font-weight: 600;
 }
+
+/* M42 §C4: a chapter's own row, its entry button beside the expand
+ * chevron (present only when it has subheadings) — `.tocEntry` keeps its
+ * block/full-width rule for both this and a plain (childless) chapter's
+ * row, so `flex: 1` here is what actually shares the row with the chevron. */
+.tocRow {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
+.tocRow .tocEntry {
+  flex: 1;
+  min-width: 0;
+}
+
+.tocExpand {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+  transition: transform var(--duration-standard) var(--ease-standard);
+}
+
+.tocExpandOpen {
+  transform: rotate(90deg);
+}
+
+.tocChildren {
+  display: flex;
+  flex-direction: column;
+}

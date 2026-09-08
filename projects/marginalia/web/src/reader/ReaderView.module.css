@@ -435,6 +435,20 @@
      surface and its own decorations, not the panels beside it. */
 }
 
+/* M42 §D3: the native PDF pane's own override of the rule directly above —
+   `.stage`'s cream/paper `--color-bg` is deliberate for reflowed *text*
+   (decision 12, "the reader taking its quietest variant"), but a rendered
+   PDF page is a rasterized image whose own background is (in the
+   overwhelming case) plain white paper, not this app's reader theme. Left
+   at fit-page on a portrait page in a wide pane, or any other layout that
+   leaves slack around the page, the band that used to show through was the
+   cream tone — a visible seam between the page and its own surroundings.
+   Applied only under `capabilities.zoom` (true only for `PdfRenderer` —
+   ReaderView.tsx), so the EPUB pane's own `.stage` is untouched. */
+.stageNativePane {
+  background: #fff;
+}
+
 /* M19.6: everything that must stay confined to the page's own box — the
    epub content, the curl/vignette/edge-grab decorations — lives here now,
    `inset: 0` filling exactly what .stage used to clip directly.
