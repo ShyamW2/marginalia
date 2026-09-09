@@ -3,6 +3,56 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-09 (even later) — M43 §E closed out: widen the detector, spike OCR for real, ship the PNG
+
+The operator, asked to finish M43, pre-authorized both forks the 2026-09-09 (earlier)
+entry below left open: widening `detectEquationBands` past its own scope ("a light OCR
+package install... if not formatted in text") and falling back to the existing
+rasterized-image path if OCR didn't pan out ("happy to screenshot/embed... as we handle
+images and diagrams too"). Both were needed.
+
+**1. `isEquationLine` widened, real input recovered.** Added a second, independent signal
+— math-only Unicode density (Mathematical Alphanumeric Symbols, Letterlike Symbols,
+Arrows, Mathematical Operators) on a line ending in a right-aligned equation number.
+First cut used density alone, no number required, and was discarded before landing: it
+rasterized 267 bands on the real PDF, almost all of them inline math inside ordinary
+prose sentences — this document's formal-semantics writing style is itself dense with
+Unicode math notation throughout its running text, not just at display equations, so a
+bare density threshold cannot tell "equation" from "prose that discusses math" for it.
+The equation number turned out to be the one specific-enough signal. Final heuristic:
+51 equation bands, monotonically numbered (1)–(63) with expected gaps for genuinely
+inline ones, zero found false positives on inspection. PDF.md §3.4 amended; tests in
+`equations.test.ts` reproduce the real document's own sample lines.
+
+**2. The OCR spike ran for real against that input, and failed on packaging, not
+quality.** Two local models were tried through the existing `@huggingface/transformers`
+seam (no new runtime dependency, matching Kokoro's own pattern per decision 9):
+`onnx-community/TexTeller-ONNX` (no `preprocessor_config.json` — needs hand-rolled image
+preprocessing) and `breezedeus/pix2text-mfr` (has one, but ships `decoder_model.onnx`
+where transformers.js's `pipeline()` hard-requires `decoder_model_merged.onnx` — a
+naming convention this repo's own ONNX export never produced). A local file-layout
+workaround (a renamed copy of the plain decoder file in the expected slot) loaded and ran
+without throwing, and produced degenerate repeating-token garbage — confidently wrong,
+not visibly broken, exactly the failure mode the 2026-09-08 entry below already worried
+about and exactly why this section's own fallback exists. **Decided: report and stop,
+same as the 2026-09-09 (earlier) entry's own pattern** — do not hand-roll the ONNX
+Runtime IO contract against an unfamiliar export this session; ship the PNG (§F1's raster
+bump makes it sharper) as the real, final equation representation for now. PDF.md §3.4's
+OCR-upgrade amendment (2026-09-08) stays written but unbuilt. Full spike notes: NOTES.md
+"M43 §E1" (2026-09-09, second entry).
+
+**3. F1 done.** `RASTER_SCALE` 2×→4×, measured against the real PDF now that the widened
+detector gives it equation crops to bump: extraction 5.8s→13.0s, generated EPUB
+613KB→1.28MB, both acceptable; visibly crisper at reading zoom.
+
+**Owed to the operator, not done here:** re-importing "A Programming Paradigm for
+Spatiotemporal Composability" under the new `EXTRACTOR_VERSION` (4→5, bumped for both
+changes above) and running `pnpm --filter server reanchor <oldId> <newId>` to move its
+highlights — deliberately not run against the live library from this session; decision 5
+and `reanchorPdf.ts`'s own header are both explicit that no UI or script triggers this
+without the operator's own action.
+
+
 ## 2026-09-09 — M43 §E1: report the detector gap, don't build past it this session
 
 §E1 (the local math-OCR spike) turned out to have no input to test: `detectEquationBands`

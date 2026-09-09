@@ -2281,6 +2281,36 @@ LaTeX stays out of `resource_text` regardless of this change.
       only) — **decided: report only**, no OCR model installed or evaluated this session.
       Widening `isEquationLine` to also catch this real, non-hypothetical encoding is a
       distinct, unscoped finding, not decided or started here.
+      ⚠️ **Continued 2026-09-09 (second pass, same day) — widened, spiked for real,
+      still not wired in; see NOTES.md "M43 §E1" (second entry) and decisions.md
+      2026-09-09 (even later).** Operator pre-authorized both forks left open above.
+      `isEquationLine` widened: a line ending in its own right-aligned number
+      (`/\(\d+\)\s*$/`) whose text is >15% math-only Unicode (Mathematical Alphanumeric
+      Symbols, Letterlike Symbols, Arrows, Mathematical Operators) is now also an
+      equation band. A first cut (density alone, no number required) was tried and
+      discarded — it rasterized 267 bands on the real PDF, almost all inline math inside
+      ordinary prose sentences (this paper's formal-definition style is itself
+      Unicode-math-dense throughout), which is exactly what this section's "inline math
+      is out of scope" already forbids. The equation number turned out to be the one
+      signal specific enough to mean "display equation." Real result: **51 equation
+      bands**, monotonically numbered (1)–(63) with expected gaps, no false positives
+      found on inspection. `equations.test.ts` gained cases built from this document's
+      own repro'd lines. PDF.md §3.4 amended.
+      With real input finally available, spiked two local math-OCR models through
+      `@huggingface/transformers` (Kokoro's own seam, AUDIO.md — no new runtime
+      dependency): `onnx-community/TexTeller-ONNX` (no `preprocessor_config.json` at
+      all — confirmed via the HF API's file listing, not just the web UI) and
+      `breezedeus/pix2text-mfr` (TrOCR architecture, has a proper preprocessor config,
+      but ships `decoder_model.onnx` where transformers.js's `Vision2Seq` loader
+      hard-codes `decoder_model_merged.onnx` with no override — read in
+      `node_modules/@huggingface/transformers/dist/transformers.js`'s own
+      `constructSessions` call). A local rename workaround (copying the plain decoder
+      file into the expected slot, loading with `local_files_only`) ran without error
+      and produced degenerate repeating-token garbage, not real LaTeX — confidently
+      wrong, not visibly broken, exactly the risk decisions.md 2026-09-08 flagged.
+      **Decided: stop here, report the packaging gap, don't hand-roll the ONNX Runtime
+      IO contract this session.** §E1/§E2/§E3 stay unchecked; the rasterized PNG (§F1's
+      raster bump makes it sharper) is the real, shipped equation representation for now.
 - [ ] **E2.** On a successful OCR above whatever confidence bar E1's findings justify,
       embed the result as typeset math (KaTeX or MathJax — pick whichever E1's spike finds
       renders more reliably offline) in the generated EPUB in place of the flat PNG.
@@ -2300,7 +2330,7 @@ LaTeX stays out of `resource_text` regardless of this change.
 
 Per PDF.md §3.5's amendment (2026-09-08).
 
-- [ ] **F1.** Bump `rasterize.ts`'s `RASTER_SCALE` constant (currently a fixed `2`) —
+- [x] **F1.** Bump `rasterize.ts`'s `RASTER_SCALE` constant (currently a fixed `2`) —
       tuned originally for legibility at the extractor's own default render, not against a
       HiDPI reading surface, and newly visible as soft next to the native pane once B1
       lands there. A fixed higher scale (e.g. 3–4×) is still the right shape — no need for
@@ -2310,6 +2340,21 @@ Per PDF.md §3.5's amendment (2026-09-08).
       already used for M42's own gate has several); confirm the size/import-time cost
       (larger generated EPUBs) stays acceptable, and that a figure at the new scale reads
       visibly sharper than today's 2× on a HiDPI display._
+      Done 2026-09-09: bumped to a fixed `4`. The Engineers Australia doc isn't in the
+      current library to re-run against; used the one real PDF that is ("A Programming
+      Paradigm for Spatiotemporal Composability"), which by this point in the session has
+      51 equation crops (§E's widening) plus its 1 figure and 1 table to measure against —
+      more raster surface than that doc had at the session's start. Extraction time
+      5.8s→13.0s, generated reflow EPUB 613KB→1.28MB, both acceptable for an import-time
+      job on 92 pages. Visual check (saved crops, viewed directly): equation glyphs and
+      the one figure's ruled line read visibly crisper at normal reading zoom, no
+      placement/alignment regression. `tsc -b` clean; all 586 server tests pass.
+      ⚠️ Owed to the operator, not run this session: the real "Spatiotemporal
+      Composability" resource was extracted under `EXTRACTOR_VERSION` 4; this task and
+      §E's widening both change extraction output, so the version is bumped to 5.
+      Re-importing it and running `pnpm --filter server reanchor <oldId> <newId>` is an
+      explicit operator action (decision 5) — deliberately not triggered against the live
+      library from this session.
 
 ---
 

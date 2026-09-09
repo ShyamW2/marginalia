@@ -9277,3 +9277,114 @@ installing a multi-GB local OCR model to test against hand-rolled crops the app 
 never produce. **Decided: report only, no build this session** — see decisions.md 2026-09-09.
 §E1/§E2/§E3 stay unchecked in TASKS.md pending that decision; nothing else in M43 depends on
 them.
+
+## M43 §E1 (second entry) — detector widened for real, OCR spiked against real equations,
+found infeasible on packaging — 2026-09-09
+
+Operator asked to finish M43, pre-authorizing both forks the entry above left open: a light
+local-OCR install if warranted, or falling back to the existing raster/embed path (§3.5's
+mechanism, already used for figures and tables) if not. Both were exercised.
+
+**Widening `isEquationLine`, take one (discarded): bare math-glyph density, no number
+required.** Added a Unicode-range check (Mathematical Alphanumeric Symbols U+1D400–1D7FF,
+Letterlike Symbols U+2100–214F, Arrows U+2190–21FF, Mathematical Operators U+2200–22FF, the
+two Misc Mathematical Symbols blocks, Supplemental Mathematical Operators) — >30% of a
+line's non-space codepoints in these ranges, or >15% with a trailing `(\d+)`. Ran the real
+pipeline against the same "Spatiotemporal Composability" PDF: **267 equation blocks**, not
+the expected ~9. Printed the flagged lines for page 43 (13 bands) to see why:
+
+```
+"1. 𝜋𝑛 ∈ dom(𝐹𝛾 ) ∪ {𝗋𝗈𝗈𝗍};"
+"2. 𝑚 ≠ 𝑛 ⇒ 𝑝𝑚 ∩ 𝑝𝑛 = ⌀;"
+"4. installed𝑛(𝛾) ∧ 𝑘 ∈ 𝑑𝑛 ∧ 𝜔𝑛(𝑘) = 𝑚 ⇒ installed𝑚(𝛾)."
+"𝑚"
+"𝑛 "
+```
+
+Two problems, both fatal to a density-only signal on this document specifically: (a) this
+paper's prose is *itself* written with heavy inline Unicode math notation throughout
+(numbered definition lists, not just display equations) — a whole formal-definition
+sentence reads as dense as a real equation, which is precisely the "inline math inside a
+paragraph is out of scope" case PDF.md §3.4 already carves out and this signal was
+blindly rasterizing anyway; (b) a single stray subscript-fragment "line" (`"𝑚"`,
+presumably a mis-grouped subscript token) reads as 100% math with nothing to dilute it.
+Neither is a tuning-the-threshold problem — the two classes are genuinely indistinguishable
+by per-line Unicode density alone on this document's writing style.
+
+**Take two (shipped): require the line to also end in the equation's own right-aligned
+number.** Every genuine display equation in this document (and conventionally, in general)
+ends its line in `(16)`, `(24)`, … ; an inline-math-heavy prose sentence or a stray glyph
+fragment does not. Dropped the density-only branch entirely, kept only "trailing `(\d+)`
+AND >15% math-glyph fraction." Re-ran: **51 equation bands**, one per page-15-through-52
+numbered equation, monotonically increasing (1)–(63) with the expected gaps (genuinely
+inline instances the number-requirement correctly leaves as text). Printed every flagged
+line across the whole document to check for false positives — none found; a couple of
+lines have visibly dropped-subscript extraction artifacts pre-existing in the pipeline
+(`"𝜎𝑆 ≔ ⋃{𝜎 | | 𝑚 ∈ dom(𝐹 )} (47)"`), unrelated to detection and out of scope here.
+`equations.test.ts` gained cases built directly from this document's own repro'd lines
+(bypassing `groupLines`'s word-gap heuristic, which inserted spurious spaces into a
+synthetic one-item-per-character fixture and nearly hid a real bug — the fixture's
+uniform glyph width/step read as "every character is its own word" to `joinLineItems`;
+building the `PdfLine` directly instead was simpler and matches the real "items=N chars=N"
+shape `extractPdf` actually produces for this encoding).
+
+**The OCR spike, finally with real input: two models tried, both blocked on packaging, not
+quality.** With 51 real rasterized equation crops available, tried
+`onnx-community/TexTeller-ONNX` (the natural pix2tex successor) via
+`@huggingface/transformers`'s `pipeline('image-to-text', …)` — the same seam AUDIO.md's
+Kokoro engine already uses, so no new runtime dependency either way. Failed immediately:
+the repo (checked via the HF API's file listing, not just the web UI) ships no
+`preprocessor_config.json` at all — `AutoProcessor.from_pretrained` has nothing to load,
+and hand-rolling the exact resize/pad/normalize TexTeller's own Python preprocessing uses,
+without the published config to check against, risks silently wrong input that produces
+confidently-wrong output — the specific poison decisions.md 2026-09-08 already flagged.
+
+Tried `breezedeus/pix2text-mfr` next (TrOCR architecture — a standard,
+well-supported combo in transformers.js, unlike TexTeller's bespoke setup). It *does* ship
+a `preprocessor_config.json`, so the image-processing half loads cleanly. But its ONNX
+export (`encoder_model.onnx` + `decoder_model.onnx`, both at the repo root, no `onnx/`
+subfolder) doesn't match what transformers.js's `Vision2SeqModel.from_pretrained` hard-codes
+for this model type — reading the library's own source
+(`node_modules/@huggingface/transformers/dist/transformers.js`, the `constructSessions`
+call for `MODEL_TYPES.Vision2Seq`): it always requests `encoder_model` and
+`decoder_model_merged` by those literal names, with no config-level override for the base
+filename. This repo has no `decoder_model_merged.onnx` — its own `generation_config.json`
+sets `"use_cache": false`, i.e. it was exported to be run without any KV-cache reuse at
+all, which is why no merged (or even `_with_past`) decoder variant exists.
+
+Tested whether a local rename could bridge the gap: downloaded the repo's files by hand
+into `env.cacheDir`'s expected local-cache layout (`subfolder: ""`, since the files sit at
+repo root, not under `onnx/`), copying `decoder_model.onnx` to `decoder_model_merged.onnx`.
+Loaded and ran with `local_files_only: true` — no error, model loaded in ~400ms, inference
+in ~2.8s. Output: `"a a 2 2 2 2 2 2 2 2 …"` repeated out to the max-token cap. Degenerate,
+not garbled — a real, distinguishable failure signature (would trivially trip a
+repeated-substring confidence check), but it confirms the naming workaround does not
+actually produce a working decode loop; something about how transformers.js's generation
+loop drives a plain (non-merged) decoder graph doesn't match this checkpoint's actual
+contract, and debugging that would mean reading the ONNX graph's real input/output names
+via `onnxruntime-node` directly and probably hand-writing the generation loop against
+them — a materially bigger and riskier undertaking than "install a light OCR package,"
+with the exact confidently-wrong-output risk this feature's own spec was written to avoid.
+
+**Decided: stop here, same pattern as the first §E1 entry — report, don't build past the
+finding.** §3.4's rule stays "detect and rasterize, do not reconstruct," with the OCR-to-
+typeset-math upgrade (2026-09-08 amendment) written but not built. The rasterized PNG —
+sharper now that §F1 lands the same session — is the real, shipped equation representation.
+§E1/§E2/§E3 stay unchecked in TASKS.md. See decisions.md 2026-09-09 (even later).
+
+## M43 §F1 — raster scale bump, measured against the real PDF — 2026-09-09
+
+`RASTER_SCALE` 2×→4× (`rasterize.ts`), per PDF.md §3.5's amendment. Measured against the
+real "Spatiotemporal Composability" PDF, now that §E's widening gives the extractor 51
+equation crops (plus its 1 figure, 1 table) to rasterize instead of ~0: extraction time
+5.8s→13.0s, generated reflow EPUB 613KB→1.28MB. Both acceptable for an import-time job on
+a 92-page document. Visual check (saved crops, viewed directly): equation glyphs and the
+one figure's ruled line read visibly crisper at normal reading zoom; no regression in crop
+placement/alignment. `tsc -b` clean; all 586 server tests pass.
+
+⚠️ **Owed to the operator, not run this session:** the real "Spatiotemporal Composability"
+resource in `data/` was extracted under `EXTRACTOR_VERSION` 4 (now 5, bumped for both the
+detector widening and this raster change). Re-importing it and running `pnpm --filter
+server reanchor <oldId> <newId>` (moves highlights across the version boundary,
+`cli/reanchorPdf.ts`) is an explicit operator action per decision 5 — deliberately not
+triggered from this session against the live library.

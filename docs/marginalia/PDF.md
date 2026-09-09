@@ -194,6 +194,25 @@ digest, search, and the audio narration.
 ~2.5 and whose items span three or more distinct `fontName`s is an equation band. Replace
 it with an image (§3.5's mechanism) and emit **nothing** into `resource_text` for it.
 
+**Widened 2026-09-09 (M43 §E), decisions.md that date.** The density/fontName check above
+assumes the classic LaTeX/dvips encoding — math as many tiny glyph-path fragments spread
+across several subset fonts. A `unicode-math`-style toolchain instead typesets a display
+equation as ordinary positioned *text* in Unicode math-alphanumeric codepoints, in one
+embedded font — density ~1.0, one font, invisible to the original rule. Found live against
+a real PDF with genuine numbered equations and zero equation bands anywhere (NOTES.md
+"M43 §E1"). Second rule, additive to the first: a line ending in a right-aligned equation
+number (`/\(\d+\)\s*$/`) whose non-space characters are >15% math-only Unicode (the
+Mathematical Alphanumeric Symbols, Letterlike Symbols, Arrows, and Mathematical Operators
+blocks) is also an equation band. ⚠️ **The equation number is load-bearing, not a nice-to-
+have** — a bare math-glyph-density threshold with no number requirement was tried first
+and discarded, same session: this document's ordinary prose is itself math-notation-dense
+throughout ("1. 𝜋𝑛 ∈ dom(𝐹𝛾) ∪ {𝗋𝗈𝗈𝗍};"), so density alone rasterized 267 bands — almost
+all inline math inside paragraphs, exactly what this section's own next paragraph forbids
+touching. The number is the one signal specific to "this line is a numbered display
+equation," not "this line discusses math." Known gap, not solved here: an unnumbered
+multi-line equation whose continuation lines carry no number of their own stays
+text — accepted rather than chased this session (`equations.ts`'s own comment).
+
 Inline math inside a paragraph is out of scope — it stays as whatever text extraction
 gives, and that is accepted.
 
@@ -209,6 +228,25 @@ multi-line/matrix equations is a worse poison for the digest/search/audio than t
 plain-text reconstruction this section already rejects (a wrong symbol reads as
 confidently correct, not visibly mangled). This is a rendering-quality change only.
 
+**Spiked and closed, not wired in, 2026-09-09 (M43 §E1, decisions.md that date).** With
+the widening above giving the spike real input for the first time, two candidate local
+math-OCR models were tried against it (`onnx-community/TexTeller-ONNX`,
+`breezedeus/pix2text-mfr`) through the same `@huggingface/transformers` seam AUDIO.md's
+Kokoro engine already uses — no new runtime dependency. Both fail *before* the OCR-quality
+question this amendment was written to answer: neither ships in the exact file layout
+`@huggingface/transformers`'s high-level `pipeline()` requires (a standard
+`preprocessor_config.json`, and a `decoder_model_merged.onnx` — TexTeller-ONNX has neither;
+pix2text-mfr has the first but not the second). Forcing a local file-layout workaround
+(renaming pix2text-mfr's plain `decoder_model.onnx` into the expected slot) loaded and ran
+without error but produced degenerate, repeating garbage output — a confidently-wrong
+failure mode, not a legible one, and exactly what this section already accepts a PNG
+fallback to guard against. **Decided: ship the PNG only.** §3.4's rule stands unchanged at
+"detect and rasterize, do not reconstruct"; the *visual upgrade* to typeset math this
+amendment describes stays unbuilt, pending either a properly transformers.js-packaged
+local math-OCR model or a session with budget to hand-roll the ONNX Runtime IO contract
+directly against one of these two checkpoints. Full spike notes: NOTES.md "M43 §E1"
+(2026-09-09, second entry).
+
 ### 3.5 Figures, tables, and the images that survive
 
 A **figure region** is a rectangle of the page containing no text items, bounded by
@@ -219,14 +257,17 @@ Rasterize the region at 2× scale to PNG via pdf.js's canvas renderer with a cli
 embed it in the generated EPUB as `images/fig-p<page>-<n>.png`, placed as a `<figure>` at
 the reading position of its caption.
 
-**Amended 2026-09-08 (M43).** 2× (`rasterize.ts`'s `RASTER_SCALE`) was tuned for text
-legibility at the extractor's own default render, not for a HiDPI reading surface — found
-soft/blurry next to the native pane once M43 §B's canvas fix makes *that* pane
-DPR-correct, which makes the gap between the two panes' figure fidelity newly visible.
-Bump the constant (a fixed higher scale, e.g. 3–4×, still simplest — no need for
-per-viewer DPR-awareness server-side, since the PNG is generated once at import and
-consumed by every viewer) and re-run against a figure-heavy real PDF to confirm the size
-cost (larger generated EPUBs, more import time) stays acceptable.
+**Amended 2026-09-08 (M43), done 2026-09-09 (§F1).** 2× (`rasterize.ts`'s `RASTER_SCALE`)
+was tuned for text legibility at the extractor's own default render, not for a HiDPI
+reading surface — found soft/blurry next to the native pane once M43 §B's canvas fix makes
+*that* pane DPR-correct, which makes the gap between the two panes' figure fidelity newly
+visible. Bumped to a fixed **4×** (still simplest — no need for per-viewer DPR-awareness
+server-side, since the PNG is generated once at import and consumed by every viewer).
+Measured against the real 92-page "Spatiotemporal Composability" PDF (51 equation bands,
+1 figure, 1 table once §3.4's widening above gave the equation detector real input):
+extraction time 5.8s→13.0s, generated EPUB 613KB→1.28MB — both comfortably acceptable for
+an import-time job, and the equation/figure crops read visibly crisper at normal reading
+zoom.
 
 ⚠️ **The image never enters `resource_text`. The caption always does.** The caption is
 how the digest, the scan and search find a figure at all; the image is not text and must
