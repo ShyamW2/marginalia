@@ -2258,15 +2258,29 @@ EPUB.
 Per PDF.md §3.4's amendment (2026-09-08); decisions.md that date records why the OCR'd
 LaTeX stays out of `resource_text` regardless of this change.
 
-- [ ] **E1.** Spike: evaluate a local math-OCR model (decision 9's local-first posture —
-      e.g. an open-source LaTeX-OCR model runnable in-process or via a local sidecar,
-      matching the "local-first, no cloud TTS/OCR dependency" pattern Kokoro already set)
-      against `detectEquationBands`'s (`equations.ts`) existing rasterized bands from a
-      real PDF with genuine display equations. Report accuracy/failure modes on
-      multi-line and matrix equations specifically — decisions.md's stated risk — before
-      committing to wiring it in.
+- [ ] **E1.** ⛔ **Blocked at its own input, found 2026-09-09 — see NOTES.md "M43 §E1" and
+      decisions.md 2026-09-09.** Spike: evaluate a local math-OCR model (decision 9's
+      local-first posture — e.g. an open-source LaTeX-OCR model runnable in-process or via
+      a local sidecar, matching the "local-first, no cloud TTS/OCR dependency" pattern
+      Kokoro already set) against `detectEquationBands`'s (`equations.ts`) existing
+      rasterized bands from a real PDF with genuine display equations. Report
+      accuracy/failure modes on multi-line and matrix equations specifically —
+      decisions.md's stated risk — before committing to wiring it in.
       ⚠️ Not yet a build task until E1 reports back; don't wire this into `generateEpub.ts`
       on the assumption it'll work well enough.
+      **Found, not fixed:** ran the real pipeline (`extractPdf`) against "A Programming
+      Paradigm for Spatiotemporal Composability" — the one PDF already in the library with
+      genuine display equations (pages 15–18, (16)–(24), including a multi-line
+      `match`/`Maybe` construct). **Zero equation blocks came back** — every equation line
+      in this document sits at glyph-fragment density ≤ 1.0 in a single font, because this
+      PDF typesets math as Unicode math-alphanumeric text (𝑔, 𝛾, 𝜑, ℑ, 𝖬𝖺𝗒𝖻𝖾) rather than
+      the many-tiny-glyph-fragments-across-several-fonts encoding `isEquationLine`'s
+      `density > 2.5` / `fonts >= 3` heuristic was tuned against. There is no rasterized
+      band anywhere in this document for a math-OCR spike to run against. Put to the
+      operator (three options: fix the detector, hand-roll crops bypassing it, or report
+      only) — **decided: report only**, no OCR model installed or evaluated this session.
+      Widening `isEquationLine` to also catch this real, non-hypothetical encoding is a
+      distinct, unscoped finding, not decided or started here.
 - [ ] **E2.** On a successful OCR above whatever confidence bar E1's findings justify,
       embed the result as typeset math (KaTeX or MathJax — pick whichever E1's spike finds
       renders more reliably offline) in the generated EPUB in place of the flat PNG.

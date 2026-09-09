@@ -9228,3 +9228,52 @@ model rewrite, still open) will otherwise have re-derived from scratch.
 
 Dev server (`:5173`/`:5175`) was not running at the start of this pass; started it
 (`pnpm dev`) after confirming no prior instance held those ports, and left it running.
+
+## M43 §E1 — the equation-OCR spike blocked at its own input: `detectEquationBands` never
+fires on the one real multi-equation PDF in the library — 2026-09-09
+
+§E1 asks to evaluate a local math-OCR model against `detectEquationBands`'s (`equations.ts`)
+existing rasterized bands from a real PDF with genuine display equations. Before installing
+anything, ran the real pipeline (`extractPdf`) against "A Programming Paradigm for
+Spatiotemporal Composability" — the one PDF already in the library with genuine numbered
+display equations (visible on pages 15–18 of the reader: (16)–(24), including a multi-line
+`match`/`Maybe` construct). **Zero equation blocks came back.**
+
+Root-caused by reproducing `extract.ts`'s own line-grouping (`orderPageItems` →
+`groupLines`) standalone and printing `isEquationLine`'s two inputs for every line
+containing an equation's own number marker:
+
+```
+page 14: "𝑔′(Δ) = (𝛾, 𝜑 ∘ 𝑔 ∘ 𝑓) (16)"                          items=24 chars=24 density=1.00 fonts=1 [g_d0_f6]
+page 14: "ℑ∗ ≔ 𝜇ℑ. (𝑒 : Γ → Γ × (Γ → Γ) × 𝖬𝖺𝗒𝖻𝖾(ℑ)) (17)"          items=39 chars=39 density=1.00 fonts=1 [g_d0_f6]
+page 16: "Σ ≔ (𝑘 : 𝐾) ⇀ 𝒱︀ 𝑘 (20)"                                items=19 chars=19 density=1.00 fonts=1 [g_d0_f6]
+page 17: "notify (𝜎, 𝜎 ) ≔ deactivating if 𝜎 ⊧ 𝑑 ∧ 𝜎′ ⊭ 𝑑 (24)"    items=31 chars=44 density=0.70 fonts=1 [g_d0_f6]
+```
+
+`isEquationLine` requires `density > 2.5` (item-count per character) **and** `fontNames.length
+>= 3`. Every equation line in this document sits at density ≤ 1.0 and exactly one font
+(`g_d0_f6`). The heuristic was tuned against the "classic" LaTeX/dvips-style PDF, where math
+renders as many tiny individually-positioned glyph-path fragments spread across several
+subset fonts (symbol font, italic math font, upright text font, …) — a real, common encoding,
+and presumably what PDF.md §3.4 was written against. This PDF instead typesets math using
+**Unicode math-alphanumeric codepoints** (𝑔, 𝛾, 𝜑, ℑ, 𝖬𝖺𝗒𝖻𝖾 — the mathematical
+italic/bold/sans-serif planes) as ordinary positioned *text* runs in a single embedded font —
+a real, and plausibly increasingly common, encoding from modern LaTeX toolchains (e.g.
+`unicode-math`) or from typesetting pipelines that pre-substitute Unicode math glyphs rather
+than relying on symbol-font glyph paths. `groupLines` and `orderPageItems` both handle it
+fine as *text* — these lines read correctly in the reflow pane and in `resource_text` today,
+just as literal Unicode math soup rather than real math — but `isEquationLine` never fires,
+so §3.4's whole "detect → rasterize → do not reconstruct" path (and therefore §E's entire
+"OCR the rasterized band" plan) has **no input** on this document. `extractPdf` confirms it
+end to end: `isScan=false, pages=92`, **0** equation blocks anywhere in the document.
+
+This is a distinct, more foundational gap than §E1 as scoped — it isn't about OCR quality at
+all, it's that the detector's own two-signal heuristic (glyph-fragment density + font-name
+count) doesn't generalize to a real, non-hypothetical equation encoding already sitting in
+this library. Put to the operator directly rather than either quietly patching
+`detectEquationBands` (real scope creep past what §E1 asked for, and a change to binding
+PDF.md §3.4 territory that deserves its own sign-off) or spending the session's time/disk on
+installing a multi-GB local OCR model to test against hand-rolled crops the app itself would
+never produce. **Decided: report only, no build this session** — see decisions.md 2026-09-09.
+§E1/§E2/§E3 stay unchecked in TASKS.md pending that decision; nothing else in M43 depends on
+them.

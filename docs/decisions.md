@@ -3,6 +3,26 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-09 — M43 §E1: report the detector gap, don't build past it this session
+
+§E1 (the local math-OCR spike) turned out to have no input to test: `detectEquationBands`
+(`equations.ts`) produces zero equation bands for "A Programming Paradigm for Spatiotemporal
+Composability" — the one real PDF in the library with genuine display equations — because its
+heuristic (glyph-fragment density > 2.5, ≥3 distinct fonts) is tuned for the classic
+multi-subset-font LaTeX encoding, and this PDF instead sets math as Unicode
+math-alphanumeric text in a single embedded font. Full root-cause and measurements in
+`docs/marginalia/NOTES.md` "M43 §E1" (2026-09-09).
+
+Put to the operator before proceeding: fix the detector (real scope creep past §E1, and a
+change to binding PDF.md §3.4 territory), hand-roll crops bypassing the detector to spike the
+OCR question anyway (a multi-GB local model install against input the app itself would never
+produce), or report only. **Decided: report only.** §E1/§E2/§E3 stay unchecked in TASKS.md;
+no OCR model was installed or evaluated this session. The detector gap is a distinct,
+unscoped finding — worth its own milestone entry (widening `isEquationLine` to also catch a
+single-font, Unicode-math-alphanumeric line) before §E's OCR question can be tested against
+this document for real, but that widening is not decided here and should not be inferred from
+this entry.
+
 ## 2026-09-08 — M43 scoped: two forked calls on native-pane/reflow feedback
 
 The operator's own live pass against the native pane and the reflow output — the same
