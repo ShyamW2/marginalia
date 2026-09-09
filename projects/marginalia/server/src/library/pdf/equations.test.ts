@@ -56,6 +56,48 @@ describe("detectEquationBands", () => {
     expect(detectEquationBands([proseLine])).toHaveLength(0);
   });
 
+  // M43 §E1/§E (NOTES.md/decisions.md 2026-09-09): a real PDF typesets math
+  // as Unicode math-alphanumeric text in one embedded font (density ~1.0,
+  // one font) rather than the classic fragmented-glyph encoding above — the
+  // four lines below are that document's own repro'd equation lines.
+  // Built directly (bypassing `groupLines`' word-gap heuristic) so `text`
+  // matches the real repro'd string verbatim, one item per character — the
+  // same "items=N chars=N" shape NOTES.md's repro printed.
+  function unicodeMathLine(y: number, text: string, fontName = "g_d0_f6") {
+    const items: RawTextItem[] = Array.from(text).map((ch, i) => glyph(ch, 40 + i * 6, y, fontName));
+    return { items, text, y, leftEdge: 40, fontSize: 8, fontNames: [fontName] };
+  }
+
+  it("detects a Unicode math-alphanumeric equation line (single font, density ~1.0)", () => {
+    const line = unicodeMathLine(500, "𝑔′(Δ) = (𝛾, 𝜑 ∘ 𝑔 ∘ 𝑓) (16)");
+    const bands = detectEquationBands([line]);
+    expect(bands).toHaveLength(1);
+  });
+
+  it("detects a multi-line Unicode math-alphanumeric run as one band", () => {
+    const line1 = unicodeMathLine(500, "ℑ∗ ≔ 𝜇ℑ. (𝑒 : Γ → Γ × (Γ → Γ) × 𝖬𝖺𝗒𝖻𝖾(ℑ)) (17)");
+    const line2 = unicodeMathLine(486, "Σ ≔ (𝑘 : 𝐾) ⇀ 𝒱 𝑘 (20)");
+    const bands = detectEquationBands([line1, line2]);
+    expect(bands).toHaveLength(1);
+    expect(bands[0].startIndex).toBe(0);
+    expect(bands[0].endIndex).toBe(2);
+  });
+
+  it("detects a math-heavy line that mixes in named-relation English, given a trailing equation number", () => {
+    const line = unicodeMathLine(500, "notify (𝜎, 𝜎′) ≔ deactivating if 𝜎 ⊧ 𝑑 ∧ 𝜎′ ⊭ 𝑑 (24)");
+    expect(detectEquationBands([line])).toHaveLength(1);
+  });
+
+  it("does not flag prose that names a variable once, with no equation number", () => {
+    const line = unicodeMathLine(500, "Let 𝑥 denote the input to the function under discussion here.");
+    expect(detectEquationBands([line])).toHaveLength(0);
+  });
+
+  it("does not flag an ordinary numbered list item as an equation", () => {
+    const line = unicodeMathLine(500, "The classifier improved accuracy substantially (24)");
+    expect(detectEquationBands([line])).toHaveLength(0);
+  });
+
   it("requires 3+ distinct fonts, not just high item density", () => {
     // Just as dense as the equation lines above (items-per-character > 2.5,
     // via the same invisible-spacer pattern) but entirely one font — must

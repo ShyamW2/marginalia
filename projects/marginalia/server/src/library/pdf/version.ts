@@ -5,4 +5,4 @@
  * separate resource beside the old one (decision 5); `cli/reanchorPdf.ts`
  * moves highlights across that boundary.
  */
-export const EXTRACTOR_VERSION = 4;
+export const EXTRACTOR_VERSION = 5;

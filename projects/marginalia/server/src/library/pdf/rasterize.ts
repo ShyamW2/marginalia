@@ -28,9 +28,15 @@ export interface RenderablePage {
   render(params: { canvasContext: unknown; viewport: unknown }): { promise: Promise<void> };
 }
 
-const RASTER_SCALE = 2;
+// Bumped 2×→4× 2026-09-09 (M43 §F1, PDF.md §3.5 amended 2026-09-08): 2× was
+// tuned for legibility at the extractor's own default render, not against a
+// HiDPI reading surface, and read soft next to the native pane once M43 §B's
+// canvas fix made *that* pane DPR-correct. Fixed (not per-viewer-DPR-aware)
+// on purpose — the PNG is generated once at import and read by every
+// viewer/device that opens the book afterward.
+const RASTER_SCALE = 4;
 
-/** Renders a full page to a PNG buffer at 2× scale, once, so individual
+/** Renders a full page to a PNG buffer at `RASTER_SCALE`, once, so individual
  *  regions can be cropped from it. Null on any failure (degraded). */
 export async function renderPageToBuffer(
   page: RenderablePage,
