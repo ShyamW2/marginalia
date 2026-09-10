@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, type Location } from "react-router-dom";
 import { App, findOverlayPathname } from "./App.js";
@@ -9,6 +9,25 @@ import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 // piles onto the previous test's DOM instead of replacing it, and two tests
 // both landing on /settings collide on "found multiple Settings headings".
 afterEach(cleanup);
+
+// `App` mounts several hooks that fetch on mount (useLibrary, appearanceSync,
+// useServerHealth, and M45's capabilities.ts) against a server that doesn't
+// exist in this test process — every one of them already treats a failed
+// fetch as "use the sensible default" (an empty library, unset appearance,
+// no software-rendering degrade), which is exactly what's under test here.
+// Left unmocked, that's a real OS-level connection attempt per call instead
+// of an immediate, deterministic rejection — fine alone, but under this
+// workspace's full concurrent `pnpm -r test` run the real round-trips were
+// occasionally slow enough to blow `findByText`'s default 1s timeout
+// (found live, M45). Mocking the rejection keeps the same behavior these
+// hooks were already written to handle, just without depending on real
+// socket timing.
+beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 /** Builds just enough of a `Location` for `findOverlayPathname` — it only
  * ever reads `.pathname` and `.state.background`. */

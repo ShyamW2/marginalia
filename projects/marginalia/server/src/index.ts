@@ -61,8 +61,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// M45 (DESKTOP.md §7.1b): whether Electron's main process detected software
+// (SwiftShader) rendering — the one env var it sets on this process besides
+// MARGINALIA_RESOURCES_PATH. Read once, not per-request: it can't change
+// without a relaunch. Carried over the existing health check rather than a
+// new endpoint or a preload bridge, so a plain browser tab (which never has
+// the env var set) gets `false` from the exact same call it already makes.
+const SOFTWARE_RENDERING = process.env.MARGINALIA_SOFTWARE_RENDERING === "1";
+
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, softwareRendering: SOFTWARE_RENDERING });
 });
 
 app.use("/api/resources", resourcesRouter);

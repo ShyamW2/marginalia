@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import {
   Scene3DProvider,
@@ -8,8 +8,30 @@ import {
   useScene3DHold,
   useScene3DLayer,
 } from "./Scene3D.js";
+import { resetSoftwareRenderingCache } from "../app/capabilities.js";
 
-afterEach(cleanup);
+/** M45's fourth signal is a `GET /api/health` fetch. Defaults to the plain-
+ * browser answer (`false`) so every existing test in this file — none of
+ * which cares about it — sees the same behaviour as before it existed. */
+function mockHealthResponse(softwareRendering: boolean): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, softwareRendering }),
+    }),
+  );
+}
+
+beforeEach(() => {
+  resetSoftwareRenderingCache();
+  mockHealthResponse(false);
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 // The real Canvas needs a WebGL context jsdom can't provide. The seam's own
 // logic — one canvas, layer registration, reduced-motion and context-lost
@@ -295,6 +317,33 @@ describe("Scene3DProvider", () => {
     } finally {
       mockUseReducedMotion.mockReturnValue(false);
     }
+  });
+
+  it("renders zero canvases when the server reports software rendering", async () => {
+    mockHealthResponse(true);
+    render(
+      <Scene3DProvider>
+        <Registrar id="desk" />
+        <AvailabilityProbe />
+      </Scene3DProvider>,
+    );
+    // Mounts optimistically (the fetch hasn't resolved yet)...
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+    // ...then degrades once Electron's answer comes back, the same shape as
+    // a context loss arriving after the fact.
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(0));
+    expect(screen.getByTestId("available").textContent).toBe("false");
+  });
+
+  it("stays available when the server answers with no software-rendering flag at all — the plain-browser case", async () => {
+    render(
+      <Scene3DProvider>
+        <Registrar id="desk" />
+        <AvailabilityProbe />
+      </Scene3DProvider>,
+    );
+    await waitFor(() => expect(document.querySelectorAll("canvas")).toHaveLength(1));
+    expect(screen.getByTestId("available").textContent).toBe("true");
   });
 
   it("degrades to zero canvases on a lost WebGL context, and reports it as unavailable", async () => {

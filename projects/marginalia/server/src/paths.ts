@@ -89,12 +89,19 @@ export const AUDIO_DIR = path.join(DATA_DIR, "audio");
  * App resources (today, just the built web SPA) versus user data (library,
  * DB, models, vault): different lifetimes, and in a packaged app different
  * directories entirely — collapsing them into one resolver is the mistake
- * this function exists to prevent (DESKTOP.md §3.2). Electron sets
- * `resourcesPath` on `process` once the app is packaged; a plain Node
- * process (dev, or M44's throwaway launcher) has none, so it falls back to
- * the same `WORKSPACE_ROOT` every consumer already resolved against.
+ * this function exists to prevent (DESKTOP.md §3.2). `MARGINALIA_RESOURCES_PATH`
+ * (highest priority) is how M45's main process passes its own `resourcesPath`
+ * down to the server, which now runs in a `utilityProcess` rather than as a
+ * plain child of the Electron binary — whether that process type inherits
+ * `process.resourcesPath` on its own is not a thing to depend on, so main
+ * sets it explicitly. Absent that, `process.resourcesPath` itself (set when
+ * *this* process is packaged) is the second check; a plain Node process
+ * (dev, or M44's throwaway launcher) has neither, so it falls back to the
+ * same `WORKSPACE_ROOT` every consumer already resolved against.
  */
 export function resolveResourceDir(): string {
+  const override = process.env.MARGINALIA_RESOURCES_PATH;
+  if (override && override.trim()) return path.resolve(override);
   const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
   return resourcesPath && resourcesPath.trim() ? resourcesPath : WORKSPACE_ROOT;
 }

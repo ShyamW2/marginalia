@@ -12,6 +12,7 @@ import { Canvas, useFrame, type RootState } from "@react-three/fiber";
 import { NoToneMapping, type Group, type Material, type Mesh } from "three";
 import { useReducedMotion } from "motion/react";
 import { SceneLights } from "./SceneLights.js";
+import { fetchSoftwareRendering } from "../app/capabilities.js";
 import styles from "./Scene3D.module.css";
 
 /** A layer on its way out: where its opacity is going, how long it takes to get
@@ -34,6 +35,7 @@ interface Scene3DContextValue {
   setFade: (ms: number | null) => void;
   elevate: (delta: 1 | -1) => void;
   contextLost: boolean;
+  softwareRendering: boolean;
 }
 
 const Scene3DContext = createContext<Scene3DContextValue | null>(null);
@@ -76,6 +78,21 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
   const reducedMotion = useReducedMotion();
   const [layers, setLayers] = useState<Record<string, ReactNode>>({});
   const [contextLost, setContextLost] = useState(false);
+
+  // M45 (DESKTOP.md §7.1b): Electron's fourth signal into this gate, fetched
+  // once. Defaults to `false` so a plain browser tab — which never sets the
+  // server-side env var behind this — renders exactly as it always has,
+  // before the fetch even resolves.
+  const [softwareRendering, setSoftwareRendering] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSoftwareRendering().then((value) => {
+      if (!cancelled) setSoftwareRendering(value);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Which layers have a live owner mounted, and which are being held past
   // their owner's unmount (see `useScene3DHold`). Refs rather than state:
@@ -188,8 +205,9 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
   const hasLayers = layerIds.length > 0;
 
   // Reduced motion renders zero canvases, full stop — checked here once
-  // rather than by every consumer (TASKS.md M23 §A, "everywhere").
-  const canRender = !reducedMotion && !contextLost;
+  // rather than by every consumer (TASKS.md M23 §A, "everywhere"). Software
+  // rendering joins it the same way, not as a separate path (M45).
+  const canRender = !reducedMotion && !contextLost && !softwareRendering;
 
   // ⚠️ The canvas is **sticky**: once a consumer has ever registered, it stays
   // mounted for the session and merely idles (`frameloop="never"`) when no
@@ -245,7 +263,16 @@ export function Scene3DProvider({ children }: { children: ReactNode }) {
 
   return (
     <Scene3DContext.Provider
-      value={{ setLayer, holdLayer, releaseLayer, setLayerFade, setFade, elevate, contextLost }}
+      value={{
+        setLayer,
+        holdLayer,
+        releaseLayer,
+        setLayerFade,
+        setFade,
+        elevate,
+        contextLost,
+        softwareRendering,
+      }}
     >
       {children}
       {shouldMount && (
@@ -554,12 +581,13 @@ export function useScene3DElevated(elevated: boolean): void {
 
 /**
  * Whether a surface's registered 3D content is actually being rendered right
- * now — `false` under reduced motion or after a lost context. A surface
- * checks this to decide whether to show its 3D layer or its existing 2D
- * presentation; it never needs to know *why* 3D isn't available.
+ * now — `false` under reduced motion, after a lost context, or when Electron
+ * has detected software rendering (M45). A surface checks this to decide
+ * whether to show its 3D layer or its existing 2D presentation; it never
+ * needs to know *why* 3D isn't available.
  */
 export function useScene3DAvailable(): boolean {
   const reducedMotion = useReducedMotion();
-  const { contextLost } = useScene3DContext();
-  return !reducedMotion && !contextLost;
+  const { contextLost, softwareRendering } = useScene3DContext();
+  return !reducedMotion && !contextLost && !softwareRendering;
 }

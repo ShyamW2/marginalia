@@ -10,7 +10,8 @@
     "build": "pnpm --filter @marginalia/shared build && pnpm --filter @marginalia/server build && pnpm --filter @marginalia/web build",
     "start": "pnpm build && NODE_ENV=production pnpm --filter @marginalia/server start",
     "test": "pnpm -r --no-bail test",
-    "sync": "node scripts/sync.mjs"
+    "sync": "node scripts/sync.mjs",
+    "electron": "pnpm build && pnpm --filter @marginalia/electron build && pnpm --filter @marginalia/electron start"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

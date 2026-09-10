@@ -2,6 +2,7 @@ packages:
   - "shared"
   - "server"
   - "web"
+  - "electron"
 
 # Native modules pnpm 10 must be allowed to compile/relink on install.
 # Without this, better-sqlite3's build script is silently skipped and the
@@ -21,3 +22,5 @@ onlyBuiltDependencies:
   - onnxruntime-node
   - protobufjs
   - sharp
+  # M45: electron's postinstall downloads/extracts its pinned binary.
+  - electron

@@ -69,6 +69,7 @@ describe("resolveDataDir", () => {
 describe("resolveResourceDir", () => {
   afterEach(() => {
     delete (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    delete process.env.MARGINALIA_RESOURCES_PATH;
   });
 
   it("falls back to WORKSPACE_ROOT outside Electron", () => {
@@ -77,6 +78,15 @@ describe("resolveResourceDir", () => {
 
   it("prefers process.resourcesPath once Electron sets it", () => {
     (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath = "/Applications/Marginalia.app/Contents/Resources";
+    expect(resolveResourceDir()).toBe("/Applications/Marginalia.app/Contents/Resources");
+  });
+
+  // M45: the server now runs in a utilityProcess main forks explicitly, so
+  // main passes its own resourcesPath down rather than relying on whatever
+  // that process type does or doesn't inherit on its own.
+  it("prefers MARGINALIA_RESOURCES_PATH over process.resourcesPath", () => {
+    (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath = "/wrong/path";
+    process.env.MARGINALIA_RESOURCES_PATH = "/Applications/Marginalia.app/Contents/Resources";
     expect(resolveResourceDir()).toBe("/Applications/Marginalia.app/Contents/Resources");
   });
 });
