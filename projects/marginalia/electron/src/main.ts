@@ -14,6 +14,19 @@ import { clampToDisplays, loadWindowState, saveWindowState, type WindowState } f
  * loading `http://127.0.0.1:<port>/`, exactly as DESKTOP.md §2.3 requires.
  */
 
+// Found live (2026-09-10, an M5 MacBook Air, decisions.md same date): Chromium
+// disabled gpu_compositing/webgl/2d_canvas/almost everything else while its own
+// complete GPU info showed a fully valid ANGLE-Metal renderer (real extension list,
+// sane driver versions) — not SwiftShader. That combination is Chromium's own
+// GPU-allowlist not yet recognizing brand-new hardware, not a broken or missing
+// driver, and it's exactly what this flag exists to override. Must be set before
+// `app.whenReady()` — the GPU process reads command-line switches at launch.
+// `isSoftwareRendering()` (gpu.ts) is unaffected either way: it still correctly
+// degrades a machine where the GPU genuinely is unavailable (SwiftShader, or
+// `--disable-gpu`), since ignoring the blocklist can't accelerate hardware that
+// isn't there.
+app.commandLine.appendSwitch("ignore-gpu-blocklist");
+
 // electron/dist/main.js -> electron/dist -> electron -> projects/marginalia
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 
