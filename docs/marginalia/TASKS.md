@@ -2627,37 +2627,110 @@ enrollment**, which makes this the highest-leverage scheduling action in it (DES
 **Nothing in M44–M48 adds a reader feature.** If a reading-behaviour change looks necessary
 to package the app, it is a misdiagnosis — write it to NOTES.md rather than shipping it.
 
-- [ ] **`resolveDataDir()`.** `MARGINALIA_DATA_DIR` → OS per-user directory → the legacy
+- [x] **`resolveDataDir()`.** `MARGINALIA_DATA_DIR` → OS per-user directory → the legacy
       install-relative path. `paths.ts`'s existing exports become derived; every consumer
       keeps its current name, so nothing outside `paths.ts` changes.
       _Acceptance: the built tree copied to an arbitrary path, with `MARGINALIA_DATA_DIR`
       pointed at an empty directory, boots, creates the data dirs, serves the SPA, imports
       Alice and answers a question._
-- [ ] **The migration — copy, verify, mark. Never move.** One-time, on a legacy `data/`
+      **Done.** `resolveOsDataDir()` (darwin → `~/Library/Application Support/marginalia`,
+      linux → `$XDG_DATA_HOME`/`~/.local/share/marginalia`) and `resolveDataDir()` in
+      `paths.ts`; every existing export (`DATA_DIR`, `LIBRARY_DIR`, `DB_PATH`, `DIGEST_DIR`,
+      `MODELS_DIR`, `AUDIO_DIR`) now derives from it, no consumer changed.
+      ⚠️ **The priority order has a gate the doc's one-line summary doesn't spell out**,
+      needed to keep this safe on every machine already running from source: the OS
+      directory only wins once its migration marker exists (see the migration task below);
+      until then, an existing `data/` keeps resolving exactly as it does today. Without
+      that gate, `resolveDataDir()` would have silently pointed the operator's own `pnpm
+      dev` at an empty OS directory the moment this landed — the two-machine dev setup's
+      real ~150MB library sits at the legacy path on both machines, and nothing here
+      touches it. Verified live: built tree copied to a fresh temp dir, `MARGINALIA_DATA_DIR`
+      pointed at another empty temp dir, server booted, created `library/digests/models/
+      audio` plus a fresh `marginalia.sqlite` (WAL mode, `-wal`/`-shm` present), served the
+      SPA (`GET /` → 200) and imported `fixtures/alice-in-wonderland.epub` via a real
+      `POST /api/resources` (200, resource row returned, `.epub` landed under the temp
+      `library/`). ⚠️ **"answers a question" was not run** — that needs a configured LLM
+      provider credential, which this session did not touch. Tests: `paths.test.ts`.
+- [x] **The migration — copy, verify, mark. Never move.** One-time, on a legacy `data/`
       only; the source is left intact and a marker records success, so a failure is
       recoverable by deleting the destination. ⚠️ The `-wal` and `-shm` are **part of the
       database**: move them alongside the `.sqlite`, or checkpoint the WAL first and prove
       it. The operator's live `data/` is ~150MB and is the only real library that exists.
       _Acceptance: a **copy** of the operator's real `data/` migrates, and library,
       highlights, threads and reading positions match the original row-count for row-count._
-- [ ] **`resolveResourceDir()`, separate from the data directory**, for `index.ts:79`'s
+      **Done as `dataMigration.ts`'s `migrateLegacyDataDir()`**, run explicitly via
+      `pnpm --filter server migrate-data-dir` (`cli/migrateDataDir.ts`) — never wired into
+      server startup, so a bad copy is only ever discovered by deliberately running it.
+      `fs.cpSync(legacy, target, { recursive: true })` carries the `-wal`/`-shm` sidecars
+      alongside `marginalia.sqlite` without special-casing them (they're ordinary files
+      under the tree); verification is a per-table `COUNT(*)` comparison between the
+      legacy and migrated databases (`compareRowCounts`), covering every real user table —
+      library, highlights, threads, reading positions and the rest — not just the three
+      named in the acceptance line. A non-empty, unmarked target is refused rather than
+      merged into. Tests (`dataMigration.test.ts`) cover a real copy including WAL
+      sidecars, no-legacy-data, the marker short-circuiting a second call, a refused
+      non-empty target, and a forced row-count divergence (via a mocked `fs.cpSync`)
+      reported as `verification-failed` with the marker never written.
+      ⚠️ **Owed to the operator, not run this session:** migrating a copy of the real
+      ~150MB `data/` is the one step this session deliberately did not take — do it with
+      `MARGINALIA_DATA_DIR=<scratch dir> pnpm --filter server migrate-data-dir` against a
+      **copy** of `data/`, never the original, per the memory note this repo already
+      carries about that directory.
+- [x] **`resolveResourceDir()`, separate from the data directory**, for `index.ts:79`'s
       `webDist`. App resources and user data go to different places in a bundle; collapsing
       them into one resolver is the mistake this task exists to prevent.
-- [ ] **`wordnet-db` path resolution behind an asar-aware helper** (`wordnet.ts:286`), so
+      _Done: `resolveResourceDir()` (`paths.ts`) returns `process.resourcesPath` once
+      Electron sets it (M45+), falling back to `WORKSPACE_ROOT` otherwise — identical to
+      today's behaviour until then. `index.ts` now builds `webDist` from it instead of
+      `WORKSPACE_ROOT` directly. Tests: `paths.test.ts`._
+- [x] **`wordnet-db` path resolution behind an asar-aware helper** (`wordnet.ts:286`), so
       M47 has nothing to retrofit. ⚠️ `getDictionary()` catches and returns `null` by
       design, so a broken path leaves Define silently degraded — every test of this must
       assert a real definition came back, never just "no error".
-- [ ] **The port, and the appearance bug freeing it creates.** Prefer 5175, fall back to
+      _Done: `resolveUnpackedPath()` (`paths.ts`) rewrites an `app.asar` path to
+      `app.asar.unpacked`, a no-op everywhere else; `wordnet.ts`'s `getDictionary()` now
+      resolves `require("wordnet-db").path` through it before opening the dataset.
+      `wordnet.test.ts`'s existing fixture (a real definition round-trip, not just
+      "no error") still passes unchanged, so the wrapping didn't weaken that guarantee._
+- [x] **The port, and the appearance bug freeing it creates.** Prefer 5175, fall back to
       the next free port — **and** move the four `localStorage` UI settings (theme, accent,
       paper tint, desk view mode) into the `settings` table. Both halves: `localStorage` is
       origin-keyed, so a bare ephemeral port makes the app forget its own appearance on
       every launch. DESKTOP.md §7.2 records why a custom `app://` protocol was rejected.
       _Acceptance: launched twice on two different ports, both windows show the operator's
       chosen theme and accent._
-- [ ] **Verify:** build the throwaway launcher from DESKTOP.md §5 (M44's gate) — starts the
+      **Done.** `resolvePort()` (`server/src/port.ts`) prefers 5175 and probes upward only
+      when it's taken (an explicit `PORT` env var is used as-is, no fallback); verified
+      live against this machine's own `pnpm dev` already holding 5175 — the launcher
+      correctly landed on 5176 without disturbing it. `uiTheme`/`uiAccent`/
+      `uiPaperTintHue`/`uiDeskViewMode` join `Settings` (`UiAppearanceSettingsSchema`,
+      shared/src/schemas.ts) and the `settings` table (`server/src/settings/store.ts`),
+      `""` meaning unset in every field, same convention as `vaultPath`.
+      ⚠️ **A trade-off the acceptance line doesn't spell out**: `localStorage` stays as
+      each hook's *instant-paint* cache (read synchronously, same as today) rather than
+      being replaced outright, because there is no app-wide settings provider this could
+      block first paint on without one. `useTheme`/`useAccent`/`usePaperTint`
+      (`web/src/app/`) and `DeskPage`'s existing settings-fetch effect each reconcile
+      once per mount against the server via a shared `appearanceSync.ts` (one `GET
+      /api/settings` for all three App-level hooks, not three); a write pushes to both.
+      Net effect: the common case (port unchanged) is unaffected, a fallback-port launch
+      shows the previous appearance for one reconcile round-trip rather than instantly —
+      not the zero-flash the acceptance line's phrasing could be read as promising.
+      Flagged here rather than silently narrowed. Tests: `port.test.ts`,
+      `settings/store.test.ts`, `useTheme.test.ts`, `useAccent.test.ts`,
+      `usePaperTint.test.ts`, `deskViewBus.test.ts`.
+- [x] **Verify:** build the throwaway launcher from DESKTOP.md §5 (M44's gate) — starts the
       bundled server, opens the default browser. Use it to prove relocatable data, bundled
       assets and port handling end to end. **Do not ship it**; a browser tab fails the
       hand-it-to-a-friend test and Safari does not render what this app is built against.
+      **Done: `scripts/launch-preview.mjs`** — spawns `server/dist/index.js`, watches its
+      stdout for the "listening on" line, then `open`/`xdg-open`s that URL. Verified live:
+      `pnpm build` then `MARGINALIA_DATA_DIR=<temp dir> node scripts/launch-preview.mjs`
+      booted against a fresh directory and fell back to port 5176 around this machine's
+      own already-running dev server on 5175, without disturbing it — exactly the
+      collision-avoidance case §3.4 exists for. The browser-open step itself is untested
+      in this session (no display in this environment); the spawn is `detached`+`unref`ed
+      so a missing `xdg-open` target fails silently rather than blocking the server.
 
 ### M45 — Desktop: the Electron shell
 

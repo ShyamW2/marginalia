@@ -9388,3 +9388,48 @@ detector widening and this raster change). Re-importing it and running `pnpm --f
 server reanchor <oldId> <newId>` (moves highlights across the version boundary,
 `cli/reanchorPdf.ts`) is an explicit operator action per decision 5 — deliberately not
 triggered from this session against the live library.
+
+## M44 (started) — resolveDataDir's marker gate, and the appearance-flash trade-off — 2026-09-10
+
+Landed: `resolveDataDir()`/`resolveOsDataDir()`/`resolveResourceDir()`/`resolveUnpackedPath()`
+(`paths.ts`), `dataMigration.ts` + its CLI, `port.ts`'s `resolvePort()`, the four appearance
+settings moved into the sidecar store, and `scripts/launch-preview.mjs` (M44's gate). TASKS.md
+has the per-item detail; two judgment calls are worth a home of their own.
+
+**Why `resolveDataDir()` gates the OS directory on a migration marker rather than preferring
+it unconditionally**, even though DESKTOP.md §3.1 lists the priority as "MARGINALIA_DATA_DIR →
+OS directory → legacy" with no gate mentioned. Read literally, an unconditional preference
+would have this repo's own `pnpm dev` — on both machines in the two-machine setup (memory:
+Mac Node 20/pnpm 9, Linux Node 24/pnpm 10) — silently resolve to an empty
+`~/Library/Application Support/marginalia` / `~/.local/share/marginalia` the moment this
+landed, instead of the real ~150MB `data/` sitting right there in the checkout. Nothing would
+error; the app would just look empty, and importing a book afterward would start fragmenting
+data across two locations. That is exactly the class of incident the data/ caution memory
+exists for. The marker gate makes the new resolution inert until a migration has actually
+completed: pre-migration, `resolveDataDir()` behaves identically to before this session, on
+every machine, dev or packaged. Only `migrateLegacyDataDir()` succeeding — copy, verify every
+table's row count, then write the marker — flips it over, and deleting the marker (or the
+whole target directory) falls back to the legacy path again, which is what DESKTOP.md's own
+"recoverable by deleting the destination" means once it's load-bearing rather than incidental.
+
+**Why the port/appearance-settings acceptance line ("both windows show the operator's chosen
+theme and accent") is met with a caveat, not exactly.** DESKTOP.md §3.4 doesn't specify whether
+the fix needs to be flash-free, and there's no app-wide settings provider today that first
+paint could block on without one being built new (out of scope for a plumbing milestone).
+`localStorage` stays each hook's synchronous instant-paint read; the server settings table is
+the durable copy, reconciled once per mount. So: same port across launches (the common case,
+and the one the stable-port preference exists to keep common) — indistinguishable from before.
+Different origin (the fallback-port case) — correct after one reconcile round-trip, not
+instantly. Recorded as a deliberate, proportionate choice rather than silently narrowing the
+acceptance criterion; revisit only if a real fallback-port launch is later found to flash
+visibly enough to bother a reader (unlikely on a loopback round-trip, but not measured here).
+
+**Owed to the operator, not run this session:** (1) migrating a copy of the real `data/` —
+the CLI (`pnpm --filter server migrate-data-dir`) is built and unit-tested against synthetic
+fixtures, but running it against the operator's actual ~150MB library, even as a copy, is
+their call per the data-loss-caution memory; (2) `launch-preview.mjs`'s browser-open step —
+verified that the server side works end to end (relocated data dir, port fallback around this
+machine's own live `pnpm dev` on 5175, a real EPUB import via `POST /api/resources`), but
+`open`/`xdg-open` was never exercised against a real display in this environment; (3) the
+"answers a question" half of `resolveDataDir`'s acceptance line, which needs a configured LLM
+provider credential this session didn't touch.
