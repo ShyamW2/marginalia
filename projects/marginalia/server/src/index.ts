@@ -4,7 +4,7 @@ import fs from "node:fs";
 import multer from "multer";
 import { getDb } from "./db.js";
 import { diagnoseNativeFailure, formatNativeFailure } from "./startupDiagnosis.js";
-import { WORKSPACE_ROOT } from "./paths.js";
+import { resolveResourceDir } from "./paths.js";
 import { resourcesRouter } from "./routes/resources.js";
 import { highlightsRouter } from "./routes/highlights.js";
 import { settingsRouter } from "./routes/settings.js";
@@ -76,7 +76,7 @@ app.use("/api/cast", castRouter);
 
 // Serve the built web app in production. In dev, Vite serves the web app on
 // its own port and proxies /api here — this branch is a no-op then.
-const webDist = path.join(WORKSPACE_ROOT, "web", "dist");
+const webDist = path.join(resolveResourceDir(), "web", "dist");
 if (process.env.NODE_ENV === "production" && fs.existsSync(webDist)) {
   app.use(express.static(webDist));
   // Express 5 / path-to-regexp v8 dropped the bare "*" wildcard — it now

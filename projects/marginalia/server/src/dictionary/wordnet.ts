@@ -3,6 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { createRequire } from "node:module";
 import type { Dictionary, DictionaryEntry, DictionarySense } from "./engine.js";
+import { resolveUnpackedPath } from "../paths.js";
 
 /**
  * WordNet 3.1 behind the `Dictionary` seam (M30 C). The dataset ships in
@@ -283,7 +284,10 @@ let dictionary: Dictionary | null | undefined;
 export function getDictionary(): Dictionary | null {
   if (dictionary !== undefined) return dictionary;
   try {
-    const dictPath = require("wordnet-db").path as string;
+    // M44 (DESKTOP.md §3.3): `wordnet-db`'s own path is a virtual one inside
+    // `app.asar` once packaged — resolveUnpackedPath is a no-op today and
+    // becomes load-bearing the moment M47 unpacks this module.
+    const dictPath = resolveUnpackedPath(require("wordnet-db").path as string);
     dictionary = new WordNetDictionary(dictPath);
   } catch {
     dictionary = null;
