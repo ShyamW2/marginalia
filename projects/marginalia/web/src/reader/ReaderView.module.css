@@ -757,6 +757,32 @@
   flex-shrink: 0;
 }
 
+/* M43 §J: the zoom slider's own positioning context, so its transient
+   "switched to one-page scroll" notice can anchor directly above the
+   trigger — same "docked at the viewport bottom, grows upward" shape
+   SliderDial's own drag popup already uses at both call sites. */
+.zoomSliderAnchor {
+  position: relative;
+  display: flex;
+}
+
+.zoomExitNotice {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 0.4rem);
+  transform: translateX(-50%);
+  z-index: 20;
+  white-space: nowrap;
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-panel);
+  padding: 0.45rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--color-text);
+  pointer-events: none;
+}
+
 /* M24.7 §G rework of M14 fullscreen (decisions.md 2026-08-19/2026-08-21/
    2026-08-22): `f` hides the app's chrome and lets the page grow into the
    freed space — "no card, no strips, no rail," replaced by a vignette, a 2px

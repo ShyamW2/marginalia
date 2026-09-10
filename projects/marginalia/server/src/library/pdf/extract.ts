@@ -2,7 +2,7 @@ import type { PageItems } from "./headerFooter.js";
 import { stripRunningHeadersFooters } from "./headerFooter.js";
 import { orderPageItems } from "./columns.js";
 import { groupLines } from "./lines.js";
-import { detectEquationBands } from "./equations.js";
+import { detectEquationBands, detectMathDenseBlocks } from "./equations.js";
 import { detectFigureRegions } from "./figures.js";
 import { detectTableRegions } from "./tables.js";
 import { buildPageBlocks } from "./blocks.js";
@@ -209,16 +209,23 @@ export async function extractPdf(buffer: Buffer, options: ExtractPdfOptions = {}
     const extractedChars = lines.reduce((sum, l) => sum + l.text.replace(/\s/g, "").length, 0);
     if (extractedChars < SCAN_CHAR_THRESHOLD) shortPageCount++;
 
-    const equationBands = detectEquationBands(lines);
+    const equationBands = detectEquationBands(lines, pageItems.width, pageItems.height);
+    const mathBlocks = detectMathDenseBlocks(lines, equationBands, pageItems.width, pageItems.height);
     const figureRegions = detectFigureRegions(lines, pageItems.width, pageItems.height);
     const tableRegions = detectTableRegions(lines);
 
-    const needsRaster = equationBands.length > 0 || figureRegions.length > 0 || tableRegions.length > 0;
+    const needsRaster =
+      equationBands.length > 0 || mathBlocks.length > 0 || figureRegions.length > 0 || tableRegions.length > 0;
     const raster = needsRaster ? await getRaster(pageItems.pageIndex) : null;
 
     const equationImages = await Promise.all(
       equationBands.map((band) =>
         raster ? cropRegion(raster.png, raster.scale, raster.pageHeight, band) : Promise.resolve(null),
+      ),
+    );
+    const mathBlockImages = await Promise.all(
+      mathBlocks.map((block) =>
+        raster ? cropRegion(raster.png, raster.scale, raster.pageHeight, block) : Promise.resolve(null),
       ),
     );
     const figureImages = await Promise.all(
@@ -240,6 +247,7 @@ export async function extractPdf(buffer: Buffer, options: ExtractPdfOptions = {}
       equationImages,
       figureImages,
       tableImages,
+      mathBlockImages,
     );
     pages.push({ pageIndex: pageItems.pageIndex, width: pageItems.width, height: pageItems.height, blocks });
   }

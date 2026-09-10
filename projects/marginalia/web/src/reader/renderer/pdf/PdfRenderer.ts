@@ -98,6 +98,7 @@ import {
   clampZoomScale,
   computeFitScale,
   shouldShowSpread,
+  SPREAD_ZOOM_HEADROOM,
   wheelZoomTarget,
   ZOOM_COMMIT_DEBOUNCE_MS,
   ZOOM_STEP,
@@ -151,10 +152,16 @@ interface PdfjsViewport {
   height: number;
   transform: number[];
 }
+// M43 §K2: pdf.js's real `RenderTask` — `cancel()` rejects `promise` with a
+// `RenderingCancelledException` rather than resolving it.
+interface PdfjsRenderTask {
+  promise: Promise<void>;
+  cancel(): void;
+}
 interface PdfjsPage {
   getViewport(params: { scale: number }): PdfjsViewport;
   getTextContent(): Promise<{ items: (PdfjsTextItem | Record<string, unknown>)[] }>;
-  render(params: { canvasContext: CanvasRenderingContext2D; viewport: PdfjsViewport }): { promise: Promise<void> };
+  render(params: { canvasContext: CanvasRenderingContext2D; viewport: PdfjsViewport }): PdfjsRenderTask;
 }
 interface PdfjsDocument {
   numPages: number;
@@ -375,6 +382,14 @@ export class PdfRenderer implements ResourceRenderer {
   private pageMounts = new Map<number, PageMount>();
   private layoutListeners = new Set<Listener<void>>();
   private deselectListeners = new Set<Listener<void>>();
+  /** M43 §K2: the in-flight `page.render()` task for each currently-
+   * rendering page index, if any — so a new render for the same page (a
+   * zoom-triggered rebuild, or the page scrolling back into view before its
+   * prior render finished) can cancel the stale one instead of leaving
+   * pdf.js to keep rasterizing a frame nothing will ever show, which also
+   * serializes behind the canvas's 2D context and can delay the render that
+   * actually matters. */
+  private inFlightRenders = new Map<number, PdfjsRenderTask>();
 
   // ── M42 §D1: continuous zoom (drag/scroll/pinch) ───────────────────────
   /** `renderPaginated`'s own `wrapper` — the element `setZoomScale`'s live
@@ -547,6 +562,9 @@ export class PdfRenderer implements ResourceRenderer {
     this.doc = null;
     this.pageMounts = new Map();
     this.paginatedWrapperEl = null;
+    // M43 §K2: nothing left to show any of these — stop rasterizing.
+    for (const task of this.inFlightRenders.values()) task.cancel();
+    this.inFlightRenders = new Map();
   }
 
   private async buildPageTexts(): Promise<void> {
@@ -1186,16 +1204,40 @@ export class PdfRenderer implements ResourceRenderer {
    * notification, exactly like a native pinch-zoom preview: the chrome's own
    * zoom-percent readout only needs to move once the gesture settles (the
    * slider control already shows its own live value while dragging; see
-   * ReaderView.tsx), not once per intermediate frame. A no-op under
-   * continuous scroll (`paginatedWrapperEl` is null there — no single
-   * wrapper to scale), which just leaves the view as-is until the debounced
-   * `relayout()` rebuilds the scroll column at the new scale. */
+   * ReaderView.tsx), not once per intermediate frame.
+   *
+   * M43 §K1: continuous scroll (the default since M43 §D) has no single
+   * wrapper to scale the same way — `scrollHost`'s placeholder column is
+   * sized and scroll-anchored against real layout geometry
+   * (`syncContinuousWindow`'s `getBoundingClientRect` viewport math,
+   * `scrollIntoView`), and transform-scaling the whole column would need to
+   * compensate `scrollTop` to keep the reader's current position visually
+   * anchored — real geometry work this method doesn't have the gesture
+   * state to do safely. Previously this was a documented no-op there, which
+   * is the proximate cause of the "choppy" complaint this section fixes: a
+   * zoom drag/pinch/slider-scrub over the (now-default) scroll state showed
+   * nothing at all until the debounce settled, then jumped once. Cheaper,
+   * safe middle ground: scale each *currently mounted* page's own div
+   * in place, around its own center — no scrollHost geometry touched, no
+   * anchor math, so the document's scroll position and overall column
+   * height stay exactly where they were. The accepted trade-off (same
+   * shape the paginated preview's own blur-at-large-factors one already is)
+   * is that a scaled page's placeholder siblings don't resize to match
+   * until the debounced real re-render lands, so there's a brief visual
+   * mismatch against neighboring pages during a fast zoom — preferred over
+   * showing nothing at all. */
   private applyZoomPreview(targetScale: number): void {
-    const wrapper = this.paginatedWrapperEl;
-    if (!wrapper) return;
     const factor = targetScale / this.effectiveScale;
-    wrapper.style.transform = `scale(${factor})`;
-    wrapper.style.transformOrigin = "50% 0%";
+    const wrapper = this.paginatedWrapperEl;
+    if (wrapper) {
+      wrapper.style.transform = `scale(${factor})`;
+      wrapper.style.transformOrigin = "50% 0%";
+      return;
+    }
+    for (const mount of this.pageMounts.values()) {
+      mount.pageDiv.style.transform = `scale(${factor})`;
+      mount.pageDiv.style.transformOrigin = "50% 50%";
+    }
   }
 
   private handleWheel = (event: WheelEvent): void => {
@@ -1271,6 +1313,15 @@ export class PdfRenderer implements ResourceRenderer {
     const natural = this.naturalPageSizes[this.pageIndex] ?? { width: 0, height: 0 };
 
     let legibleSpread = false;
+    // M43 §J: whether `userScale` (if any) still sits within the spread's
+    // own zoom headroom — computed against the *spread's* fit scale
+    // specifically (never the 1-up one), so it can be checked before
+    // `pagesAcross` itself is decided; see the constant's own comment.
+    let withinSpreadHeadroom = true;
+    // Hoisted so both the pagesAcross decision and the snap-back check
+    // below can read it without recomputing — only meaningful once
+    // `containerWidth > 0`.
+    let spreadFitScale = FALLBACK_SCALE;
     if (containerWidth <= 0) {
       // Not yet laid out (or jsdom, which never lays out at all) —
       // FALLBACK_SCALE keeps every existing test's pixel expectations
@@ -1284,36 +1335,51 @@ export class PdfRenderer implements ResourceRenderer {
       this.currentFitScale = FALLBACK_SCALE;
     } else {
       legibleSpread = shouldShowSpread(containerWidth, natural.width);
-      // M43 §C2: pagesAcross now follows the explicit toggle, not container
+      spreadFitScale =
+        computeFitScale(containerWidth, containerHeight, natural.width, natural.height, 2) || FALLBACK_SCALE;
+      withinSpreadHeadroom =
+        this.userScale === null || this.userScale <= spreadFitScale * SPREAD_ZOOM_HEADROOM + ZOOM_EPSILON;
+      // M43 §C2/§J: pagesAcross follows the explicit toggle, not container
       // width alone — `"fit-spread"` resolves to 1-up at a width too narrow
       // for a legible spread (PDF.md §7.6's capability table already
       // documented that fallback), and `"fit-page"` never auto-spreads
-      // regardless of how wide the container is.
-      this.pagesAcross = this.userScale === null && this.fitMode === "fit-spread" && legibleSpread ? 2 : 1;
+      // regardless of how wide the container is. A standing zoom-in stays
+      // 2-up through `SPREAD_ZOOM_HEADROOM`'s own range before falling back
+      // to 1-up/scroll — not the instant `userScale` goes non-null.
+      const showSpread = this.fitMode === "fit-spread" && legibleSpread && withinSpreadHeadroom;
+      this.pagesAcross = showSpread ? 2 : 1;
       // Stable, even-aligned pairing (0|1, 2|3, ...) whenever a spread is
       // showing — idempotent if already even, and what re-pairs a page that
       // was alone (odd index) the moment a spread becomes available.
       if (this.pagesAcross === 2 && this.pageIndex % 2 === 1) this.pageIndex -= 1;
-      this.currentFitScale =
-        computeFitScale(containerWidth, containerHeight, natural.width, natural.height, this.pagesAcross) ||
-        FALLBACK_SCALE;
+      this.currentFitScale = showSpread
+        ? spreadFitScale
+        : computeFitScale(containerWidth, containerHeight, natural.width, natural.height, 1) || FALLBACK_SCALE;
     }
 
     // Snap-back: a resize (or the container simply finishing layout) that
     // brings the fit scale back up to meet a standing zoom-in undoes it,
-    // exactly as zooming back down by hand would.
-    if (this.userScale !== null && this.userScale <= this.currentFitScale + ZOOM_EPSILON) {
+    // exactly as zooming back down by hand would. M43 §J: while the spread
+    // is still eligible (`fitMode`/`legibleSpread`), this compares against
+    // the *spread's* own fit scale even at `pagesAcross === 1` (narrow
+    // container) so a zoom that's merely exercising the headroom above the
+    // spread's fit scale is never mistaken for "back at fit" against the
+    // much larger 1-up scale — that comparison only applies once the spread
+    // is no longer on offer at all.
+    const snapBackFitScale = this.fitMode === "fit-spread" && legibleSpread ? spreadFitScale : this.currentFitScale;
+    if (this.userScale !== null && this.userScale <= snapBackFitScale + ZOOM_EPSILON) {
       this.userScale = null;
     }
 
     this.effectiveScale = this.userScale ?? this.currentFitScale;
-    // M43 §D1/§D2 (PDF.md §7.6 amended): scroll is the default; the one
-    // paginated exception is a legible spread explicitly selected via §C2's
-    // toggle, at the fit-mode's own (unzoomed) scale. An unmeasured
-    // container keeps the single-page paginated fallback above rather than
-    // defaulting to scroll — see that branch's own comment.
+    // M43 §D1/§D2 (PDF.md §7.6 amended, headroom widened M43 §J): scroll is
+    // the default; the one paginated exception is a legible spread
+    // explicitly selected via §C2's toggle, at or within
+    // `SPREAD_ZOOM_HEADROOM` of the fit-mode's own (unzoomed) scale. An
+    // unmeasured container keeps the single-page paginated fallback above
+    // rather than defaulting to scroll — see that branch's own comment.
     const paginated =
-      containerWidth <= 0 || (this.userScale === null && this.fitMode === "fit-spread" && legibleSpread);
+      containerWidth <= 0 || (this.fitMode === "fit-spread" && legibleSpread && withinSpreadHeadroom);
     const nextAdvance: "image" | "scroll" = paginated ? "image" : "scroll";
     this.capabilities = {
       ...this.capabilities,
@@ -1412,7 +1478,27 @@ export class PdfRenderer implements ResourceRenderer {
     // `canvas` package, which this file deliberately doesn't add just to
     // satisfy a test environment. A real browser always has one.
     const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | null;
-    if (ctx) await page.render({ canvasContext: ctx, viewport: renderViewport }).promise;
+    if (ctx) {
+      // M43 §K2: a render still in flight for this same page (this can only
+      // be an older, now-superseded one — a page index is only ever mounted
+      // once per generation) is cancelled rather than left to keep
+      // rasterizing a frame nothing will show.
+      this.inFlightRenders.get(pageIndex)?.cancel();
+      const task = page.render({ canvasContext: ctx, viewport: renderViewport });
+      this.inFlightRenders.set(pageIndex, task);
+      try {
+        await task.promise;
+      } catch {
+        // Either this task's own cancellation (rejects with
+        // RenderingCancelledException) or a real render failure — both
+        // degrade the same way a missing canvas context already does here:
+        // no raster this time, no throw past this call. The generation
+        // check right below discards the result if a newer relayout has
+        // already superseded it, which a cancellation always implies.
+      } finally {
+        if (this.inFlightRenders.get(pageIndex) === task) this.inFlightRenders.delete(pageIndex);
+      }
+    }
     if (this.cancelled || generation !== this.renderGeneration) return null;
 
     const content = await page.getTextContent();
@@ -1434,12 +1520,23 @@ export class PdfRenderer implements ResourceRenderer {
       indices = [this.pageIndex, this.pageIndex + 1];
     }
 
+    // M43 §J: a spread zoomed within its headroom can render wider than the
+    // container — a fixed-size host with `overflow: auto` around the
+    // (potentially oversized) flex row, same idiom `relayout()`'s own
+    // continuous-scroll `scrollHost` already uses. At the ordinary fit
+    // scale the row exactly fills this host, so nothing visibly changes;
+    // only once zoomed past fit does a scrollbar appear.
+    const scrollHost = document.createElement("div");
+    scrollHost.style.cssText = "width:100%;height:100%;overflow:auto;position:relative;";
+
     const wrapper = document.createElement("div");
     wrapper.style.display = "flex";
     wrapper.style.flexDirection = "row";
     wrapper.style.alignItems = "flex-start";
     wrapper.style.justifyContent = "center";
     wrapper.style.gap = "0";
+    wrapper.style.width = "fit-content";
+    wrapper.style.minWidth = "100%";
 
     const newMounts = new Map<number, PageMount>();
     for (const idx of indices) {
@@ -1450,7 +1547,8 @@ export class PdfRenderer implements ResourceRenderer {
     }
     if (generation !== this.renderGeneration) return;
 
-    container.replaceChildren(wrapper);
+    scrollHost.appendChild(wrapper);
+    container.replaceChildren(scrollHost);
     this.pageMounts = newMounts;
     // M42 §D1: this fresh wrapper carries no transform of its own — the
     // *next* live zoom gesture (not this render) is what `setZoomScale`

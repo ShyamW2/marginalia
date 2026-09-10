@@ -78,4 +78,57 @@ describe("detectFigureRegions", () => {
 
     expect(regions).toHaveLength(0);
   });
+
+  // M43 §I: a diagram built from vector graphics with text labels inside it
+  // leaves no blank gap for the plain adjacent-line test to find — the
+  // labels themselves must be swept into the region instead.
+  describe("labeled diagram regions (M43 §I)", () => {
+    it("sweeps short label lines above a caption into the region", () => {
+      const lines = groupLines([
+        item("Preceding paragraph text runs here for a while.", 40, 760),
+        item("L-Iter", 40, 460),
+        item("L-Begin L-Finish", 40, 430),
+        item("Inactive L-Divert Active", 40, 400),
+        item("O-Remove", 40, 370),
+        item("Figure 1. The component lifecycle.", 40, 300),
+        item("Following paragraph text runs here for a while.", 40, 280),
+      ]);
+
+      const regions = detectFigureRegions(lines, PAGE_WIDTH, PAGE_HEIGHT);
+
+      expect(regions).toHaveLength(1);
+      expect(regions[0].side).toBe("above");
+      // Indices 1-4 are the four label lines; 0 (the preceding paragraph)
+      // and 5 (the caption itself) must not be swept in.
+      expect(regions[0].startIndex).toBe(1);
+      expect(regions[0].endIndex).toBe(5);
+    });
+
+    it("excludes the swept label lines' indices from a genuinely blank region", () => {
+      const lines = groupLines([
+        item("Preceding paragraph text.", 40, 700),
+        item("Figure 1. A diagram of the pipeline.", 40, 300),
+        item("Following paragraph text.", 40, 280),
+      ]);
+
+      const regions = detectFigureRegions(lines, PAGE_WIDTH, PAGE_HEIGHT);
+
+      expect(regions).toHaveLength(1);
+      expect(regions[0].startIndex).toBe(regions[0].endIndex);
+    });
+
+    it("does not sweep ordinary body prose in as if it were labels", () => {
+      const lines = groupLines([
+        item("A sentence of real prose that just happens to run a bit long here.", 40, 700),
+        item("Another full sentence of ordinary prose immediately above the figure.", 40, 686),
+        item("Figure 1. A diagram of the pipeline.", 40, 672),
+        item("Following paragraph text runs here.", 40, 658),
+      ]);
+
+      const regions = detectFigureRegions(lines, PAGE_WIDTH, PAGE_HEIGHT);
+
+      // No blank gap and no label-shaped lines either — no region at all.
+      expect(regions).toHaveLength(0);
+    });
+  });
 });

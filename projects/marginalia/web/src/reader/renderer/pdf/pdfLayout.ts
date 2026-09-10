@@ -22,6 +22,16 @@ export function shouldShowSpread(containerWidth: number, naturalPageWidth: numbe
   return containerWidth / (naturalPageWidth * 2) >= MIN_SPREAD_SCALE;
 }
 
+/** M43 §J: how far past a legible spread's own fit scale the reader can
+ * keep zooming while still showing two pages (horizontal scroll picking up
+ * whatever no longer fits) before dropping to single-page continuous
+ * scroll. Previously there was no headroom at all — `userScale` going
+ * non-null at all flipped `pagesAcross` straight to 1, so the very first
+ * zoom tick past the spread's fit scale ended the spread; the operator
+ * asked for "another 20-30%" before that happens. Named so it's trivial to
+ * retune live, same as `MIN_SPREAD_SCALE`. */
+export const SPREAD_ZOOM_HEADROOM = 1.25;
+
 /** M43 §C2: the two explicit states the native pane's fit toggle cycles
  * through — `fit-page` shows one page fit to both axes, `fit-spread` shows
  * two, also fit to both axes (never just one, per §7.6's amended "one

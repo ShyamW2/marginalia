@@ -785,6 +785,22 @@ export function ReaderView({
   useEffect(() => {
     pdfZoomRef.current = pdfZoom;
   }, [pdfZoom]);
+  // M43 §J: a transient "switched to one-page scroll" notice, shown only
+  // when continued zooming (not an explicit fit-mode toggle click, and not
+  // a resize) carries a legible spread past its own headroom into
+  // single-page continuous scroll — detected below as `mode` going from
+  // "fit-spread" (at rest) to "free" (mid-zoom) in the same
+  // `onLayoutChanged` tick that `advance` also flips to "scroll". An
+  // explicit toggle click always lands on a named mode ("fit-page"), never
+  // "free", and a pure resize leaves `userScale`/`mode` untouched — so
+  // neither of those false-triggers this.
+  const [pdfSpreadZoomNotice, setPdfSpreadZoomNotice] = useState(false);
+  const pdfSpreadZoomNoticeTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (pdfSpreadZoomNoticeTimerRef.current !== null) window.clearTimeout(pdfSpreadZoomNoticeTimerRef.current);
+    };
+  }, []);
   // M40 §C9: the reading mode is a reader setting remembered *per book*
   // (`reading_state.flow`, migration 42) — `null` means "not decided by the
   // reader this session; use whatever the book was last saved with",
@@ -1794,6 +1810,20 @@ export function ReaderView({
   function pinchScaleMax(): number {
     return capabilitiesRef.current.zoom ? MAX_ZOOM_SCALE : TEXT_SIZE_MAX;
   }
+  // M43 §K3: `touchmove` fires on every raw event, which on some devices
+  // outpaces the display's own refresh rate — batched here to "latest value
+  // wins, at most once per animation frame" so a fast pinch doesn't call
+  // `setZoomScale` (and its own CSS-transform preview write) more often
+  // than the browser can actually paint a frame. Cleared on unmount so a
+  // pending frame never calls into a renderer that's already gone.
+  const pendingPinchScaleRef = useRef<number | null>(null);
+  const pinchRafHandleRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (pinchRafHandleRef.current !== null) cancelAnimationFrame(pinchRafHandleRef.current);
+    };
+  }, []);
+
   /** The pinch *is* the live commit for PDF zoom (`setZoomScale` already
    * debounces its own real re-render — PdfRenderer.ts, M42 §D1) — no
    * PinchResizeInstrument popover, since the page scaling live under the
@@ -1801,7 +1831,15 @@ export function ReaderView({
    * "the pinch drives its value"), unchanged from before this landed. */
   function handlePinchPreview(scale: number, viewportX: number, viewportY: number): void {
     if (capabilitiesRef.current.zoom) {
-      rendererRef.current?.setZoomScale(scale);
+      pendingPinchScaleRef.current = scale;
+      if (pinchRafHandleRef.current === null) {
+        pinchRafHandleRef.current = requestAnimationFrame(() => {
+          pinchRafHandleRef.current = null;
+          const pending = pendingPinchScaleRef.current;
+          pendingPinchScaleRef.current = null;
+          if (pending !== null) rendererRef.current?.setZoomScale(pending);
+        });
+      }
       return;
     }
     setPinchInstrument({
@@ -2861,7 +2899,17 @@ export function ReaderView({
         unsubscribers.push(
           activeRenderer.onLayoutChanged(() => {
             applyCapabilities(activeRenderer.capabilities);
-            setPdfZoom({ mode: activeRenderer.getZoomMode(), percent: activeRenderer.getZoomPercent() });
+            const nextMode = activeRenderer.getZoomMode();
+            // M43 §J: the notice fires exactly on the edge — the previous
+            // tick was the paginated spread at rest, this one is mid-zoom
+            // and has dropped to scroll. See the state's own comment above
+            // for why "free" (not any resize/toggle path) is the signature.
+            if (pdfZoomRef.current?.mode === "fit-spread" && nextMode === "free" && activeRenderer.capabilities.advance === "scroll") {
+              setPdfSpreadZoomNotice(true);
+              if (pdfSpreadZoomNoticeTimerRef.current !== null) window.clearTimeout(pdfSpreadZoomNoticeTimerRef.current);
+              pdfSpreadZoomNoticeTimerRef.current = window.setTimeout(() => setPdfSpreadZoomNotice(false), 3000);
+            }
+            setPdfZoom({ mode: nextMode, percent: activeRenderer.getZoomPercent() });
           }),
         );
         // M43 §A2: the native pane's own "click away from a selection
@@ -3942,28 +3990,35 @@ export function ReaderView({
   // a linear percent. Shown only under `capabilities.zoom` at each call
   // site, same as the fit toggle/±buttons beside it.
   const zoomSlider = (
-    <Slider
-      ariaLabel="Zoom"
-      value={(pdfZoom?.percent ?? 100) / 100}
-      min={MIN_ZOOM_SCALE}
-      max={MAX_ZOOM_SCALE}
-      scale="log2"
-      dragPxPerUnit={120}
-      keyboardStep={ZOOM_STEP}
-      step={0.01}
-      clickToType={false}
-      formatValue={(v) => `${Math.round(v * 100)}%`}
-      // M43 §C1: both call sites (the fullscreen pebble and the windowed
-      // footer) dock this trigger at the bottom of the viewport, same as
-      // the reading-progress slider a few lines up — `dialPlacement`
-      // defaults to "below" (SliderDial.tsx), which grows the dial
-      // downward off the bottom edge instead of over the reading pane.
-      dialPlacement="above"
-      onPreviewChange={(v) => {
-        if (v !== null) rendererRef.current?.setZoomScale(v);
-      }}
-      onCommit={(v) => rendererRef.current?.setZoomScale(v)}
-    />
+    <div className={styles.zoomSliderAnchor}>
+      {/* M43 §J: "near the zoom window" per the operator's own ask, rather
+          than the screen-wide Toast (app/Toast.tsx) publish uses — anchored
+          the same way SliderDial's own drag popup already is (above the
+          trigger, both call sites dock it at the viewport bottom). */}
+      {pdfSpreadZoomNotice && <span className={styles.zoomExitNotice}>Switched to one-page scroll</span>}
+      <Slider
+        ariaLabel="Zoom"
+        value={(pdfZoom?.percent ?? 100) / 100}
+        min={MIN_ZOOM_SCALE}
+        max={MAX_ZOOM_SCALE}
+        scale="log2"
+        dragPxPerUnit={120}
+        keyboardStep={ZOOM_STEP}
+        step={0.01}
+        clickToType={false}
+        formatValue={(v) => `${Math.round(v * 100)}%`}
+        // M43 §C1: both call sites (the fullscreen pebble and the windowed
+        // footer) dock this trigger at the bottom of the viewport, same as
+        // the reading-progress slider a few lines up — `dialPlacement`
+        // defaults to "below" (SliderDial.tsx), which grows the dial
+        // downward off the bottom edge instead of over the reading pane.
+        dialPlacement="above"
+        onPreviewChange={(v) => {
+          if (v !== null) rendererRef.current?.setZoomScale(v);
+        }}
+        onCommit={(v) => rendererRef.current?.setZoomScale(v)}
+      />
+    </div>
   );
 
   return (

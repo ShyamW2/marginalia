@@ -657,7 +657,7 @@ describe("PdfRenderer — zoom/layout (M41 §C1, amended M43 §C2/§D1–D2)", (
     renderer.destroy();
   });
 
-  it("selecting fit-spread at a legible width is the one paginated state; zooming in drops back to scroll, zooming out snaps back", async () => {
+  it("selecting fit-spread at a legible width is the one paginated state; a small zoom-in stays paginated within the headroom, a larger one drops to scroll, zooming out snaps back", async () => {
     const bytes = loadFixturePdf();
     stubResourceFetch(bytes);
 
@@ -676,19 +676,39 @@ describe("PdfRenderer — zoom/layout (M41 §C1, amended M43 §C2/§D1–D2)", (
     expect(renderer.capabilities.spread).toBe(true);
     expect(renderer.getZoomMode()).toBe("fit-spread");
 
+    const settle = async () => {
+      for (let i = 0; i < 10 && layoutChanges === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      layoutChanges = 0;
+    };
+
+    // M43 §J: one ZOOM_STEP (1.2×) sits inside SPREAD_ZOOM_HEADROOM (1.25×)
+    // — the spread must still hold, not drop at the first zoom tick the way
+    // it did before this section.
     renderer.zoomIn();
+    await settle();
+    expect(renderer.capabilities.advance).toBe("image");
+    expect(renderer.capabilities.spread).toBe(true);
+    expect(renderer.getZoomMode()).toBe("free");
+
+    // A second step (1.2² = 1.44×) clears the headroom — now it drops.
+    renderer.zoomIn();
+    await settle();
     expect(renderer.capabilities.advance).toBe("scroll");
     expect(renderer.getZoomMode()).toBe("free");
-    // Let the async DOM rebuild the capability flip already committed to
-    // (synchronously, before relayout's own first await) actually settle —
-    // several event-loop turns, not one, since renderPageInto chains
-    // multiple real awaits (getPage, getTextContent).
-    for (let i = 0; i < 10 && layoutChanges === 0; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    expect(layoutChanges).toBeGreaterThan(0);
 
+    // One step back (to 1.2×) lands inside the headroom again — paginated,
+    // but not yet back at the exact fit scale.
     renderer.zoomOut();
+    await settle();
+    expect(renderer.capabilities.advance).toBe("image");
+    expect(renderer.capabilities.spread).toBe(true);
+    expect(renderer.getZoomMode()).toBe("free");
+
+    // A second step returns to exactly the fit scale.
+    renderer.zoomOut();
+    await settle();
     expect(renderer.capabilities.advance).toBe("image");
     expect(renderer.getZoomMode()).toBe("fit-spread");
 
@@ -806,24 +826,57 @@ describe("PdfRenderer — continuous zoom (M42 §D1)", () => {
     const renderer = new PdfRenderer();
     await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
 
-    // M43 §D2: `applyZoomPreview` only has a wrapper to scale in the one
-    // paginated state (an explicit, legible fit-spread) — every other state
-    // is continuous scroll, which mounts a scroll host instead (see
-    // `applyZoomPreview`'s own comment on why it's a no-op there).
+    // The one paginated state (an explicit, legible fit-spread) has a
+    // single wrapper `applyZoomPreview` scales directly; continuous scroll
+    // (the next test) scales each mounted page's own div instead (M43 §K1).
     let layoutChanges = 0;
     renderer.onLayoutChanged(() => (layoutChanges += 1));
     renderer.setZoomMode("fit-spread");
     await waitFor(() => layoutChanges > 0);
     expect(renderer.capabilities.advance).toBe("image");
 
-    const wrapper = container.firstElementChild as HTMLElement;
+    // M43 §J: the paginated flex row sits inside a fixed-size, scrollable
+    // host (so a spread zoomed within its headroom can overflow it
+    // horizontally) — `applyZoomPreview` still scales the inner row, not
+    // the host.
+    const scrollHost = container.firstElementChild as HTMLElement;
+    const wrapper = scrollHost.firstElementChild as HTMLElement;
     expect(wrapper.style.transform).toBe("");
 
     renderer.setZoomScale(2.5);
-    // Same node — the preview scales what's already on screen rather than
+    // Same nodes — the preview scales what's already on screen rather than
     // waiting for a fresh raster.
-    expect(container.firstElementChild).toBe(wrapper);
+    expect(container.firstElementChild).toBe(scrollHost);
+    expect(scrollHost.firstElementChild).toBe(wrapper);
     expect(wrapper.style.transform).toMatch(/^scale\(/);
+
+    renderer.destroy();
+  });
+
+  it("applies a live CSS-transform preview to each mounted page's own div in continuous scroll (M43 §K1)", async () => {
+    const bytes = loadFixturePdf();
+    stubResourceFetch(bytes);
+    const container = document.createElement("div");
+    mockContainerSize(container, 800, 1000);
+    const renderer = new PdfRenderer();
+    await renderer.mount(container, { id: "fixture" }, { flow: "paginated", spread: "auto", fontScale: 1, marginPx: 0 });
+    expect(renderer.capabilities.advance).toBe("scroll");
+
+    const scrollHost = container.firstElementChild as HTMLElement;
+    // A mounted (not placeholder) page div is the one carrying a canvas —
+    // scrollHost's own children are direct page slots here, unlike the
+    // paginated case's single inner flex-row wrapper.
+    const mountedPageDiv = Array.from(scrollHost.children).find((el) => el.querySelector("canvas")) as
+      | HTMLElement
+      | undefined;
+    expect(mountedPageDiv).toBeTruthy();
+    expect(mountedPageDiv!.style.transform).toBe("");
+
+    renderer.setZoomScale(2.5);
+    // Previously a no-op in this (now-default) state — the operator's
+    // "choppy" complaint traced to exactly this gap: nothing visibly moved
+    // until the debounced real re-render landed.
+    expect(mountedPageDiv!.style.transform).toMatch(/^scale\(/);
 
     renderer.destroy();
   });

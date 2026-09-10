@@ -1,4 +1,4 @@
-import { detectEquationBands, type EquationBand } from "./equations.js";
+import { detectEquationBands, detectMathDenseBlocks } from "./equations.js";
 import { detectFigureRegions, type FigureRegion } from "./figures.js";
 import { detectTableRegions, type TableRegion } from "./tables.js";
 import type { PdfBlock, PdfLine } from "./types.js";
@@ -7,19 +7,22 @@ import type { PdfBlock, PdfLine } from "./types.js";
  * Turns a page's grouped lines into the final `PdfBlock[]` reading order:
  * an equation band's lines are removed from the text stream and replaced
  * by one `equation` block (§3.4 — nothing it covered enters `resource_text`);
- * a figure's caption line stays as a `line` block (the caption always
- * enters `resource_text`, §3.5), with one `figure` block inserted on
- * whichever side its blank region was found. A table (§3.5, amended M42) is
- * the same rule applied to its row/cell lines instead of a blank region:
- * they're removed from the text stream entirely and replaced by one `table`
- * block inserted right after its caption line.
+ * a math-dense block (M43 §H, same treatment as an equation band) is
+ * handled identically. A figure's caption line stays as a `line` block (the
+ * caption always enters `resource_text`, §3.5), with one `figure` block
+ * inserted on whichever side its region was found — its swept label lines
+ * (M43 §I), if any, are removed from the text stream the same way a table's
+ * row lines already are. A table (§3.5, amended M42) is the same rule
+ * applied to its row/cell lines instead of a blank region: they're removed
+ * from the text stream entirely and replaced by one `table` block inserted
+ * right after its caption line.
  *
  * Pure and synchronous — rasterization is async (`rasterize.ts`) and
  * resolved by the caller (`extract.ts`) into
- * `equationImages`/`figureImages`/`tableImages`, keyed by the
- * band/region's index in the arrays `detectEquationBands`/
- * `detectFigureRegions`/`detectTableRegions` returned for these same
- * `lines`.
+ * `equationImages`/`figureImages`/`tableImages`/`mathBlockImages`, keyed by
+ * the band/region's index in the arrays `detectEquationBands`/
+ * `detectFigureRegions`/`detectTableRegions`/`detectMathDenseBlocks`
+ * returned for these same `lines`.
  */
 export function buildPageBlocks(
   lines: PdfLine[],
@@ -29,8 +32,10 @@ export function buildPageBlocks(
   equationImages: (Buffer | null)[],
   figureImages: (Buffer | null)[],
   tableImages: (Buffer | null)[] = [],
+  mathBlockImages: (Buffer | null)[] = [],
 ): PdfBlock[] {
-  const equationBands = detectEquationBands(lines);
+  const equationBands = detectEquationBands(lines, pageWidth, pageHeight);
+  const mathBlocks = detectMathDenseBlocks(lines, equationBands, pageWidth, pageHeight);
   const figureRegions = detectFigureRegions(lines, pageWidth, pageHeight);
   const tableRegions = detectTableRegions(lines);
 
@@ -55,22 +60,36 @@ export function buildPageBlocks(
     for (let i = region.startIndex; i < region.endIndex; i++) tableRowSkip.add(i);
   });
 
-  const equationAt = new Map<number, { band: EquationBand; image: Buffer | null }>();
+  // M43 §I: a figure region's swept label lines (empty range for a
+  // genuinely blank region, the pre-M43 case) get the same treatment —
+  // captured into the image, excluded from the text stream.
+  const figureRowSkip = new Set<number>();
+  figureRegions.forEach((region) => {
+    for (let i = region.startIndex; i < region.endIndex; i++) figureRowSkip.add(i);
+  });
+
+  // M43 §H: a math-dense block is rasterized identically to an equation
+  // band (same "detect and rasterize, nothing enters resource_text" rule),
+  // so both feed the same `equationAt`/`skipUntil` bookkeeping.
+  const equationAt = new Map<number, { y: number; image: Buffer | null }>();
   equationBands.forEach((band, i) => {
-    equationAt.set(band.startIndex, { band, image: equationImages[i] ?? null });
+    equationAt.set(band.startIndex, { y: band.y, image: equationImages[i] ?? null });
+  });
+  mathBlocks.forEach((block, i) => {
+    equationAt.set(block.startIndex, { y: block.y, image: mathBlockImages[i] ?? null });
   });
   const skipUntil = new Set<number>();
-  equationBands.forEach((band) => {
+  [...equationBands, ...mathBlocks].forEach((band) => {
     for (let i = band.startIndex + 1; i < band.endIndex; i++) skipUntil.add(i);
   });
 
   const blocks: PdfBlock[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (skipUntil.has(i) || tableRowSkip.has(i)) continue;
+    if (skipUntil.has(i) || tableRowSkip.has(i) || figureRowSkip.has(i)) continue;
 
     const equation = equationAt.get(i);
     if (equation) {
-      blocks.push({ kind: "equation", image: equation.image, y: equation.band.y, page: pageIndex });
+      blocks.push({ kind: "equation", image: equation.image, y: equation.y, page: pageIndex });
       continue;
     }
 
