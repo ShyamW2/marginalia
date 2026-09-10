@@ -2752,21 +2752,60 @@ ever does slip through: that is a bug in the change, not a tradeoff to manage by
 committed — fix it forward with a commit that says what broke and for whom, never squashed
 silently into the feature commit that caused it.
 
-- [ ] **Main process, window, menu.** `BrowserWindow`, single-instance lock, native menu,
+- [x] **Main process, window, menu.** `BrowserWindow`, single-instance lock, native menu,
       window-state persistence.
-- [ ] **Express runs in a `utilityProcess`, not in main.** A `better-sqlite3` ABI fault
+      _Done: new `@marginalia/electron` workspace package. `main.ts` holds
+      `app.requestSingleInstanceLock()` (a second launch focuses the existing window instead
+      of opening a second one — verified live), `menu.ts` builds a plain OS-chrome menu (no
+      product features on it), and `windowState.ts` is the pure geometry logic — load/save/
+      clamp-to-attached-displays — kept free of any Electron import so it's unit-tested with
+      plain fixtures (`windowState.test.ts`, 10 tests) rather than a real window. ⚠️
+      **CommonJS, not ESM**, unlike the rest of this workspace: `import { app } from
+      "electron"` under `"type": "module"` failed at Electron's own module-linking step
+      (`SyntaxError: ... does not provide an export named 'Menu'`) — the published `electron`
+      package's CJS shape only gets Electron's real API object through its `require()`
+      interception, which doesn't reach named ESM imports the same way. Reverting the package
+      to CommonJS (`tsconfig.json`'s `module`/`moduleResolution`, no `"type": "module"`) fixed
+      it outright; found and fixed live, not by memory of Electron's docs.
+- [x] **Express runs in a `utilityProcess`, not in main.** A `better-sqlite3` ABI fault
       should kill a child the main process can report on, not the window.
       `server/src/startupDiagnosis.ts` already writes the readable instruction — surface it
       in a dialog, do not rewrite it.
-- [ ] **`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`.** The renderer
+      _Done: `serverProcess.ts`'s `startServer()` forks `server/dist/index.js` via
+      `utilityProcess.fork()`, watching stdout for the same "listening on
+      http://localhost:<port>" line `scripts/launch-preview.mjs` already parses. A
+      `ServerStartupError` carries raw stderr — untouched — into `main.ts`'s
+      `dialog.showErrorBox`. Verified against a **real** ABI fault (better-sqlite3 built for
+      plain Node, run under Electron's own Node ABI): the exact `startupDiagnosis.ts` banner
+      came through the child's stderr and rendered in the dialog, unedited. A crash *after* a
+      clean start reports the same way rather than leaving a blank window; a `quitting` flag
+      set in `before-quit` stops that same handler from firing a spurious crash dialog on an
+      ordinary quit (found by re-reading the code, not live — worth another pass before
+      shipping).
+
+- [x] **`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`.** The renderer
       loads `http://127.0.0.1:<port>/` and all 90 relative `/api` fetches resolve
       unchanged; the job stream is a fetch-stream, not an `EventSource`. **No API base URL,
       no CORS, no preload data bridge** — introducing one "for the desktop build" is the
       anti-goal here.
-- [ ] **`cliPath.ts` proven against a real bundle.** A GUI launch *is* the bare-`PATH` case
+      _Done: exactly those three `webPreferences`, no preload script at all. `will-navigate`
+      and `setWindowOpenHandler` restrict the window to the loopback origin it loaded,
+      opening anything else (`shell.openExternal`) rather than following it in-window or
+      silently dropping it — a small addition beyond the task list, in the same spirit as
+      the three flags rather than a new surface._
+- [x] **`cliPath.ts` proven against a real bundle.** A GUI launch *is* the bare-`PATH` case
       (M26's finding, TASKS.md:78); the login-shell fallback becomes the common path. The
       two local providers degrade to a legible "not installed", never an error.
-- [ ] **Detect software rendering, and feed the gate that already exists.** Chromium falls
+      _Done, on Linux — the Mac leg is still open (see Verify). `serverProcess.ts` forwards
+      `main`'s own `process.env` to the child unmodified (deliberately — "fixing" `PATH`
+      before the fork would mean the login-shell fallback never actually runs). Proved two
+      ways: live, the real Electron `utilityProcess` found `codex`/`claude` on this machine
+      exactly as `pnpm dev` does; separately, `findCliBin()` against a `PATH` forced down to
+      `/usr/bin:/bin:/usr/sbin:/sbin` (bare-PATH/GUI-launch shape) still resolved both via the
+      login-shell strategy. The "not installed" degrade (Accounts' `describeCli`,
+      `authFlows.ts`) is M26/M30 code, unchanged here — not re-verified this session beyond
+      confirming it's still the code path a miss reaches._
+- [x] **Detect software rendering, and feed the gate that already exists.** Chromium falls
       back to **SwiftShader** on a machine with a missing or blacklisted GPU driver and says
       nothing — the shelf and the fold then run at a few frames per second with no error
       anywhere, which is the AppImage's most likely bad first impression.
@@ -2776,12 +2815,51 @@ silently into the feature commit that caused it.
       per 3D surface, and that path is built; this is its missing trigger. DESKTOP.md §7.1b
       records why direct Metal and WebGPU were both declined (Chromium already runs your
       WebGL on Metal via ANGLE; there is no acceleration to switch on).
+      _Done, with the crossing worked out deliberately: `Scene3D.tsx` is browser code and
+      `app.getGPUFeatureStatus()` only exists in Electron's main process, so the signal
+      crosses the same way `resolveResourceDir()` already does (DESKTOP.md's own framing for
+      this milestone) — an env var (`MARGINALIA_SOFTWARE_RENDERING`) main sets on the forked
+      server, which now answers it on the existing `GET /api/health` rather than a new
+      endpoint or a preload bridge. `web/src/app/capabilities.ts` fetches it once, the same
+      shared-in-flight-promise shape as `appearanceSync.ts`; `Scene3DProvider` folds it into
+      `canRender` and into `useScene3DAvailable()`'s context value alongside `contextLost`, so
+      it degrades exactly like a lost context rather than a new path. `gpu.ts`'s
+      `isSoftwareRendering()` is a pure classification over Chromium's per-feature status
+      strings, kept in its own Electron-import-free module so it's unit-tested with fixture
+      objects (6 tests, including the real `--disable-gpu` shape) instead of a GPU process;
+      `gpuDetect.ts` is the one-line Electron-touching wrapper. Verified live end to end:
+      launched with `--disable-gpu`, `GET /api/health` answered
+      `{"softwareRendering":true}` — the flag actually crossed the process boundary, not just
+      passed in isolation. A plain browser tab never sets the env var, so `/api/health`
+      answers `false` there exactly as before this task existed (`Scene3D.test.tsx` gained
+      two tests for both ends of this)._
 - [ ] **Verify:** opens the reader, imports an EPUB, highlights, asks a question against a
       pasted API key, publishes to a vault folder, and survives quit-and-relaunch with
       library and highlights intact. On a Mac with `codex` installed via `nvm`, Accounts
       reports it found — **launched from Finder, not from a terminal**. Launched with
       `--disable-gpu` (standing in for a driverless Linux box), it falls back to the 2D/list
       surfaces rather than rendering the shelf in software.
+      **Partially verified, on this Linux machine — left open rather than checked off.**
+      Proven live, driving the real API a click would call (M44's own verification style,
+      since headless): opened via `electron .` under Xvfb against an isolated
+      `MARGINALIA_DATA_DIR`; imported `fixtures/alice-in-wonderland.epub` via a real `POST
+      /api/resources`; created a highlight via `POST /api/highlights` (anchored — offset/
+      length resolved, not null); a second launch against the same `userData` focused nothing
+      new (single-instance lock) rather than opening twice; a clean quit and a fresh relaunch
+      showed the same library with `highlightCount: 1` intact; `--disable-gpu` produced
+      `softwareRendering: true` end to end (previous bullet). ⚠️ **What that leaves open, and
+      why it couldn't happen this session:** "asks a question" and "publishes to a vault
+      folder" both need a real configured LLM provider (an operator's own API key, not one to
+      fabricate here); the Mac-specific legs — `codex` found via `nvm` specifically, and a
+      launch **from Finder** rather than a terminal — need a Mac, and this session's machine
+      is Linux (`docs/marginalia/*` memory: this project runs on a Mac + a Linux box over
+      GitHub). Also found and fixed along the way, not part of the original task list: a
+      `better-sqlite3` built for plain Node fails immediately under Electron's own Node ABI
+      (expected — DESKTOP.md §2.1 files the permanent, multi-target fix as M47's job); this
+      session did a local, temporary rebuild (`@electron/rebuild`) to complete the
+      verification above, then rebuilt back to Node's ABI and reran the full test suite
+      (`pnpm -r --no-bail test`, 619 + 574 + 16 passing) before finishing, so the operator's
+      own `pnpm dev` is exactly as it was.
 
 ### M46 — Desktop: the long-lived process
 

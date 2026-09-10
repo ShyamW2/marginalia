@@ -9433,3 +9433,52 @@ machine's own live `pnpm dev` on 5175, a real EPUB import via `POST /api/resourc
 `open`/`xdg-open` was never exercised against a real display in this environment; (3) the
 "answers a question" half of `resolveDataDir`'s acceptance line, which needs a configured LLM
 provider credential this session didn't touch.
+
+## M45 — the Electron shell — 2026-09-10
+
+Landed: `@marginalia/electron` (`main.ts`, `menu.ts`, `serverProcess.ts`, `gpu.ts`/
+`gpuDetect.ts`, `windowState.ts`), `paths.ts`'s `MARGINALIA_RESOURCES_PATH` override,
+`/api/health`'s `softwareRendering` field, and `Scene3D.tsx`'s fourth `canRender` signal
+(`web/src/app/capabilities.ts`). TASKS.md has the per-item detail and what M45's own Verify
+bullet couldn't close on this machine; two things are worth a home here because they're
+findings, not just line items.
+
+**The `electron` npm package doesn't survive `"type": "module"` the way the rest of this
+workspace does.** `import { app } from "electron"` failed at Electron's own module-linking
+step (`SyntaxError: ... does not provide an export named 'Menu'`), not at runtime — the whole
+module graph fails to link before anything executes. The published `electron` package is a
+CJS module whose `module.exports` is literally the binary's path string in a plain Node
+process; the real API object only appears via a `require()`-level interception that Electron's
+main process performs specifically for the string `'electron'`. That interception is a
+`require()` behavior, not (in the version this project pinned, Electron 40.10.6) something
+ESM's `import` reaches the same way. `@marginalia/electron` is CommonJS — no `"type":
+"module"`, `module`/`moduleResolution` set to `CommonJS`/`Node` — the one package in this
+workspace that is, and deliberately so; found live, not predicted from documentation, so
+worth flagging before anyone "fixes" it back to match server/web's ESM convention.
+
+**`better-sqlite3`'s Electron-ABI rebuild is real, and it is exactly the lazy failure
+DESKTOP.md §2.1 warns about — hit live, not simulated.** A plain-Node build of
+`better-sqlite3` (this workspace's ordinary `pnpm install` state) fails inside Electron's
+`utilityProcess` with the *identical* `NODE_MODULE_VERSION` mismatch `startupDiagnosis.ts` was
+written to diagnose — Electron 40 bundles its own Node ABI (143), different from the plain
+Node 24 this box's `pnpm dev` runs under. That's M47's permanent problem (a per-target CI
+rebuild), not M45's to solve — but M45's own Verify bullet needed a working DB to prove
+anything past "the dialog fired correctly." This session did a **local, temporary** rebuild
+(`npx @electron/rebuild --version 40.10.6 --which-module better-sqlite3`) sufficient to drive
+real API calls through the real Electron process tree, then rebuilt back to plain Node's ABI
+(`pnpm rebuild -r better-sqlite3`) and reran the full suite (619 + 574 + 16 tests) before
+finishing — so this is a fact recorded for M47, not a standing change to the repo's native
+module state. ⚠️ Worth noting for whoever picks up M47: the failure path this exercised is the
+*good* outcome (a readable dialog, not a silent crash) — it is direct, live evidence that
+M45's dialog-surfacing task actually does what it says under the exact fault M47 is scheduled
+to eliminate.
+
+**Owed to the operator, not run this session** (TASKS.md's Verify bullet is left unchecked,
+not narrowed, for this reason): the Mac-specific legs — `codex` found via `nvm` specifically,
+and a launch **from Finder** rather than a terminal — need a Mac, and this session's machine is
+Linux (memory: this project runs on a Mac + a Linux box over GitHub); "asks a question against
+a pasted API key" and "publishes to a vault folder" both need a real configured LLM provider
+credential, which this session didn't fabricate. Everything else in M45's Verify bullet that
+*could* run headlessly on this machine did, live: real EPUB import, an anchored highlight,
+single-instance-lock behavior on a second launch, and quit-and-relaunch persistence, all
+driving the actual API through the actual `utilityProcess` — see TASKS.md for the specifics.
