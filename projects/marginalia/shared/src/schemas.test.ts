@@ -17,6 +17,10 @@ describe("schemas smoke test", () => {
       title: "Test Book",
       author: "Jane Doe",
       format: "epub",
+      // M39 §D (decision 18): the genre schema selector.
+      kind: "prose",
+      // M39: whether the resource has an extractable text layer.
+      textLayer: true,
       metadata: {},
       importedAt: new Date().toISOString(),
       highlightCount: 0,
@@ -148,6 +152,11 @@ describe("schemas smoke test", () => {
       // Define never ran on it.
       definition: "",
       definitionSource: "" as const,
+      // M30: reader vs. thematic-digest provenance.
+      origin: "reader" as const,
+      // M39 (decision 17d): the format-neutral Locator, alongside the CFI.
+      offset: 0,
+      length: 8,
       createdAt: new Date().toISOString(),
     };
     expect(HighlightSchema.safeParse({ ...base, note: "" }).success).toBe(true);
@@ -172,6 +181,9 @@ describe("schemas smoke test", () => {
       note: "",
       definition: "",
       definitionSource: "" as const,
+      origin: "reader" as const,
+      offset: 0,
+      length: 8,
       createdAt: new Date().toISOString(),
     };
     expect(HighlightSchema.safeParse(base).success).toBe(false);
