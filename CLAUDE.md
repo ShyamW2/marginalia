@@ -39,8 +39,14 @@ distilled insights compile into an Obsidian vault.
 - `docs/REFACTORING.md` — why/when/how we refactor, and how success is measured — binding for M19.8
 - `docs/SHIPPING.md` — the distribution ladder. Rungs are **named, not numbered**:
   **Local → Repo → {Desktop | Private} → Hosted → Stores**, where Desktop and Private are
-  siblings off Repo rather than steps. Repo shipped 2026-08-06; Private is next; nothing
-  above it is scheduled. Read it before any work justified by "we'll need it when we ship."
+  siblings off Repo rather than steps. Repo shipped 2026-08-06; **Desktop is scheduled
+  (2026-09-09) as M44–M48**; Private is unscheduled and unblocked; nothing above them is
+  scheduled. Read it before any work justified by "we'll need it when we ship."
+- `docs/marginalia/DESKTOP.md` — the Desktop rung, specified: Electron on Mac + Linux, the
+  five blockers, what a process that no longer restarts changes about memory, and signing.
+  **Binding for M44–M48.** Read §3 before touching `paths.ts` or the port, and §2.3 before
+  "fixing" a cache — three of the obvious candidates are already correct, and two of the
+  real defects fail silently.
 - `docs/OPUS.md` — how to run a **design/review** session: interrogating feedback,
   verifying premises before building on them, and writing docs an implementation
   session can execute. Read it before any session that decides rather than executes.
@@ -74,6 +80,12 @@ doc), never by drift.
    "we're doing formats now" is not an argument for starting it.
 4. **Node server + browser UI.** Local server owns the library, annotation store, and
    LLM calls; the browser renders. Wrap in Tauri/Electron only after the product is proven.
+   *Condition met 2026-09-09:* the wrap is **scheduled** as M44–M48 — **Electron**, macOS
+   (arm64 + x64) and Linux (AppImage x64), after the PDF arc; Windows deferred. Spec in
+   `docs/marginalia/DESKTOP.md`. This is the decision being executed as written, not
+   overturned: the product does not change, and **no task in M44–M48 may add a reader
+   feature.** The Electron-over-Tauri ruling was re-confirmed against the current native
+   surface (five modules with platform binaries, not one) — see decisions.md 2026-09-09.
 5. **Immutable-on-import library.** Importing a resource snapshots it (content-addressed).
    Resources never change after import, so annotation anchors cannot rot.
 6. **Sidecar store is the source of truth.** Highlights, threads, and metadata live in

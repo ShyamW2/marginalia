@@ -6,11 +6,15 @@ Repo-level on purpose: the ladder is the same for every project here. Marginalia
 worked example because it is the only project that has gone far enough to have real
 gates.*
 
-**Status: Repo shipped 2026-08-06 (decisions.md); Private is next; nothing above it is
-scheduled.** This document settles the *shape* so that when a rung is chosen it is chosen
-deliberately, and so nobody starts Hosted by accident while thinking they are finishing
-Repo. CLAUDE.md settled decision 4 ("wrap in Tauri/Electron only after the product is
-proven") stands; this document is what "wrap" turns out to mean.
+**Status: Repo shipped 2026-08-06 (decisions.md). Desktop is scheduled (Mac + Linux,
+2026-09-09) as TASKS.md M44–M48, after the PDF arc; Private remains unscheduled and
+unblocked. Nothing above them is scheduled.** This document settles the *shape* so that
+when a rung is chosen it is chosen deliberately, and so nobody starts Hosted by accident
+while thinking they are finishing Repo. CLAUDE.md settled decision 4 ("wrap in
+Tauri/Electron only after the product is proven") stands; this document is what "wrap"
+turns out to mean — and `docs/marginalia/DESKTOP.md` is what taking that rung turns out to
+cost, in detail. **Desktop's row below records the ladder; DESKTOP.md is binding for the
+work.**
 
 ## The one-paragraph version
 
@@ -33,8 +37,8 @@ Electron nor a Node server. Private is how an iPad gets the product at all befor
 |---|---|---|---|---|
 | **Local** | localhost, dev mode | you, `pnpm dev` | — | here today |
 | **Repo** | the GitHub repo | whoever clones it | license + reproducible install, not code | ✅ 2026-08-06 |
-| **Desktop** | an installable app | the app, on their machine | data location, packaging the native modules, updates | — |
-| **Private** | one box, your devices | you, on one box | authentication — there is none today | next |
+| **Desktop** | an installable app | the app, on their machine | data location, packaging the native modules, updates | scheduled 2026-09-09 → M44–M48 |
+| **Private** | one box, your devices | you, on one box | authentication — there is none today | unscheduled, unblocked |
 | **Hosted** | a public website | you, for strangers | multi-tenancy, the vault's disappearance, other people's books | not scheduled |
 | **Stores** | app stores / native iPad | ditto, plus a store | sandboxing vs. the vault; a sync design that does not exist | not scheduled |
 
@@ -203,14 +207,29 @@ run dev tooling. If the goal is "my friend reads a book in this", skip to Deskto
 
 CLAUDE.md decision 4's endpoint. The product does not change; the delivery does.
 
-**Electron vs. Tauri is decided by the native module, not by taste.** The server is Node
-with `better-sqlite3` and `adm-zip`. Electron ships a Node runtime, so the server moves in
-essentially as-is — the cost is a ~100MB installer and per-platform prebuilt
-`better-sqlite3` binaries. Tauri ships a Rust core and a system webview (~10MB), which
-means either bundling Node as a sidecar binary (most of Electron's problems, none of its
-tooling) or porting the server to Rust (a rewrite of 24k lines' worth of behaviour).
-**Recommendation: Electron**, and revisit only if installer size becomes a real
-complaint.
+**⚠️ Scheduled 2026-09-09 as M44–M48 (Mac + Linux; Windows deferred). The spec is
+`docs/marginalia/DESKTOP.md` and it supersedes the numbers in this section**, two of which
+had expired by the time the rung was taken. They are corrected below rather than deleted,
+because how they went stale is itself the lesson: a packaging estimate has the shelf life of
+its dependency list.
+
+**Electron vs. Tauri is decided by the native module, not by taste.** ~~The server is Node
+with `better-sqlite3` and `adm-zip`.~~ **Corrected 2026-09-09: it is five modules with
+platform binaries** — `onnxruntime-node` (208MB, every platform in one package),
+`@huggingface/transformers` (48MB), `pdfjs-dist` (35MB), `wordnet-db` (34MB),
+`@napi-rs/canvas` (33MB) and `better-sqlite3` (13MB). Electron ships a Node runtime, so the
+server moves in essentially as-is. Tauri ships a Rust core and a system webview (~10MB),
+which means either bundling Node as a sidecar binary (most of Electron's problems, none of
+its tooling) or porting the server to Rust (a rewrite of 24k lines' worth of behaviour).
+**Recommendation: Electron** — and the growth in the native surface *hardens* that ruling
+rather than reopening it, since a Tauri sidecar would ship every one of those modules plus a
+Node binary. Re-confirmed 2026-09-09.
+
+⚠️ **~~a ~100MB installer~~ — corrected 2026-09-09 to ~350MB installed, ~150MB per-arch
+DMG**, plus an 89MB first-run model download that stays out of the installer. And **ABI is
+not uniform across those six**: N-API is stable, so `onnxruntime-node` and `@napi-rs/canvas`
+cross into Electron unchanged, while `better-sqlite3` needs an Electron-ABI rebuild per
+target — and fails *lazily*, so "the app launched" does not test it.
 
 ⚠️ **`data/` must move first, and it is a migration, not a rename.** `paths.ts` resolves
 `DATA_DIR` two levels up from the compiled file. Inside an app bundle that is a read-only
@@ -404,8 +423,13 @@ These apply to any project in this repo, not just Marginalia:
 ## What is deliberately left open
 
 - Which rung is actually wanted. This document ranks the *costs*; it does not choose.
-- Whether Desktop is wanted at all, now that Private reaches an iPad without it.
-- The name. "Marginalia" is a working name and the Desktop rung is the deadline for that.
+- ~~Whether Desktop is wanted at all, now that Private reaches an iPad without it.~~
+  **Answered 2026-09-09: yes, and it is scheduled** (decisions.md, DESKTOP.md). This does
+  not settle Private — they are siblings, and Private is still the only rung reaching an
+  iPad.
+- The name. "Marginalia" is a working name and the Desktop rung is the deadline for that —
+  now a dated one: **M48**, after which it lives in an installer, a bundle id, a keychain
+  entry and an update feed.
 - Anything about pricing, revenue or a business — out of scope here on purpose. If the Hosted rung
   is ever taken seriously, that is its first question, not its last.
 
