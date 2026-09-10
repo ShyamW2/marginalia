@@ -689,6 +689,24 @@ export const AudioSettingsSchema = z.object({
 });
 export type AudioSettings = z.infer<typeof AudioSettingsSchema>;
 
+/**
+ * M44 (DESKTOP.md §3.4): these four lived only in `localStorage`, which
+ * Chromium keys by origin — a desktop launch that falls back off its
+ * preferred port got a new origin and forgot its own appearance every time.
+ * Moved into the sidecar store (settled decision 6) so correctness doesn't
+ * depend on which port was free; the client still keeps a `localStorage`
+ * copy as an instant-paint cache for the common case where the port didn't
+ * move. `""` means unset in every field here — same convention as
+ * `vaultPath`/`ttsModelPath` above.
+ */
+export const UiAppearanceSettingsSchema = z.object({
+  uiTheme: z.enum(["", "paper", "ink"]),
+  uiAccent: z.string(),
+  uiPaperTintHue: z.string(),
+  uiDeskViewMode: z.enum(["", "desk", "list", "shelf"]),
+});
+export type UiAppearanceSettings = z.infer<typeof UiAppearanceSettingsSchema>;
+
 /** GET /api/settings response — secrets are masked ("***") if set, "" if unset.
  * M19 (decisions.md 2026-07-29 later): provider configuration moved out of
  * this flat bag into provider *profiles* + *roles* (below) — this schema now
@@ -717,7 +735,7 @@ export const SettingsSchema = z.object({
   kindLabelSage: z.string(),
   kindLabelHoney: z.string(),
   kindLabelSlate: z.string(),
-}).merge(AudioSettingsSchema);
+}).merge(AudioSettingsSchema).merge(UiAppearanceSettingsSchema);
 export type Settings = z.infer<typeof SettingsSchema>;
 
 /**

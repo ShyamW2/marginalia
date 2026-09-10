@@ -1,3 +1,5 @@
+import { pushAppearanceSetting } from "../app/appearanceSync.js";
+
 const EVENT = "marginalia:desk-view-mode-change";
 const STORAGE_KEY = "marginalia:desk-view-mode";
 
@@ -29,9 +31,15 @@ export function persistDeskViewMode(mode: DeskViewMode): void {
  * open Settings/Scan/Digest) won't remount to re-read `localStorage`, so it
  * needs to be told directly; its own effect re-persisting the same value
  * right back is harmless.
+ *
+ * M44 (DESKTOP.md §3.4): also writes through to the sidecar `settings` table
+ * (`uiDeskViewMode`), best-effort — `localStorage` stays the instant-paint
+ * cache `loadDeskViewMode` reads synchronously; `DeskPage` reconciles the
+ * two once per mount the same way `useTheme`/`useAccent`/`usePaperTint` do.
  */
 export function emitDeskViewMode(mode: DeskViewMode): void {
   persistDeskViewMode(mode);
+  pushAppearanceSetting({ uiDeskViewMode: mode });
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent<DeskViewMode>(EVENT, { detail: mode }));
 }
@@ -42,4 +50,11 @@ export function onDeskViewMode(handler: (mode: DeskViewMode) => void): () => voi
   }
   window.addEventListener(EVENT, listener);
   return () => window.removeEventListener(EVENT, listener);
+}
+
+/** The server's recorded desk view mode, or null if it's unset or doesn't
+ * parse to one of the three real modes — the caller's own default (today,
+ * always `loadDeskViewMode()`'s "desk") applies in either case. */
+export function parseServerDeskViewMode(raw: string): DeskViewMode | null {
+  return MODES.find((mode) => mode === raw) ?? null;
 }

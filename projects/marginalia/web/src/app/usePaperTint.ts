@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { tintKeepingLightness } from "../controls/colorMath.js";
+import { fetchAppearanceSettings, pushAppearanceSetting } from "./appearanceSync.js";
 
 const STORAGE_KEY = "marginalia:paperHue";
 // Subtle by construction, not by convention — colorMath.test.ts sweeps every
@@ -8,12 +9,23 @@ const STORAGE_KEY = "marginalia:paperHue";
 const PAPER_TINT_SATURATION = 12;
 const TINTED_TOKENS = ["--color-bg", "--color-bg-raised"] as const;
 
-function readStoredHue(): number | null {
-  if (typeof window === "undefined") return null;
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (stored === null) return null;
+function parseHue(stored: string | null): number | null {
+  if (stored === null || stored === "") return null;
   const hue = Number(stored);
   return Number.isFinite(hue) ? hue : null;
+}
+
+function readStoredHue(): number | null {
+  if (typeof window === "undefined") return null;
+  return parseHue(window.localStorage.getItem(STORAGE_KEY));
+}
+
+function persistHue(hue: number | null): void {
+  if (hue === null) {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } else {
+    window.localStorage.setItem(STORAGE_KEY, String(hue));
+  }
 }
 
 function applyPaperTint(hue: number | null): void {
@@ -44,6 +56,10 @@ function applyPaperTint(hue: number | null): void {
  * override at `:root` is shadowed the instant it's inherited into that
  * subtree — the same material-not-room split settled decision 12 already
  * draws between the two registers.
+ *
+ * M44 (DESKTOP.md §3.4): `localStorage` is an instant-paint cache now, not
+ * the source of truth — the sidecar `settings` table (`uiPaperTintHue`) is.
+ * See useTheme.ts for why the reconciliation below only runs once per mount.
  */
 export function usePaperTint(): {
   hue: number | null;
@@ -74,14 +90,31 @@ export function usePaperTint(): {
     };
   }, [hue]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetchAppearanceSettings().then((settings) => {
+      if (cancelled || !settings) return;
+      const serverHue = parseHue(settings.uiPaperTintHue);
+      if (serverHue !== readStoredHue()) {
+        persistHue(serverHue);
+        setHueState(serverHue);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const setHue = useCallback((next: number) => {
     setHueState(next);
-    window.localStorage.setItem(STORAGE_KEY, String(next));
+    persistHue(next);
+    pushAppearanceSetting({ uiPaperTintHue: String(next) });
   }, []);
 
   const resetHue = useCallback(() => {
     setHueState(null);
-    window.localStorage.removeItem(STORAGE_KEY);
+    persistHue(null);
+    pushAppearanceSetting({ uiPaperTintHue: "" });
   }, []);
 
   return { hue, setHue, resetHue };

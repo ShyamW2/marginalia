@@ -62,6 +62,13 @@ const DEFAULTS = {
   kind_label_sage: "Define",
   kind_label_honey: "Key quote",
   kind_label_slate: "Thematic Question",
+  // M44 (DESKTOP.md §3.4): these four used to live only in localStorage —
+  // "" means unset (system theme / no accent / no paper tint / default desk
+  // view), same convention as vault_path above.
+  ui_theme: "",
+  ui_accent: "",
+  ui_paper_tint_hue: "",
+  ui_desk_view_mode: "",
 };
 
 type SettingsKey = keyof typeof DEFAULTS;
@@ -95,6 +102,10 @@ const KEY_TO_FIELD: Record<SettingsKey, keyof Settings> = {
   kind_label_sage: "kindLabelSage",
   kind_label_honey: "kindLabelHoney",
   kind_label_slate: "kindLabelSlate",
+  ui_theme: "uiTheme",
+  ui_accent: "uiAccent",
+  ui_paper_tint_hue: "uiPaperTintHue",
+  ui_desk_view_mode: "uiDeskViewMode",
 };
 
 const FIELD_TO_KEY = Object.fromEntries(
@@ -131,6 +142,10 @@ export function getRawSettings(db: Database.Database): {
   kindLabelSage: string;
   kindLabelHoney: string;
   kindLabelSlate: string;
+  uiTheme: "" | "paper" | "ink";
+  uiAccent: string;
+  uiPaperTintHue: string;
+  uiDeskViewMode: "" | "desk" | "list" | "shelf";
 } {
   const raw = readRaw(db);
   return {
@@ -153,6 +168,10 @@ export function getRawSettings(db: Database.Database): {
     kindLabelSage: raw.kind_label_sage,
     kindLabelHoney: raw.kind_label_honey,
     kindLabelSlate: raw.kind_label_slate,
+    uiTheme: raw.ui_theme as "" | "paper" | "ink",
+    uiAccent: raw.ui_accent,
+    uiPaperTintHue: raw.ui_paper_tint_hue,
+    uiDeskViewMode: raw.ui_desk_view_mode as "" | "desk" | "list" | "shelf",
   };
 }
 

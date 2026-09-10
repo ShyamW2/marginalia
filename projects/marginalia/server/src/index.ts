@@ -5,6 +5,7 @@ import multer from "multer";
 import { getDb } from "./db.js";
 import { diagnoseNativeFailure, formatNativeFailure } from "./startupDiagnosis.js";
 import { resolveResourceDir } from "./paths.js";
+import { resolvePort } from "./port.js";
 import { resourcesRouter } from "./routes/resources.js";
 import { highlightsRouter } from "./routes/highlights.js";
 import { settingsRouter } from "./routes/settings.js";
@@ -18,7 +19,13 @@ import { usageRouter } from "./routes/usage.js";
 import { jobsRouter } from "./routes/jobs.js";
 import { audioRouter, castRouter, ttsRouter } from "./routes/audio.js";
 
-const PORT = Number(process.env.PORT ?? 5175);
+// M44 (DESKTOP.md §3.4): an explicit PORT is an operator's exact request —
+// used as-is, no fallback. With none set, prefer 5175 and only probe for the
+// next free port if something else already holds it (another copy of the
+// app, or `pnpm dev` running alongside a packaged build), so two instances
+// can still both boot.
+const EXPLICIT_PORT = process.env.PORT ? Number(process.env.PORT) : undefined;
+const PREFERRED_PORT = 5175;
 
 // Touch the DB at startup so migrations run before we accept requests.
 // M22.6 F: a native-module failure here is fatal by design, but its default
@@ -107,7 +114,8 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 };
 app.use(errorHandler);
 
-app.listen(PORT, "127.0.0.1", () => {
+const port = EXPLICIT_PORT ?? (await resolvePort(PREFERRED_PORT));
+app.listen(port, "127.0.0.1", () => {
   // eslint-disable-next-line no-console
-  console.log(`marginalia server listening on http://localhost:${PORT}`);
+  console.log(`marginalia server listening on http://localhost:${port}`);
 });

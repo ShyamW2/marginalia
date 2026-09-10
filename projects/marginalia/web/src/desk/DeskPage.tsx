@@ -11,7 +11,13 @@ import { SHORTCUT_KEYS } from "../shortcuts/keys.js";
 import { useShortcuts } from "../shortcuts/useShortcuts.js";
 import { DeskCanvas } from "./DeskCanvas.js";
 import { ShelfView } from "./ShelfView.js";
-import { loadDeskViewMode, onDeskViewMode, persistDeskViewMode, type DeskViewMode } from "./deskViewBus.js";
+import {
+  loadDeskViewMode,
+  onDeskViewMode,
+  parseServerDeskViewMode,
+  persistDeskViewMode,
+  type DeskViewMode,
+} from "./deskViewBus.js";
 import styles from "./DeskPage.module.css";
 
 type ViewMode = DeskViewMode;
@@ -96,6 +102,16 @@ export function DeskPage({ overlayOpen = false }: DeskPageProps) {
         if (!settings) return;
         setCursorStyle(settings.cursorStyle);
         setCursorTrailEnabled(settings.cursorTrailEnabled);
+        // M44 (DESKTOP.md §3.4): reconcile the view mode against the sidecar
+        // store the same way useTheme/useAccent/usePaperTint do — this only
+        // visibly changes anything when localStorage (read synchronously
+        // above, in loadDeskViewMode) disagrees with what the server
+        // remembers, e.g. a fallback-port launch landed on a fresh origin.
+        const serverMode = parseServerDeskViewMode(settings.uiDeskViewMode);
+        if (serverMode && serverMode !== loadDeskViewMode()) {
+          persistDeskViewMode(serverMode);
+          setMode(serverMode);
+        }
       })
       .catch(() => {
         // keep defaults — the desk still works with system cursor, no trail

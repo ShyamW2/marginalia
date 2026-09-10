@@ -104,6 +104,10 @@ describe("schemas smoke test", () => {
       kindLabelSage: "Define",
       kindLabelHoney: "Key quote",
       kindLabelSlate: "Thematic Question",
+      uiTheme: "",
+      uiAccent: "",
+      uiPaperTintHue: "",
+      uiDeskViewMode: "",
     });
     expect(result.success).toBe(true);
   });

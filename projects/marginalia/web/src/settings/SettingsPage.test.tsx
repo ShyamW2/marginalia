@@ -29,6 +29,10 @@ const SETTINGS: Settings = {
   kindLabelSage: "Define",
   kindLabelHoney: "Key quote",
   kindLabelSlate: "Thematic Question",
+  uiTheme: "",
+  uiAccent: "",
+  uiPaperTintHue: "",
+  uiDeskViewMode: "",
 };
 
 const DEFAULT_PROFILE: ProviderProfile = {
