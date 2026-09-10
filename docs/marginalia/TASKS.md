@@ -2845,9 +2845,23 @@ silently into the feature commit that caused it.
       missing, replaced by the 2D fallback, on hardware that should render them. Narrowed to
       `gpu_compositing`/`webgl`/`webgl2` only, with the false-positive case now a named test,
       plus a startup diagnostic line (`gpuDetect.ts`) printing the raw values and which
-      signal fired — see NOTES.md's M45 follow-up entry. **Not yet re-verified on the
-      operator's Mac** — this correction is unverified against real hardware as of this
-      writing.
+      signal fired — see NOTES.md's M45 follow-up entry.
+
+      ⚠️ **That correction was necessary but not sufficient — a second issue underneath it,
+      found from the diagnostic's own output.** The Mac's `[gpu]` line came back genuinely
+      `disabled_software`/`disabled_off` across the board, but `app.getGPUInfo('complete')`
+      described a fully valid ANGLE-Metal renderer (the real Apple M5 chip, sane driver
+      versions, a real extension list) — not SwiftShader. Chromium's own GPU allowlist
+      simply doesn't recognize hardware this new yet, so it blanket-disables acceleration as
+      a precaution. `main.ts` now sets `app.commandLine.appendSwitch("ignore-gpu-blocklist")`
+      before `app.whenReady()` — decisions.md 2026-09-10 has the full reasoning and the
+      tradeoff accepted (this flag can't distinguish "not yet recognized" from "genuinely
+      broken," so a driver that's blocklisted for a real reason also gets unblocked; accepted
+      because a bad combination still degrades via the existing context-loss recovery rather
+      than crashing). Verified live on Linux under Xvfb that `--disable-gpu` still correctly
+      reports `softwareRendering: true` with the flag present — it doesn't interfere with a
+      genuine software-fallback machine. **Still unverified against the Mac that found both
+      bugs** — the operator needs to pull and retest before this line can be checked off.
 - [ ] **Verify:** opens the reader, imports an EPUB, highlights, asks a question against a
       pasted API key, publishes to a vault folder, and survives quit-and-relaunch with
       library and highlights intact. On a Mac with `codex` installed via `nvm`, Accounts

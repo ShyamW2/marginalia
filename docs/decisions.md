@@ -3,6 +3,46 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-10 — Electron ships `--ignore-gpu-blocklist`, found live on brand-new hardware
+
+M45's own software-rendering gate (`isSoftwareRendering()`, DESKTOP.md §7.1b) surfaced a
+real defect during the operator's own Mac sign-off: on an M5 MacBook Air, Chromium disabled
+`gpu_compositing`/`webgl`/almost every other GPU feature, degrading the Desk/shelf/opening/
+curl to their 2D fallback on hardware that should render them fine. The diagnostic this
+session added specifically for this (`gpuDetect.ts`'s `[gpu]` log lines) made the actual
+cause legible rather than another guess: `app.getGPUInfo('complete')` returned a fully
+valid ANGLE-Metal renderer description (real extension list, sane driver/OS versions,
+`glRenderer` naming the actual Apple M5 chip) — not SwiftShader, not an error. That
+combination — a GPU Chromium can describe in detail but still blanket-disables — is
+Chromium's own GPU allowlist not yet recognizing hardware this new, not a broken or
+missing driver. Electron 40's bundled Chromium build predates official support for it.
+
+**Decision: `app.commandLine.appendSwitch("ignore-gpu-blocklist")`, unconditional, in
+`main.ts`, before `app.whenReady()`.** This tells Chromium to use a GPU it can actually
+describe even when its own allowlist hasn't caught up — exactly the documented purpose of
+the flag. `isSoftwareRendering()` itself is untouched and still correct: on a machine
+where the GPU is genuinely unavailable (real SwiftShader fallback, or `--disable-gpu`),
+ignoring the blocklist can't accelerate hardware that isn't there — verified live, this
+session, against Linux under Xvfb with `--disable-gpu`: the flag changed nothing about
+that (correct) degraded path.
+
+**The tradeoff, named rather than silently taken:** Chromium's GPU blocklist exists for
+two reasons, not one — an unrecognized GPU and a *known-bad* one. This flag can't tell
+them apart; it overrides both. For "not yet recognized" (this Mac, almost certainly every
+brand-new chip going forward) that's exactly right. For a machine on the blocklist because
+its driver is *actually* buggy, this flag could produce real rendering corruption or a
+crash that the blocklist was specifically added to prevent — a risk this codebase is
+accepting on behalf of every future user, not just the one who found the bug. Accepted
+because: (a) `Scene3D.tsx`'s existing context-loss handling (settled decision 14) already
+gives a bad session one recovery attempt before permanently falling back to 2D, so a
+genuinely broken combination degrades rather than hard-crashes the app; (b) the
+alternative — leaving new Apple Silicon (and eventually new GPUs generally) running the
+degraded 2D presentation until Electron ships an update — is a worse default for the
+common case this flag is fixing. **Revisit if a real corruption/crash report ever
+traces to this flag** — the fix then is scoping it (e.g., only appending it when
+`getGPUInfo('complete')` already returned a real, named renderer rather than an error, so
+it never overrides a *genuine* driver failure), not removing it outright.
+
 ## 2026-09-10 — M43 sign-off feedback: six correctives, none of them re-litigating §E/§F
 
 The operator's live sign-off pass against the real "Spatiotemporal Composability" PDF

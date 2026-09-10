@@ -9604,6 +9604,19 @@ fixtures were internally consistent but never modeled a real machine's actual st
 next time a heuristic like this ships, a fixture sourced from a real `getGPUFeatureStatus()`
 dump (any platform) is worth more than a plausible-looking synthetic one.
 
+**Update, same day: the narrowing above was correct but incomplete.** The operator's own
+`[gpu]` line, once captured, showed `gpu_compositing`/`webgl`/almost everything else
+genuinely `disabled_software`/`disabled_off` — not the false positive above, a real one. But
+the same diagnostic's `getGPUInfo('complete')` dump described a fully valid ANGLE-Metal
+renderer naming the actual Apple M5 chip, real driver versions, a real extension list — not
+SwiftShader, not an error. Chromium's own GPU allowlist doesn't yet recognize hardware this
+new, so it blanket-disables as a precaution regardless of the GPU being real and working.
+Fixed with `app.commandLine.appendSwitch("ignore-gpu-blocklist")` in `main.ts` — full
+reasoning and the accepted tradeoff (this flag can't distinguish "unrecognized" from
+"genuinely broken," so a real driver bug also gets unblocked) in decisions.md 2026-09-10.
+Verified live on Linux under Xvfb that `--disable-gpu` is unaffected by the flag — still
+correctly reports `softwareRendering: true`. **Also not yet re-verified on the Mac.**
+
 ## Found during M44/45 verification, out of scope — a pre-M44 reader bug — 2026-09-10
 
 The operator found this independently while verifying M44/M45's launcher and Electron shell,
