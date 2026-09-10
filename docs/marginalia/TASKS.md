@@ -2833,6 +2833,21 @@ silently into the feature commit that caused it.
       passed in isolation. A plain browser tab never sets the env var, so `/api/health`
       answers `false` there exactly as before this task existed (`Scene3D.test.tsx` gained
       two tests for both ends of this)._
+      ⚠️ **Corrected 2026-09-10, after the operator ran this on real hardware.** The version
+      above shipped with a real false positive: `isSoftwareRendering()` also checked `opengl`
+      and `rasterization`, both of which can legitimately read "off"/"software" on a machine
+      with a perfectly good GPU (macOS runs WebGL through ANGLE-on-Metal, so `opengl` is
+      disabled regardless of GPU health there; `rasterization` can be software as a
+      compositor-tile detail independent of WebGL's own acceleration) — invisible to this
+      session because Xvfb has no GPU to be wrong about, so every live test here only ever
+      exercised the `--disable-gpu` (true) side, never a real accelerated (false) side.
+      Result on the operator's MacBook Air: the Desk/shelf/opening/curl were entirely
+      missing, replaced by the 2D fallback, on hardware that should render them. Narrowed to
+      `gpu_compositing`/`webgl`/`webgl2` only, with the false-positive case now a named test,
+      plus a startup diagnostic line (`gpuDetect.ts`) printing the raw values and which
+      signal fired — see NOTES.md's M45 follow-up entry. **Not yet re-verified on the
+      operator's Mac** — this correction is unverified against real hardware as of this
+      writing.
 - [ ] **Verify:** opens the reader, imports an EPUB, highlights, asks a question against a
       pasted API key, publishes to a vault folder, and survives quit-and-relaunch with
       library and highlights intact. On a Mac with `codex` installed via `nvm`, Accounts
@@ -2860,6 +2875,21 @@ silently into the feature commit that caused it.
       verification above, then rebuilt back to Node's ABI and reran the full test suite
       (`pnpm -r --no-bail test`, 619 + 574 + 16 passing) before finishing, so the operator's
       own `pnpm dev` is exactly as it was.
+
+      **The operator then ran this on their own Mac (2026-09-10) — real results, still left
+      open.** Hit the same Electron-ABI `better-sqlite3` fault as a fresh checkout (expected,
+      fixed the same way: `@electron/rebuild`); once past it, the Electron shell itself came
+      up and single-instance/quit-relaunch behaved. Found the GPU false positive above — the
+      fix is unverified on their machine as of this writing. Two things found are **not**
+      M44/M45 defects: PDF import failing ("not a readable PDF") traced to their Node being
+      20.19.4, short of the `Promise.withResolvers` (Node ≥22) `pdfjs-dist` needs — a Node
+      upgrade, not a code fix, and reproduces in the test suite identically. A book opening
+      into a blank/unpaginated state until the chapter list is used manually reproduces
+      identically in the M44 plain-browser launcher and the M45 Electron shell alike, which
+      rules out anything Electron-specific as the cause; filed as its own pre-existing
+      finding in NOTES.md, out of M44–M48's scope. Still open for a Mac: "asks a question"
+      and "publishes to a vault folder" (need a real provider key), and the Finder-launch/
+      `codex`-via-`nvm` leg specifically.
 
 ### M46 — Desktop: the long-lived process
 

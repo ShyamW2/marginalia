@@ -9566,3 +9566,56 @@ count check as an actual rendered scene — jsdom's lack of a canvas context mak
 untestable headlessly in this repo today (predates M46); a real verification needs a real GPU
 context (Electron under Xvfb with `--disable-gpu` still renders 2D canvas, just not WebGL, so
 even that combination doesn't reach `Scene3D`'s actual texture upload path).
+
+## M45 follow-up — a real GPU false positive, found on the operator's Mac — 2026-09-10
+
+The operator ran M45's own Verify bullet on real hardware (a MacBook Air) — the leg this
+session's Linux-under-Xvfb testing structurally couldn't reach, since Xvfb has no GPU at all
+and every live test here only ever exercised the `--disable-gpu` (true) side of
+`isSoftwareRendering()`, never the accelerated (false) side against a real driver. Result: the
+Desk/shelf/book-opening/page-curl were missing entirely, replaced by the pre-3D 2D/list
+fallback — `canRender` was reading `softwareRendering: true` on a machine with a perfectly
+good GPU.
+
+**Root cause, once isolated:** `isSoftwareRendering()` checked five feature-status keys
+(`gpu_compositing`, `webgl`, `webgl2`, `opengl`, `rasterization`); two of them false-positive
+on real, accelerated hardware. macOS: Chromium runs WebGL through ANGLE-on-Metal, not native
+GL, so `opengl` reports disabled/unavailable **regardless of GPU health** — it was never a
+signal about WebGL's own acceleration on that platform. `rasterization` can legitimately read
+`"software"` as a compositor-tile implementation detail, independent of whether the WebGL
+context itself is hardware-backed. Both got swept in by a substring match that was written and
+tested (`gpu.test.ts`) only against the keys that genuinely mattered, plus fixtures that never
+modeled what a real Mac's benign-but-scary-looking strings look like.
+
+**Fixed:** narrowed to `gpu_compositing`/`webgl`/`webgl2` only (`gpu.ts`) — the three that
+actually govern a WebGL canvas's own acceleration — with the false-positive case now a named
+test. Also added a startup diagnostic line (`gpuDetect.ts`, `console.log("[gpu]", ...)`,
+visible directly in the terminal `pnpm electron` was run from) that prints the raw feature
+values, which of the two signals (`isSoftwareRendering()` vs. `getGPUInfo('basic')`'s
+`auxAttributes.softwareRendering`) fired, and the final verdict — so a false positive on some
+other machine's config is a one-round-trip diagnosis from the field instead of another guess.
+**Not yet re-verified on the operator's Mac** — this session has no way to run it there; the
+operator needs to pull, rebuild `@marginalia/electron`, and confirm the Desk/shelf render
+again before this is closed out.
+
+⚠️ Worth naming plainly: this shipped in M45's own commit as a real regression on real
+hardware, invisible to this session because Xvfb has no GPU to be wrong about. `gpu.test.ts`'s
+fixtures were internally consistent but never modeled a real machine's actual strings —
+next time a heuristic like this ships, a fixture sourced from a real `getGPUFeatureStatus()`
+dump (any platform) is worth more than a plausible-looking synthetic one.
+
+## Found during M44/45 verification, out of scope — a pre-M44 reader bug — 2026-09-10
+
+The operator found this independently while verifying M44/M45's launcher and Electron shell,
+not introduced by either: opening a book lands in a blank state — chrome (title, author, nav)
+renders, but no page content, and the chapter list can be slow to populate on a fresh
+process. Reproduces identically in the M44 plain-browser launcher and the M45 Electron shell,
+which is itself useful evidence — it rules out anything Electron-specific (the utilityProcess
+boundary, the loopback origin, contextIsolation) as the cause, since neither milestone touched
+reader/pagination code. Once the chapter list loads and a chapter is picked manually, reading
+and chapter-to-chapter traversal work fine — so this looks like a missed "no stored reading
+position yet" default (should land on the first page/chapter, doesn't), not a broken reader.
+**Not investigated or fixed this session** — flagged here rather than pulled into M44–M48's
+scope; worth its own milestone or bugfix session. Operator also suggested defaulting
+`page_number_mode` to "on" rather than "off" — a one-line, deliberate product default change
+in `settings/store.ts`, not implemented here pending the operator's go-ahead.
