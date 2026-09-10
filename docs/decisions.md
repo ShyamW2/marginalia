@@ -3,6 +3,55 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-10 — M43 sign-off feedback: six correctives, none of them re-litigating §E/§F
+
+The operator's live sign-off pass against the real "Spatiotemporal Composability" PDF
+(the same one §E/§F were built and measured against) and the native pane's zoom chrome
+found six problems before M43 could close. All six landed as new TASKS.md §G–§K; PDF.md
+§3.4/§3.5/§7.6 amended. None reopen §E's "ship the PNG, not OCR" call or §D's "scroll by
+default" model — these are fidelity/coverage/smoothness correctives within both.
+
+**Extraction (§G/§H — equations, figures).** Two judgment calls worth naming. First: a
+piecewise function's crop being truncated and equation (38) going uncaptured entirely
+(its number split onto a separate, garbled runt line) are both instances of the same
+underlying gap — `isEquationLine`'s per-line test has no memory of what came immediately
+before or after it. The fix (a bounded gap-tolerant band-growth window, plus a
+runt-number-line lookahead) is deliberately narrow rather than a rewrite toward
+paragraph-aware equation parsing, which this session judged as reopening more than the
+report asked for. Second: a component-lifecycle diagram with its own text labels went
+uncaptured because figure-region detection has never actually been "a rectangle with no
+text items" despite PDF.md's phrasing — it's a single-adjacent-line gap test. Real fix
+(reading pdf.js's operator list to find drawn vector-graphics bounding boxes) was
+considered and declined as a new subsystem for uncertain payoff, same cost/benefit call
+§E1 already made about hand-rolling an ONNX IO contract. Shipped instead: a sparse-label
+heuristic (short lines near a caption count as the figure's own whitespace) — honestly a
+heuristic, with the same "known gap, not solved here" acceptance this arc has used
+throughout. **`EXTRACTOR_VERSION` bumped 5→6** (equation/figure detection output changed);
+re-importing the real PDF and reanchoring its highlights stays the operator's own
+explicit action, same as every prior version bump this milestone.
+
+**Native pane (§I/§J — spread zoom headroom, smoothness).** The zoom-jump the operator
+hit (a spread dropping to single-page scroll after one zoom tick) turned out to be the
+exact bug M43 §0.1 had already root-caused live and deliberately left unfixed, pending
+this rewrite — not a new defect. `SPREAD_ZOOM_HEADROOM = 1.25` was chosen to split the
+operator's own "20–30%" ask rather than tuned against a real display; expect it to move.
+The "choppy" zoom report resolved into two independent mechanisms once traced: a
+documented no-op (the CSS-transform preview never had a node to scale in continuous-scroll
+mode, which M43 §D made the default) and an unrelated, previously-unnoticed gap (pdf.js
+render tasks were never cancelled, so a superseded frame kept rasterizing). Both are real,
+named fixes — not a general "make it feel faster" pass.
+
+**Owed to the operator, not done here.** No display or Playwright in this session's
+environment, so none of §I/§J's viewer changes were exercised in a real browser — the
+zoom-headroom state machine is tested end-to-end against the real fixture PDF's own
+`pdfjs-dist` parsing (jsdom's canvas-2D gap only skips rasterization, not layout), but the
+actual *feel* of a zoom scrub is exactly the judgment this report was about, and needs the
+operator's own eyes. Extraction-side changes (§G/§H) likewise need a real re-import under
+`EXTRACTOR_VERSION` 6 before equation (38) or the lifecycle diagram can be checked against
+the live library — the dev server (already running this session, hot-reloaded these
+changes) kept serving the existing library without error, which is the extent of what
+this session could check live.
+
 ## 2026-09-09 (even later) — M43 §E closed out: widen the detector, spike OCR for real, ship the PNG
 
 The operator, asked to finish M43, pre-authorized both forks the 2026-09-09 (earlier)
@@ -52,6 +101,188 @@ highlights — deliberately not run against the live library from this session; 
 and `reanchorPdf.ts`'s own header are both explicit that no UI or script triggers this
 without the operator's own action.
 
+## 2026-09-09 (later) — The Desktop rung is scheduled: M44–M48, Mac and Linux, Electron
+
+The operator asked what it would take to ship Marginalia as an installable Mac/Linux app
+rather than a web app, and named the two things they expected to matter: memory management
+in a process that no longer restarts, and macOS notarization. Both are real; the memory one
+turned out to have three specific targets rather than being diffuse, and notarization turned
+out to be the *cheapest* of the five milestones. **Full spec: `docs/marginalia/DESKTOP.md`,
+binding for M44–M48. Tasks: TASKS.md M44–M48.**
+
+**Scheduled after the PDF arc (M39–M43), not in parallel.** M39–M43 are still adding to the
+native surface (`pdfjs-dist`, `@napi-rs/canvas`, the reflow pipeline); packaging a moving
+target means building the CI matrix twice. This settles SHIPPING.md's open question "whether
+Desktop is wanted at all" in the affirmative, and does **not** settle Private — they are
+siblings, and Private is still the only rung that reaches an iPad.
+
+**Windows is out of this arc** by the operator's framing ("explore later"). The incremental
+cost is a fourth CI target plus an OV certificate on a hardware token (~$200–400/yr), so
+M47's ONNX pruning is specified as a target *list*, never a deletion.
+
+### What the code survey changed about the plan
+
+SHIPPING.md's Desktop section was written 2026-07-30 and two load-bearing facts had expired.
+Both are corrected there; the arc is planned on the corrected ones.
+
+- **The native surface is five modules, not "`better-sqlite3` and `adm-zip`."** Measured:
+  `onnxruntime-node` 208MB (all platforms in one package; 31MB darwin/arm64, 43MB
+  linux/x64), `@huggingface/transformers` 48MB, `pdfjs-dist` 35MB, `wordnet-db` 34MB,
+  `@napi-rs/canvas` 33MB, `better-sqlite3` 13MB. **This hardens the Electron ruling rather
+  than reopening it** — a Tauri sidecar would ship all of that plus a Node binary, winning
+  nothing on size and losing the rebuild/notarize/update tooling.
+- **ABI is not uniform, and only one module is dangerous.** N-API is ABI-stable, so
+  `onnxruntime-node` (directory literally `bin/napi-v3/`) and `@napi-rs/canvas` cross into
+  Electron unchanged. `better-sqlite3` needs an Electron-ABI rebuild per target — the same
+  module whose build has already been silently skipped once here, and which fails *lazily*
+  (`import()` resolves; only `new Database()` throws).
+- **The size estimate was low by 3×.** "~100MB installer" predates ONNX, pdf.js and WordNet.
+  Realistic: ~350MB installed, ~150MB per-arch DMG, plus an 89MB first-run weights download
+  that stays out of the installer.
+
+### Two findings that changed the work, not just the numbers
+
+**1. Networking needs no changes at all.** All 90 API calls are relative (`fetch("/api/…")`
+×22, template-literal ×68) and the job stream is a fetch-stream, not an `EventSource`
+(`web/src/jobs/jobsApi.ts:83`). A window that loads the server's own origin resolves every
+one of them. So the renderer stays `contextIsolation: true` / `nodeIntegration: false` /
+`sandbox: true` with **no API base URL, no CORS, and no preload data bridge** — and
+introducing one "for the desktop build" is now an explicit anti-goal in M45.
+
+**2. Freeing the port would make the app forget its own appearance on every launch.** Theme,
+accent, paper tint and the desk view mode persist in `localStorage`
+(`app/useTheme.ts`, `useAccent.ts`, `usePaperTint.ts`, `desk/deskViewBus.ts`), which
+Chromium keys by **origin** — and `127.0.0.1:54321` is a different origin from
+`:54322`. Nobody has seen this because the dev port is fixed at 5175. **Ruling: both halves
+— prefer 5175 with next-free fallback, *and* move those four settings into the `settings`
+table.** The stable-port preference keeps Chromium's own origin-keyed state (zoom, devtools)
+put; the settings move makes correctness independent of which port was free, and they are
+settings, so CLAUDE.md decision 6 already says the sidecar store is where they belong.
+*A custom `app://` protocol for a stable origin was considered and rejected*: it would push
+all 90 relative fetches through a protocol handler proxying to loopback, including the two
+streaming job endpoints, and streaming through `protocol.handle` is the fiddliest surface in
+Electron for a smaller payoff.
+
+### The memory question, verified rather than accepted
+
+The operator's instinct — "apps are not ephemeral, so memory management, LRU things" — is
+right in direction and was worth checking in detail, because most of the obvious candidates
+are already correct. **Already bounded, and M46 must not re-do them:** the job registry
+prunes at `MAX_FINISHED_JOBS = 50` with an explicit sweep (`jobs/registry.ts:49–59`),
+`inFlightRenders` and `authFlows` both delete on completion, `cliPath`'s cache is a handful
+of entries. Someone had already thought about this.
+
+Three things do change when the process stops restarting:
+
+1. **Three unbounded GPU texture caches** — `scene3d/spineTexture.ts:51`,
+   `useCoverTexture.ts:9`, `useSpinePalette.ts:14`, module-level `Map`s keyed by book with no
+   eviction anywhere. These are the only genuine LRU candidates in the app. ⚠️ **Dropping the
+   `Map` entry is not the fix**: `three` textures hold GPU memory released only by
+   `.dispose()`, so an LRU without disposal moves the leak from JS heap to VRAM, where it is
+   harder to see. `useSpinePalette` holds plain data and wants bounding but not disposal.
+2. **The Kokoro session is pinned forever** (`audio/kokoro.ts:18–19`) — deliberately and
+   correctly for a dev server. Its only invalidation is by model *path*; idle unload is an
+   orthogonal second reason to drop it.
+3. **Uploads are 200MB into RAM** (`routes/resources.ts:45–46`). SHIPPING.md files this
+   under Hosted; it is a Desktop problem too, because the spike lands in the process that
+   also holds the model.
+
+M46 is measured against NOTES.md:2127's existing **214MB RSS** baseline, in the same
+numbers-not-feelings discipline as M27's fold measurements.
+
+### Audio: offered as a cut, declined
+
+Dropping `onnxruntime-node`, `@huggingface/transformers` and `sharp` would have removed
+~90MB per target, the LGPL question and the largest resident allocation — and SHIPPING.md
+step 9 notes the TTS stack has never run on a machine that is not the operator's, making it
+the least-proven thing to hand a stranger. **The operator declined; the product ships
+whole**, with the ONNX runtime bundled and Kokoro's 89MB of weights still fetched on first
+use. M46's idle-unload task and M47's pruning task exist because of this ruling.
+
+*(The option was offered under the label "ship it lazily", which the operator correctly
+pushed back on: only the weights are lazy, and they already were. The ruling is "bundled
+runtime, weights on first use" — the status quo plus packaging.)*
+
+### The rest, briefly
+
+- **Linux is AppImage, single target.** `.deb` reaches only Debian/Ubuntu. **Flatpak is
+  rejected on a product ground, not a packaging one**: its sandbox conflicts directly with
+  the vault writing to an arbitrary operator-typed path — the same conflict SHIPPING.md
+  records for the Mac App Store under Stores, arriving early and buying nothing.
+- **`sharp` has zero direct imports here** and is only an optional peer of
+  `@huggingface/transformers`, with Kokoro audio-only. If M47 can exclude it from the
+  bundle, SHIPPING.md step 2's LGPL relinking obligation never attaches. Specified as a
+  check, not an assumption.
+- **`data/` is a migration, not a rename** (SHIPPING.md already said so; this adds the
+  trap). Copy-verify-mark, never move — and the `-wal`/`-shm` are part of the database, so a
+  migration that takes `marginalia.sqlite` alone silently loses the most recent writes
+  against a live 5MB WAL.
+- **`wordnet-db` fails silently under asar.** `getDictionary()` catches and returns `null`
+  by design (`wordnet.ts:283–291`), so a packaged build can ship with Define quietly dead
+  and pass a smoke test. Every acceptance criterion touching it asserts a real definition,
+  never "no error".
+- **Apple enrollment starts on day one of M44**, not at M48 — individual identity
+  verification is days-to-weeks of calendar and is the arc's only external dependency.
+- **M44's gate is a throwaway browser launcher** — ~20 lines, starts the bundled server,
+  opens the default browser. It proves relocatable data, bundled assets and port handling in
+  week one with zero packaging work, and is explicitly **not** shippable: a browser tab
+  fails the hand-it-to-a-friend test, and Safari does not render what this app is developed
+  against.
+
+### Corrected the same day, on the operator's questions
+
+Three follow-ups, two of which changed the plan.
+
+**1. The effort estimate was wrong and is corrected in DESKTOP.md §6.** "~4–6 weeks of
+implementation sessions" was solo-human-developer weeks, written into a binding doc for a
+project that ships an M30-sized milestone in 3–4 agentic sessions. The correction is not
+"divide by ten": **this arc's composition differs from every milestone before it.** M30 was
+code end to end, which is exactly what compresses. M44–M48 is two-thirds code (compresses
+fully), plus machine wall-clock that compresses *not at all* — a CI matrix build is 10–20
+minutes and packaging defects are only found by running the produced artifact, each
+`notarytool submit --wait` is 5–30 minutes, and a 12-hour soak is 12 hours — plus two
+verifications needing a second machine and a person. **New figures: ~10–15 sessions of work,
+~2–4 weeks of calendar**, set by Apple enrollment and M47's CI loop rather than by typing
+speed. ⚠️ **The arc cannot finish faster than enrollment**, so enrollment moved from "day one
+of M44" to "before M44, months early if possible" — it is free to start and is the single
+highest-leverage scheduling action available.
+
+**2. "Would Tauri be needed for iPad/iPhone later?" — no, and this is worth recording because
+it is the most plausible reason to reopen a settled ruling.** Tauri 2 does have iOS/Android
+targets, but Tauri mobile expects a **Rust backend compiled into the binary**, and iOS
+forbids both shipping a Node runtime that spawns child processes and JIT outside the system
+webview. This server is Node with five N-API modules that shells out to `claude` and `codex`.
+So "Tauri for iPad" *is* the Rust rewrite already priced and rejected — **choosing Electron
+costs nothing on iPad, because no packaging choice buys one.** SHIPPING.md's existing ruling
+is unchanged and now has its reasoning: an iPad is reached by the **Private** rung, or later
+by a native client against the same HTTP API (a second front end, not a packaging step).
+Recorded in DESKTOP.md §7.1.
+
+**3. "GPU acceleration / Metal?" — already have it; but the question found a real Linux
+defect.** Chromium on modern macOS runs WebGL through **ANGLE on Metal** by default, so
+`scene3d/Scene3D.tsx:298–301`'s R3F canvas is already on the GPU and will be in Electron by
+the same path — there is no acceleration to switch on and no SDK step. Going direct would
+mean dropping WebGL, i.e. rewriting M23's substrate *and* M27's fold renderer, against
+settled decision 14; `WebGPURenderer` is declined for the same reason plus being a second
+path on a one-path seam. **The real risk is the inverse and it is on Linux:** `Scene3D.tsx`
+handles reduced motion (`:76`) and context loss (`:234–235`) and gates on both (`:192`), but
+**cannot detect WebGL running on SwiftShader** — so an AppImage on a box with a missing or
+blacklisted driver renders the shelf and the fold in software at a few frames per second
+*with no error anywhere*. Decision 14 requires a deliberate degraded path per 3D surface;
+that path exists and this is its missing trigger. **New M45 task**, feeding
+`app.getGPUFeatureStatus()` into the existing `canRender` rather than adding a fourth path.
+
+**Also added, from the same exchange:** a written memory budget as M46's *first* task, and a
+`--max-old-space-size` cap on the `utilityProcess`. With the framing that matters — Electron's
+own overhead is ~100–200MB across its processes against an ONNX session of 200–400MB, so
+**the RAM killer is ONNX, not Electron**, it is already paid today, and what changes is only
+that it is never released. Reaching for Electron flags before the idle-unload optimises the
+wrong number. Disabling the sandbox or site isolation to save a process is out of bounds:
+~30MB for the security posture M45 gets free.
+
+**Cost: ~10–15 implementation sessions over ~2–4 weeks of calendar, ~$99/yr, no per-user or
+per-month cost.** The real cost is support — past M48 the operator is the person who fixes it
+on someone else's OS.
 
 ## 2026-09-09 — M43 §E1: report the detector gap, don't build past it this session
 

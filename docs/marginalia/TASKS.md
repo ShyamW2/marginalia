@@ -2356,6 +2356,438 @@ Per PDF.md §3.5's amendment (2026-09-08).
       explicit operator action (decision 5) — deliberately not triggered against the live
       library from this session.
 
+#### G. Reflow — equation crop fidelity and coverage, corrective
+
+Scoped 2026-09-10, from the operator's own live sign-off pass against the real
+"Spatiotemporal Composability" PDF and the generated-EPUB reflow output — the same pass
+that closed §0–§F above and that this milestone was waiting on before it could close.
+Binding: `docs/marginalia/PDF.md` §3.4 (amended that date). Orthogonal to §E's OCR
+question — nothing here changes whether math renders as PNG or typeset; it's about the
+PNG path's own fidelity and coverage, the thing that's actually shipping.
+
+- [x] **G1.** ⚠️ Equation crops read too narrow/too short — piecewise functions (1.5–1.8×
+      taller than what was captured) and equations with sub/superscripts get cut off.
+      Root cause: `detectEquationBands`'s crop rect was a bare union of the band's own
+      text-item boxes with zero padding, and band growth stopped at the first line that
+      failed the per-line density/number test — a piecewise function's case-row lines
+      (ordinary density, between two genuinely dense lines) broke the run early,
+      truncating the crop to only the dense lines actually captured.
+      Fix: `equations.ts`'s new `paddedBoundingBox` pads the raw union by a fraction of
+      the band's own tallest item (`VERTICAL_PAD_FRACTION`/`HORIZONTAL_PAD_FRACTION`),
+      clamped to the page — needs `pageWidth`/`pageHeight` threaded into
+      `detectEquationBands`, matching `detectFigureRegions`'s existing signature. Band
+      growth now tolerates up to `PIECEWISE_MAX_GAP_LINES` (3) consecutive
+      non-qualifying lines before concluding the band ended, then trims back to the last
+      genuinely qualifying line — the same tolerant-run shape `tables.ts`'s
+      `MAX_NONQUALIFYING_RUN` already uses for a table's wrapped column-1 labels.
+      _Acceptance: a synthetic piecewise-function fixture (dense line, two ordinary-density
+      case rows, dense closing line) yields one band spanning all four lines, not just the
+      dense ones; a crop's padded box strictly exceeds the raw item union on every edge,
+      clamped to the page._
+      Done 2026-09-10: new `equations.test.ts` cases cover both — the padding assertion
+      and the piecewise-widening case, plus a negative case confirming an unrelated
+      paragraph five lines later is *not* swept in (the gap-tolerance window has a real
+      edge). All existing equation tests updated for the new `(lines, pageWidth,
+      pageHeight)` signature; `blocks.ts`/`extract.ts` call sites updated to match.
+- [x] **G2.** ⚠️ Not all equations are captured — eqn (38),
+      `reach(i) := ⋂{S | i ∈ S ∧ ∀i′ ∈ S, γ ∈ Γ. …}`, rendered as flat garbled text.
+      Root cause: the equation's number sat on its own short trailing line (garbled
+      prime/quote-mark artifacts plus `(38)`), separate from the equation's own text line
+      — so neither line passed `isEquationLine`: the body line had no trailing number of
+      its own, and the runt number-line's `mathGlyphFraction` was ~0 (primes/digits/parens
+      aren't math-Unicode). Separately, found reading the same fixture: plain-block Greek
+      (`Γ`, `σ`, …, U+0370–U+03FF) wasn't in `MATH_UNICODE_RANGES` at all — only *styled*
+      Unicode-math-alphanumeric Greek counted, understating density on any line using
+      ordinary Greek letters.
+      Fix: a `RUNT_NUMBER_LINE` pattern (leading punctuation/artifact glyphs plus `(NN)`)
+      — a line matching it right after a math-dense line with no number of its own counts
+      as carrying *that* line's number, and gets absorbed into the band so it doesn't leak
+      into `resource_text`. Added the Greek/Coptic block to `MATH_UNICODE_RANGES`; safe
+      because the trailing-number requirement (2026-09-09's own reasoning) stays the
+      false-positive guard regardless of what widens the density fraction.
+      _Acceptance: a math-dense line with no number, followed by a runt `′′′′ (38)`-style
+      line, yields one band covering both; a plain-Greek-heavy line with its own trailing
+      number, which only clears density once Greek counts, is detected; a genuine
+      unrelated numbered line following ordinary prose is not absorbed._
+      Done 2026-09-10: covered in the same `equations.test.ts` pass as G1.
+- [x] **G3.** Lemmas/corollaries — long, math-dense passages with no equation number —
+      are hard to follow as flat text and should also rasterize, but only past a real
+      length+density bar; a wordy paragraph that merely names a variable stays text.
+      New `detectMathDenseBlocks` (`equations.ts`, PDF.md §3.4): a second pass over
+      whatever `detectEquationBands` didn't already claim, walking contiguous
+      paragraph-bounded runs (same gap-ratio rule `lines.ts`'s own paragraph splitter
+      uses) and rasterizing a run whose combined length clears `MATH_BLOCK_MIN_CHARS`
+      (150) **and** combined math-glyph density clears `MATH_BLOCK_DENSITY_THRESHOLD`
+      (0.3 — roughly double the equation rule's 0.15, since there's no number here to
+      bound false positives) exactly like an equation band: same padded crop, same
+      "nothing enters `resource_text`" rule. Wired into `blocks.ts` (merged into the same
+      `equationAt`/`skipUntil` bookkeeping equation bands already use — no new `PdfBlock`
+      kind) and `extract.ts` (a second rasterize pass, `mathBlockImages`).
+      _Acceptance: a long math/Greek-symbol-dense paragraph with no equation number is
+      captured as one block; a long wordy paragraph naming a variable once or twice is
+      not; a math-dense paragraph under the char-count floor is not; a run already
+      claimed by an equation band is skipped._
+      Done 2026-09-10: `equations.test.ts`'s new `detectMathDenseBlocks` describe block
+      covers all four cases. `tsc -b` clean; all 600 server tests pass (`blocks.test.ts`,
+      `extract.test.ts` — the latter exercises the real fixture PDF through the whole
+      pipeline end to end — both green with the new wiring).
+      ⚠️ **Not live-verified against the real "Spatiotemporal Composability" PDF this
+      session** — that resource was extracted under `EXTRACTOR_VERSION` 5; §G/§H/§I
+      together bump it to 6 (`pdf/version.ts`), and re-importing plus
+      `pnpm --filter server reanchor <oldId> <newId>` stays the operator's own explicit
+      action (decision 5), same as F1's own precedent. What *was* checked live: the dev
+      server (already running, hot-reloaded these changes mid-session) kept serving the
+      existing library — including that resource's unaffected old rows — without error.
+
+#### H. Reflow — figure/diagram capture for labeled vector regions
+
+Scoped 2026-09-10, same operator pass as §G above. Binding: PDF.md §3.5 (amended that
+date).
+
+- [x] **H1.** A component-lifecycle state diagram (vector boxes/arrows, with its own text
+      labels — "L-Iter", "L-Begin L-Finish", "Inactive L-Divert Active", "O-Remove", …)
+      wasn't rendered at all — its caption ("Figure 1 | The component lifecycle…") stayed
+      as a text line, but the diagram itself never became an image; the labels instead got
+      swept into ordinary paragraph reconstruction, producing a flat, disconnected list of
+      the label text.
+      Root cause: despite PDF.md §3.5's "rectangle containing no text items" phrasing,
+      `detectFigureRegions` only ever measured the y-gap to the single line immediately
+      adjacent to the caption — never a whole-region scan. A diagram's own labels are
+      ordinary `PdfLine`s at the diagram's positions, so the gap to the nearest one is
+      small, the region never cleared `MIN_AREA_FRACTION`, and it was silently dropped —
+      diagram and all.
+      Fix: `figures.ts`'s `sweepLabels` walks outward from the caption, away from the
+      body-text side, absorbing short (`LABEL_MAX_CHARS`, 30 chars), label-shaped lines up
+      to `FIGURE_MAX_REGION_FRACTION` (0.4) of the page — stopping at the first line that
+      reads as real body prose, or at that cap. `FigureRegion` gained `startIndex`/
+      `endIndex` (mirroring `TableRegion`'s own shape from M42 exactly), so the swept
+      label lines are excluded from `resource_text` in `blocks.ts` (a new `figureRowSkip`
+      set, alongside the existing `tableRowSkip`) once they're captured into the image
+      instead. A genuinely blank region (nothing to sweep) is unaffected —
+      `startIndex === endIndex`, today's pre-existing shape.
+      ⚠️ **Real vector-graphics detection (pdf.js's operator list, tracking the CTM to
+      find drawn-path bounding boxes) was considered and declined** — real new-subsystem
+      work for uncertain payoff, against this same arc's own M43 §E1 precedent (a smaller
+      OCR spike declined on an equivalent cost/benefit call). The sparse-text heuristic
+      here is honestly a heuristic, not a positive "this is a diagram" signal.
+      _Acceptance: a caption with several short label lines in its blank region is
+      detected, with those lines' indices in `startIndex..endIndex`; a genuinely blank
+      region is unaffected; ordinary body prose adjacent to a caption (long sentences, no
+      real gap) is never swept in as if it were labels._
+      Done 2026-09-10: `figures.test.ts`'s new "labeled diagram regions" describe block
+      covers all three cases, reproducing the real diagram's own label shapes. `tsc -b`
+      clean; all 600 server tests pass. Same live-verification note as G3 above — owed to
+      a real re-import under `EXTRACTOR_VERSION` 6, an explicit operator action.
+
+#### I. Native pane — spread zoom headroom before dropping to continuous scroll
+
+Scoped 2026-09-10, from the operator's own live pass against the native PDF viewer's zoom
+chrome. Binding: PDF.md §7.6 (amended that date).
+
+- [x] **I1.** ⚠️ Zooming a two-page spread jumped to single-page continuous scroll far too
+      soon — one tap of zoom-in, ~100% (an artefact of that page's own aspect ratio, not a
+      real threshold), with no headroom at all. This is the exact bug M43 §0.1 had already
+      found and root-caused, left for this rewrite: *"found a real zoom-jump bug at the
+      exact spread→continuous-scroll crossing... belongs to M43 §D's rewrite of the same
+      code."*
+      Root cause, confirmed reading `PdfRenderer.ts`: `paginated`/`pagesAcross` both keyed
+      off `this.userScale === null` verbatim — any zoom-in at all flipped `userScale`
+      non-null, instantly dropping `pagesAcross` to 1 and `advance` to `"scroll"`.
+      Fix: new `SPREAD_ZOOM_HEADROOM` (1.25, `pdfLayout.ts` — the operator asked for
+      "another 20–30%"). `relayout()`'s `pagesAcross`/`paginated` derivation now stays 2-up
+      while `userScale` sits at or below the spread's own fit scale × the headroom,
+      computed against the *spread's* fit scale specifically (hoisted so it's available
+      before `pagesAcross` itself is decided). The paginated wrapper's scroll host gains
+      `overflow: auto` (a fixed-size host wrapping the flex row, same idiom the
+      continuous-scroll `scrollHost` already used) so a spread zoomed within headroom that
+      no longer fits edge-to-edge scrolls horizontally — the operator explicitly accepted
+      this ("that's okay"). ⚠️ The snap-back check (nulls `userScale` once it drifts back
+      to at-or-below the active fit scale) had to be guarded the same way: while the
+      spread is still eligible, it compares against the *spread's* fit scale even once
+      `pagesAcross` has already fallen to 1 (a narrow container) — otherwise the moment
+      `pagesAcross` flips to 1 mid-zoom, the check would compare against the much larger
+      1-up fit scale and snap `userScale` straight back to null, defeating the headroom
+      with a jarring value-jump at the exact boundary this task exists to smooth.
+      A small "switched to one-page scroll" notice (`ReaderView.tsx`, anchored at the zoom
+      slider — "near the zoom window" per the operator's own ask, not the screen-wide
+      `Toast`) fires exactly on that transition edge: the previous `onLayoutChanged` tick
+      read `"fit-spread"` (at rest) and this one reads `"free"` (mid-zoom) with `advance`
+      now `"scroll"` — a signature that only an actual zoom gesture produces, never an
+      explicit fit-mode toggle click (always lands on a named mode, never `"free"`) or a
+      resize (leaves `userScale`/mode untouched). Auto-dismisses after 3s.
+      _Acceptance: a legible spread holds 2-up through `SPREAD_ZOOM_HEADROOM`'s own range;
+      the discrete zoom-in ladder (one `ZOOM_STEP` tick, 1.2×, stays within the 1.25×
+      headroom; a second tick, 1.44×, clears it and drops to scroll); zooming back out
+      returns to the spread; the notice appears on the zoom-caused transition and not on
+      an explicit toggle or a resize._
+      Done 2026-09-10: `PdfRenderer.test.ts`'s zoom/layout describe block rewritten for
+      the headroom (one tick stays paginated, a second drops, zooming out returns in two
+      steps — the real fit scale for this fixture/container pair turned out to make a
+      single zoom-out land inside the headroom rather than exactly back at fit, which the
+      test now asserts as its own step rather than assuming). `tsc -b` clean; all 557 web
+      tests pass. ⚠️ **Not live-verified in a real browser this session** — no display, no
+      Playwright available in this environment (checked: not installed as a project
+      dependency). The zoom-headroom state machine itself is exercised end-to-end against
+      the real fixture PDF via real `pdfjs-dist` parsing (jsdom's own canvas-2D gap only
+      skips the actual rasterization, not the layout/capability logic this task changed)
+      — but the operator's own eyes on the real feel, and the notice's placement/timing in
+      a real viewport, are owed.
+
+#### J. Native pane — smoother zoom
+
+Scoped 2026-09-10, same operator pass as §I: *"currently it renders slow (choppy) after
+scrubbing zoom/pinching in."* Binding: PDF.md §7.6 (amended that date, no contract
+change — this is a performance fix within the existing continuous-zoom concept, M41
+§C1).
+
+- [x] **J1.** `applyZoomPreview`'s CSS-transform live preview — what's supposed to make a
+      zoom gesture visibly interpolate before the debounced real re-render lands — only
+      ever had a node to scale in the rare paginated-spread state (`paginatedWrapperEl`);
+      in the now-default continuous scroll (M43 §D) it was a documented no-op, so a
+      drag/pinch/slider-scrub showed nothing at all for the full `ZOOM_COMMIT_DEBOUNCE_MS`
+      (120ms), then jumped once — the proximate cause of "choppy."
+      Fix: when there's no single paginated wrapper, `applyZoomPreview` now scales each
+      *currently mounted* page's own div in place, around its own center — deliberately
+      not a whole-column transform, which would need to compensate `scrollHost`'s
+      `scrollTop` to keep the reader's position visually anchored (real geometry work this
+      method doesn't have the gesture state to do safely). Accepted trade-off, same shape
+      the paginated preview's own "blurrier at large factors" one already is: a scaled
+      page's placeholder siblings don't resize to match until the real re-render lands, so
+      there's a brief visual mismatch against neighbours during a fast zoom — preferred
+      over showing nothing at all.
+      _Acceptance: a mounted page's own div carries a live `scale(...)` transform
+      immediately on `setZoomScale`, before the debounce settles, in continuous-scroll
+      mode exactly as the paginated wrapper already did in its own state._
+      Done 2026-09-10: new case in `PdfRenderer.test.ts`'s continuous-zoom describe block
+      (the existing preview test only ever covered the paginated branch — this was a real,
+      previously-untested gap, not just an untested-but-working path).
+- [x] **J2.** A superseded `page.render()` call (e.g. mid zoom-drag, or a page scrolling
+      back into view before its prior render finished) was never cancelled —
+      `renderTask.cancel()` was never called anywhere in this codebase. pdf.js kept
+      rasterizing an already-obsolete frame to completion, wasting CPU/GPU time and,
+      because pdf.js serializes renders into a canvas's own 2D context, potentially
+      delaying the render that actually mattered.
+      Fix: `renderPageInto` now tracks the in-flight `RenderTask` per page index
+      (`inFlightRenders`) and calls `.cancel()` on a still-running one before starting a
+      new render for that same page; cleaned up in `destroy()` too. A cancelled render's
+      rejection (`RenderingCancelledException`) is caught and degrades the same way a
+      missing canvas context already does here — no throw past `renderPageInto`, the
+      existing `generation` check right below discards the result either way.
+      ⚠️ **Not unit-testable in this repo's jsdom environment** — `HTMLCanvasElement
+      .getContext` is unimplemented there (confirmed: every `page.render()` call site is
+      gated behind `if (ctx)`, and `ctx` is always `null` under jsdom, which is why the
+      existing test suite never exercises real rasterization at all). Verified by reading
+      the code against pdf.js's own documented `RenderTask` contract; a real cancellation
+      race is owed to a live browser check.
+- [x] **J3.** Touch-pinch's `onPinchPreview` called `setZoomScale` (and, after J1, its own
+      CSS-transform write) on every raw `touchmove` with no batching — on some devices
+      `touchmove` outpaces the display's own refresh rate. Now rAF-batched to "latest
+      value wins, at most once per animation frame" (`ReaderView.tsx`), cleared on
+      unmount. Left the Ctrl/Cmd+wheel path unbatched, per this task's own scoping note —
+      wheel events are lower-frequency and `handleWheel` already composes across rapid
+      ticks via `pendingZoomTarget`, so a redundant gate looked like it would cost more to
+      verify than it would likely buy.
+      _Acceptance for J: a zoom drag/pinch/slider-scrub shows continuous visual feedback
+      in continuous-scroll mode (not just the paginated-spread state), a superseded render
+      doesn't keep rasterizing after a newer one supersedes it, and a fast pinch doesn't
+      call into the renderer more than once per frame._
+      Done 2026-09-10: `tsc -b` clean; all 557 web tests pass (26 → 27 in
+      `PdfRenderer.test.ts`, J1's new case). ⚠️ **The live "does it actually feel
+      instantaneous now" judgment — the whole point of the operator's report — is owed.**
+      No display or Playwright in this session's environment; see I1's own note on the
+      same gap. J1/J2 are real, root-caused fixes for concretely identified mechanisms
+      (a documented no-op path, an uncancelled render), not guesses, but a scrub's *feel*
+      is exactly the kind of thing this repo's own discipline (CLAUDE.md: "verify by
+      actually driving the app") says to check by hand before calling it done.
+
+#### Verify
+
+- [ ] **Operator sign-off on §G–§J**, on the real app. In particular: re-import the
+      "Spatiotemporal Composability" PDF under `EXTRACTOR_VERSION` 6 (§G3/H1's own note)
+      and confirm equation (38) now rasterizes, a piecewise equation's crop is no longer
+      truncated, and the component-lifecycle diagram renders as an image with its caption
+      rather than a flat text list; reanchor existing highlights onto the new resource
+      (decision 5) if the sign-off is done against the live library rather than a fresh
+      import. In the native pane: confirm a two-page spread holds ~25% further zoom before
+      dropping to single-page scroll, with the notice appearing near the zoom control on
+      that transition; and judge whether a zoom drag/pinch now feels continuous rather
+      than choppy after each ~120ms settle.
+
+---
+
+### M44 — Desktop: the relocatable server (no Electron)
+
+**Binding spec: `docs/marginalia/DESKTOP.md`.** Read §3 before touching `paths.ts` and §3.4
+before touching the port; both encode defects that fail silently. Scheduled 2026-09-09 after
+the PDF arc (decisions.md). ⚠️ **Start Apple Developer Program enrollment before this milestone, not during it** —
+individual identity verification is days-to-weeks of *calendar*, it gates M48 and nothing
+before it, and it is free to start months early. **The arc cannot finish faster than
+enrollment**, which makes this the highest-leverage scheduling action in it (DESKTOP.md §6).
+
+**Nothing in M44–M48 adds a reader feature.** If a reading-behaviour change looks necessary
+to package the app, it is a misdiagnosis — write it to NOTES.md rather than shipping it.
+
+- [ ] **`resolveDataDir()`.** `MARGINALIA_DATA_DIR` → OS per-user directory → the legacy
+      install-relative path. `paths.ts`'s existing exports become derived; every consumer
+      keeps its current name, so nothing outside `paths.ts` changes.
+      _Acceptance: the built tree copied to an arbitrary path, with `MARGINALIA_DATA_DIR`
+      pointed at an empty directory, boots, creates the data dirs, serves the SPA, imports
+      Alice and answers a question._
+- [ ] **The migration — copy, verify, mark. Never move.** One-time, on a legacy `data/`
+      only; the source is left intact and a marker records success, so a failure is
+      recoverable by deleting the destination. ⚠️ The `-wal` and `-shm` are **part of the
+      database**: move them alongside the `.sqlite`, or checkpoint the WAL first and prove
+      it. The operator's live `data/` is ~150MB and is the only real library that exists.
+      _Acceptance: a **copy** of the operator's real `data/` migrates, and library,
+      highlights, threads and reading positions match the original row-count for row-count._
+- [ ] **`resolveResourceDir()`, separate from the data directory**, for `index.ts:79`'s
+      `webDist`. App resources and user data go to different places in a bundle; collapsing
+      them into one resolver is the mistake this task exists to prevent.
+- [ ] **`wordnet-db` path resolution behind an asar-aware helper** (`wordnet.ts:286`), so
+      M47 has nothing to retrofit. ⚠️ `getDictionary()` catches and returns `null` by
+      design, so a broken path leaves Define silently degraded — every test of this must
+      assert a real definition came back, never just "no error".
+- [ ] **The port, and the appearance bug freeing it creates.** Prefer 5175, fall back to
+      the next free port — **and** move the four `localStorage` UI settings (theme, accent,
+      paper tint, desk view mode) into the `settings` table. Both halves: `localStorage` is
+      origin-keyed, so a bare ephemeral port makes the app forget its own appearance on
+      every launch. DESKTOP.md §7.2 records why a custom `app://` protocol was rejected.
+      _Acceptance: launched twice on two different ports, both windows show the operator's
+      chosen theme and accent._
+- [ ] **Verify:** build the throwaway launcher from DESKTOP.md §5 (M44's gate) — starts the
+      bundled server, opens the default browser. Use it to prove relocatable data, bundled
+      assets and port handling end to end. **Do not ship it**; a browser tab fails the
+      hand-it-to-a-friend test and Safari does not render what this app is built against.
+
+### M45 — Desktop: the Electron shell
+
+- [ ] **Main process, window, menu.** `BrowserWindow`, single-instance lock, native menu,
+      window-state persistence.
+- [ ] **Express runs in a `utilityProcess`, not in main.** A `better-sqlite3` ABI fault
+      should kill a child the main process can report on, not the window.
+      `server/src/startupDiagnosis.ts` already writes the readable instruction — surface it
+      in a dialog, do not rewrite it.
+- [ ] **`contextIsolation: true`, `nodeIntegration: false`, `sandbox: true`.** The renderer
+      loads `http://127.0.0.1:<port>/` and all 90 relative `/api` fetches resolve
+      unchanged; the job stream is a fetch-stream, not an `EventSource`. **No API base URL,
+      no CORS, no preload data bridge** — introducing one "for the desktop build" is the
+      anti-goal here.
+- [ ] **`cliPath.ts` proven against a real bundle.** A GUI launch *is* the bare-`PATH` case
+      (M26's finding, TASKS.md:78); the login-shell fallback becomes the common path. The
+      two local providers degrade to a legible "not installed", never an error.
+- [ ] **Detect software rendering, and feed the gate that already exists.** Chromium falls
+      back to **SwiftShader** on a machine with a missing or blacklisted GPU driver and says
+      nothing — the shelf and the fold then run at a few frames per second with no error
+      anywhere, which is the AppImage's most likely bad first impression.
+      `app.getGPUFeatureStatus()` in main answers it; the answer joins `reducedMotion` and
+      `contextLost` in `scene3d/Scene3D.tsx:192`'s `canRender`. ⚠️ **Not a fourth
+      independent path** — settled decision 14 already requires a deliberate degraded path
+      per 3D surface, and that path is built; this is its missing trigger. DESKTOP.md §7.1b
+      records why direct Metal and WebGPU were both declined (Chromium already runs your
+      WebGL on Metal via ANGLE; there is no acceleration to switch on).
+- [ ] **Verify:** opens the reader, imports an EPUB, highlights, asks a question against a
+      pasted API key, publishes to a vault folder, and survives quit-and-relaunch with
+      library and highlights intact. On a Mac with `codex` installed via `nvm`, Accounts
+      reports it found — **launched from Finder, not from a terminal**. Launched with
+      `--disable-gpu` (standing in for a driverless Linux box), it falls back to the 2D/list
+      surfaces rather than rendering the shelf in software.
+
+### M46 — Desktop: the long-lived process
+
+The browser has been cleaning up after this app for its whole life; an Electron window that
+stays open for a week never reloads. DESKTOP.md §2.3 lists what is *already* bounded — do
+not spend this milestone re-bounding the job registry.
+
+- [ ] **Write the memory budget first** — idle, reading, listening — into NOTES.md, so the
+      tasks below have a target rather than a direction. Anchor it on NOTES.md:2127's
+      measured 214MB server RSS plus a *measured* Electron baseline, not a guess. ⚠️ Note
+      the framing before optimising (DESKTOP.md §4): Electron's own overhead is ~100–200MB
+      across its processes, while the ONNX session is 200–400MB — **the RAM killer is ONNX,
+      not Electron**, and it is already paid today; what changes is that it is never
+      released. Reaching for Electron flags before doing the idle-unload below is optimising
+      the wrong number, and **disabling the sandbox or site isolation to save a process is
+      out of bounds** — ~30MB for the security posture M45 gets free.
+- [ ] **`--max-old-space-size` on the `utilityProcess`**, set from that budget, so a runaway
+      server heap fails loudly instead of quietly swapping the machine. Test the cap by
+      exceeding it; an untested limit is a guess with a number on it.
+- [ ] **LRU the three unbounded GPU texture caches** — `scene3d/spineTexture.ts:51`,
+      `useCoverTexture.ts:9`, `useSpinePalette.ts:14`: module-level `Map`s keyed by book
+      with no eviction anywhere. ⚠️ **Dropping the `Map` entry is not the fix** — `three`
+      textures hold GPU memory released only by `.dispose()`, so an LRU without disposal
+      moves the leak to VRAM where it is harder to see. `useSpinePalette` holds plain data
+      and needs bounding but not disposal; do not give all three the same treatment.
+- [ ] **Idle unload for the Kokoro session** (`audio/kokoro.ts:18–19`) — a module-level
+      promise with no unload path, so one paragraph of audio at 09:00 is still resident at
+      midnight. Orthogonal to the existing model-path invalidation; the two must not fight.
+- [ ] **`multer.memoryStorage()` → `diskStorage`** (`routes/resources.ts:45–46`) into a temp
+      dir under the data directory, cleaned on both success and failure. A 200MB upload
+      currently spikes RSS by its full size inside the process that also holds the model.
+- [ ] **Verify — numbers, not feelings**, written to NOTES.md against its existing 214MB RSS
+      baseline (NOTES.md:2127). Opening 50 books in the shelf and returning to the Desk
+      leaves GPU texture count bounded (measure both before and after). A 12-hour idle soak
+      after one audio playback returns RSS to within a stated margin of its pre-playback
+      value. A 150MB PDF import does not spike RSS by 150MB.
+
+### M47 — Desktop: packaging and the native matrix
+
+- [ ] **`electron-builder`**, targets `dmg` (arm64, x64) and `AppImage` (x64).
+- [ ] **Prune `onnxruntime-node`'s foreign platforms** — it ships every platform in one
+      package; 208MB → 31MB (darwin/arm64) or 43MB (linux/x64). ⚠️ Express it as a target
+      **list**, not a deletion, so Windows stays cheap to add later.
+- [ ] **`asarUnpack` + the `app.asar` → `app.asar.unpacked` rewrite** for
+      `@napi-rs/canvas`'s `.node` and `wordnet-db`'s dataset. Unpacking without rewriting
+      resolves to a path that no longer has the file.
+- [ ] **Electron-ABI rebuild for `better-sqlite3`.** N-API is ABI-stable, so
+      `onnxruntime-node` (`bin/napi-v3/…`) and `@napi-rs/canvas` cross unchanged; this one
+      does not. ⚠️ It fails **lazily** — `import()` resolves and only `new Database()`
+      throws — so a verification that stops at "the app launched" has not tested it.
+- [ ] **Exclude `sharp`, then re-run the license audit.** Zero direct imports in this
+      codebase; it is an optional peer of `@huggingface/transformers` and Kokoro is
+      audio-only. SHIPPING.md step 2 warns LGPL-3.0 `@img/sharp-libvips-*` stops being inert
+      at Desktop because a bundle redistributes the binary — excluding it means the
+      relinking obligation never attaches. ⚠️ **Check, don't assume**: confirm `transformers`
+      does not lazily require it on the Kokoro path. If it does, the obligation is real and
+      gets its own decisions.md entry.
+- [ ] **GitHub Actions matrix** — macOS arm64, macOS x64, Linux x64. CI work, not laptop
+      work: a `better-sqlite3` built on the operator's Linux box is not a macOS artifact.
+- [ ] **Verify:** an installer produced **by CI, not by the operator's laptop**, on a machine
+      with no Node, no pnpm and no Claude CLI: an EPUB imports (proves `better-sqlite3`
+      bound), a PDF page rasterizes (proves canvas unpacked), **Define returns a real
+      WordNet definition** (proves the dictionary is alive rather than silently `null`), and
+      audio plays one paragraph (proves ONNX survived pruning).
+
+### M48 — Desktop: signing, notarization, keys and updates
+
+⚠️ Gated on the Apple enrollment started in M44. ~$99/yr.
+
+- [ ] **Developer ID Application cert, hardened runtime, `notarytool submit --wait`,
+      staple.** Cert `.p12` + password + App Store Connect API key into CI secrets.
+- [ ] **Entitlements.** Electron needs `com.apple.security.cs.allow-jit` and
+      `allow-unsigned-executable-memory`. Spawning `claude`/`codex` may additionally need
+      `allow-dyld-environment-variables` and/or `disable-library-validation` — the most
+      likely surprise in this arc, and it interacts with M45's `cliPath` work. Find out by
+      testing a notarized build, not by reading a table.
+- [ ] **Keys move to the OS keychain.** `provider_profiles.anthropic_api_key` /
+      `openai_api_key` are plaintext (`migrations.ts:330,334`) — defensible on the
+      operator's own disk, not in software handed to someone else. `safeStorage` behind the
+      existing settings seam, with a migration for existing rows and a fallback for a
+      platform with no keyring (a headless Linux AppImage has none).
+- [ ] **`electron-updater` against GitHub Releases.** Without it, shipping a bugfix means
+      asking everyone to re-download.
+- [ ] **A real name and icon.** SHIPPING.md makes the Desktop rung the name's deadline, and
+      notes "Marginalia" is taken by at least one reading-adjacent project. **This is the
+      last milestone at which the name is free** — after it, it is in an installer, a bundle
+      id, a keychain entry and an update feed.
+- [ ] **Verify:** `spctl -a -vvv` passes on a Mac that has never seen the source, against a
+      DMG **downloaded from a GitHub Release** — by downloading and double-clicking, not by
+      reading the build log. A subsequent release is picked up by `electron-updater` and
+      applied. An existing profile's API key is readable after the keychain migration and is
+      **no longer present in plaintext in the database**, checked by reading the row.
+- [ ] **The rung, actually reached.** SHIPPING.md rule 2: *a rung is not reached until
+      someone who is not the operator has used it.* Clean machine, downloaded installer,
+      imports an EPUB, answers a question, publishes to a vault, survives a restart. Until
+      then this arc is built, not shipped.
+
 ---
 
 ## Parked (post-v1.5) — recorded so they aren't relitigated

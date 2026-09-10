@@ -247,6 +247,51 @@ local math-OCR model or a session with budget to hand-roll the ONNX Runtime IO c
 directly against one of these two checkpoints. Full spike notes: NOTES.md "M43 §E1"
 (2026-09-09, second entry).
 
+**Amended 2026-09-10 (M43 §G/§H), from a fresh operator sign-off pass against the real
+"Spatiotemporal Composability" PDF, three findings.** None of these touch the OCR
+question above — they're about the fidelity and coverage of the rasterized-PNG path
+itself, the thing that's actually shipping.
+
+*Crop padding and piecewise-band growth (§G1).* The crop rect was a bare union of the
+equation band's own text-item boxes, with no margin — ascender/descender/sub-superscript
+overshoot a glyph's reported box doesn't fully cover got cropped flush, and a piecewise
+function's case-row lines (ordinary item density, between two genuinely dense lines)
+broke band growth at the first one, truncating the crop to only the dense lines actually
+captured. Fixed two ways: the box now pads by a fraction of the band's own tallest item
+(`VERTICAL_PAD_FRACTION`/`HORIZONTAL_PAD_FRACTION`, `equations.ts`), clamped to the page;
+and band growth tolerates up to `PIECEWISE_MAX_GAP_LINES` consecutive non-qualifying
+lines before concluding the band really ended (the same shape §3.5's table amendment
+below already uses for a wrapped column-1 label), trimming back to the last genuinely
+qualifying line rather than running away into unrelated prose.
+
+*A missed equation, found live (§G2).* Equation (38) in the real PDF went uncaptured: its
+number sat on its own short trailing line (garbled prime/quote-mark artifacts plus
+`(38)`), separate from the equation's own text — so neither the number-bearing runt line
+(no math-Unicode content of its own) nor the equation's own line (no trailing number of
+its own) passed `isEquationLine` on its own. A runt line matching
+`/^[^\p{L}\p{N}]*\(\d+\)\s*$/u` immediately after a math-dense line now counts as
+carrying *that* line's number, and gets absorbed into the band so it doesn't leak into
+`resource_text` as orphaned prose. Separately: plain-block Greek (`Γ`, `σ`, …,
+U+0370–U+03FF) was entirely outside `MATH_UNICODE_RANGES` — only *styled*
+Unicode-math-alphanumeric Greek (the U+1D400–U+1D7FF plane) counted — understating
+density on any line using ordinary Greek letters, which display equations do constantly.
+Added; safe because the trailing-number requirement (2026-09-09's own reasoning) remains
+the false-positive guard regardless of what widens the density fraction.
+
+*Math-dense long-form blocks, e.g. lemmas (§H, new).* A lemma or corollary heavy with
+Greek/math notation reads as garbled prose in `resource_text` for the same reason a
+display equation does, but carries no equation number to anchor detection on and no
+per-line item-density signature `isEquationLine` can key on. `detectMathDenseBlocks`
+(`equations.ts`) is a second, additive pass over whatever `detectEquationBands` didn't
+already claim: a contiguous run of lines (paragraph-bounded, same gap-ratio rule
+`lines.ts`'s own paragraph splitter uses) whose combined length clears
+`MATH_BLOCK_MIN_CHARS` (150) and whose combined math-glyph density clears
+`MATH_BLOCK_DENSITY_THRESHOLD` (0.3 — roughly double the equation rule's 0.15, since
+there's no number here to bound false positives) is rasterized exactly like an equation
+band: same crop/pad mechanism, same "nothing enters `resource_text`" rule. A merely
+wordy paragraph that names a variable once or twice stays text, by design — length and
+density both have to clear the bar, never either alone.
+
 ### 3.5 Figures, tables, and the images that survive
 
 A **figure region** is a rectangle of the page containing no text items, bounded by
@@ -288,6 +333,29 @@ rule to it properly: the table's row text is excluded from `resource_text`, only
 caption and the rasterized image remain. **The cost, accepted with eyes open:** a
 `document` digest's `findings`/`methods` fields cannot quote a table's data — same
 trade-off already accepted for equations.
+
+**Amended 2026-09-10 (M43 §I), from the same operator pass as §3.4's above.** A
+component-lifecycle state diagram (vector boxes/arrows, its own text labels — "L-Iter",
+"Inactive L-Divert Active", …) went uncaptured entirely, rendered as a flat, disconnected
+list of its label text with the diagram itself never rasterized. Root cause: despite this
+section's "no text items" phrasing, `detectFigureRegions` never scanned a candidate
+region for text at all — it only measured the *y-gap* to the single line immediately
+adjacent to the caption, and a diagram's own labels (ordinary `PdfLine`s at the diagram's
+positions) leave little to no such gap, so the region never cleared `MIN_AREA_FRACTION`
+and was silently dropped. "No text items" is relaxed to "no *dense* text": `figures.ts`
+now walks outward from the caption, away from the body-text side, absorbing short
+(`LABEL_MAX_CHARS`), label-shaped lines up to `FIGURE_MAX_REGION_FRACTION` of the page —
+stopping at the first line that reads as real body prose, or at that cap. `FigureRegion`
+gained `startIndex`/`endIndex` (mirroring `TableRegion`'s own shape exactly) so the swept
+label lines are excluded from `resource_text` the same way a table's row lines already
+are, once they're captured into the image instead. A genuinely blank region (no labels to
+sweep) is unaffected — `startIndex === endIndex`, today's pre-existing behaviour.
+**Real vector-graphics detection (walking pdf.js's operator list to find drawn-path
+bounding boxes) was considered and declined** — real new-subsystem work for uncertain
+payoff, against this same arc's own precedent (M43 §E1 declined a smaller OCR spike on
+an equivalent cost/benefit call). The sparse-text heuristic above is honestly a heuristic,
+not a positive "this is a diagram" signal — accepted the same way the caption-adjacency
+test it extends already was.
 
 ---
 
@@ -775,6 +843,40 @@ purely through `capabilities`, never a format check in `ReaderView` (settled dec
 17c). The capability-profile table above still holds for the paginated exception state;
 add a `"scroll"` row for the new default with `spread: ✗` (no gutter to spread across,
 same as continuous already reads today).
+
+**Amended 2026-09-10 (M43 §J), a real zoom-jump found live in the model just above.**
+`advance`/`pagesAcross` both keyed off `userScale === null` verbatim — *any* zoom-in at
+all, even the first discrete `ZOOM_STEP` (1.2×) tick, dropped a legible spread straight to
+single-page scroll, with no headroom at all. (This is the bug M43 §0.1 had already
+root-caused and left for this rewrite.) A spread now stays 2-up/paginated through
+`SPREAD_ZOOM_HEADROOM` (1.25× the spread's own fit scale, `pdfLayout.ts`) before falling
+back — the pane's paginated wrapper gains `overflow: auto` for that range (same idiom
+`relayout()`'s own continuous-scroll host already uses), so a spread zoomed within
+headroom that no longer fits edge-to-edge scrolls horizontally rather than being clipped.
+Crossing back out of the headroom (further zoom, a narrower pane, or the fit-mode toggle)
+drops to continuous scroll exactly as the un-widened model already did. `ReaderView.tsx`
+shows a transient "Switched to one-page scroll" notice anchored at the zoom slider,
+fired only on the zoom-caused edge of that transition (never an explicit fit-mode toggle
+click or a resize, both already self-explanatory) and auto-dismissing after a few
+seconds.
+
+**Amended 2026-09-10 (M43 §K), the operator's "choppy" zoom report.** Two contributing
+causes, both in `PdfRenderer.ts`. First: `applyZoomPreview`'s CSS-transform live preview
+— the thing that makes a zoom gesture visibly interpolate before the debounced real
+re-render lands — only ever had a node to scale in the rare paginated-spread state; in the
+now-default continuous scroll it was a documented no-op, so a drag/pinch/slider-scrub
+showed nothing at all until `ZOOM_COMMIT_DEBOUNCE_MS` (120ms) elapsed, then jumped once.
+It now scales each currently-mounted page's own div in place (around its own center),
+leaving `scrollHost`'s scroll position and column height untouched — cheaper than
+compensating a whole-column transform's scroll anchor, at the accepted cost of a mounted
+page's placeholder siblings not resizing to match until the real re-render lands. Second:
+a superseded `page.render()` call (e.g. mid zoom-drag) was never cancelled — pdf.js kept
+rasterizing an already-obsolete frame to completion, wasting CPU/GPU time and, since
+pdf.js serializes renders into a canvas's own 2D context, potentially delaying the render
+that actually mattered. `renderPageInto` now tracks the in-flight `RenderTask` per page
+index and cancels a still-running one before starting a new one for the same page.
+Touch-pinch's `onPinchPreview` (previously calling `setZoomScale` on every raw
+`touchmove`, uncapped) is now batched to at most once per animation frame.
 
 ---
 
