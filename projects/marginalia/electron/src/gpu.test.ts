@@ -49,6 +49,25 @@ describe("isSoftwareRendering", () => {
     ).toBe(false);
   });
 
+  // Found live on a real MacBook Air: the first version of this function
+  // also checked `opengl` and `rasterization`, and both false-positived on
+  // fully accelerated hardware — degrading a real GPU to the 2D fallback.
+  it("ignores opengl and rasterization — both legitimately report 'software'-ish on real, accelerated hardware", () => {
+    expect(
+      isSoftwareRendering({
+        gpu_compositing: "enabled",
+        webgl: "enabled",
+        webgl2: "enabled",
+        // macOS: Chromium runs WebGL through ANGLE-on-Metal, not native GL,
+        // so opengl itself is legitimately off regardless of GPU health.
+        opengl: "unavailable_off",
+        // A compositor-tile detail, independent of whether WebGL itself is
+        // accelerated.
+        rasterization: "software",
+      }),
+    ).toBe(false);
+  });
+
   it("is false against an empty status object", () => {
     expect(isSoftwareRendering({})).toBe(false);
   });

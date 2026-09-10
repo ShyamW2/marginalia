@@ -13,14 +13,21 @@
  * and do not otherwise — so a substring match across the keys that matter to
  * a WebGL canvas is a direct read of the thing this exists to detect, not a
  * guess.
+ *
+ * ⚠️ **Only `gpu_compositing`/`webgl`/`webgl2` — found live, on a real Mac,
+ * after this over-included two more.** The first version also checked
+ * `opengl` and `rasterization`, and it false-positived on real, accelerated
+ * hardware (a MacBook Air): macOS legitimately reports `opengl` as
+ * disabled/unavailable regardless of GPU health — Chromium runs WebGL there
+ * through ANGLE-on-Metal, not native GL, so `opengl` says nothing about
+ * whether *WebGL* is accelerated — and `rasterization` can legitimately be
+ * `"software"` (a compositor-tile detail) on a machine whose WebGL context
+ * is fully hardware-accelerated. Checking either meant a real GPU got
+ * degraded to the 2D fallback it was never meant to reach. The three kept
+ * here are the ones that actually govern whether a WebGL canvas itself is
+ * accelerated.
  */
 export function isSoftwareRendering(featureStatus: Record<string, string>): boolean {
-  const relevant = [
-    featureStatus.gpu_compositing,
-    featureStatus.webgl,
-    featureStatus.webgl2,
-    featureStatus.opengl,
-    featureStatus.rasterization,
-  ];
+  const relevant = [featureStatus.gpu_compositing, featureStatus.webgl, featureStatus.webgl2];
   return relevant.some((value) => typeof value === "string" && /software/i.test(value));
 }
