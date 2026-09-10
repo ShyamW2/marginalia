@@ -2734,6 +2734,24 @@ to package the app, it is a misdiagnosis — write it to NOTES.md rather than sh
 
 ### M45 — Desktop: the Electron shell
 
+⚠️ **Web/browser parity is not automatic from here through M48, and it's cheap to lose by
+accident.** Every task in this milestone and the three after it wraps the same server + SPA
+that already runs today in a plain browser (SHIPPING.md's Local and Private rungs) — Electron
+is packaging, not a second product (CLAUDE.md settled decision 4: "the product does not
+change"). The discipline that keeps that true: an Electron-only capability is **feature-
+detected and degraded gracefully** (`process.versions.electron`, `resourcesPath`, a capability
+flag passed down — the exact pattern `resolveResourceDir()`/`resolveUnpackedPath()` set in M44,
+paths.ts), never an `if (electron) { … } else { … }` branch that changes product behaviour for
+a plain browser tab that lacks whatever the branch is checking for. The GPU-software-rendering
+check below is the test case built into this milestone: it's a **fourth signal** into
+`Scene3D.tsx`'s existing `canRender` gate, alongside `reducedMotion`/`contextLost` — not a new,
+independent path — so a plain browser, which never sets it, keeps rendering exactly as it does
+today. Treat "still works in a plain browser, unpackaged" as its own acceptance leg on every
+task from here through M48, not something checked once at the end. And if a regression here
+ever does slip through: that is a bug in the change, not a tradeoff to manage by how it's
+committed — fix it forward with a commit that says what broke and for whom, never squashed
+silently into the feature commit that caused it.
+
 - [ ] **Main process, window, menu.** `BrowserWindow`, single-instance lock, native menu,
       window-state persistence.
 - [ ] **Express runs in a `utilityProcess`, not in main.** A `better-sqlite3` ABI fault
