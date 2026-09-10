@@ -11,7 +11,7 @@ import { getDb } from "../db.js";
 import { importEpub } from "../library/importResource.js";
 import {
   ensureReflowEpubPath,
-  hashPdfBuffer,
+  hashPdfFile,
   importPdf,
   PdfInvalidError,
   PdfPasswordError,
@@ -40,11 +40,22 @@ import { deleteResourceAudioCache } from "../audio/render.js";
 import { digestMarkdownPath } from "../digest/markdown.js";
 import { getShowThematicQuotes } from "../digest/thematicQuoteVisibility.js";
 import { startJob } from "../jobs/registry.js";
+import { UPLOADS_DIR } from "../paths.js";
 
+// M46 (DESKTOP.md §4.3): a 200MB import used to land as a single in-memory
+// `Buffer` on `req.file`, spiking RSS by its full size inside the same
+// process that holds the ONNX model. `diskStorage` streams the upload
+// straight to `UPLOADS_DIR` instead; a handler reads it back only when it's
+// actually ready to import, and `cleanupUpload` below removes it whether
+// that import succeeds or fails.
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({ destination: UPLOADS_DIR }),
   limits: { fileSize: 200 * 1024 * 1024 },
 });
+
+function cleanupUpload(filePath: string): void {
+  fs.rm(filePath, { force: true }, () => {});
+}
 
 export const resourcesRouter: Router = Router();
 
@@ -58,21 +69,25 @@ function pdfImportErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : "PDF import failed";
 }
 
-resourcesRouter.post("/", upload.single("file"), (req, res) => {
+resourcesRouter.post("/", upload.single("file"), async (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: "missing_file" });
     return;
   }
   const name = req.file.originalname.toLowerCase();
+  const uploadPath = req.file.path;
 
   if (name.endsWith(".epub")) {
     try {
-      const resource = importEpub(getDb(), req.file.buffer);
+      const buffer = fs.readFileSync(uploadPath);
+      const resource = importEpub(getDb(), buffer);
       res.status(200).json(resource);
     } catch (err) {
       res.status(422).json({
         error: err instanceof Error ? err.message : "import_failed",
       });
+    } finally {
+      cleanupUpload(uploadPath);
     }
     return;
   }
@@ -81,31 +96,32 @@ resourcesRouter.post("/", upload.single("file"), (req, res) => {
     // M39 §C5/PDF.md §2.1: PDF extraction walks every page, detects columns
     // and rasterizes regions — expensive enough that a 400-page PDF would
     // block the single-process server (and therefore reading) for the
-    // length of the import, so it runs as a job. The resource id is a pure
-    // hash of bytes already in hand, so it's known before extraction even
-    // starts and can seed the job's `resourceId` right away.
+    // length of the import, so it runs as a job. M46 (DESKTOP.md §4.3): the
+    // resourceId hash streams off disk rather than forcing an early full
+    // buffer read, and the buffer extraction actually needs is read once,
+    // inside the job, right when it's used — not held in memory for the
+    // request's whole life the way `req.file.buffer` used to be.
     const db = getDb();
-    const buffer = req.file.buffer;
-    const resourceId = hashPdfBuffer(buffer);
-    const job = startJob(
-      "pdf-import",
-      resourceId,
-      req.file.originalname,
-      async (signal, reportProgress) => {
-        try {
-          await importPdf(db, buffer, req.file!.originalname, {
-            signal,
-            onPage: (current, total) => reportProgress({ current, total, message: `Extracting page ${current} of ${total}` }),
-          });
-        } catch (err) {
-          throw new Error(pdfImportErrorMessage(err));
-        }
-      },
-    );
+    const originalname = req.file.originalname;
+    const resourceId = await hashPdfFile(uploadPath);
+    const job = startJob("pdf-import", resourceId, originalname, async (signal, reportProgress) => {
+      try {
+        const buffer = fs.readFileSync(uploadPath);
+        await importPdf(db, buffer, originalname, {
+          signal,
+          onPage: (current, total) => reportProgress({ current, total, message: `Extracting page ${current} of ${total}` }),
+        });
+      } catch (err) {
+        throw new Error(pdfImportErrorMessage(err));
+      } finally {
+        cleanupUpload(uploadPath);
+      }
+    });
     res.status(202).json({ jobId: job.id });
     return;
   }
 
+  cleanupUpload(uploadPath);
   res.status(400).json({ error: "unsupported_format" });
 });
 

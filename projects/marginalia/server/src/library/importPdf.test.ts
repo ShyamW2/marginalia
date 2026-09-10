@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import crypto from "node:crypto";
-import { hashPdfBuffer } from "./importPdf.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { hashPdfBuffer, hashPdfFile } from "./importPdf.js";
 import { EXTRACTOR_VERSION } from "./pdf/version.js";
 
 /**
@@ -30,5 +33,18 @@ describe("hashPdfBuffer", () => {
 
   it("differs for different bytes", () => {
     expect(hashPdfBuffer(Buffer.from("a"))).not.toBe(hashPdfBuffer(Buffer.from("b")));
+  });
+});
+
+// M46 (DESKTOP.md §4.3): the upload route hashes off disk, not off an
+// already-in-memory buffer — this is the one place that formula has to stay
+// provably identical between the two paths.
+describe("hashPdfFile", () => {
+  it("matches hashPdfBuffer for the same bytes, read from disk instead of memory", async () => {
+    const buffer = Buffer.from("streamed from disk, not buffered in RAM");
+    const filePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "hash-pdf-file-")), "upload.pdf");
+    fs.writeFileSync(filePath, buffer);
+
+    await expect(hashPdfFile(filePath)).resolves.toBe(hashPdfBuffer(buffer));
   });
 });

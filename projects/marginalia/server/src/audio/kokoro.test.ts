@@ -92,3 +92,72 @@ describe("KokoroEngine error mapping", () => {
     });
   });
 });
+
+describe("KokoroEngine idle unload (M46, DESKTOP.md §4.2)", () => {
+  it("disposes the ONNX session and reloads after 15 minutes idle", async () => {
+    vi.useFakeTimers();
+    const dispose = vi.fn().mockResolvedValue([]);
+    const fromPretrained = vi
+      .fn()
+      .mockResolvedValue({ model: { dispose }, voices: { af_heart: { name: "Heart", language: "en-us", gender: "Female" } } });
+    vi.doMock("kokoro-js", () => ({ KokoroTTS: { from_pretrained: fromPretrained } }));
+    const { KokoroEngine } = await freshKokoroModule();
+    const engine = new KokoroEngine("/tmp/does-not-matter");
+
+    await engine.voices();
+    expect(fromPretrained).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+    expect(dispose).toHaveBeenCalledTimes(1);
+
+    await engine.voices();
+    expect(fromPretrained).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("does not unload while still within the idle window", async () => {
+    vi.useFakeTimers();
+    const dispose = vi.fn().mockResolvedValue([]);
+    const fromPretrained = vi
+      .fn()
+      .mockResolvedValue({ model: { dispose }, voices: { af_heart: { name: "Heart", language: "en-us", gender: "Female" } } });
+    vi.doMock("kokoro-js", () => ({ KokoroTTS: { from_pretrained: fromPretrained } }));
+    const { KokoroEngine } = await freshKokoroModule();
+    const engine = new KokoroEngine("/tmp/does-not-matter");
+
+    await engine.voices();
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await engine.voices();
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+    // Each access resets the idle window, so 20 minutes of continued use
+    // never crosses the 15-minute idle threshold in one uninterrupted gap.
+    expect(dispose).not.toHaveBeenCalled();
+    expect(fromPretrained).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("disposes the old session when the model path changes, not just on idle", async () => {
+    vi.useFakeTimers();
+    const disposeA = vi.fn().mockResolvedValue([]);
+    const disposeB = vi.fn().mockResolvedValue([]);
+    const voices = { af_heart: { name: "Heart", language: "en-us", gender: "Female" } };
+    const fromPretrained = vi
+      .fn()
+      .mockResolvedValueOnce({ model: { dispose: disposeA }, voices })
+      .mockResolvedValueOnce({ model: { dispose: disposeB }, voices });
+    vi.doMock("kokoro-js", () => ({ KokoroTTS: { from_pretrained: fromPretrained } }));
+    const { KokoroEngine } = await freshKokoroModule();
+
+    const engineA = new KokoroEngine("/tmp/path-a");
+    await engineA.voices();
+    expect(disposeA).not.toHaveBeenCalled();
+
+    const engineB = new KokoroEngine("/tmp/path-b");
+    await engineB.voices();
+
+    expect(disposeA).toHaveBeenCalledTimes(1);
+    expect(fromPretrained).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+});

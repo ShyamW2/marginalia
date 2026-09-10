@@ -16,6 +16,54 @@ const DTYPE = "q8"; // smallest/fastest quantization that still sounds fine; SPE
 
 let modelPromise: Promise<KokoroTTS> | null = null;
 let modelPathUsed: string | null = null;
+// The resolved model, tracked separately from `modelPromise` so idle unload
+// (below) only ever disposes a session that actually finished loading —
+// never one still mid-download.
+let resolvedModel: KokoroTTS | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+// M46 (DESKTOP.md §4.2): a loaded Kokoro session is 200–400MB resident and,
+// unlike everything else in this process, never released on its own — one
+// paragraph of audio at 09:00 is still resident at midnight. 15 minutes is
+// long enough to survive an ordinary pause inside a reading session
+// (looking something up, a short break) without reloading, short enough
+// that stepping away — the actual memory-budget case (NOTES.md) — frees it
+// well within the day. Orthogonal to `modelPathUsed`'s settings-change
+// invalidation below; the two share `resolvedModel`/`modelPromise` but
+// never fire from the same call site.
+const IDLE_UNLOAD_MS = 15 * 60 * 1000;
+
+/** Releases the loaded ONNX session (`.dispose()` — letting the JS object
+ * go out of scope does not free onnxruntime's own native allocation, same
+ * caveat as the GPU textures in `scene3d/`) and resets state so the next
+ * request reloads from scratch. Exported for the idle timer and for a
+ * settings-driven path change (`loadModel` below) to share one path rather
+ * than two slightly different ones. */
+async function unload(): Promise<void> {
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  const model = resolvedModel;
+  resolvedModel = null;
+  modelPromise = null;
+  modelPathUsed = null;
+  if (model) {
+    try {
+      await model.model.dispose();
+    } catch {
+      // Best-effort: the process is letting go of the reference regardless,
+      // and a failed dispose here shouldn't block the next load.
+    }
+  }
+}
+
+function scheduleIdleUnload(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => void unload(), IDLE_UNLOAD_MS);
+  // Never the reason the process stays alive — this is cleanup, not work.
+  idleTimer.unref?.();
+}
 
 /** `af_heart` -> american/female; `bm_george` -> british/male. Kokoro's own
  * `voices` metadata gives `gender` ("Female"/"Male") and a BCP-47-ish
@@ -39,20 +87,39 @@ async function loadModel(modelPath: string): Promise<KokoroTTS> {
   // A different model path than last time (a setting change) invalidates
   // the cached load — same "settings changed, reload" rule the provider
   // registry follows, just with a heavier resource behind it.
-  if (modelPromise && modelPathUsed === modelPath) return modelPromise;
+  if (modelPromise && modelPathUsed === modelPath) {
+    scheduleIdleUnload();
+    return modelPromise;
+  }
+
+  // The path is changing (or nothing has loaded yet) — a stale session from
+  // the old path must not survive alongside the new one.
+  if (idleTimer) {
+    clearTimeout(idleTimer);
+    idleTimer = null;
+  }
+  const stale = resolvedModel;
+  resolvedModel = null;
+  if (stale) void stale.model.dispose();
 
   transformersEnv.cacheDir = modelPath;
   modelPathUsed = modelPath;
-  modelPromise = KokoroTTS.from_pretrained(MODEL_ID, { dtype: DTYPE, device: "cpu" }).catch((err) => {
-    modelPromise = null;
-    // AUDIO.md's native-binding hazard: onnxruntime-node failing to load at
-    // all (ABI mismatch) and a network/disk failure fetching weights look
-    // different to a user, so they get different codes rather than one
-    // generic "audio broken".
-    const message = err instanceof Error ? err.message : String(err);
-    const looksLikeDownloadFailure = /fetch|ENOTFOUND|network|404|ETIMEDOUT/i.test(message);
-    throw new TTSError(looksLikeDownloadFailure ? "model_download_failed" : "model_unavailable", message);
-  });
+  modelPromise = KokoroTTS.from_pretrained(MODEL_ID, { dtype: DTYPE, device: "cpu" })
+    .then((model) => {
+      resolvedModel = model;
+      scheduleIdleUnload();
+      return model;
+    })
+    .catch((err) => {
+      modelPromise = null;
+      // AUDIO.md's native-binding hazard: onnxruntime-node failing to load at
+      // all (ABI mismatch) and a network/disk failure fetching weights look
+      // different to a user, so they get different codes rather than one
+      // generic "audio broken".
+      const message = err instanceof Error ? err.message : String(err);
+      const looksLikeDownloadFailure = /fetch|ENOTFOUND|network|404|ETIMEDOUT/i.test(message);
+      throw new TTSError(looksLikeDownloadFailure ? "model_download_failed" : "model_unavailable", message);
+    });
   return modelPromise;
 }
 

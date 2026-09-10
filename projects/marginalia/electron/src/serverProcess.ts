@@ -82,3 +82,50 @@ export function startServer(
     });
   });
 }
+
+const MEMORY_CHECK_INTERVAL_MS = 10_000;
+
+/**
+ * M46 (DESKTOP.md §4): "a runaway server heap fails loudly instead of
+ * quietly swapping the machine", enforced by polling real RSS rather than
+ * a V8 heap cap.
+ *
+ * ⚠️ **`execArgv`'s `--max-old-space-size` was tried first and does not
+ * work here — verified live, not assumed.** `utilityProcess.fork`'s
+ * `execArgv` is echoed back on `process.execArgv` inside the child, which
+ * looks like it took, but neither `v8.getHeapStatistics().heap_size_limit`
+ * nor `--expose-gc`'s `global.gc` reflect it: Electron 40's utility
+ * process only wires a small allowlist of flags through to the actual V8
+ * isolate, and general V8 flags aren't on it. This is also arguably the
+ * more relevant number anyway — DESKTOP.md §4's own framing is that
+ * ONNX's native allocation, entirely outside the JS heap, is the actual
+ * risk here, and a heap-only cap wouldn't have caught it.
+ *
+ * Polls `getMetrics()` (`app.getAppMetrics`, injected so this stays
+ * Electron-import-free and unit-testable) for `child`'s own
+ * `workingSetSize` and calls `onExceeded` the first time it crosses
+ * `maxRssMb`. Returns a stop function; the caller owns killing the child
+ * and reporting the failure — this only watches.
+ */
+export function watchServerMemory(
+  child: UtilityProcess,
+  maxRssMb: number,
+  getMetrics: () => Array<{ pid: number; memory: { workingSetSize: number } }>,
+  onExceeded: (rssMb: number) => void,
+): () => void {
+  let firedOnce = false;
+  const timer = setInterval(() => {
+    if (firedOnce) return;
+    const pid = child.pid;
+    if (pid === undefined) return;
+    const metric = getMetrics().find((m) => m.pid === pid);
+    if (!metric) return;
+    const rssMb = metric.memory.workingSetSize / 1024;
+    if (rssMb > maxRssMb) {
+      firedOnce = true;
+      onExceeded(rssMb);
+    }
+  }, MEMORY_CHECK_INTERVAL_MS);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}

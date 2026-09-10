@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
 import { CanvasTexture, ImageLoader, SRGBColorSpace, Texture } from "three";
+import { LruCache } from "./lruCache.js";
 
 const loader = new ImageLoader();
 // Keyed by resource id: a shelf mounts every book at once, and books remount
 // on re-sort/re-filter — without a cache each remount would re-request and
-// re-upload the same cover. Never evicted; the library is small enough
-// (SPEC.md) that this is bounded by "how many books exist", not unbounded.
-const cache = new Map<string, Texture>();
+// re-upload the same cover.
+//
+// M46 (DESKTOP.md §4.1): this used to be "never evicted; the library is
+// small enough" — the bound that stops holding once it isn't. 120 matches
+// `spineTexture.ts`'s cap (the two are looked at together on the same
+// shelf); `.dispose()` on evict for the same reason a `CanvasTexture`'s GPU
+// upload needs it there.
+const MAX_CACHED_COVERS = 120;
+const cache = new LruCache<string, Texture>(MAX_CACHED_COVERS, (texture) => texture.dispose());
 
 /**
  * The largest a cover is ever uploaded at, in texels.

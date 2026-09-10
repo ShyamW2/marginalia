@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { fallbackPalette, spinePaletteFromPixels, type SpinePalette } from "./coverPalette.js";
 import { useCoverTexture } from "./useCoverTexture.js";
+import { LruCache } from "./lruCache.js";
 
 // How large the cover is sampled at. The extraction quantizes to 4 bits a
 // channel anyway (`coverPalette.ts`), so a thumbnail carries every bit of
@@ -8,10 +9,18 @@ import { useCoverTexture } from "./useCoverTexture.js";
 const SAMPLE_WIDTH = 48;
 const SAMPLE_HEIGHT = 72;
 
-// Keyed by resource id and kept for the session, like the cover cache it reads
-// through: the answer cannot change (covers are immutable on import, settled
-// decision 5), and a shelf remounts every book on every view change.
-const cache = new Map<string, SpinePalette>();
+// Keyed by resource id, like the cover cache it reads through: the answer
+// cannot change (covers are immutable on import, settled decision 5), and a
+// shelf remounts every book on every view change.
+//
+// M46 (DESKTOP.md §4.1): bounded, but with no `onEvict` — unlike
+// `spineTexture.ts`/`useCoverTexture.ts`, a `SpinePalette` is a handful of
+// plain RGB values, not a GPU resource. Giving it a `.dispose()` step by
+// reflex, "because the other two caches have one", would be following the
+// letter of the fix and not its reasoning. Same 120 cap as the cover cache
+// it's derived from, so the two don't drift apart on the same shelf.
+const MAX_CACHED_PALETTES = 120;
+const cache = new LruCache<string, SpinePalette>(MAX_CACHED_PALETTES);
 
 function sample(image: CanvasImageSource): SpinePalette | null {
   const canvas = document.createElement("canvas");

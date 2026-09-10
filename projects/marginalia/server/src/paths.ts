@@ -84,6 +84,14 @@ export const MODELS_DIR = path.join(DATA_DIR, "models");
 // M21 (AUDIO.md): the rendered-audio cache, content-addressed by
 // resource/cast hash/spine index — safe to delete at any time.
 export const AUDIO_DIR = path.join(DATA_DIR, "audio");
+// M46 (DESKTOP.md §4.3): where `multer.diskStorage` lands an upload before
+// import reads it back — under the data directory rather than the OS temp
+// dir so it survives a `MARGINALIA_DATA_DIR` override and is on the same
+// filesystem as `LIBRARY_DIR` (a same-volume rename is free; a cross-volume
+// one silently copies). Emptied at every server start (`ensureDataDirs`
+// only creates it) — a leftover here after a crash is safe to discard,
+// never something to resume from.
+export const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 
 /**
  * App resources (today, just the built web SPA) versus user data (library,
@@ -129,4 +137,9 @@ export function ensureDataDirs(): void {
   fs.mkdirSync(DIGEST_DIR, { recursive: true });
   fs.mkdirSync(MODELS_DIR, { recursive: true });
   fs.mkdirSync(AUDIO_DIR, { recursive: true });
+  // Swept on every start, not just created: `UPLOADS_DIR` only ever holds a
+  // file mid-upload, so anything found here was orphaned by a crash or a
+  // kill -9 between the write and the cleanup that normally follows it.
+  fs.rmSync(UPLOADS_DIR, { recursive: true, force: true });
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }

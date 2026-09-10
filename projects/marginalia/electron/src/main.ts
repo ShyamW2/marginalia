@@ -2,7 +2,7 @@ import path from "node:path";
 import { app, BrowserWindow, Menu, dialog, screen, shell } from "electron";
 import { buildMenu } from "./menu.js";
 import { detectSoftwareRendering } from "./gpuDetect.js";
-import { startServer, ServerStartupError, type ServerHandle } from "./serverProcess.js";
+import { startServer, watchServerMemory, ServerStartupError, type ServerHandle } from "./serverProcess.js";
 import { clampToDisplays, loadWindowState, saveWindowState, type WindowState } from "./windowState.js";
 
 /**
@@ -16,6 +16,21 @@ import { clampToDisplays, loadWindowState, saveWindowState, type WindowState } f
 
 // electron/dist/main.js -> electron/dist -> electron -> projects/marginalia
 const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
+
+// M46 (DESKTOP.md §4, NOTES.md's memory budget): caps the server
+// `utilityProcess`'s real RSS, polled via `app.getAppMetrics()`
+// (`watchServerMemory`) rather than a V8 heap flag. `execArgv`'s
+// `--max-old-space-size` was tried first — see `serverProcess.ts`'s own
+// doc comment for the live verification that Electron 40 doesn't actually
+// apply it to a utility process. RSS is the more honest target anyway:
+// DESKTOP.md §4.4's measured baseline is 214MB server RSS, and §4 puts the
+// Kokoro session's own native ONNX allocation (outside the JS heap
+// entirely) at 200–400MB on top of that once audio has played — so normal,
+// legitimate operation can reach ~600MB. 1536MB is generous headroom over
+// that ceiling, while still being small enough next to a typical machine's
+// RAM that a true runaway (an unbounded array, a leaked buffer) is caught
+// as a crash report rather than left to swap the machine.
+const SERVER_MAX_RSS_MB = 1536;
 
 /** Where the server's compiled entry point lives. Packaged layout (M47's
  * `extraResource`) is `<resourcesPath>/server/index.js`; unpackaged (this
@@ -164,6 +179,31 @@ async function launch(): Promise<void> {
       app.quit();
     }
   });
+
+  // M46: the loud-failure half of the memory budget. `stopMemoryWatch`
+  // clears the poll on any path that ends this server (a clean quit, or
+  // the ordinary crash handler above already having fired) so it never
+  // outlives the handle it's watching.
+  const stopMemoryWatch = watchServerMemory(
+    handle.process,
+    SERVER_MAX_RSS_MB,
+    () => app.getAppMetrics(),
+    (rssMb) => {
+      stopMemoryWatch();
+      if (serverHandle !== handle) return;
+      // Null it *before* killing: the generic exit handler above checks
+      // `serverHandle === handle` specifically so this deliberate kill
+      // reports once, with the real reason, instead of twice.
+      serverHandle = null;
+      handle.process.kill();
+      dialog.showErrorBox(
+        "Marginalia has stopped",
+        `The server exceeded its memory budget (${rssMb.toFixed(0)}MB, over the ${SERVER_MAX_RSS_MB}MB limit) and was stopped. Restart the app to continue.`,
+      );
+      app.quit();
+    },
+  );
+  handle.process.on("exit", stopMemoryWatch);
 
   createWindow(handle.port);
 }

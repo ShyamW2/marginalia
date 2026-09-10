@@ -19,6 +19,21 @@ export function hashPdfBuffer(buffer: Buffer): string {
   return crypto.createHash("sha256").update(buffer).update(`:${EXTRACTOR_VERSION}`).digest("hex");
 }
 
+/** Same digest as {@link hashPdfBuffer}, computed over a file already on disk
+ * without ever holding it whole in memory (M46, DESKTOP.md §4.3) — the
+ * upload route's own resourceId lookup runs before it's ready to read the
+ * file back for extraction, so it shouldn't be the thing that forces an
+ * early full buffer read. */
+export function hashPdfFile(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    fs.createReadStream(filePath)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("error", reject)
+      .on("end", () => resolve(hash.update(`:${EXTRACTOR_VERSION}`).digest("hex")));
+  });
+}
+
 /** Exported so `deleteResource` (store.ts) can clean up this file without
  * duplicating the naming convention. */
 export function reflowEpubPath(id: string): string {

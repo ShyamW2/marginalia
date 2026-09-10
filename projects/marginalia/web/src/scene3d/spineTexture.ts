@@ -1,6 +1,7 @@
 import { CanvasTexture, LinearFilter, SRGBColorSpace } from "three";
 import type { SpinePalette } from "./coverPalette.js";
 import { fitSpineTitle } from "./spineLayout.js";
+import { LruCache } from "./lruCache.js";
 
 /**
  * Paints a book's spine — cloth, head rule, and the title running head to tail
@@ -44,11 +45,19 @@ const TEXEL_SCALE = 2;
  * surface the GPU will refuse. */
 const MAX_CANVAS_EDGE = 2048;
 
-// One texture per book, kept for the session. A book's spine does not change,
-// and a shelf remounts every book whenever the view mode changes — the same
-// rationale (and the same "the library is small enough" bound, SPEC.md) as the
-// cover cache in `useCoverTexture.ts`.
-const cache = new Map<string, CanvasTexture>();
+// M46 (DESKTOP.md §4.1): bounded, not unbounded — a book's spine doesn't
+// change, and a shelf remounts every book on every view change, so a
+// growing library kept accumulating GPU textures nothing ever freed. 120
+// keeps a shelf well past the "browse 50, return to the Desk" verification
+// scenario (TASKS.md M46) resident without eviction, while still being a
+// real, finite bound rather than "the library is small enough" (the old
+// rationale, which stops holding once it isn't). `.dispose()` on evict:
+// letting a `CanvasTexture` fall out of the map does not release the GPU
+// memory it uploaded — only `.dispose()` does (same caveat as
+// `useCoverTexture.ts`, and the reason `useSpinePalette.ts`'s plain-data
+// cache does *not* get this treatment).
+const MAX_CACHED_SPINES = 120;
+const cache = new LruCache<string, CanvasTexture>(MAX_CACHED_SPINES, (texture) => texture.dispose());
 
 const FONT_STACK = `"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif`;
 
