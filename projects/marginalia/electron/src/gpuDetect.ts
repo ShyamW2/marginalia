@@ -22,6 +22,7 @@ export async function detectSoftwareRendering(): Promise<boolean> {
   const fromFeatureStatus = isSoftwareRendering(featureStatus);
 
   let auxSoftwareRendering = false;
+  let gpuInfo: unknown;
   try {
     const info = (await app.getGPUInfo("basic")) as {
       auxAttributes?: { softwareRendering?: boolean };
@@ -30,19 +31,26 @@ export async function detectSoftwareRendering(): Promise<boolean> {
   } catch {
     // Left false — see the doc comment on the boolean-only path this mirrors.
   }
+  // A second, deliberately separate call: 'complete' carries the actual GPU
+  // device/driver/vendor Chromium found (what chrome://gpu shows), which
+  // 'basic' doesn't. Logged raw and unfiltered — this is a debugging aid for
+  // a real, live false-positive (gpu_compositing/webgl disabled on hardware
+  // that should have neither disabled), not something to parse in code.
+  try {
+    gpuInfo = await app.getGPUInfo("complete");
+  } catch (error) {
+    gpuInfo = { error: error instanceof Error ? error.message : String(error) };
+  }
 
   const result = fromFeatureStatus || auxSoftwareRendering;
   // eslint-disable-next-line no-console
   console.log(
-    "[gpu]",
-    JSON.stringify({
-      softwareRendering: result,
-      fromFeatureStatus,
-      auxSoftwareRendering,
-      gpu_compositing: featureStatus.gpu_compositing,
-      webgl: featureStatus.webgl,
-      webgl2: featureStatus.webgl2,
-    }),
+    "[gpu] verdict",
+    JSON.stringify({ softwareRendering: result, fromFeatureStatus, auxSoftwareRendering }),
   );
+  // eslint-disable-next-line no-console
+  console.log("[gpu] featureStatus", JSON.stringify(featureStatus));
+  // eslint-disable-next-line no-console
+  console.log("[gpu] info(complete)", JSON.stringify(gpuInfo));
   return result;
 }
