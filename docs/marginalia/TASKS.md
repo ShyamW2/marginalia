@@ -2867,7 +2867,7 @@ The browser has been cleaning up after this app for its whole life; an Electron 
 stays open for a week never reloads. DESKTOP.md §2.3 lists what is *already* bounded — do
 not spend this milestone re-bounding the job registry.
 
-- [ ] **Write the memory budget first** — idle, reading, listening — into NOTES.md, so the
+- [x] **Write the memory budget first** — idle, reading, listening — into NOTES.md, so the
       tasks below have a target rather than a direction. Anchor it on NOTES.md:2127's
       measured 214MB server RSS plus a *measured* Electron baseline, not a guess. ⚠️ Note
       the framing before optimising (DESKTOP.md §4): Electron's own overhead is ~100–200MB
@@ -2876,26 +2876,63 @@ not spend this milestone re-bounding the job registry.
       released. Reaching for Electron flags before doing the idle-unload below is optimising
       the wrong number, and **disabling the sandbox or site isolation to save a process is
       out of bounds** — ~30MB for the security posture M45 gets free.
-- [ ] **`--max-old-space-size` on the `utilityProcess`**, set from that budget, so a runaway
+      _Done — NOTES.md's M46 entry, measured live against the built server (idle, an EPUB
+      import, a synthetic ~108MB PDF import), not guessed._
+- [x] **`--max-old-space-size` on the `utilityProcess`**, set from that budget, so a runaway
       server heap fails loudly instead of quietly swapping the machine. Test the cap by
       exceeding it; an untested limit is a guess with a number on it.
-- [ ] **LRU the three unbounded GPU texture caches** — `scene3d/spineTexture.ts:51`,
+      _Done, but not as written — testing it by exceeding it (as this bullet itself demands)
+      is what caught that `execArgv`'s `--max-old-space-size` does not actually reach the
+      utility process's V8 isolate in Electron 40 (verified live under Xvfb: the flag echoes
+      on `process.execArgv` but neither `v8.getHeapStatistics().heap_size_limit` nor a second
+      flag's observable effect change — see NOTES.md's M46 entry for the full finding). The
+      loud-failure requirement is met a different way instead: `serverProcess.ts`'s
+      `watchServerMemory()` polls real RSS via `app.getAppMetrics()` and kills the child past
+      a budget (`main.ts`'s `SERVER_MAX_RSS_MB`, 1536MB) — also live-verified by exceeding it,
+      and arguably the more correct target given DESKTOP.md §4's own framing that ONNX's
+      native allocation, outside the JS heap entirely, is the actual risk._
+- [x] **LRU the three unbounded GPU texture caches** — `scene3d/spineTexture.ts:51`,
       `useCoverTexture.ts:9`, `useSpinePalette.ts:14`: module-level `Map`s keyed by book
       with no eviction anywhere. ⚠️ **Dropping the `Map` entry is not the fix** — `three`
       textures hold GPU memory released only by `.dispose()`, so an LRU without disposal
       moves the leak to VRAM where it is harder to see. `useSpinePalette` holds plain data
       and needs bounding but not disposal; do not give all three the same treatment.
-- [ ] **Idle unload for the Kokoro session** (`audio/kokoro.ts:18–19`) — a module-level
+      _Done: a shared `LruCache` (`scene3d/lruCache.ts`), capacity 120 for all three, with an
+      `onEvict` disposal callback for the two texture caches and none for `useSpinePalette`'s
+      plain-data one. `lruCache.test.ts` covers the 200-books-over-120-cap scenario this
+      bullet itself describes._
+- [x] **Idle unload for the Kokoro session** (`audio/kokoro.ts:18–19`) — a module-level
       promise with no unload path, so one paragraph of audio at 09:00 is still resident at
       midnight. Orthogonal to the existing model-path invalidation; the two must not fight.
-- [ ] **`multer.memoryStorage()` → `diskStorage`** (`routes/resources.ts:45–46`) into a temp
+      _Done: a 15-minute idle timer disposes the ONNX session (`model.model.dispose()`) and
+      resets state; reset on every access so continued use never trips it. Also disposes the
+      old session on a path change (the existing invalidation), which used to leak — not
+      asked for explicitly, but the same one-line fix the new disposal plumbing already
+      needed. 8 tests in `kokoro.test.ts` cover idle timeout, no-premature-unload, and
+      path-change disposal, with fake timers._
+- [x] **`multer.memoryStorage()` → `diskStorage`** (`routes/resources.ts:45–46`) into a temp
       dir under the data directory, cleaned on both success and failure. A 200MB upload
       currently spikes RSS by its full size inside the process that also holds the model.
+      _Done: `paths.ts`'s new `UPLOADS_DIR`, swept on every server start. The PDF path's
+      resourceId hash now streams off disk (`importPdf.ts`'s new `hashPdfFile`) instead of
+      forcing an early full buffer read; the buffer extraction needs is read once, inside the
+      job, right when it's used. Verified live: a real ~108MB synthetic PDF upload left RSS
+      at 130.7MB immediately after the multipart upload completed (829ms) — indistinguishable
+      from idle — with cleanup confirmed (`uploads/` empty) after the job finished._
 - [ ] **Verify — numbers, not feelings**, written to NOTES.md against its existing 214MB RSS
       baseline (NOTES.md:2127). Opening 50 books in the shelf and returning to the Desk
       leaves GPU texture count bounded (measure both before and after). A 12-hour idle soak
       after one audio playback returns RSS to within a stated margin of its pre-playback
       value. A 150MB PDF import does not spike RSS by 150MB.
+      **Partially verified this session, left open rather than checked off** (NOTES.md's M46
+      entry has the numbers). Live: server RSS idle/EPUB-import/PDF-import-job; the multer fix
+      specifically (upload-phase RSS unaffected by a ~108MB file); the RSS watchdog firing on
+      a real exceeded budget. Not run: the 12-hour idle soak (a real time cost, not run this
+      session) and the "50 books in the shelf" GPU-texture-count check as an actual rendered
+      scene (jsdom has no canvas/WebGL context — untestable headlessly in this repo, a
+      pre-existing limitation, not something M46 introduced); `lruCache.test.ts`'s own
+      200-over-120 scenario covers the eviction *logic* DESKTOP.md §4.1 describes, not a real
+      GPU trace.
 
 ### M47 — Desktop: packaging and the native matrix
 

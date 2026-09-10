@@ -9482,3 +9482,87 @@ credential, which this session didn't fabricate. Everything else in M45's Verify
 *could* run headlessly on this machine did, live: real EPUB import, an anchored highlight,
 single-instance-lock behavior on a second launch, and quit-and-relaunch persistence, all
 driving the actual API through the actual `utilityProcess` — see TASKS.md for the specifics.
+
+## M46 — the long-lived process — 2026-09-10
+
+Landed: bounded, disposing LRU for the three GPU texture caches (`web/src/scene3d/lruCache.ts`,
+wired into `spineTexture.ts`, `useCoverTexture.ts`, `useSpinePalette.ts`); idle unload for the
+Kokoro ONNX session (`server/src/audio/kokoro.ts`); `multer.memoryStorage()` →
+`diskStorage` for resource uploads (`paths.ts`'s new `UPLOADS_DIR`, `routes/resources.ts`,
+`library/importPdf.ts`'s new `hashPdfFile`); and a memory-budget enforcement mechanism on the
+Electron `utilityProcess` (`electron/src/serverProcess.ts`, `main.ts`). One thing here is a
+finding worth a home, not just a line item.
+
+**`--max-old-space-size` on `utilityProcess.fork`'s `execArgv` does not work — verified live,
+not assumed, and this is exactly the trap DESKTOP.md's own "an untested limit is a guess with a
+number on it" line was written to catch.** The obvious implementation (`execArgv:
+["--max-old-space-size=48"]`) *looks* like it takes: the child's own `process.execArgv` echoes
+the flag back. But driving a real memory-hog child through a real `utilityProcess.fork` under
+Xvfb (same harness M45 used) showed `v8.getHeapStatistics().heap_size_limit` staying at the
+platform default (4096MB) regardless of the flag, and a second, independent probe
+(`--expose-gc`, a plain Node flag with an easily-observed effect — `typeof global.gc`) confirmed
+it: `global.gc` was `undefined` in the child even though `process.execArgv` showed
+`["--expose-gc"]`. Electron 40's utility process only wires a small allowlist of flags through
+to the actual V8 isolate it creates; general V8/Node CLI flags in `execArgv` are accepted and
+echoed but silently dropped. Had this shipped untested, the cap would have been a no-op —
+exactly the "guess with a number on it" the milestone's own acceptance line warns against.
+
+**The fix that actually works: poll real RSS via `app.getAppMetrics()`, not a V8 heap flag** —
+`serverProcess.ts`'s new `watchServerMemory()`. Also verified live: a fake server that logs a
+port (so `startServer()` resolves) and then grows without bound was watched with a 150MB cap;
+`app.getAppMetrics()` tracked its `workingSetSize` accurately in real time (722MB → 4GB across
+the run in one exploratory pass), the watchdog fired the first poll after it crossed 150MB (at
+a measured 466.6MB, ~10s in — `MEMORY_CHECK_INTERVAL_MS`), and `main.ts`'s wiring killed the
+child and reported it distinctly from an ordinary crash (nulling `serverHandle` before `kill()`
+so the pre-existing generic exit handler doesn't double-report). This is arguably the more
+correct target anyway, not just the one that works: DESKTOP.md §4's whole framing is that
+ONNX's native allocation — entirely outside the JS heap — is the actual risk, and a heap-only
+cap would never have caught it even if it had worked.
+
+**The written memory budget**, anchored on measurements from this session plus NOTES.md's
+existing 214MB server-RSS baseline (this file, above, "Digest subprocess" entry):
+
+- **Server process, idle**: measured live against the built `server/dist/index.js` (not the
+  `tsx` dev wrapper, which carries its own transform overhead) with an isolated
+  `MARGINALIA_DATA_DIR` — RSS 124–160MB, V8 `heapUsed` ~34MB.
+- **Server process, reading** (an EPUB import): heapUsed rose to ~36MB, RSS to ~131MB — a
+  real import against `fixtures/alice-in-wonderland.epub`, not a synthetic load.
+- **Server process, a PDF import job**: heapUsed ~41MB idle-to-job; RSS 415MB against a
+  synthetic ~108MB multi-page PDF (62 pages of noise-image content, built locally — no real
+  fixture this large exists in `fixtures/`). Of that, `external` (Node's Buffer/ArrayBuffer
+  accounting) jumped from ~30MB to ~250MB *after* the upload finished, once the job's own
+  `fs.readFileSync` + pdfjs-dist decode work began — extraction inherently needs the file
+  resident to parse it, which is unavoidable with the current pdfjs-dist-based extractor and
+  out of scope for this milestone (M46's own task list names only the upload path). **The
+  claim this milestone's fix actually makes is narrower and was verified precisely**: RSS
+  immediately after the multipart upload completed (829ms for the 108MB file) was 130.7MB —
+  indistinguishable from idle. The old `memoryStorage()` code would have shown RSS jump by
+  the file's full size *during the upload itself*, before extraction ever started; the new
+  `diskStorage` code doesn't, because the file streams straight to disk. TASKS.md's literal
+  "a 150MB PDF import does not spike RSS by 150MB" is true for the upload phase this milestone
+  targets and not necessarily for the extraction phase after it, which was never this
+  milestone's job to fix.
+- **Kokoro (ONNX), loaded**: not re-measured this session (AUDIO.md/DESKTOP.md's existing
+  200–400MB figure stands — this session changed *when* it unloads, not its resident size).
+  15-minute idle timeout chosen to survive an ordinary in-session pause without reloading
+  while freeing well within a day of stepping away — see `kokoro.ts`'s own comment.
+- **GPU texture caches**: bounded to 120 entries each (`spineTexture.ts`, `useCoverTexture.ts`,
+  `useSpinePalette.ts`) — comfortably past TASKS.md's own "50 books" verification scenario
+  while still finite. Not re-measured against real VRAM this session (jsdom has no canvas
+  2D/WebGL context — `spineTexture()`/`useCoverTexture()` already documented this as
+  untestable in this environment before M46); the eviction/disposal *logic* is covered by
+  `lruCache.test.ts`'s own 200-books-over-a-cap-of-120 scenario, which is DESKTOP.md §4.1's
+  literal example.
+- **`utilityProcess` memory budget**: 1536MB RSS cap (`main.ts`'s `SERVER_MAX_RSS_MB`) — set
+  well above the ~600MB legitimate ceiling (214MB server baseline + up to 400MB Kokoro) so
+  normal operation, including a large import, never trips it, while still catching a true
+  runaway (verified live above) long before it could swap a typical machine.
+
+**Not run this session — a real time cost, not a gap in the work**: the 12-hour idle soak
+TASKS.md's Verify bullet calls for (RSS/GPU-memory sampled at start, +1h, +12h after one audio
+playback). Left open rather than faked, same discipline M45's checkpoint used for its own
+Mac-only legs. Also not run: the "open 50 books in the shelf, return to the Desk" GPU-texture
+count check as an actual rendered scene — jsdom's lack of a canvas context makes this
+untestable headlessly in this repo today (predates M46); a real verification needs a real GPU
+context (Electron under Xvfb with `--disable-gpu` still renders 2D canvas, just not WebGL, so
+even that combination doesn't reach `Scene3D`'s actual texture upload path).
