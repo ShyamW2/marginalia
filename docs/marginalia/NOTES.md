@@ -9805,3 +9805,159 @@ and the `sharp` exclusion (size/license, don't block basic function, easy to ver
 comparing install size before/after). Then the GitHub Actions matrix, which mostly
 automates steps already proven manually by that point. Finish on the real acceptance
 bar: an installer built **by CI**, run on a machine with no Node/pnpm/Claude CLI at all.
+
+## M47 — packaging and the native matrix, worked this session — 2026-09-11
+
+Built out `electron-builder` + the staging pipeline (both fully greenfield, as the
+pre-flight entry above found) and produced, extracted, and ran a real Linux AppImage.
+Full detail on the two real findings that changed course from what was assumed going in
+is in `decisions.md` 2026-09-11 (the `sharp` one) and TASKS.md's own M47 entries (both, with
+the exact commands/results). Summarized here so this entry stands alone.
+
+**Packaging architecture, decided this session and not quite what DESKTOP.md's prose
+described:** the server, its full dependency closure, and the web SPA build all ship as
+`electron-builder` `extraResources` — plain files under `resourcesPath/`, never inside
+`app.asar` — matching `main.ts`'s (M45) own `resolveServerEntry()`/`resolveResourceDir()`
+contracts exactly. That makes DESKTOP.md §3.3's `asarUnpack` bullet inapplicable by
+construction (nothing native ever lands inside asar to begin with), which TASKS.md's
+checkbox now says explicitly rather than silently diverging.
+
+**Staging tool: `@vercel/nft`, not `pnpm deploy`.** `pnpm deploy --legacy` hit a real bug in
+this environment (`_linkBins` computing a bin-dir path that lands at literally `/home/tmp`
+on a sufficiently deep checkout — reproducible, not investigated further since it's a pnpm
+bug report, not an M47 blocker); the modern injected-deploy mode refuses to run without a
+workspace-wide lockfile config change this milestone has no reason to make. `@vercel/nft`
+(same tool Next.js `output: standalone` uses) traces the real `require`/`import` graph from
+`server/dist/index.js` and correctly resolves pnpm's per-package private dependency scopes —
+the exact thing a naive `cp -rL server/node_modules` got wrong first (silently missing
+`onnxruntime-node` entirely, since it's only reachable from within `@huggingface/transformers`'s
+own private pnpm scope, not hoisted to `server/node_modules`).
+
+**Two real bugs found and fixed while building the staging script, both worth remembering
+if this script is ever touched again:**
+- **Dereferencing symlinks on copy looked obviously correct and wasn't.** `fs.cpSync(...,
+  {dereference: true})` duplicated every package more than one scope privately depends on
+  (`kokoro-js` and `@marginalia/server` both depend on `@huggingface/transformers`) — 350MB
+  became 1.4GB before pruning even ran. The fix (preserve symlinks, mirror the exact
+  original relative directory structure under the new root) hit a *second* problem:
+  Node's `fs.cpSync` on a symlink source resolves it to an **absolute** path when
+  recreating it at the destination, silently — works on the machine that built it, breaks
+  the instant the staged tree is copied anywhere else. Only caught by actually relocating
+  the staged output to `/tmp` and testing from there; a same-machine test would never have
+  shown it. The real fix is a hand-rolled recursive copy (`copyPreservingSymlinks` in
+  `stage.mjs`) that reads each symlink's target string with `readlinkSync` and recreates it
+  verbatim with `symlinkSync`, never touching `cpSync` for anything that might be a symlink.
+- **nft's `path.join(__dirname, …)` heuristic pulled the operator's own `data/`** — the real
+  reading library, highlights, and live SQLite database with WAL — straight into the staged
+  output, because `paths.ts`'s `LEGACY_DATA_DIR` is exactly that pattern and the directory
+  happens to exist. Caught before this went anywhere near a packaged build. Fixed with an
+  explicit `ignore: ["data/**"]` on the trace *and* a hard `assertNoUserData()` check
+  (searches the staged tree for a directory literally named `data` containing
+  `marginalia.sqlite`, fails the build loudly if found) so a future change that defeats the
+  ignore pattern can't ship this silently. Given DESKTOP.md §3.1's whole framing — "every
+  existing install is the operator's own" — this felt worth a hard assertion, not just a
+  one-line exclusion.
+
+**`better-sqlite3`'s Electron-ABI rebuild corrupted this machine's own dev environment
+three separate times before the real fix, and is worth recording in full because none of
+the three failures announced themselves — each was caught only by `pnpm test` failing
+afterward, with `db.close()` throwing `Cannot read properties of undefined`, tracing back
+to `NODE_MODULE_VERSION` mismatches on the shared store's compiled binary.**
+
+The isolation itself needed the same nft-based transitive trace as the main staging step —
+a one-level "copy this package's private pnpm scope too" attempt still missed `bindings`'s
+own nested `file-uri-to-path` dependency (the nesting is exactly as deep as the real
+dependency graph, not a fixed number of levels), and once that was traced correctly,
+`electron-rebuild --module-dir <the isolated copy>` **still** rebuilt the *shared pnpm
+store's* `better-sqlite3` in place, each of three times this was tried:
+
+1. First attempt: no `cwd` set on the `execFileSync` call at all — the CLI's own
+   `getProjectRootPath(process.cwd())` walked up from wherever the *calling* script's cwd
+   happened to be (`electron/`, via the `pnpm run package:*` scripts), hunting for a
+   lockfile with no bound, and used whatever it found as the ground for its own module
+   search.
+2. Second attempt: `cwd` pinned to the isolated copy, plus a decoy `pnpm-lock.yaml` dropped
+   into it so the lockfile-hunt would stop there instead of walking further. Still
+   corrupted the store. Root cause, found with `strace -e trace=openat -f`: a stray
+   `package-lock.json` sitting directly in this machine's `$HOME` (unrelated to this
+   project — some earlier, unrelated `npm install` run there) matched the CLI's *first*
+   lockfile check (`yarn.lock`, then `package-lock.json`, then `pnpm-lock.yaml`, in that
+   order, each searched unbounded up to `/`) before the decoy `pnpm-lock.yaml` — checked
+   last — ever got a chance to be found.
+3. Third attempt: the whole isolate-and-rebuild moved to a directory outside `$HOME`
+   entirely (`os.tmpdir()`), with its own real `package.json` declaring the dependency.
+   **Still corrupted the store** — `strace` showed the actual `node-gyp`/`make` invocation
+   running with `cwd` set to the real store's `better-sqlite3` directory, which a plain
+   reading of `@electron/rebuild`'s CLI source (`getProjectRootPath`, `searchForModule` in
+   `search-module.js`) doesn't obviously explain; the exact internal path wasn't found, only
+   reproduced and fixed around.
+
+**The fix that actually held, verified with the shared store made filesystem-read-only
+(`chmod -w`, so any write from the pipeline would fail loudly instead of silently
+succeeding) for the entire rebuild: stop using the CLI, use `@electron/rebuild`'s
+programmatic `rebuild()` function directly, with `projectRootPath` passed explicitly.**
+The CLI-only `getProjectRootPath` auto-detection — the thing every attempt above was
+fighting — simply isn't invoked when `projectRootPath` is supplied as an option; the
+library underneath doesn't have this problem, only the CLI wrapper does. A hash check on
+the shared store's own compiled binary, before and after, stays in `rebuild-native.mjs`
+permanently as an independent guard — three silent failures in a row is reason enough not
+to trust reasoning about this alone going forward.
+
+Live-verified the whole thing, under Electron's actual Node runtime
+(`ELECTRON_RUN_AS_NODE=1 <electron binary> -e "require('better-sqlite3')(':memory:')"`):
+the dev-built binary throws `MODULE_NOT_FOUND` (or, under plain Node, an ABI mismatch); the
+rebuilt one opens a database and reads a row back — and, separately, `pnpm test` (both
+`@marginalia/server` and `@marginalia/electron`) passes cleanly after the final fix, with
+the shared store confirmed byte-identical to its pre-rebuild state.
+
+⚠️ **Whoever touches `rebuild-native.mjs` next**: if `pnpm test` or the ordinary dev server
+ever throws a `NODE_MODULE_VERSION`/`ERR_DLOPEN_FAILED` error after running the M47
+packaging scripts, the fix is `pnpm rebuild --recursive better-sqlite3` — that command
+fixed this exact corruption all three times above, safely, using pnpm's own dependency
+graph rather than guessing at a path.
+
+**`main.ts`'s `resolveServerEntry()` had a stale guess, corrected.** Its own comment said
+the packaged path would be `resourcesPath/server/index.js` ("M47's extraResource", written
+speculatively in M45 before M47 existed). The staging script that actually shipped mirrors
+the real relative structure instead, landing the entry at `resourcesPath/server/dist/index.js`
+— found live the first time a real packaged build actually tried to boot (`ERR_MODULE_NOT_FOUND`,
+looking in the wrong place). One-line fix, `electron/src/main.ts`.
+
+**Real Verify, this session, against the actual `electron-builder`-built Linux AppImage**
+(not the raw stage output): extracted it (`--appimage-extract`, no FUSE needed in a
+container), launched it under `xvfb-run` with a fresh, isolated `HOME` and
+`MARGINALIA_DATA_DIR`. Two container-specific things needed working around, neither an app
+bug: the bundled `chrome-sandbox` SUID helper isn't root-owned/mode-4755 in this
+environment (expected — that's a real Linux security boundary, not something a build should
+paper over; `ELECTRON_DISABLE_SANDBOX=1` was used for *this test only*, never for a real
+launch), and driving it required going in via `ELECTRON_RUN_AS_NODE=1 <the packaged
+electron binary> resources/server/dist/index.js` directly rather than through the GUI's own
+dialog-driven startup-failure path, which doesn't produce console output this session could
+capture headlessly. Once running: `GET /` returned 200, a real EPUB import
+(`fixtures/alice-in-wonderland.epub`) succeeded (proves the Electron-ABI-rebuilt
+`better-sqlite3` actually bound), and a real PDF import
+(`fixtures/pdf-renderer-sample.pdf`) completed with two pages extracted (proves
+`@napi-rs/canvas` rasterizes from the packaged, pruned resources). Define and audio were
+checked against the identical pruned tree the AppImage ships (not through the app's own
+routes, since that needed a highlight/UI flow this session didn't build): a real
+`getDictionary().lookup("hello")` returned a genuine WordNet sense, and a real
+`KokoroTTS.from_pretrained(...).generate(...)`, imported the exact ESM way `kokoro.ts` does,
+produced real audio samples.
+
+**Left open, honestly:**
+- The two macOS `dmg` targets are config-complete (`electron-builder.yml`'s `mac.target`)
+  but **never built or run** — no macOS machine in this session's environment. Needs the
+  operator's Mac or a CI run.
+- `.github/workflows/desktop-build.yml` exists (three-way matrix, Node pinned to this repo's
+  `.nvmrc` — 24, comfortably past the >=22 floor the pre-flight note names) but **has not
+  actually run** — it fires on push/PR touching `projects/marginalia/**`, and this session
+  did not push.
+- The `sharp`/LGPL-3.0 question is a real blocker, not resolved here — `decisions.md`
+  2026-09-11 has the reasoning and the options; needs the operator's or a design session's
+  call before M48 gets anywhere near packaging a build meant to leave this machine.
+- `appId`/`productName`/the icon in `electron-builder.yml` are explicit placeholders
+  (`com.marginalia.reader.dev` / "Marginalia") — DESKTOP.md §1 and M48's own task list
+  already name the real ones as that milestone's job; not touched here on purpose.
+- M47's own Verify bullet names a CI-built installer on a genuinely clean machine as the
+  acceptance bar. What ran this session (above) is real and thorough but is not that —
+  logged as still-open in TASKS.md rather than checked off.

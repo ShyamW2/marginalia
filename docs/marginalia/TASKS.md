@@ -3017,31 +3017,105 @@ not spend this milestone re-bounding the job registry.
 
 ### M47 — Desktop: packaging and the native matrix
 
-- [ ] **`electron-builder`**, targets `dmg` (arm64, x64) and `AppImage` (x64).
-- [ ] **Prune `onnxruntime-node`'s foreign platforms** — it ships every platform in one
+- [x] **`electron-builder`**, targets `dmg` (arm64, x64) and `AppImage` (x64).
+      _Done: `electron/electron-builder.yml`. Server + its dependency closure + the web SPA
+      build ship as `extraResources` (a `scripts/electron-package/stage.mjs` output), not
+      through `electron-builder`'s own `files`/asar packaging — see the `asarUnpack` bullet
+      below for why. Linux AppImage built and run live this session; the two mac `dmg`
+      targets are config-complete but unbuilt — no macOS machine in this session's
+      environment, left for the operator or CI._
+- [x] **Prune `onnxruntime-node`'s foreign platforms** — it ships every platform in one
       package; 208MB → 31MB (darwin/arm64) or 43MB (linux/x64). ⚠️ Express it as a target
       **list**, not a deletion, so Windows stays cheap to add later.
-- [ ] **`asarUnpack` + the `app.asar` → `app.asar.unpacked` rewrite** for
+      _Done: `stage.mjs`'s `pruneOnnxPlatforms()`, a keep-list keyed by target platform+arch.
+      Also strips `libonnxruntime_providers_cuda.so`/`_tensorrt.so` on linux/x64 — 327MB of
+      the 370MB directory, dead weight since `audio/kokoro.ts` always runs `device: "cpu"` —
+      which is why the doc's own 43MB figure is reachable at all; keeping the platform but not
+      stripping those two files lands at ~370MB, not 43MB. Measured live: 388MB → 43MB._
+- [ ] ~~`asarUnpack` + the `app.asar` → `app.asar.unpacked` rewrite~~ for
       `@napi-rs/canvas`'s `.node` and `wordnet-db`'s dataset. Unpacking without rewriting
       resolves to a path that no longer has the file.
-- [ ] **Electron-ABI rebuild for `better-sqlite3`.** N-API is ABI-stable, so
+      **Not done as written — doesn't apply.** `main.ts` (M45) already resolves the server's
+      entry via `resourcesPath/server/...`, an `extraResources` path sibling to `app.asar`,
+      never inside it (confirmed live: `resolveServerEntry()`'s packaged branch has no
+      `app.asar` segment). Given that, the whole server and everything it requires — canvas's
+      `.node`, wordnet-db's dataset included — ships as plain files on disk, never asar-packed,
+      so the trap this bullet names can't occur by construction and `resolveUnpackedPath`
+      (`paths.ts`) stays the no-op it already was. NOTES.md's M47 entry has the full
+      reasoning. `@napi-rs/canvas` still needed its own foreign-platform prune (eleven
+      `@napi-rs/canvas-<platform>-<arch>` optional packages down to one) — done in
+      `stage.mjs`'s `pruneCanvasPlatforms()`, same pattern as onnx above.
+- [x] **Electron-ABI rebuild for `better-sqlite3`.** N-API is ABI-stable, so
       `onnxruntime-node` (`bin/napi-v3/…`) and `@napi-rs/canvas` cross unchanged; this one
       does not. ⚠️ It fails **lazily** — `import()` resolves and only `new Database()`
       throws — so a verification that stops at "the app launched" has not tested it.
-- [ ] **Exclude `sharp`, then re-run the license audit.** Zero direct imports in this
+      _Done: `scripts/electron-package/rebuild-native.mjs`, `@electron/rebuild`'s
+      **programmatic API** (not its CLI — see below) scoped to `better-sqlite3` only.
+      Isolates it (and its real transitive closure, traced with nft rather than hand-copied —
+      a one-level "copy its private pnpm scope" attempt still missed `bindings`'s own nested
+      `file-uri-to-path` dependency, and nft also had to be told about `deps/common.gypi` —
+      gyp reads it straight off disk, nft's JS-only trace can't see it) into a real,
+      non-symlinked copy first. ⚠️ **This bullet's own warning bit twice over, the second
+      time on this repo's own tooling, not on the app**: three separate times, the CLI
+      (`electron-rebuild --module-dir …`) silently rebuilt the *shared pnpm store's*
+      `better-sqlite3` in place as well, breaking `pnpm test` and the dev server the same
+      lazy way this bullet describes — caught each time only by running the test suite
+      afterward, not by the rebuild step itself reporting anything wrong. Root cause: the
+      CLI computes its own "project root" via an unbounded upward directory walk from
+      `process.cwd()` hunting for a lockfile, entirely independent of `--module-dir`, and a
+      stray `package-lock.json` sitting directly in this machine's `$HOME` (unrelated to this
+      project) kept winning that search regardless of workarounds attempted against it. The
+      real fix was to stop using the CLI: `rebuild()`'s own programmatic options accept
+      `projectRootPath` directly, skipping that auto-detection entirely. A hash check on the
+      shared store's own binary, before and after every run, stays in as an independent
+      guard — NOTES.md's M47 entry has the full incident and investigation.
+      **Live-verified the failure mode this bullet warns about, both ways**: the dev-built
+      binary throws `MODULE_NOT_FOUND` under Electron's own Node (`ELECTRON_RUN_AS_NODE=1`);
+      the rebuilt one opens a real in-memory database and reads back a row — and, separately,
+      the whole rebuild was re-run with the shared store's `better-sqlite3` directory made
+      filesystem-read-only (`chmod -w`) to prove nothing in the pipeline writes there any more._
+- [ ] ~~Exclude `sharp`, then re-run the license audit.~~ Zero direct imports in this
       codebase; it is an optional peer of `@huggingface/transformers` and Kokoro is
       audio-only. SHIPPING.md step 2 warns LGPL-3.0 `@img/sharp-libvips-*` stops being inert
       at Desktop because a bundle redistributes the binary — excluding it means the
       relinking obligation never attaches. ⚠️ **Check, don't assume**: confirm `transformers`
       does not lazily require it on the Kokoro path. If it does, the obligation is real and
       gets its own decisions.md entry.
-- [ ] **GitHub Actions matrix** — macOS arm64, macOS x64, Linux x64. CI work, not laptop
+      **Checked, and it does — this bullet's premise doesn't hold.** `@huggingface/transformers`'s
+      Node entry points (`transformers.node.cjs` *and* `.mjs`) require `sharp`
+      **unconditionally** at their own top level — not behind the runtime branch the "lazily"
+      framing assumed — so merely importing the package at all, which `kokoro-js` does for
+      audio regardless of any image code ever running, fails outright without it. The M47
+      pre-flight note (previous commit) tested this and concluded the opposite; that test was
+      a false negative from pnpm's ambient `.pnpm/node_modules/` fallback directory keeping a
+      copy resolvable no matter which specific spot was hidden — re-tested against this
+      session's own pruned, no-ambient-fallback stage output, both entry points threw
+      `Cannot find module 'sharp'`. So **`sharp` ships**, platform-pruned exactly like the
+      other two (`pruneSharpPlatforms()`) — **and the LGPL-3.0 obligation this bullet's own
+      contingency names is real.** Recorded as a blocker (NOTES.md) and `decisions.md`
+      2026-09-11, not decided here — a licensing call, not an implementation one.
+- [x] **GitHub Actions matrix** — macOS arm64, macOS x64, Linux x64. CI work, not laptop
       work: a `better-sqlite3` built on the operator's Linux box is not a macOS artifact.
+      _Done: `.github/workflows/desktop-build.yml`, three-way matrix (`macos-14`/`macos-13`/
+      `ubuntu-latest`), Node pinned to 24 (this repo's `.nvmrc` — see the pre-flight note on
+      why >=20 isn't enough). **Not yet run** — needs a push to `origin` to fire; this session
+      had no instruction to push._
 - [ ] **Verify:** an installer produced **by CI, not by the operator's laptop**, on a machine
       with no Node, no pnpm and no Claude CLI: an EPUB imports (proves `better-sqlite3`
       bound), a PDF page rasterizes (proves canvas unpacked), **Define returns a real
       WordNet definition** (proves the dictionary is alive rather than silently `null`), and
       audio plays one paragraph (proves ONNX survived pruning).
+      **Left open, deliberately** — the acceptance bar names a *CI-built* installer on a
+      *clean* machine, which this session's environment (no macOS, and this Linux box is the
+      dev machine, not a clean one) cannot satisfy. What *was* run for real, this session,
+      against the actual `electron-builder`-produced Linux AppImage (extracted, launched under
+      Xvfb with a fresh, isolated `HOME`/data dir): the app boots, the GPU detector reports
+      real feature status, and — via its real HTTP API — an EPUB imports and a PDF page
+      rasterizes. Define and audio were verified against the identical pruned/rebuilt tree the
+      AppImage ships (same files, checked via the real WordNet lookup and a real
+      `KokoroTTS.generate()` call through the exact ESM path the server code uses) rather than
+      through the packaged app's own HTTP routes. All four hold. What's still open: running
+      this *from* CI, on *macOS*, and on a machine that never had Node/pnpm installed at all.
 
 ### M48 — Desktop: signing, notarization, keys and updates
 

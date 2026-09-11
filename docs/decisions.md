@@ -3,6 +3,48 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-11 — M47: `sharp` cannot be excluded from the Desktop bundle; the LGPL-3.0
+## question TASKS.md flagged as a contingency is now real, and is not decided here
+
+TASKS.md's M47 bullet offered a clean way out of SHIPPING.md step 2's LGPL-3.0 warning on
+`@img/sharp-libvips-*`: exclude `sharp` entirely (zero direct imports in this codebase),
+with an explicit contingency — "check, don't assume: confirm transformers does not lazily
+require it on the Kokoro path; if it does, the obligation is real." The M47 pre-flight note
+(previous commit) ran that check and reported success. Re-run this session with a stricter
+test (see NOTES.md's M47 entry for the full trace) and **the contingency is triggered**:
+`@huggingface/transformers`'s Node entry points — both `transformers.node.cjs` and
+`transformers.node.mjs` — `require`/`import` "sharp" unconditionally at their own top
+level, not behind the image-loading branch the earlier test assumed gated it. Importing
+`@huggingface/transformers` at all — which `kokoro-js` does for audio, unconditionally,
+regardless of whether any image code ever runs — fails without `sharp` present. (The
+earlier test's false negative had a specific, findable cause: pnpm places an additional
+ambient fallback copy of every package at `node_modules/.pnpm/node_modules/`, which kept
+resolving `sharp` no matter which specific copy was hidden.)
+
+**Consequence:** `sharp` ships in the packaged app — platform-pruned like `onnxruntime-node`
+and `@napi-rs/canvas` (down to one `@img/sharp-<platform>-<arch>` + one
+`@img/sharp-libvips-<platform>-<arch>` pair per target), but present. Its own top-level
+`require` loads that native binary eagerly, so pruning below "present" isn't an option
+either. That means SHIPPING.md step 2's warning is live: redistributing
+`@img/sharp-libvips-*`'s compiled binary inside a bundle is understood to attach an
+LGPL-3.0 relinking obligation that doesn't apply to the source-only dependency listing
+sitting in `package.json` today.
+
+**Not decided here, on purpose** — this is a licensing call, not an implementation one
+(SONNET_PROMPT.md's operator notes: bring a decision like this back rather than letting an
+implementation session drift on it). Recorded as a blocker in NOTES.md. Options that exist,
+none chosen: (a) satisfy the LGPL-3.0 obligation directly (a written offer for the libvips
+source/object code, or shipping it dynamically linked in a way that lets a user swap it —
+sharp's own binaries are already dynamically linked against libvips, which may mean the
+obligation is lighter than "relink the whole binary" suggests, but that reading needs
+verifying against the actual license text, not assumed); (b) patch or fork the specific
+`@huggingface/transformers` module that imports `sharp` so the reference is removed or
+made genuinely conditional, decoupling Kokoro's dependency graph from image support
+entirely — real but more invasive than a build-config change; (c) accept the obligation as
+the cost of shipping audio (decision 17/settled decision 9 already accepted TTS as
+non-optional) and do the compliance work once, rather than continuing to treat it as
+avoidable.
+
 ## 2026-09-11 — M46's Kokoro idle-unload residual: measured, not chased further
 
 A 12h50m soak (real built server, isolated data dir, a real `test-voice` synthesis to
