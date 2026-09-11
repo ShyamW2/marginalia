@@ -9542,10 +9542,12 @@ existing 214MB server-RSS baseline (this file, above, "Digest subprocess" entry)
   "a 150MB PDF import does not spike RSS by 150MB" is true for the upload phase this milestone
   targets and not necessarily for the extraction phase after it, which was never this
   milestone's job to fix.
-- **Kokoro (ONNX), loaded**: not re-measured this session (AUDIO.md/DESKTOP.md's existing
-  200–400MB figure stands — this session changed *when* it unloads, not its resident size).
-  15-minute idle timeout chosen to survive an ordinary in-session pause without reloading
-  while freeing well within a day of stepping away — see `kokoro.ts`'s own comment.
+- **Kokoro (ONNX), loaded**: 421.6MB RSS right after a real `test-voice` synthesis (a fresh
+  isolated instance, idle baseline 130-160MB beforehand) — consistent with AUDIO.md/
+  DESKTOP.md's 200–400MB figure. 15-minute idle timeout chosen to survive an ordinary
+  in-session pause without reloading while freeing well within a day of stepping away —
+  see `kokoro.ts`'s own comment, and the soak result below for what "freeing" actually
+  measures out to.
 - **GPU texture caches**: bounded to 120 entries each (`spineTexture.ts`, `useCoverTexture.ts`,
   `useSpinePalette.ts`) — comfortably past TASKS.md's own "50 books" verification scenario
   while still finite. Not re-measured against real VRAM this session (jsdom has no canvas
@@ -9558,14 +9560,35 @@ existing 214MB server-RSS baseline (this file, above, "Digest subprocess" entry)
   normal operation, including a large import, never trips it, while still catching a true
   runaway (verified live above) long before it could swap a typical machine.
 
-**Not run this session — a real time cost, not a gap in the work**: the 12-hour idle soak
-TASKS.md's Verify bullet calls for (RSS/GPU-memory sampled at start, +1h, +12h after one audio
-playback). Left open rather than faked, same discipline M45's checkpoint used for its own
-Mac-only legs. Also not run: the "open 50 books in the shelf, return to the Desk" GPU-texture
-count check as an actual rendered scene — jsdom's lack of a canvas context makes this
-untestable headlessly in this repo today (predates M46); a real verification needs a real GPU
-context (Electron under Xvfb with `--disable-gpu` still renders 2D canvas, just not WebGL, so
-even that combination doesn't reach `Scene3D`'s actual texture upload path).
+**The 12-hour idle soak — run as a follow-up, real result, not faked.** A real built
+server, isolated data dir, one real `test-voice` synthesis to load Kokoro (421.6MB RSS),
+then sampled every minute, unattended, for 12h50m (later extended further while other
+work continued — 816+ samples past the unload point by the time it was last checked).
+**The idle-unload timer fired at exactly t+15:01** — `IDLE_UNLOAD_MS`'s 15 minutes,
+measured, not approximate — dropping RSS to 253.6MB. **Every single sample after that
+point showed the identical value, 253.6MB** (and `external`, 28.1MB) — zero drift, no
+leak, for the entire remainder of the soak. The one honest caveat: 253.6MB sits
+~95-125MB above the pre-Kokoro idle baseline (130-160MB), so `dispose()` reclaims most
+but not all of Kokoro's footprint — a fixed, non-growing residual, investigated and
+deliberately not chased further (decisions.md 2026-09-11: `kokoro-js` doesn't expose the
+`onnxruntime` arena setting that would address it, and reaching it means forking a pinned
+dependency for an unverified payoff). TASKS.md's acceptance line ("RSS returns to within a
+stated margin of its pre-playback value") is met in the sense that matters — bounded,
+stable, not growing — with that specific ~100MB gap stated plainly rather than rounded
+away.
+
+**Still not run — needs the operator's own machine with a real GPU, not this session's
+container**: the "open 50 books in the shelf, return to the Desk" GPU-texture-count check
+as an actual rendered scene. jsdom's lack of a canvas context makes this untestable
+headlessly in this repo (predates M46); Electron under Xvfb in this session's container
+was checked directly (`electron/src/gpuDetect.ts`'s own `detectSoftwareRendering()`, run
+live) and confirmed software rendering (`glImplementationParts: "(gl=none,angle=none)"`)
+despite real GPU hardware being present at the OS level (`nvidia-smi`/`lspci` both saw
+it) — Xvfb itself has no GL/DRI backend wired up, so this container was never going to
+reach `Scene3D`'s actual texture-upload path regardless of flags. A synthetic-EPUB
+bulk-import script (`scripts/testing/gen-and-import-epubs.cjs`, gitignored, not shipped)
+was built and verified end-to-end (135 books imported, embedded covers, 0 failures) to
+make this check painless whenever it does run on real hardware.
 
 ## M45 follow-up — a real GPU false positive, found on the operator's Mac — 2026-09-10
 

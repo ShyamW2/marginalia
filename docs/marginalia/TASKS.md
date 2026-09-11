@@ -3000,15 +3000,20 @@ not spend this milestone re-bounding the job registry.
       leaves GPU texture count bounded (measure both before and after). A 12-hour idle soak
       after one audio playback returns RSS to within a stated margin of its pre-playback
       value. A 150MB PDF import does not spike RSS by 150MB.
-      **Partially verified this session, left open rather than checked off** (NOTES.md's M46
-      entry has the numbers). Live: server RSS idle/EPUB-import/PDF-import-job; the multer fix
-      specifically (upload-phase RSS unaffected by a ~108MB file); the RSS watchdog firing on
-      a real exceeded budget. Not run: the 12-hour idle soak (a real time cost, not run this
-      session) and the "50 books in the shelf" GPU-texture-count check as an actual rendered
-      scene (jsdom has no canvas/WebGL context — untestable headlessly in this repo, a
-      pre-existing limitation, not something M46 introduced); `lruCache.test.ts`'s own
-      200-over-120 scenario covers the eviction *logic* DESKTOP.md §4.1 describes, not a real
-      GPU trace.
+      **Partially verified, left open rather than checked off** (NOTES.md's M46 entry has the
+      numbers). Live: server RSS idle/EPUB-import/PDF-import-job; the multer fix specifically
+      (upload-phase RSS unaffected by a ~108MB file); the RSS watchdog firing on a real
+      exceeded budget; **the 12-hour idle soak, run as a follow-up** — idle-unload fired at
+      exactly t+15:01, released 168MB, then held one bit-identical RSS value across 816+
+      subsequent one-minute samples with zero drift (a ~100MB residual above the pre-Kokoro
+      baseline stands, investigated and deliberately not chased further — decisions.md
+      2026-09-11). Still not run: the "50 books in the shelf" GPU-texture-count check as an
+      actual rendered scene — needs the operator's real GPU/display, confirmed unreachable
+      from this session's own container (Xvfb has no GL/DRI backend, even with real GPU
+      hardware present at the OS level); `lruCache.test.ts`'s own 200-over-120 scenario covers
+      the eviction *logic* DESKTOP.md §4.1 describes, not a real GPU trace. A bulk-import
+      script for this check (`scripts/testing/gen-and-import-epubs.cjs`, gitignored) is built
+      and verified.
 
 ### M47 — Desktop: packaging and the native matrix
 

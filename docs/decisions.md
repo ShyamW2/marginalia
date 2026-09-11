@@ -3,6 +3,39 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-11 — M46's Kokoro idle-unload residual: measured, not chased further
+
+A 12h50m soak (real built server, isolated data dir, a real `test-voice` synthesis to
+load Kokoro) verified `kokoro.ts`'s 15-minute idle-unload fires exactly on schedule and
+releases 168MB (421.6MB → 253.6MB), then holds that value **bit-identical across 816
+subsequent one-minute samples** — no drift, no leak. But 253.6MB is ~95-125MB above this
+build's measured pre-Kokoro baseline (~130-160MB), so `model.model.dispose()` reclaims
+most but not all of Kokoro's footprint; a fixed residual survives disposal and then never
+grows.
+
+Two things were checked, not assumed, before deciding not to chase it further. **The
+tokenizer holds nothing to dispose** — `PreTrainedTokenizer` has no `dispose()` method at
+all (pure JS vocab/merge data), so `model.model.dispose()` is already the complete
+disposal surface transformers.js exposes; nothing was missed on this app's side. **The
+actual lever is real but locked behind a pinned dependency**: `onnxruntime` supports
+disabling its arena allocator (`enableCpuMemArena: false`), and transformers.js's
+`from_pretrained` accepts a `session_options` passthrough for exactly this — but
+`kokoro-js` (decision 9's fixed stack) does not forward it; its own `from_pretrained`
+only accepts `{ dtype, device, progress_callback }`. Reaching the arena setting means
+forking `kokoro-js` or reimplementing its model-loading path directly against
+transformers.js, for an unverified payoff (arena-disabling trades footprint for
+per-inference allocation overhead — not a free win even if it works).
+
+**Decision: leave it.** The milestone's actual goal — bounded, non-growing memory on a
+process that no longer restarts — is met: before M46 this was resident forever; now it
+plateaus once, at a known, fixed, measured size, and stays there. A ~100MB permanent
+residual is a rounding error against the 1536MB RSS watchdog budget and the ~600MB
+legitimate-operation ceiling DESKTOP.md §4 already documents. Forking a pinned dependency
+to chase it would be the same "optimising the wrong number" mistake DESKTOP.md §4 itself
+warns against for Electron flags, and would cost time against M47, which is the arc's
+actual bottleneck. Revisit only if a future `kokoro-js` release forwards `session_options`
+on its own.
+
 ## 2026-09-11 — The real M45 GPU cause: a query-ordering bug, not the hardware or Chromium
 
 Supersedes the allowlist theory below. M45 sign-off resumed on the same M5 MacBook Air
