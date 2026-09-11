@@ -9617,6 +9617,21 @@ reasoning and the accepted tradeoff (this flag can't distinguish "unrecognized" 
 Verified live on Linux under Xvfb that `--disable-gpu` is unaffected by the flag — still
 correctly reports `softwareRendering: true`. **Also not yet re-verified on the Mac.**
 
+**Update, same day again: the flag alone didn't work.** The operator's retest came back
+with `[gpu]` output identical down to every value — the flag changed nothing. That's
+itself informative: it rules out the ordinary hardware blocklist as the mechanism (the
+flag's whole job is overriding that), leaving the "Chromium doesn't trust a macOS version
+newer than what it was built against" theory as the better explanation, and that isn't
+something any command-line flag reaches. Bumped `electron` from `^40.0.0` to `^44.0.0`
+(current stable) instead — full reasoning in decisions.md's amendment to the same entry.
+Verified the bump doesn't regress anything this session can check: `tsc -b` clean against
+44's types with no code changes needed, all 22 electron tests still pass, and a full live
+Linux/Xvfb run (single-instance lock, the server fork, `better-sqlite3` rebuilt for 44's
+ABI, `--disable-gpu` still correctly reporting `softwareRendering: true`) got further than
+any prior run this session — a real renderer process, not just the main process. **Still
+not verified against the Mac that found the underlying bug** — that's the one machine this
+session cannot reach directly.
+
 ## Found during M44/45 verification, out of scope — a pre-M44 reader bug — 2026-09-10
 
 The operator found this independently while verifying M44/M45's launcher and Electron shell,

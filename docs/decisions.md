@@ -43,6 +43,18 @@ traces to this flag** — the fix then is scoping it (e.g., only appending it wh
 `getGPUInfo('complete')` already returned a real, named renderer rather than an error, so
 it never overrides a *genuine* driver failure), not removing it outright.
 
+⚠️ **Amended same day, after the operator retested: the flag alone did nothing.** The
+retest's `[gpu]` output was byte-for-byte identical with the flag present. That rules out
+the ordinary hardware blocklist as the actual mechanism — `--ignore-gpu-blocklist` exists
+specifically to override it, and changed nothing. Read as stronger evidence for the
+"unknown future OS" theory above: Chromium refusing to trust *any* GPU on a macOS version
+newer than what it was built against isn't gated by the blocklist flag at all. Fix applied
+instead: **bumped `electron` from `^40.0.0` to `^44.0.0`** (current stable, several majors
+newer, built against much newer Chromium). The flag stays — harmless, and it's still the
+right override for the ordinary blocklist case on other hardware. Both changes are
+unverified against the machine that found them as of this writing; TASKS.md's Verify
+bullet and NOTES.md's M45 follow-up entry carry the outcome once known.
+
 ## 2026-09-10 — M43 sign-off feedback: six correctives, none of them re-litigating §E/§F
 
 The operator's live sign-off pass against the real "Spatiotemporal Composability" PDF

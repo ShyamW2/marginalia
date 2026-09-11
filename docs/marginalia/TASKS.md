@@ -2860,8 +2860,20 @@ silently into the feature commit that caused it.
       because a bad combination still degrades via the existing context-loss recovery rather
       than crashing). Verified live on Linux under Xvfb that `--disable-gpu` still correctly
       reports `softwareRendering: true` with the flag present — it doesn't interfere with a
-      genuine software-fallback machine. **Still unverified against the Mac that found both
-      bugs** — the operator needs to pull and retest before this line can be checked off.
+      genuine software-fallback machine.
+
+      ⚠️ **That flag alone turned out not to be sufficient either — a third layer, found
+      from the operator's retest.** `[gpu]` output came back byte-for-byte identical with
+      the flag present, which rules out the ordinary hardware blocklist as the actual
+      mechanism (the flag exists specifically to override it). Better explanation:
+      Chromium declining to trust *any* GPU on a macOS version newer than the build it
+      shipped in — not something a command-line flag reaches. `electron` bumped
+      `^40.0.0` → `^44.0.0` (decisions.md 2026-09-10's amendment). Verified the bump
+      doesn't regress this app: `tsc -b` clean with no code changes, all 22 electron tests
+      pass, and a live Linux/Xvfb run got further than any prior attempt — a real renderer
+      process created, not just the main process stopping at the server fork.
+      **Still unverified against the Mac that found all three findings** — the operator
+      needs to pull and retest before this line can be checked off.
 - [ ] **Verify:** opens the reader, imports an EPUB, highlights, asks a question against a
       pasted API key, publishes to a vault folder, and survives quit-and-relaunch with
       library and highlights intact. On a Mac with `codex` installed via `nvm`, Accounts
