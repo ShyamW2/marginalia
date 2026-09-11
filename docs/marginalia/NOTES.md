@@ -9705,3 +9705,62 @@ position yet" default (should land on the first page/chapter, doesn't), not a br
 scope; worth its own milestone or bugfix session. Operator also suggested defaulting
 `page_number_mode` to "on" rather than "off" — a one-line, deliberate product default change
 in `settings/store.ts`, not implemented here pending the operator's go-ahead.
+
+## M47 pre-flight — 2026-09-11
+
+M46 is done (its one open Verify leg — 50 books on a real GPU shelf — needs the
+operator's own machine, see this file's M46 entry). Before M47 starts, checked four
+things live rather than let the next session re-discover them from DESKTOP.md's prose
+alone.
+
+**`asarUnpack` is two different fixes wearing one bullet, and one of them is already
+done.** DESKTOP.md §3.3 groups "`@napi-rs/canvas`'s `.node` and `wordnet-db`'s dataset"
+under one `asarUnpack` + rewrite bullet, but they don't need the same work:
+- `wordnet.ts:290` already calls `resolveUnpackedPath()` on the path it gets from
+  `require("wordnet-db").path` — M44 wired this ahead of time, confirmed by reading the
+  file. **Nothing left to do here except add the `asarUnpack` glob itself** to the
+  `electron-builder` config so the file is actually physically outside `app.asar`.
+- `library/pdf/rasterize.ts`'s `await import("@napi-rs/canvas")` has **no**
+  `resolveUnpackedPath()` call, and needs none — a native `.node` binding loads through
+  Node's own module resolver (`process.dlopen`), which Electron's asar integration
+  already redirects transparently into `app.asar.unpacked` for real `require`/`import`
+  calls. `wordnet-db`'s case needed a manual rewrite specifically because it hands a raw
+  path *string* to `fs.open` — a different, lower-level operation asar's transparent
+  redirect doesn't cover. **Do not write a `resolveUnpackedPath()` call into
+  `rasterize.ts`** on the assumption it needs the same treatment as wordnet; it would be
+  dead code solving a problem the module loader already doesn't have. The only real task
+  for canvas is the `asarUnpack` glob pattern in the packaging config.
+
+**Excluding `sharp` is a packaging-config task, not a `pnpm-workspace.yaml` edit.**
+`sharp` is already in `onlyBuiltDependencies` (`pnpm-workspace.yaml`) — that list controls
+which native modules pnpm is *allowed to build* during install, for local dev. Whether
+`sharp` ships inside the packaged app is a completely separate question, controlled by
+`electron-builder`'s own `files`/exclusion patterns. **Don't touch
+`onlyBuiltDependencies`** to "exclude" it — that would break `pnpm install` for everyone,
+not shrink the bundle. The actual task is an exclusion glob in `electron-builder`'s
+config once it exists, plus the license-audit check DESKTOP.md §M47 already names
+(confirm `@huggingface/transformers` doesn't lazily `require` it on the Kokoro path).
+
+**`electron-builder` and CI are both fully greenfield — zero existing config.** Checked
+directly: no `electron-builder` dependency anywhere in the workspace, no build config
+(no `build` key in any `package.json`, no `electron-builder.yml`), and no
+`.github/workflows/` directory at all. This isn't "wire up a partial setup" — it's
+starting from nothing on both fronts. Budget accordingly; DESKTOP.md's "3–5 sessions,
+the arc's bottleneck" estimate already assumes this.
+
+**One cross-reference worth carrying into the CI matrix:** M45's own TASKS.md entry
+found the operator's Mac Node (20.19.4) is too old for `pdfjs-dist`'s
+`Promise.withResolvers` (needs Node ≥22) — a real, reproducing bug, but a Node-version
+issue, not an Electron one. Pin CI runners to Node ≥22 so the matrix doesn't
+silently reproduce that same failure and get misfiled as a packaging defect.
+
+**Suggested sequencing**, not a re-decision of DESKTOP.md's own list, just an ordering
+that surfaces failures at the cheapest point: `electron-builder` + both `asarUnpack`
+globs + the `better-sqlite3` Electron-ABI rebuild first (these three together are the
+minimum for *any* installer to launch and touch real data — §2.1's lazy-failure warning
+means "the app launched" proves nothing about `better-sqlite3` specifically, so that
+rebuild needs its own explicit test, not a smoke test). Then `onnxruntime-node` pruning
+and the `sharp` exclusion (size/license, don't block basic function, easy to verify by
+comparing install size before/after). Then the GitHub Actions matrix, which mostly
+automates steps already proven manually by that point. Finish on the real acceptance
+bar: an installer built **by CI**, run on a machine with no Node/pnpm/Claude CLI at all.
