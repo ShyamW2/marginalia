@@ -3,6 +3,59 @@
 Short, dated entries. Newest first. Amend CLAUDE.md's "Settled decisions" when one of
 these changes the rules.
 
+## 2026-09-11 — The real M45 GPU cause: a query-ordering bug, not the hardware or Chromium
+
+Supersedes the allowlist theory below. M45 sign-off resumed on the same M5 MacBook Air
+with two clean diagnostics run first: `xattr -l` on `Electron.app` showed no
+`com.apple.quarantine` (not a Gatekeeper effect), and the installed Chrome's own Chromium
+(`152.0.7977.83`) turned out to be five patch numbers ahead of Electron 44.3.0's bundled
+`152.0.7977.78` — not a version-cadence gap at all, which killed the "Chromium hasn't
+caught up to this OS" theory the previous two fixes were built on. Both `--ignore-
+gpu-blocklist` and a full `--disable-gpu-sandbox` (confirmed applied — `info(complete)`'s
+`sandboxed` flag flipped to `false`) were retested directly and **changed nothing**,
+byte-for-byte, same as before. That invariance across every lever Chromium exposes for
+"trust this hardware anyway" was the tell: the disable decision wasn't being made by
+Chromium's blocklist or sandbox logic at all.
+
+**Root cause, isolated with a controlled repro:** `app.getGPUFeatureStatus()` is a
+synchronous read of Chromium's *current* feature-negotiation state, not a query that
+waits for negotiation to happen. With zero `BrowserWindow`s open, it returns a permanent
+pre-negotiation placeholder — every feature "disabled" — because Chromium doesn't spin up
+real GPU-process negotiation until something actually asks for a compositor. `main.ts`'s
+`launch()` called `detectSoftwareRendering()` *before* `createWindow()` (itself blocked on
+the server handing back a port), so every prior run, on every fix attempted, was reading
+that placeholder and nothing else. Confirmed directly: a throwaway hidden `BrowserWindow`
+loading `about:blank`, created and destroyed before any status read, flips
+`getGPUFeatureStatus()` from all-disabled to `gpu_compositing`/`webgl`/`opengl`/
+`rasterization`/`skia_graphite`/`video_decode`/`video_encode`/`webgpu` all `enabled`, with
+no other change — same machine, same binary, same flags, sandbox back on.
+
+**Decision: add `probeGpuFeatureNegotiation()` in `main.ts`** — a hidden 1×1
+`BrowserWindow` that loads `about:blank` and is destroyed immediately, called before
+`detectSoftwareRendering()` in `launch()`. This preserves the existing architecture (the
+server still receives `MARGINALIA_SOFTWARE_RENDERING` as an env var at spawn time, so no
+IPC or live-update path had to be invented) while making the read itself honest.
+`--ignore-gpu-blocklist` is left in place as a harmless no-op guard rather than removed —
+its comment in `main.ts` now says plainly that it wasn't the fix — since a real blocklist
+false-positive on some future machine is still a real, separate failure mode this flag
+would legitimately address. `--disable-gpu-sandbox` was not kept; it was a diagnostic
+probe, not a change worth shipping (the sandbox does its job once negotiation is queried
+at the right time).
+
+**Verified end to end on the M5 MacBook Air**, not just via the diagnostic lines: rebuilt
+and launched the real `pnpm electron` path, `[gpu] featureStatus` showed every relevant
+feature `enabled`, `GET /api/health` answered `{"softwareRendering":false}`, and the
+operator's own screenshots showed the 3D Desk (books with real depth/perspective/shadow)
+and the book-opening page-curl fold rendering correctly — the two things M45's Verify
+bullet named as missing.
+
+**The lesson, named because it cost three rounds of guessing:** a signal read once, at
+the wrong moment, and never re-read, is a plausible root cause of "correct API, wrong
+answer" independent of whatever downstream system it *looks* like it's describing. All
+three earlier fixes (blocklist, Electron version, sandbox) were reasonable hypotheses
+given the same `[gpu]` line each time — the line itself was lying by omission (it never
+said "no window exists yet"), not by being wrong about what it measured.
+
 ## 2026-09-10 — Electron ships `--ignore-gpu-blocklist`, found live on brand-new hardware
 
 M45's own software-rendering gate (`isSoftwareRendering()`, DESKTOP.md §7.1b) surfaced a

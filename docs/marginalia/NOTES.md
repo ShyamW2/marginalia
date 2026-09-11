@@ -9632,6 +9632,41 @@ any prior run this session — a real renderer process, not just the main proces
 not verified against the Mac that found the underlying bug** — that's the one machine this
 session cannot reach directly.
 
+**Resolved, 2026-09-11 — none of the above was the actual cause.** Two diagnostics ruled
+out the remaining outside theories cleanly: `xattr -l` on `Electron.app` showed no
+quarantine flag, and the installed Chrome's Chromium (`152.0.7977.83`) is five patch
+numbers ahead of Electron 44.3.0's bundled `152.0.7977.78` — not a meaningful version gap,
+so "Chromium hasn't caught up to this OS" doesn't hold either. Retesting `--ignore-
+gpu-blocklist` and a new `--disable-gpu-sandbox` both produced byte-for-byte identical
+`[gpu]` output to every prior attempt — confirmed applied (`sandboxed` flipped to `false`
+in `info(complete)`) but zero effect on feature status either way.
+
+That total invariance was the actual clue: `app.getGPUFeatureStatus()` is a synchronous
+read of Chromium's *current* negotiated state, not a query that waits for negotiation.
+With no `BrowserWindow` ever created — and `main.ts`'s `launch()` called
+`detectSoftwareRendering()` before `createWindow()`, which itself can't run before the
+server (needing the software-rendering flag) hands back a port — every call was reading
+Chromium's permanent pre-negotiation placeholder: everything reports "disabled" until
+something asks for a compositor. Proven with a controlled repro: a throwaway hidden
+`about:blank` window, created and destroyed before any status read, flips
+`getGPUFeatureStatus()` from all-disabled to `gpu_compositing`/`webgl`/`opengl`/
+`rasterization`/`skia_graphite`/`video_decode`/`video_encode`/`webgpu` all `enabled` — same
+machine, same binary, same flags, sandbox back on, no other change.
+
+**Fix:** `probeGpuFeatureNegotiation()` in `main.ts` — a hidden 1×1 window loading
+`about:blank`, destroyed immediately, called before `detectSoftwareRendering()`. Full
+reasoning and the accepted shape in decisions.md 2026-09-11, which supersedes the
+allowlist theory above. `--ignore-gpu-blocklist` stays (harmless, and still the right
+override for an actual future blocklist false-positive); `--disable-gpu-sandbox` was a
+diagnostic probe only, not shipped.
+
+**Verified live, this time actually on the Mac that found the bug**, via the operator: the
+rebuilt real `pnpm electron` path showed `[gpu] featureStatus` with every relevant feature
+`enabled`, `GET /api/health` answered `{"softwareRendering":false}`, and screenshots showed
+the 3D Desk (real depth/perspective/shadow on the books) and the book-opening page-curl
+fold both rendering — the two surfaces M45's Verify bullet named as missing. M45's GPU
+finding is closed.
+
 ## Found during M44/45 verification, out of scope — a pre-M44 reader bug — 2026-09-10
 
 The operator found this independently while verifying M44/M45's launcher and Electron shell,

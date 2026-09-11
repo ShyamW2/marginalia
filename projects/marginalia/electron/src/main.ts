@@ -14,17 +14,14 @@ import { clampToDisplays, loadWindowState, saveWindowState, type WindowState } f
  * loading `http://127.0.0.1:<port>/`, exactly as DESKTOP.md §2.3 requires.
  */
 
-// Found live (2026-09-10, an M5 MacBook Air, decisions.md same date): Chromium
-// disabled gpu_compositing/webgl/2d_canvas/almost everything else while its own
-// complete GPU info showed a fully valid ANGLE-Metal renderer (real extension list,
-// sane driver versions) — not SwiftShader. That combination is Chromium's own
-// GPU-allowlist not yet recognizing brand-new hardware, not a broken or missing
-// driver, and it's exactly what this flag exists to override. Must be set before
-// `app.whenReady()` — the GPU process reads command-line switches at launch.
-// `isSoftwareRendering()` (gpu.ts) is unaffected either way: it still correctly
-// degrades a machine where the GPU genuinely is unavailable (SwiftShader, or
-// `--disable-gpu`), since ignoring the blocklist can't accelerate hardware that
-// isn't there.
+// Found live (2026-09-10, an M5 MacBook Air): Chromium disabled
+// gpu_compositing/webgl/2d_canvas/almost everything else while its own complete
+// GPU info showed a fully valid ANGLE-Metal renderer (real extension list, sane
+// driver versions) — not SwiftShader. The leading theory at the time was
+// Chromium's GPU-allowlist not yet recognizing brand-new hardware, which is
+// what this flag targets. Kept as a harmless no-op guard, but it turned out
+// NOT to be the cause — see the 2026-09-11 finding on `probeGpuFeatureNegotiation`
+// below and decisions.md 2026-09-11, which supersedes the allowlist theory.
 app.commandLine.appendSwitch("ignore-gpu-blocklist");
 
 // electron/dist/main.js -> electron/dist -> electron -> projects/marginalia
@@ -145,6 +142,30 @@ function createWindow(port: number): void {
   void win.loadURL(`${origin}/`);
 }
 
+/**
+ * Root cause of the 2026-09-10 finding above, isolated 2026-09-11 with a
+ * controlled repro (decisions.md, same date): `app.getGPUFeatureStatus()`
+ * returns Chromium's pre-negotiation placeholder — every feature
+ * "disabled" — until something actually asks for a compositor. With zero
+ * `BrowserWindow`s open (`launch()` used to call `detectSoftwareRendering()`
+ * before `createWindow()`, which itself can't run before the server hands
+ * back a port), that placeholder is all there ever was to read, on any
+ * machine, regardless of GPU flags — which is exactly why
+ * `ignore-gpu-blocklist`, the Electron 40→44 bump, and `--disable-gpu-sandbox`
+ * each measured zero effect: none of them touch a decision that hadn't been
+ * made yet. A throwaway hidden window is enough to force the same
+ * negotiation the real window would trigger; it's destroyed immediately so
+ * it can't outlive the real window or steal focus.
+ */
+async function probeGpuFeatureNegotiation(): Promise<void> {
+  const probe = new BrowserWindow({ show: false, width: 1, height: 1 });
+  try {
+    await probe.loadURL("about:blank");
+  } finally {
+    probe.destroy();
+  }
+}
+
 function reportStartupFailure(error: unknown): void {
   const message =
     error instanceof ServerStartupError
@@ -158,6 +179,7 @@ function reportStartupFailure(error: unknown): void {
 async function launch(): Promise<void> {
   Menu.setApplicationMenu(buildMenu());
 
+  await probeGpuFeatureNegotiation();
   const softwareRendering = await detectSoftwareRendering();
 
   let handle: ServerHandle;

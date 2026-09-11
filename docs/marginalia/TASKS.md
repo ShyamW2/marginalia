@@ -2874,6 +2874,26 @@ silently into the feature commit that caused it.
       process created, not just the main process stopping at the server fork.
       **Still unverified against the Mac that found all three findings** — the operator
       needs to pull and retest before this line can be checked off.
+
+      ⚠️ **Resolved 2026-09-11 — none of the three layers above was the actual cause.**
+      Two diagnostics cleared the remaining outside theories: no quarantine flag on
+      `Electron.app`, and the installed Chrome's Chromium build is five patch numbers
+      ahead of Electron 44's bundled one — not a version-cadence gap. Retesting
+      `--ignore-gpu-blocklist` and a new `--disable-gpu-sandbox` both reproduced
+      byte-for-byte identical `[gpu]` output despite being confirmed applied, which was
+      the actual tell: `app.getGPUFeatureStatus()` reads Chromium's *current* negotiated
+      state and doesn't wait for negotiation, and with zero `BrowserWindow`s ever created
+      (`detectSoftwareRendering()` ran before `createWindow()`, which needs a server port
+      the flag itself gates), every call on every attempt was reading a permanent
+      pre-negotiation "everything disabled" placeholder — nothing to do with the hardware,
+      Chromium's version, or the sandbox. Proven with a controlled repro (a throwaway
+      hidden `about:blank` window flips the same read from all-disabled to all-enabled,
+      same machine/binary/flags). Fixed with `probeGpuFeatureNegotiation()` in `main.ts` —
+      full reasoning in decisions.md 2026-09-11. **Verified live on the Mac that found the
+      bug:** rebuilt `pnpm electron`, `[gpu] featureStatus` and `GET /api/health` both
+      confirmed acceleration on, and operator screenshots showed the 3D Desk and the
+      book-opening page-curl both rendering. This line is checked off — the GPU finding is
+      closed. ✅
 - [ ] **Verify:** opens the reader, imports an EPUB, highlights, asks a question against a
       pasted API key, publishes to a vault folder, and survives quit-and-relaunch with
       library and highlights intact. On a Mac with `codex` installed via `nvm`, Accounts
