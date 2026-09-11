@@ -31,3 +31,7 @@ projects/marginalia/web/index.d.ts
 .DS_Store
 Thumbs.db
 *.log
+
+# throwaway verification scripts (e.g. bulk-import fixtures for a manual
+# check) — useful to keep around locally, not meant to ship or be reviewed
+projects/marginalia/scripts/testing/
