@@ -1,0 +1,79 @@
+name: Desktop build
+
+# M47 (DESKTOP.md §5 "M47 — Packaging and the native matrix"). Builds the
+# Electron app for every target the arc ships (macOS arm64, macOS x64, Linux
+# x64) and uploads each installer as an artifact. DESKTOP.md §2.1's own
+# acceptance bar is an installer produced *here*, not on a laptop, run on a
+# machine with no Node/pnpm/Claude CLI — this workflow is that "here".
+#
+# Node is pinned to 24 (this repo's .nvmrc), not just >=20 (package.json's
+# own floor): M45's own TASKS.md entry found Node 20 too old for
+# pdfjs-dist's `Promise.withResolvers` (needs >=22) — a real, reproducing
+# bug that a looser pin would silently let back in and get misfiled as a
+# packaging defect (NOTES.md's M47 pre-flight entry).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "projects/marginalia/**"
+      - ".github/workflows/desktop-build.yml"
+  pull_request:
+    paths:
+      - "projects/marginalia/**"
+      - ".github/workflows/desktop-build.yml"
+
+defaults:
+  run:
+    working-directory: projects/marginalia
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14 # arm64
+            package-script: package:mac:arm64
+            artifact-glob: release/*.dmg
+            artifact-name: marginalia-macos-arm64
+          - os: macos-13 # x64
+            package-script: package:mac:x64
+            artifact-glob: release/*.dmg
+            artifact-name: marginalia-macos-x64
+          - os: ubuntu-latest
+            package-script: package:linux:x64
+            artifact-glob: release/*.AppImage
+            artifact-name: marginalia-linux-x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared/server/web
+        run: pnpm build
+
+      - name: Build electron main process
+        run: pnpm --filter @marginalia/electron build
+
+      - name: Package
+        run: pnpm --filter @marginalia/electron run ${{ matrix.package-script }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: projects/marginalia/${{ matrix.artifact-glob }}
+          if-no-files-found: error

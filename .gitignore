@@ -2,6 +2,7 @@
 node_modules/
 dist/
 build/
+release/
 *.tsbuildinfo
 
 # local data (library, sqlite, imported books)

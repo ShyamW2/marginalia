@@ -1,0 +1,54 @@
+# M47 (DESKTOP.md §5 "M47 — Packaging and the native matrix").
+#
+# appId/productName are placeholders on purpose — CLAUDE.md settled decision
+# 4 / DESKTOP.md §1 name "a real name and icon" as M48's job, the last
+# milestone the name is still free to change (SHIPPING.md). Do not treat
+# either as final.
+appId: com.marginalia.reader.dev
+productName: Marginalia
+
+directories:
+  output: ../release
+
+# Only the Electron main-process code (electron/dist) and its own
+# package.json are packaged as `app` (tiny, and asar-packed by default —
+# electron/package.json has no runtime dependencies, only the `electron`
+# devDependency electron-builder never bundles). The server, its full
+# dependency closure, and the web SPA build all ship as `extraResources`
+# instead, matching `main.ts`'s `resolveServerEntry()` /
+# `paths.ts`'s `resolveResourceDir()`, which already expect
+# `resourcesPath/server/dist/index.js` and `resourcesPath/web/dist/` — see
+# `scripts/electron-package/stage.mjs`'s own doc comment for why that seam
+# sits outside app.asar entirely rather than using `asarUnpack`.
+files:
+  - dist/**/*
+  - package.json
+
+# `stage.mjs` (run by the package:* scripts before electron-builder) already
+# produced a pruned, per-target, Electron-ABI-rebuilt tree at
+# `../build/stage`, mirroring exactly what resourcesPath/ should contain —
+# copied verbatim, not reprocessed.
+extraResources:
+  - from: ../build/stage
+    to: .
+
+# `stage.mjs` + `rebuild-native.mjs` already did the native-module work this
+# flag would otherwise redo (and redo wrongly — electron-builder's own
+# npmRebuild doesn't know about the platform pruning already applied).
+npmRebuild: false
+# Nothing under electron/node_modules needs a native rebuild of its own
+# (no runtime deps at all), and the server tree is handled above — this
+# just prevents electron-builder from trying regardless.
+buildDependenciesFromSource: false
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  category: public.app-category.productivity
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Office

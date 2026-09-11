@@ -6,11 +6,16 @@
   "scripts": {
     "build": "tsc -b",
     "start": "electron .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "package:mac:arm64": "node ../scripts/electron-package/stage.mjs darwin arm64 && node ../scripts/electron-package/rebuild-native.mjs && electron-builder --mac --arm64",
+    "package:mac:x64": "node ../scripts/electron-package/stage.mjs darwin x64 && node ../scripts/electron-package/rebuild-native.mjs && electron-builder --mac --x64",
+    "package:linux:x64": "node ../scripts/electron-package/stage.mjs linux x64 && node ../scripts/electron-package/rebuild-native.mjs && electron-builder --linux --x64"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
     "@types/node": "^22.10.2",
     "electron": "^44.0.0",
+    "electron-builder": "^25.1.8",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

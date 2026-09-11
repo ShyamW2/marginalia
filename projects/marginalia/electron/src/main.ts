@@ -42,12 +42,16 @@ const PROJECT_ROOT = path.resolve(__dirname, "..", "..");
 // as a crash report rather than left to swap the machine.
 const SERVER_MAX_RSS_MB = 1536;
 
-/** Where the server's compiled entry point lives. Packaged layout (M47's
- * `extraResource`) is `<resourcesPath>/server/index.js`; unpackaged (this
- * milestone) it's the sibling `server/dist/index.js` this repo already
- * builds. */
+/** Where the server's compiled entry point lives. Packaged layout (M47,
+ * `scripts/electron-package/stage.mjs`) mirrors the unpackaged tree's own
+ * relative shape — `<resourcesPath>/server/dist/index.js` — because the
+ * stage script traces the server's real dependency graph and places every
+ * file at the same relative path it already has, `server/dist/` included,
+ * rather than flattening it. (Corrected from `<resourcesPath>/server/index.js`,
+ * this comment's own guess before M47 fixed the packaging layout — found live
+ * the first time the packaged build actually ran.) */
 function resolveServerEntry(): string {
-  if (app.isPackaged) return path.join(process.resourcesPath, "server", "index.js");
+  if (app.isPackaged) return path.join(process.resourcesPath, "server", "dist", "index.js");
   return path.join(PROJECT_ROOT, "server", "dist", "index.js");
 }
 
