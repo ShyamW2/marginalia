@@ -9706,6 +9706,47 @@ scope; worth its own milestone or bugfix session. Operator also suggested defaul
 `page_number_mode` to "on" rather than "off" — a one-line, deliberate product default change
 in `settings/store.ts`, not implemented here pending the operator's go-ahead.
 
+## M46 Verify — the 130-book GPU/LRU eviction leg, run — 2026-09-11
+
+The M46 entry above left one Verify leg open: "50 books in the shelf" as a real rendered
+scene, untestable in this repo's own headless test environment (jsdom has no canvas/WebGL
+context). Run this session via `scripts/testing/gen-and-import-epubs.cjs` against a fresh,
+isolated `MARGINALIA_DATA_DIR` — 130 books chosen deliberately over TASKS.md's literal "50",
+comfortably past the LRU cap of 120 so eviction actually fires rather than just populating an
+under-capacity cache.
+
+**Import-level result: clean.** `better-sqlite3` needed `pnpm rebuild -r better-sqlite3`
+first (ABI mismatch against the running Node — pre-existing environment state, not
+introduced by this test). Once running: 130/130 imported, 0 failures, 130 distinct resource
+IDs (no dedup collisions), one spot-checked cover confirmed a real, valid PNG (`HTTP 200`,
+`image/png`, `file` parses a genuine 1×1 8-bit RGB header). `GET /api/health` reported
+`{"softwareRendering":false}` throughout — hardware GPU path, not software fallback. No
+errors or GPU-relevant warnings in the server log across the batch.
+
+**The rendered-scene/eviction-in-VRAM observation itself is still open** — this session had
+no browser-automation tooling available (no `chromium-cli`, no Playwright installed) to
+drive a real Chromium against the shelf and capture it, and installing that was judged
+out of scope without checking first. The operator opened the shelf manually against the
+same running instance instead.
+
+**What the operator found doing that: not a GPU/eviction problem, a reader-chrome one,
+and it compounds with the 2026-09-10 void bug rather than being new.** Opening any of
+the synthetic books reproduces that entry's known bug (page content doesn't render on
+open), but here the documented workaround — use the chapter selector to force a
+navigation — doesn't work either: the chapter popover shows "This book has no table of
+contents," leaving no way to read anything in these books at all.
+
+Traced why: `buildToc()` in `web/src/reader/renderer/epub/toc.ts:72-73` builds the
+reader's TOC **only** from `book.navigation.toc` (epub.js's parsed NCX/nav document),
+with no fallback when it's empty. The generator script's own comment claims a numbered-
+chapters fallback for NCX-less books — that fallback is real, but it lives in the
+*importer's* extraction path (server-side, feeds `resource_text`/digest), not in
+`ChapterNav`. So any EPUB without an NCX/nav — synthetic or a real minimal one — loses
+its only escape hatch from the void bug, because there's nothing in the popover to
+select. **Not investigated further or fixed this session** — flagged here per the
+operator's call to pick up post app-porting, alongside the existing void-bug entry
+rather than as a fresh unknown.
+
 ## M47 pre-flight — 2026-09-11
 
 M46 is done (its one open Verify leg — 50 books on a real GPU shelf — needs the
